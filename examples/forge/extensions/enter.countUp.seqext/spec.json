@@ -1,0 +1,18 @@
+{
+  "primitiveKind": "enter",
+  "defaults": { "duration": "slow", "easing": "enter.snap" },
+  "tokens": { "countRevealFrames": 10 },
+  "knobs": [
+    { "name": "duration", "description": "How long the number races to its value.", "kind": "duration", "default": "slow" }
+  ],
+  "slots": [],
+  "relationships": { "pairsWith": ["enter.fadeIn"], "conflictsWith": ["enter.charCascade"] },
+  "guardrails": ["Use for one hero metric only; counters never run linear and must land on the exact value."],
+  "skeleton": [
+    {
+      "kind": "custom",
+      "code": "(function(){var el=document.querySelector(${innerJs});var o={v:0};var fmt=function(v){return ${numberPrefixJs}+Math.round(v).toLocaleString(\"en-US\")+${numberSuffixJs};};el.textContent=fmt(0);tl.fromTo(${innerJs},{opacity:0},{opacity:1,duration:${min(round(countRevealFrames/fps,3),durationSec)},ease:${easeJs}},${startSec});tl.to(o,{v:${numberValue},duration:${durationSec},ease:${easeJs},onUpdate:function(){el.textContent=fmt(o.v);}},${startSec});})();",
+      "easesUsed": ["$ease"]
+    }
+  ]
+}

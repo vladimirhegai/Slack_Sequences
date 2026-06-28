@@ -1,0 +1,18 @@
+{
+  "primitiveKind": "enter",
+  "defaults": { "duration": "relaxed", "easing": "enter.snap" },
+  "tokens": { "charRisePercent": 80, "staggerTight": 2 },
+  "knobs": [
+    { "name": "duration", "description": "Per-character rise time.", "kind": "duration", "default": "relaxed" }
+  ],
+  "slots": [],
+  "relationships": { "pairsWith": [], "conflictsWith": ["enter.countUp"] },
+  "guardrails": ["Best for very short hook lines; never for dense copy."],
+  "skeleton": [
+    {
+      "kind": "custom",
+      "code": "(function(){var el=document.querySelector(${innerJs});if(!el)return;var text=el.textContent||\"\";el.textContent=\"\";var spans=[];var wrap=document.createElement(\"span\");wrap.style.display=\"block\";wrap.style.width=\"100%\";var words=text.split(\" \");for(var w=0;w<words.length;w++){if(w>0)wrap.appendChild(document.createTextNode(\" \"));var ws=document.createElement(\"span\");ws.style.display=\"inline-block\";ws.style.whiteSpace=\"nowrap\";for(var i=0;i<words[w].length;i++){var s=document.createElement(\"span\");s.textContent=words[w][i];s.style.display=\"inline-block\";ws.appendChild(s);spans.push(s);}wrap.appendChild(ws);}el.appendChild(wrap);tl.fromTo(spans,{yPercent:${charRisePercent},opacity:0},{yPercent:0,opacity:1,duration:${durationSec},ease:${easeJs},stagger:${round(staggerTight/fps,3)}},${startSec});})();",
+      "easesUsed": ["$ease"]
+    }
+  ]
+}

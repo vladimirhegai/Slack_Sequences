@@ -1,0 +1,58 @@
+{
+  "_metadata": {
+    "major_version": 1
+  },
+  "display_information": {
+    "name": "Sequences",
+    "description": "From shipped to shown — turn a launch into an on-brand video, in Slack.",
+    "background_color": "#161616"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Sequences",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/sequences",
+        "description": "Turn a launch into an on-brand video",
+        "usage_hint": "[demo | help]",
+        "should_escape": false
+      }
+    ],
+    "shortcuts": [
+      {
+        "name": "🎬 Make a launch video",
+        "type": "message",
+        "callback_id": "make_launch_video",
+        "description": "Draft an on-brand launch video from this message"
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "commands",
+        "chat:write",
+        "channels:join",
+        "files:write",
+        "app_mentions:read",
+        "channels:history",
+        "groups:history"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "app_mention"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}

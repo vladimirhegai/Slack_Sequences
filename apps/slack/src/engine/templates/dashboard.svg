@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1000" viewBox="0 0 1400 1000">
+  <defs>
+    <linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5B5BF0" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#5B5BF0" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1400" height="1000" rx="24" fill="#141722"/>
+  <!-- sidebar -->
+  <rect x="0" y="0" width="240" height="1000" fill="#0F1219"/>
+  <circle cx="48" cy="52" r="18" fill="#5B5BF0"/>
+  <rect x="80" y="42" width="110" height="20" rx="6" fill="#2A2F3E"/>
+  <rect x="28" y="120" width="184" height="36" rx="10" fill="#232A3D"/>
+  <rect x="44" y="130" width="120" height="16" rx="5" fill="#5B5BF0"/>
+  <rect x="44" y="186" width="130" height="14" rx="5" fill="#2A2F3E"/>
+  <rect x="44" y="232" width="100" height="14" rx="5" fill="#2A2F3E"/>
+  <rect x="44" y="278" width="140" height="14" rx="5" fill="#2A2F3E"/>
+  <rect x="44" y="324" width="90" height="14" rx="5" fill="#2A2F3E"/>
+  <!-- header -->
+  <rect x="280" y="40" width="320" height="30" rx="8" fill="#2A2F3E"/>
+  <rect x="1130" y="36" width="230" height="38" rx="19" fill="#27D9A1"/>
+  <rect x="1168" y="50" width="154" height="11" rx="5" fill="#0F1219"/>
+  <!-- stat cards -->
+  <g>
+    <rect x="280" y="110" width="340" height="150" rx="16" fill="#1B2030"/>
+    <rect x="308" y="140" width="120" height="13" rx="5" fill="#39415A"/>
+    <text x="308" y="216" font-family="Segoe UI, sans-serif" font-size="44" font-weight="700" fill="#F4F5F7">48,209</text>
+    <rect x="308" y="232" width="64" height="10" rx="5" fill="#27D9A1"/>
+  </g>
+  <g>
+    <rect x="650" y="110" width="340" height="150" rx="16" fill="#1B2030"/>
+    <rect x="678" y="140" width="140" height="13" rx="5" fill="#39415A"/>
+    <text x="678" y="216" font-family="Segoe UI, sans-serif" font-size="44" font-weight="700" fill="#F4F5F7">+12.4%</text>
+    <rect x="678" y="232" width="80" height="10" rx="5" fill="#27D9A1"/>
+  </g>
+  <g>
+    <rect x="1020" y="110" width="340" height="150" rx="16" fill="#1B2030"/>
+    <rect x="1048" y="140" width="100" height="13" rx="5" fill="#39415A"/>
+    <text x="1048" y="216" font-family="Segoe UI, sans-serif" font-size="44" font-weight="700" fill="#F4F5F7">99.98%</text>
+    <rect x="1048" y="232" width="56" height="10" rx="5" fill="#5B5BF0"/>
+  </g>
+  <!-- line chart card -->
+  <rect x="280" y="300" width="710" height="420" rx="16" fill="#1B2030"/>
+  <rect x="308" y="330" width="180" height="15" rx="5" fill="#39415A"/>
+  <polyline points="308,640 388,600 468,615 548,540 628,560 708,470 788,495 868,400 948,360"
+    fill="none" stroke="#5B5BF0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <polygon points="308,640 388,600 468,615 548,540 628,560 708,470 788,495 868,400 948,360 948,690 308,690"
+    fill="url(#chartFill)"/>
+  <g stroke="#232A3D" stroke-width="1">
+    <line x1="308" y1="450" x2="948" y2="450"/>
+    <line x1="308" y1="530" x2="948" y2="530"/>
+    <line x1="308" y1="610" x2="948" y2="610"/>
+  </g>
+  <circle cx="868" cy="400" r="9" fill="#27D9A1"/>
+  <!-- bar chart card -->
+  <rect x="1020" y="300" width="340" height="420" rx="16" fill="#1B2030"/>
+  <rect x="1048" y="330" width="140" height="15" rx="5" fill="#39415A"/>
+  <g fill="#5B5BF0">
+    <rect x="1056" y="560" width="40" height="120" rx="8"/>
+    <rect x="1112" y="500" width="40" height="180" rx="8"/>
+    <rect x="1168" y="540" width="40" height="140" rx="8"/>
+    <rect x="1224" y="430" width="40" height="250" rx="8"/>
+    <rect x="1280" y="470" width="40" height="210" rx="8" fill="#27D9A1"/>
+  </g>
+  <!-- table card -->
+  <rect x="280" y="760" width="1080" height="200" rx="16" fill="#1B2030"/>
+  <g fill="#39415A">
+    <rect x="308" y="792" width="220" height="13" rx="5"/>
+    <rect x="308" y="838" width="900" height="11" rx="5" fill="#232A3D"/>
+    <rect x="308" y="876" width="900" height="11" rx="5" fill="#232A3D"/>
+    <rect x="308" y="914" width="620" height="11" rx="5" fill="#232A3D"/>
+  </g>
+</svg>

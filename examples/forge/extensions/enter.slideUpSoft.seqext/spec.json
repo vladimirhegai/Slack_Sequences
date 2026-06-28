@@ -1,0 +1,23 @@
+{
+  "primitiveKind": "enter",
+  "defaults": { "duration": "base", "easing": "enter.glide", "distance": "step" },
+  "tokens": {},
+  "knobs": [
+    { "name": "distance", "description": "How far it lifts from.", "kind": "distance", "default": "step" },
+    { "name": "duration", "description": "Settle time.", "kind": "duration", "default": "base" }
+  ],
+  "slots": [],
+  "relationships": { "pairsWith": ["enter.fadeIn"], "conflictsWith": [] },
+  "guardrails": ["Keep it quiet — supporting text only, never the hero headline."],
+  "skeleton": [
+    {
+      "kind": "fromTo",
+      "target": "$inner",
+      "from": { "y": "$distancePx", "opacity": 0 },
+      "to": { "y": 0, "opacity": 1 },
+      "durationSec": "$durationSec",
+      "ease": "$ease",
+      "atSec": "$startSec"
+    }
+  ]
+}

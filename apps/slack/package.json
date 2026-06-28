@@ -5,6 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "demo": "tsx scripts/demoSmoke.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "mcp:demo": "tsx scripts/mcpDemo.ts",
+    "mcp:server": "tsx src/engine/mcpServer.ts",
+    "test": "vitest run --root ../.. apps/slack/test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -15,7 +20,8 @@
     "@sequences/core": "*",
     "@sequences/platform": "*",
     "@slack/bolt": "^4.7.3",
-    "dotenv": "^16.6.1"
+    "dotenv": "^16.6.1",
+    "puppeteer-core": "^24.43.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
