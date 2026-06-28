@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildingBlocks, resultBlocks } from "../src/blocks.ts";
+import { buildingBlocks, resultBlocks, thinkingStepsBlocks } from "../src/blocks.ts";
 
 describe("Slack blocks", () => {
   it("escapes user-controlled mrkdwn in titles", () => {
@@ -9,7 +9,10 @@ describe("Slack blocks", () => {
     });
   });
 
-  const actionIds = (videoStage: "rendering" | "ready" | "unavailable") => {
+  const actionIds = (
+    videoStage: "rendering" | "ready" | "unavailable",
+    renderQuality: "draft" | "high" = "draft",
+  ) => {
     const blocks = resultBlocks({
       jobId: "job-1",
       title: "Relay",
@@ -18,6 +21,7 @@ describe("Slack blocks", () => {
       videoStage,
       usedMcp: false,
       provider: "claude-code-cli",
+      renderQuality,
     });
     const actions = blocks.find((block) => block.type === "actions");
     return actions && actions.type === "actions"
@@ -30,7 +34,8 @@ describe("Slack blocks", () => {
   });
 
   it("offers approve & share only once the video is ready", () => {
-    expect(actionIds("ready")).toEqual(["revise_open", "undo_apply", "approve_open"]);
+    expect(actionIds("ready")).toEqual(["revise_open", "undo_apply", "render_hd", "approve_open"]);
+    expect(actionIds("ready", "high")).toEqual(["revise_open", "undo_apply", "approve_open"]);
     expect(actionIds("unavailable")).toEqual(["revise_open", "undo_apply"]);
   });
 
@@ -53,7 +58,7 @@ describe("Slack blocks", () => {
     expect(headline("unavailable")).toContain("Couldn’t render");
   });
 
-  it("shows an argument-free MCP tool receipt and retrieved skill context", () => {
+  it("shows an argument-free final build trace and retrieved skill context", () => {
     const blocks = resultBlocks({
       jobId: "job-1",
       title: "Relay",
@@ -70,10 +75,24 @@ describe("Slack blocks", () => {
     });
     const text = JSON.stringify(blocks);
 
-    expect(text).toContain("MCP tool receipt");
+    expect(text).toContain("Build trace");
     expect(text).toContain("`submit_plan` ✓ 42ms");
     expect(text).toContain("`render` ↪ local fallback 81ms");
     expect(text).toContain("Agent context");
     expect(text).toContain("`/product-launch-video`");
+    expect(text).toContain("Reply in this thread to revise");
+  });
+
+  it("renders incremental thinking-step states", () => {
+    const text = JSON.stringify(thinkingStepsBlocks("Relay", [
+      { tool: "submit_plan", state: "succeeded", durationMs: 42 },
+      { tool: "render_preview", state: "fallback", durationMs: 81 },
+      { tool: "render", state: "running", quality: "high" },
+    ]));
+
+    expect(text).toContain("Thinking steps for");
+    expect(text).toContain("`submit_plan`");
+    expect(text).toContain("local fallback");
+    expect(text).toContain("Render video (high)");
   });
 });

@@ -117,5 +117,6 @@ npm run demo --workspace @sequences/slack
 ```
 
 Only expose Slack controls after their complete handler and failure path exist.
-Render HD, Approve/Share, Undo, full-thread ingestion, and conversational
-reply-to-revise are not built yet.
+Undo, Approve/Share, and full-thread ingestion (the 🎬 shortcut summarizes the
+whole thread) are wired. Render HD on demand and conversational reply-to-revise
+are not built yet.

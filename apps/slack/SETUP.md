@@ -22,11 +22,14 @@ npm install
 The manifest declares everything the bot needs: the `/sequences` slash command,
 the **🎬 Make a launch video** message shortcut, the bot scopes (`commands`,
 `chat:write`, `channels:join`, `files:write`, `app_mentions:read`, `channels:history`,
-`groups:history`), Socket Mode, and the `app_mention` event.
+`groups:history`), Socket Mode, and the `app_mention`, `message.channels`, and
+`message.groups` events.
 
 Already created the app? Open **App Manifest**, replace it with
 [manifest.json](manifest.json), save, then **reinstall the app to the workspace**.
 Slack does not add new OAuth scopes to an existing bot token until you reinstall.
+Event-subscription changes also require the updated manifest. If this app
+predates conversational revise, updating and reinstalling is mandatory.
 
 ## 3. Get the two tokens
 
@@ -58,6 +61,11 @@ In Slack, invite the bot to a channel (`/invite @Sequences`), then:
   no model, no API key). The fastest way to confirm the whole pipeline works.
 - **`/sequences`** — opens the modal to make a video from your own brief.
 - **🎬 Make a launch video** (message → ⋯ → shortcuts) — drafts from a message.
+- **Reply in the reel thread** — revises that reel in place. “Make it shorter,”
+  “warmer,” “punchier,” and several other common tweaks use deterministic
+  commands and do not need a model.
+- **Render HD** — re-encodes the approved composition at high quality. Future
+  shares use the HD artifact; it does not alter scenes, timing, or motion design.
 
 The bot auto-joins public channels when `/sequences` is invoked. Private channels
 still require `/invite @Sequences`. If Slack reports `not_in_channel` or
@@ -65,7 +73,8 @@ still require `/invite @Sequences`. If Slack reports `not_in_channel` or
 `xoxb-…` token into `.env`, and restart the process.
 
 Create/revise, thumbnails, and MP4 rendering use the local Sequences MCP server
-by default. Slack shows a tool-call receipt on each result. For diagnosis only,
+by default. Slack shows live Thinking Steps while each operation runs and a
+compact build trace on the result. For diagnosis only,
 set `SLACK_SEQUENCES_USE_MCP=0` to force the equivalent in-process path.
 
 ## 6. Verify without Slack (optional)

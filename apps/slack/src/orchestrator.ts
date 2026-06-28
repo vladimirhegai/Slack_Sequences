@@ -31,7 +31,7 @@ import { initializeProject, projectDirFor } from "./engine/projectTemplates.ts";
 import { requestPlanWith } from "./engine/planRunner.ts";
 import { requestTweak } from "./engine/tweakRunner.ts";
 import { generateSceneThumbnails } from "./engine/thumbs.ts";
-import { renderProject } from "./engine/render.ts";
+import { renderProject, type RenderQuality } from "./engine/render.ts";
 import { McpClient } from "./engine/mcpClient.ts";
 import { retrieveHyperframesSkillContext } from "./agent/skillContext.ts";
 
@@ -104,6 +104,8 @@ export interface VideoResult {
   toolCalls: ToolCallReceipt[];
   /** HyperFrames skills retrieved into the planning/revision prompt. */
   skillsUsed: string[];
+  /** Read-only Slack-hosted MCP calls used to assemble workspace context. */
+  slackMcpTools?: string[];
   /** True when the plan came from a curated preset rather than a planning brain. */
   usedPreset: boolean;
   provider: ProviderId;
@@ -116,6 +118,28 @@ export interface ToolCallReceipt {
   tool: McpToolName;
   status: ToolCallStatus;
   durationMs: number;
+}
+
+export interface OrchestratorProgress {
+  tool: McpToolName;
+  phase: "started" | "completed";
+  receipt?: ToolCallReceipt;
+  quality?: RenderQuality;
+}
+
+export type ProgressCallback = (progress: OrchestratorProgress) => void | Promise<void>;
+
+async function reportProgress(
+  callback: ProgressCallback | undefined,
+  progress: OrchestratorProgress,
+): Promise<void> {
+  if (!callback) return;
+  try {
+    await callback(progress);
+  } catch (error) {
+    // Slack status updates are observability, never a reason to fail the render.
+    process.stderr.write(`[orchestrator] progress callback failed: ${String(error)}\n`);
+  }
 }
 
 function outlineText(project: Project): string {
@@ -187,33 +211,64 @@ async function applyMutation(
   command: Command,
   mcp: { tool: "submit_plan" | "apply_commands"; args: Record<string, unknown> },
   preferMcp?: boolean,
+  onProgress?: ProgressCallback,
 ): Promise<{ usedMcp: boolean; receipt?: ToolCallReceipt }> {
+  await reportProgress(onProgress, { tool: mcp.tool, phase: "started" });
   if (mcpEnabled(preferMcp)) {
     const started = performance.now();
     try {
       await applyViaMcp(dir, mcp.tool, mcp.args);
+      const receipt: ToolCallReceipt = {
+        tool: mcp.tool,
+        status: "succeeded",
+        durationMs: Math.round(performance.now() - started),
+      };
+      await reportProgress(onProgress, { tool: mcp.tool, phase: "completed", receipt });
       return {
         usedMcp: true,
-        receipt: {
-          tool: mcp.tool,
-          status: "succeeded",
-          durationMs: Math.round(performance.now() - started),
-        },
+        receipt,
       };
     } catch (error) {
       process.stderr.write(`[orchestrator] MCP path failed, falling back in-process: ${String(error)}\n`);
-      applyInProcess(dir, command);
+      try {
+        applyInProcess(dir, command);
+      } catch (fallbackError) {
+        const receipt: ToolCallReceipt = {
+          tool: mcp.tool,
+          status: "failed",
+          durationMs: Math.round(performance.now() - started),
+        };
+        await reportProgress(onProgress, { tool: mcp.tool, phase: "completed", receipt });
+        throw fallbackError;
+      }
+      const receipt: ToolCallReceipt = {
+        tool: mcp.tool,
+        status: "fallback",
+        durationMs: Math.round(performance.now() - started),
+      };
+      await reportProgress(onProgress, { tool: mcp.tool, phase: "completed", receipt });
       return {
         usedMcp: false,
-        receipt: {
-          tool: mcp.tool,
-          status: "fallback",
-          durationMs: Math.round(performance.now() - started),
-        },
+        receipt,
       };
     }
   }
-  applyInProcess(dir, command);
+  const started = performance.now();
+  try {
+    applyInProcess(dir, command);
+  } catch (error) {
+    await reportProgress(onProgress, {
+      tool: mcp.tool,
+      phase: "completed",
+      receipt: {
+        tool: mcp.tool,
+        status: "failed",
+        durationMs: Math.round(performance.now() - started),
+      },
+    });
+    throw error;
+  }
+  await reportProgress(onProgress, { tool: mcp.tool, phase: "completed" });
   return { usedMcp: false };
 }
 
@@ -228,66 +283,109 @@ async function applyMutation(
  */
 export async function renderVideo(
   dir: string,
-  options: { preferMcp?: boolean } = {},
+  options: {
+    preferMcp?: boolean;
+    quality?: RenderQuality;
+    onProgress?: ProgressCallback;
+  } = {},
 ): Promise<{ mp4Path?: string; toolCalls: ToolCallReceipt[]; usedMcp: boolean }> {
+  const quality = options.quality ?? "draft";
+  await reportProgress(options.onProgress, { tool: "render", phase: "started", quality });
   if (mcpEnabled(options.preferMcp)) {
     const started = performance.now();
     try {
-      const text = await applyViaMcp(dir, "render", { quality: "draft" });
+      const text = await applyViaMcp(dir, "render", { quality });
       const payload = JSON.parse(text) as { outputPath?: unknown };
       if (typeof payload.outputPath !== "string" || !payload.outputPath) {
         throw new Error("render tool returned no outputPath");
       }
+      const receipt: ToolCallReceipt = {
+        tool: "render",
+        status: "succeeded",
+        durationMs: Math.round(performance.now() - started),
+      };
+      await reportProgress(options.onProgress, {
+        tool: "render",
+        phase: "completed",
+        receipt,
+        quality,
+      });
       return {
         mp4Path: payload.outputPath,
         usedMcp: true,
-        toolCalls: [{
-          tool: "render",
-          status: "succeeded",
-          durationMs: Math.round(performance.now() - started),
-        }],
+        toolCalls: [receipt],
       };
     } catch (error) {
       process.stderr.write(`[orchestrator] MCP render failed, falling back in-process: ${String(error)}\n`);
       const project = loadProject(dir);
       try {
-        const result = await renderProject(dir, project, { quality: "draft", quiet: true });
+        const result = await renderProject(dir, project, { quality, quiet: true });
+        const receipt: ToolCallReceipt = {
+          tool: "render",
+          status: "fallback",
+          durationMs: Math.round(performance.now() - started),
+        };
+        await reportProgress(options.onProgress, {
+          tool: "render",
+          phase: "completed",
+          receipt,
+          quality,
+        });
         return {
           mp4Path: result.outputPath,
           usedMcp: false,
-          toolCalls: [{
-            tool: "render",
-            status: "fallback",
-            durationMs: Math.round(performance.now() - started),
-          }],
+          toolCalls: [receipt],
         };
       } catch (fallbackError) {
         process.stderr.write(`[orchestrator] render skipped: ${String(fallbackError)}\n`);
+        const receipt: ToolCallReceipt = {
+          tool: "render",
+          status: "failed",
+          durationMs: Math.round(performance.now() - started),
+        };
+        await reportProgress(options.onProgress, {
+          tool: "render",
+          phase: "completed",
+          receipt,
+          quality,
+        });
         return {
           usedMcp: false,
-          toolCalls: [{
-            tool: "render",
-            status: "failed",
-            durationMs: Math.round(performance.now() - started),
-          }],
+          toolCalls: [receipt],
         };
       }
     }
   }
 
   const project = loadProject(dir);
+  const started = performance.now();
   try {
-    const result = await renderProject(dir, project, { quality: "draft", quiet: true });
+    const result = await renderProject(dir, project, { quality, quiet: true });
+    await reportProgress(options.onProgress, { tool: "render", phase: "completed", quality });
     return { mp4Path: result.outputPath, toolCalls: [], usedMcp: false };
   } catch (error) {
     process.stderr.write(`[orchestrator] render skipped: ${String(error)}\n`);
+    await reportProgress(options.onProgress, {
+      tool: "render",
+      phase: "completed",
+      quality,
+      receipt: {
+        tool: "render",
+        status: "failed",
+        durationMs: Math.round(performance.now() - started),
+      },
+    });
     return { toolCalls: [], usedMcp: false };
   }
 }
 
 async function buildPreviews(
   dir: string,
-  options: { render: boolean; preferMcp?: boolean },
+  options: {
+    render: boolean;
+    preferMcp?: boolean;
+    onProgress?: ProgressCallback;
+  },
 ): Promise<{
   thumbnailPaths: string[];
   mp4Path?: string;
@@ -299,6 +397,7 @@ async function buildPreviews(
   let usedMcp = false;
   const toolCalls: ToolCallReceipt[] = [];
 
+  await reportProgress(options.onProgress, { tool: "render_preview", phase: "started" });
   if (mcpEnabled(options.preferMcp)) {
     const started = performance.now();
     try {
@@ -309,29 +408,61 @@ async function buildPreviews(
       }
       thumbnailPaths = payload.files.map((file) => path.join(dir, "build", file));
       usedMcp = true;
-      toolCalls.push({
+      const receipt: ToolCallReceipt = {
         tool: "render_preview",
         status: "succeeded",
         durationMs: Math.round(performance.now() - started),
-      });
+      };
+      toolCalls.push(receipt);
+      await reportProgress(options.onProgress, { tool: "render_preview", phase: "completed", receipt });
     } catch (error) {
       process.stderr.write(`[orchestrator] MCP preview failed, falling back in-process: ${String(error)}\n`);
-      const thumbs = await generateSceneThumbnails(dir, project);
-      thumbnailPaths = Object.values(thumbs.files).map((file) => path.join(dir, "build", file));
-      toolCalls.push({
-        tool: "render_preview",
-        status: "fallback",
-        durationMs: Math.round(performance.now() - started),
-      });
+      try {
+        const thumbs = await generateSceneThumbnails(dir, project);
+        thumbnailPaths = Object.values(thumbs.files).map((file) => path.join(dir, "build", file));
+        const receipt: ToolCallReceipt = {
+          tool: "render_preview",
+          status: "fallback",
+          durationMs: Math.round(performance.now() - started),
+        };
+        toolCalls.push(receipt);
+        await reportProgress(options.onProgress, { tool: "render_preview", phase: "completed", receipt });
+      } catch (fallbackError) {
+        const receipt: ToolCallReceipt = {
+          tool: "render_preview",
+          status: "failed",
+          durationMs: Math.round(performance.now() - started),
+        };
+        await reportProgress(options.onProgress, { tool: "render_preview", phase: "completed", receipt });
+        throw fallbackError;
+      }
     }
   } else {
-    const thumbs = await generateSceneThumbnails(dir, project);
-    thumbnailPaths = Object.values(thumbs.files).map((file) => path.join(dir, "build", file));
+    const started = performance.now();
+    try {
+      const thumbs = await generateSceneThumbnails(dir, project);
+      thumbnailPaths = Object.values(thumbs.files).map((file) => path.join(dir, "build", file));
+      await reportProgress(options.onProgress, { tool: "render_preview", phase: "completed" });
+    } catch (error) {
+      await reportProgress(options.onProgress, {
+        tool: "render_preview",
+        phase: "completed",
+        receipt: {
+          tool: "render_preview",
+          status: "failed",
+          durationMs: Math.round(performance.now() - started),
+        },
+      });
+      throw error;
+    }
   }
 
   if (!options.render) return { thumbnailPaths, toolCalls, usedMcp };
   // MP4 needs FFmpeg + Chrome; renderVideo degrades to thumbnails-only on failure.
-  const rendered = await renderVideo(dir, { preferMcp: options.preferMcp });
+  const rendered = await renderVideo(dir, {
+    preferMcp: options.preferMcp,
+    onProgress: options.onProgress,
+  });
   return {
     thumbnailPaths,
     mp4Path: rendered.mp4Path,
@@ -348,6 +479,7 @@ export interface CreateVideoOptions extends BriefFields {
   provider?: ProviderId;
   render?: boolean;
   preferMcp?: boolean;
+  onProgress?: ProgressCallback;
   /**
    * Skip the planning brain and apply this plan directly. A function receives the
    * freshly-initialized project so it can reference seeded asset ids. This is the
@@ -386,11 +518,13 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     planToCommands(project, plan),
     { tool: "submit_plan", args: { plan: plan as unknown as Record<string, unknown> } },
     options.preferMcp,
+    options.onProgress,
   );
 
   const previews = await buildPreviews(dir, {
     render: options.render ?? true,
     preferMcp: options.preferMcp,
+    onProgress: options.onProgress,
   });
   const applied = loadProject(dir);
   return {
@@ -415,6 +549,7 @@ export interface ReviseVideoOptions {
   provider?: ProviderId;
   render?: boolean;
   preferMcp?: boolean;
+  onProgress?: ProgressCallback;
 }
 
 export async function reviseVideo(options: ReviseVideoOptions): Promise<VideoResult & { mode: string }> {
@@ -434,11 +569,13 @@ export async function reviseVideo(options: ReviseVideoOptions): Promise<VideoRes
     command,
     { tool: "apply_commands", args: { commands: tweak.commands as unknown as Record<string, unknown>[] } },
     options.preferMcp,
+    options.onProgress,
   );
 
   const previews = await buildPreviews(dir, {
     render: options.render ?? true,
     preferMcp: options.preferMcp,
+    onProgress: options.onProgress,
   });
   const applied = loadProject(dir);
   return {
@@ -466,30 +603,50 @@ export async function reviseVideo(options: ReviseVideoOptions): Promise<VideoRes
  */
 export async function undoVideo(
   dir: string,
-  options: { render?: boolean; preferMcp?: boolean } = {},
+  options: {
+    render?: boolean;
+    preferMcp?: boolean;
+    onProgress?: ProgressCallback;
+  } = {},
 ): Promise<VideoResult> {
   const providerId = resolveProvider();
   const toolCalls: ToolCallReceipt[] = [];
   let usedMcp = false;
 
   if (mcpEnabled(options.preferMcp)) {
+    await reportProgress(options.onProgress, { tool: "undo", phase: "started" });
     const started = performance.now();
     try {
       await applyViaMcp(dir, "undo", {});
       usedMcp = true;
-      toolCalls.push({ tool: "undo", status: "succeeded", durationMs: Math.round(performance.now() - started) });
+      const receipt: ToolCallReceipt = {
+        tool: "undo",
+        status: "succeeded",
+        durationMs: Math.round(performance.now() - started),
+      };
+      toolCalls.push(receipt);
+      await reportProgress(options.onProgress, { tool: "undo", phase: "completed", receipt });
     } catch (error) {
       process.stderr.write(`[orchestrator] MCP undo failed, falling back in-process: ${String(error)}\n`);
       undoInProcess(dir);
-      toolCalls.push({ tool: "undo", status: "fallback", durationMs: Math.round(performance.now() - started) });
+      const receipt: ToolCallReceipt = {
+        tool: "undo",
+        status: "fallback",
+        durationMs: Math.round(performance.now() - started),
+      };
+      toolCalls.push(receipt);
+      await reportProgress(options.onProgress, { tool: "undo", phase: "completed", receipt });
     }
   } else {
+    await reportProgress(options.onProgress, { tool: "undo", phase: "started" });
     undoInProcess(dir);
+    await reportProgress(options.onProgress, { tool: "undo", phase: "completed" });
   }
 
   const previews = await buildPreviews(dir, {
     render: options.render ?? false,
     preferMcp: options.preferMcp,
+    onProgress: options.onProgress,
   });
   const applied = loadProject(dir);
   return {

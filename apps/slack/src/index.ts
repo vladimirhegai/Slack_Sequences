@@ -3,14 +3,19 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { App } from "@slack/bolt";
 import type { BlockAction, MessageShortcut, ViewSubmitAction } from "@slack/bolt";
+import type { GenericMessageEvent } from "@slack/types";
 import type { WebClient } from "@slack/web-api";
 import {
   buildCreateModal,
   buildReviseModal,
   buildShareModal,
   buildingBlocks,
+  diagnosticsBlocks,
   errorBlocks,
+  hdReadyBlocks,
   resultBlocks,
+  thinkingStepsBlocks,
+  type ThinkingStep,
   type VideoStage,
 } from "./blocks.ts";
 import {
@@ -19,16 +24,24 @@ import {
   reviseVideo,
   undoVideo,
   type CreateVideoOptions,
+  type McpToolName,
+  type OrchestratorProgress,
+  type ProgressCallback,
   type Tone,
   type VideoResult,
 } from "./orchestrator.ts";
 import { DEMO_BRIEF, buildDemoPlan } from "./demo.ts";
-import { createJob, getJob, updateJob } from "./jobStore.ts";
+import { createJob, findJobByThread, getJob, updateJob } from "./jobStore.ts";
+import { EventDeduper, parseThreadReply, type ThreadReply } from "./messageEvents.ts";
 import {
   postMessageWithAutoJoin,
   userFacingSlackError,
 } from "./slackApi.ts";
 import { summarizeThread, type ThreadMessage } from "./thread.ts";
+import { getSlackUserToken } from "./slackTokenStore.ts";
+import { slackInstallUrl } from "./slackOAuth.ts";
+import { retrieveSlackMcpContext } from "./slackMcpContext.ts";
+import { runDiagnostics } from "./diagnostics.ts";
 
 const botToken = process.env.SLACK_BOT_TOKEN;
 const appToken = process.env.SLACK_APP_TOKEN;
@@ -36,6 +49,9 @@ if (!botToken) throw new Error("Missing SLACK_BOT_TOKEN in .env");
 if (!appToken) throw new Error("Missing SLACK_APP_TOKEN in .env");
 
 const app = new App({ token: botToken, appToken, socketMode: true });
+const eventDeduper = new EventDeduper();
+const activeJobs = new Set<string>();
+let botUserId: string | undefined;
 
 /* ----------------------------------------------------------------- helpers */
 
@@ -67,6 +83,30 @@ function logBackgroundError(label: string, error: unknown): void {
 
 function runInBackground(label: string, task: Promise<void>): void {
   void task.catch((error) => logBackgroundError(label, error));
+}
+
+function runJobInBackground(
+  label: string,
+  client: WebClient,
+  jobId: string,
+  task: () => Promise<void>,
+): void {
+  if (activeJobs.has(jobId)) {
+    const job = getJob(jobId);
+    if (job) {
+      runInBackground(
+        `${label} busy notice`,
+        postMessageWithAutoJoin(client, {
+          channel: job.channel,
+          thread_ts: job.threadTs ?? job.messageTs,
+          text: ":hourglass_flowing_sand: I’m already updating this reel. Try the next revision when this one is ready.",
+        }).then(() => undefined),
+      );
+    }
+    return;
+  }
+  activeJobs.add(jobId);
+  runInBackground(label, task().finally(() => activeJobs.delete(jobId)));
 }
 
 async function safeUpdate(
@@ -117,17 +157,26 @@ async function uploadVideo(
   channel: string,
   threadTs: string | undefined,
   mp4Path: string,
+  quality: "draft" | "high" = "draft",
 ): Promise<void> {
   await client.files.uploadV2({
     ...dest(channel, threadTs),
     file: mp4Path,
     filename: path.basename(mp4Path),
-    initial_comment: "Draft launch reel :point_down:",
+    initial_comment: quality === "high"
+      ? "HD launch reel — this replaces the draft :point_down:"
+      : "Draft launch reel :point_down:",
   });
 }
 
 /** Build the result message for a given delivery stage (shared by create + revise). */
-function stageBlocks(jobId: string, title: string, result: VideoResult, stage: VideoStage) {
+function stageBlocks(
+  jobId: string,
+  title: string,
+  result: VideoResult,
+  stage: VideoStage,
+  renderQuality: "draft" | "high" = "draft",
+) {
   return resultBlocks({
     jobId,
     title,
@@ -137,9 +186,42 @@ function stageBlocks(jobId: string, title: string, result: VideoResult, stage: V
     usedMcp: result.usedMcp,
     toolCalls: result.toolCalls,
     skillsUsed: result.skillsUsed,
+    slackMcpTools: result.slackMcpTools,
     usedPreset: result.usedPreset,
     provider: result.provider,
+    renderQuality,
   });
+}
+
+function makeProgressReporter(
+  client: WebClient,
+  channel: string,
+  messageTs: string,
+  title: string,
+): ProgressCallback {
+  const steps = new Map<McpToolName, ThinkingStep>();
+  return async (progress: OrchestratorProgress) => {
+    const previous = steps.get(progress.tool);
+    const next: ThinkingStep = progress.phase === "started"
+      ? {
+          tool: progress.tool,
+          state: "running",
+          quality: progress.quality ?? previous?.quality,
+        }
+      : {
+          tool: progress.tool,
+          state: progress.receipt?.status ?? "succeeded",
+          durationMs: progress.receipt?.durationMs,
+          quality: progress.quality ?? previous?.quality,
+        };
+    steps.set(progress.tool, next);
+    await safeUpdate(client, {
+      channel,
+      ts: messageTs,
+      blocks: thinkingStepsBlocks(title, [...steps.values()]),
+      text: `Building “${title}”…`,
+    });
+  };
 }
 
 /**
@@ -157,10 +239,13 @@ async function deliverVideo(
     title: string;
     result: VideoResult;
     notifyFailure?: (message: string) => Promise<void>;
+    onProgress?: ProgressCallback;
   },
 ): Promise<void> {
   const rendered = await renderVideo(args.result.projectDir, {
     preferMcp: args.result.mcpRequested,
+    quality: "draft",
+    onProgress: args.onProgress,
   });
   const result = {
     ...args.result,
@@ -169,7 +254,7 @@ async function deliverVideo(
     toolCalls: [...args.result.toolCalls, ...rendered.toolCalls],
   };
   const { mp4Path } = rendered;
-  updateJob(args.jobId, { status: "ready", mp4Path });
+  updateJob(args.jobId, { status: "ready", mp4Path, renderQuality: "draft" });
   await safeUpdate(client, {
     channel: args.channel,
     ts: args.messageTs,
@@ -195,6 +280,8 @@ async function deliverVideo(
 interface CreateArgs {
   channel: string;
   threadTs?: string;
+  teamId?: string;
+  userId?: string;
   product: string;
   brandName?: string;
   whatShipped: string;
@@ -209,6 +296,22 @@ interface CreateArgs {
 }
 
 async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
+  let userToken: string | undefined;
+  if (!args.presetPlan) {
+    if (args.teamId && args.userId) {
+      userToken = getSlackUserToken(args.teamId, args.userId);
+    }
+    if (!userToken) {
+      const installUrl = slackInstallUrl(args.teamId);
+      const message = installUrl
+        ? `Connect Sequences to Slack once, then run the command again: ${installUrl}`
+        : "Slack MCP authorization is not configured on this deployment. Set PUBLIC_BASE_URL and the Slack OAuth environment variables.";
+      if (args.notifyFailure) await args.notifyFailure(message);
+      else logBackgroundError("Slack MCP authorization required", message);
+      return;
+    }
+  }
+
   const jobId = randomUUID();
   let posted: Awaited<ReturnType<WebClient["chat"]["postMessage"]>>;
   try {
@@ -224,6 +327,7 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     return;
   }
   const messageTs = posted.ts as string;
+  const onProgress = makeProgressReporter(client, args.channel, messageTs, args.product);
 
   createJob({
     id: jobId,
@@ -235,7 +339,37 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     title: args.product,
   });
 
-  // Tier 1: plan + apply + thumbnails — fast, no MP4 render yet.
+  // Context plane: search Slack through Slack's hosted MCP server with the
+  // invoking user's permissions. The deterministic demo deliberately skips it.
+  let enrichedContext = args.context;
+  let slackMcpTools: string[] | undefined;
+  if (userToken) {
+    try {
+      const workspace = await retrieveSlackMcpContext({
+        userToken,
+        product: args.product,
+        whatShipped: args.whatShipped,
+        extraContext: args.context,
+      });
+      enrichedContext = [
+        args.context,
+        "Verified workspace context retrieved through Slack's hosted MCP server:",
+        workspace.text,
+      ].filter(Boolean).join("\n\n");
+      slackMcpTools = workspace.toolsCalled;
+    } catch (error) {
+      updateJob(jobId, { status: "error" });
+      await safeUpdate(client, {
+        channel: args.channel,
+        ts: messageTs,
+        blocks: errorBlocks(args.product, error instanceof Error ? error.message : String(error)),
+        text: `Couldn’t retrieve Slack workspace context for “${args.product}”`,
+      });
+      return;
+    }
+  }
+
+  // Execution plane: plan + Sequences MCP + thumbnails, then MP4.
   let result: VideoResult;
   try {
     result = await createVideo({
@@ -246,10 +380,12 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
       audience: args.audience,
       tone: args.tone,
       lengthSec: args.lengthSec,
-      context: args.context,
+      context: enrichedContext,
       presetPlan: args.presetPlan,
       render: false,
+      onProgress,
     });
+    result.slackMcpTools = slackMcpTools;
   } catch (error) {
     updateJob(jobId, { status: "error" });
     await safeUpdate(client, {
@@ -284,6 +420,7 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     title: args.product,
     result,
     notifyFailure: args.notifyFailure,
+    onProgress,
   });
 }
 
@@ -307,12 +444,20 @@ async function runRevise(client: WebClient, jobId: string, instruction: string):
 
   const messageTs = posted.ts as string;
   const threadTs = job.threadTs ?? job.messageTs;
+  const onProgress = makeProgressReporter(client, job.channel, messageTs, job.title);
+  updateJob(jobId, { status: "building" });
 
   // Tier 1: apply the tweak + re-thumbnail (zero-token where the matcher is sure).
   let result: VideoResult;
   try {
-    result = await reviseVideo({ projectDir: job.projectDir, instruction, render: false });
+    result = await reviseVideo({
+      projectDir: job.projectDir,
+      instruction,
+      render: false,
+      onProgress,
+    });
   } catch (error) {
+    updateJob(jobId, { status: "ready" });
     await safeUpdate(client, {
       channel: job.channel,
       ts: messageTs,
@@ -343,6 +488,7 @@ async function runRevise(client: WebClient, jobId: string, instruction: string):
     jobId,
     title: job.title,
     result,
+    onProgress,
   });
 }
 
@@ -367,12 +513,15 @@ async function runUndo(client: WebClient, jobId: string): Promise<void> {
 
   const messageTs = posted.ts as string;
   const threadTs = job.threadTs ?? job.messageTs;
+  const onProgress = makeProgressReporter(client, job.channel, messageTs, job.title);
+  updateJob(jobId, { status: "building" });
 
   // Tier 1: revert the journal + re-thumbnail (deterministic; no model).
   let result: VideoResult;
   try {
-    result = await undoVideo(job.projectDir, { render: false });
+    result = await undoVideo(job.projectDir, { render: false, onProgress });
   } catch (error) {
+    updateJob(jobId, { status: "ready" });
     await safeUpdate(client, {
       channel: job.channel,
       ts: messageTs,
@@ -403,7 +552,71 @@ async function runUndo(client: WebClient, jobId: string): Promise<void> {
     jobId,
     title: job.title,
     result,
+    onProgress,
   });
+}
+
+/* --------------------------------------------------------------- HD flow */
+
+async function runHdRender(client: WebClient, jobId: string): Promise<void> {
+  const job = getJob(jobId);
+  if (!job || !job.projectDir) return;
+  if (job.renderQuality === "high" && job.mp4Path) {
+    await postMessageWithAutoJoin(client, {
+      channel: job.channel,
+      thread_ts: job.threadTs ?? job.messageTs,
+      text: ":high_brightness: This reel is already using the HD render.",
+    });
+    return;
+  }
+
+  const posted = await postMessageWithAutoJoin(client, {
+    channel: job.channel,
+    thread_ts: job.threadTs ?? job.messageTs,
+    blocks: buildingBlocks(job.title, "Preparing the HD replacement…"),
+    text: `Rendering “${job.title}” in HD…`,
+  });
+  const messageTs = posted.ts as string;
+  const threadTs = job.threadTs ?? job.messageTs;
+  const onProgress = makeProgressReporter(client, job.channel, messageTs, job.title);
+  updateJob(jobId, { status: "building" });
+
+  const rendered = await renderVideo(job.projectDir, {
+    quality: "high",
+    onProgress,
+  });
+  if (!rendered.mp4Path) {
+    updateJob(jobId, { status: "ready" });
+    await safeUpdate(client, {
+      channel: job.channel,
+      ts: messageTs,
+      blocks: errorBlocks(job.title, "The HD render was unavailable. The existing draft is still safe to share."),
+      text: `Couldn’t render “${job.title}” in HD`,
+    });
+    return;
+  }
+
+  updateJob(jobId, {
+    status: "ready",
+    mp4Path: rendered.mp4Path,
+    renderQuality: "high",
+  });
+  await safeUpdate(client, {
+    channel: job.channel,
+    ts: messageTs,
+    blocks: hdReadyBlocks(jobId, job.title),
+    text: `“${job.title}” is ready in HD`,
+  });
+  try {
+    await uploadVideo(client, job.channel, threadTs, rendered.mp4Path, "high");
+  } catch (error) {
+    logBackgroundError("HD video upload failed", error);
+    await postMessageWithAutoJoin(client, {
+      channel: job.channel,
+      thread_ts: threadTs ?? messageTs,
+      text: `:warning: The HD video rendered, but Slack could not upload it. ${userFacingSlackError(error)}`,
+    }).catch((postError) => logBackgroundError("HD warning failed", postError));
+  }
 }
 
 /* ------------------------------------------------------------- share flow */
@@ -411,11 +624,11 @@ async function runUndo(client: WebClient, jobId: string): Promise<void> {
 async function runShare(client: WebClient, jobId: string, targetChannel: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) return;
-  if (!job.mp4Path) {
+  if (job.status === "building" || !job.mp4Path) {
     await postMessageWithAutoJoin(client, {
       channel: job.channel,
       thread_ts: job.threadTs ?? job.messageTs,
-      text: ":warning: Nothing to share yet — wait for the video to finish rendering.",
+      text: ":warning: Nothing current to share yet — wait for the active render to finish.",
     }).catch((error) => logBackgroundError("share-before-ready notice failed", error));
     return;
   }
@@ -425,7 +638,7 @@ async function runShare(client: WebClient, jobId: string, targetChannel: string)
       channel: targetChannel,
       text: `:rocket: *${job.title}* — launch reel`,
     });
-    await uploadVideo(client, targetChannel, undefined, job.mp4Path);
+    await uploadVideo(client, targetChannel, undefined, job.mp4Path, job.renderQuality ?? "draft");
     await postMessageWithAutoJoin(client, {
       channel: job.channel,
       thread_ts: job.threadTs ?? job.messageTs,
@@ -441,6 +654,32 @@ async function runShare(client: WebClient, jobId: string, targetChannel: string)
   }
 }
 
+async function handleConversationalReply(
+  client: WebClient,
+  reply: ThreadReply,
+): Promise<boolean> {
+  const job = findJobByThread(reply.channel, reply.threadTs);
+  if (!job) return false;
+  if (!eventDeduper.claim(reply.eventId)) return true;
+
+  if (job.status === "building") {
+    await postMessageWithAutoJoin(client, {
+      channel: job.channel,
+      thread_ts: reply.threadTs,
+      text: ":hourglass_flowing_sand: This reel is still building. Send that revision again once the draft is ready.",
+    });
+    return true;
+  }
+
+  runJobInBackground(
+    "in-thread revise",
+    client,
+    job.id,
+    () => runRevise(client, job.id, reply.instruction),
+  );
+  return true;
+}
+
 /* --------------------------------------------------------------- listeners */
 
 app.command("/sequences", async ({ command, ack, client, respond }) => {
@@ -454,8 +693,31 @@ app.command("/sequences", async ({ command, ack, client, respond }) => {
         "*Sequences — from shipped to shown.*\n" +
         "• `/sequences` — open the modal and turn a launch into an on-brand video.\n" +
         "• `/sequences demo` — build a ready-made *Relay v2* launch reel (no setup).\n" +
-        "• *🎬 Make a launch video* message shortcut — draft a video from any message.",
+        "• `/sequences mcp-test` — self-check every service (MCP, render host, Slack, config).\n" +
+        "• *🎬 Make a launch video* message shortcut — draft a video from any message.\n" +
+        "• Reply in a reel’s thread to revise it; common tweaks like “shorter” and “warmer” need no model.",
     });
+    return;
+  }
+
+  if (text === "mcp-test" || text === "check" || text === "doctor") {
+    await respond({ response_type: "ephemeral", text: "Running the Sequences self-check… :stethoscope:" });
+    runInBackground(
+      "/sequences mcp-test",
+      (async () => {
+        const report = await runDiagnostics({
+          client,
+          teamId: command.team_id,
+          userId: command.user_id,
+        });
+        await respond({
+          response_type: "ephemeral",
+          replace_original: false,
+          blocks: diagnosticsBlocks(report),
+          text: report.healthy ? "Self-check: all core services healthy." : "Self-check: some services need attention.",
+        });
+      })(),
+    );
     return;
   }
 
@@ -483,7 +745,11 @@ app.command("/sequences", async ({ command, ack, client, respond }) => {
 
   await client.views.open({
     trigger_id: command.trigger_id,
-    view: buildCreateModal({ channel: command.channel_id, userId: command.user_id }),
+    view: buildCreateModal({
+      channel: command.channel_id,
+      userId: command.user_id,
+      teamId: command.team_id,
+    }),
   });
 });
 
@@ -513,6 +779,7 @@ app.shortcut("make_launch_video", async ({ ack, shortcut, client }) => {
       channel: s.channel.id,
       threadTs,
       userId: s.user.id,
+      teamId: s.team?.id,
       whatShipped,
     }),
   });
@@ -524,6 +791,7 @@ app.view("create_video", async ({ ack, view, client }) => {
     channel?: string;
     threadTs?: string;
     userId?: string;
+    teamId?: string;
   };
   const state = view.state;
   const lengthValue = Number(readSelect(state, "length"));
@@ -532,6 +800,8 @@ app.view("create_video", async ({ ack, view, client }) => {
     runCreate(client, {
       channel: meta.channel ?? "",
       threadTs: meta.threadTs,
+      teamId: meta.teamId,
+      userId: meta.userId,
       product: readInput(state, "product") || "Untitled launch",
       whatShipped: readInput(state, "what_shipped"),
       audience: readInput(state, "audience") || undefined,
@@ -561,14 +831,29 @@ app.view("revise_video", async ({ ack, view, client }) => {
   const meta = JSON.parse(view.private_metadata || "{}") as { jobId?: string };
   const instruction = readInput(view.state, "instruction");
   if (meta.jobId && instruction) {
-    runInBackground("revise modal", runRevise(client, meta.jobId, instruction));
+    runJobInBackground(
+      "revise modal",
+      client,
+      meta.jobId,
+      () => runRevise(client, meta.jobId!, instruction),
+    );
   }
 });
 
 app.action("undo_apply", async ({ ack, body, client }) => {
   await ack();
   const jobId = actionValue(body as BlockAction);
-  if (jobId) runInBackground("undo", runUndo(client, jobId));
+  if (jobId) {
+    runJobInBackground("undo", client, jobId, () => runUndo(client, jobId));
+  }
+});
+
+app.action("render_hd", async ({ ack, body, client }) => {
+  await ack();
+  const jobId = actionValue(body as BlockAction);
+  if (jobId) {
+    runJobInBackground("HD render", client, jobId, () => runHdRender(client, jobId));
+  }
 });
 
 app.action("approve_open", async ({ ack, body, client }) => {
@@ -589,9 +874,29 @@ app.view("share_video", async ({ ack, view, client }) => {
   }
 });
 
-app.event("app_mention", async ({ say }) => {
+app.message(async ({ message, client }) => {
+  if (message.subtype !== undefined && message.subtype !== "thread_broadcast") return;
+  const reply = parseThreadReply(message as GenericMessageEvent, botUserId);
+  if (reply) await handleConversationalReply(client, reply);
+});
+
+app.event("app_mention", async ({ event, client, say }) => {
+  if (event.thread_ts) {
+    const instruction = event.text.replace(botUserId ? new RegExp(`<@${botUserId}>`, "g") : /<@[^>]+>/g, "").trim();
+    if (instruction) {
+      const handled = await handleConversationalReply(client, {
+        channel: event.channel,
+        threadTs: event.thread_ts,
+        eventId: `${event.channel}:${event.ts}`,
+        instruction,
+      });
+      if (handled) return;
+    }
+  }
   await say("Sequences is online. Run `/sequences` to turn a launch into a video.");
 });
 
+const auth = await app.client.auth.test();
+botUserId = typeof auth.user_id === "string" ? auth.user_id : undefined;
 await app.start();
 console.log("⚡ Sequences for Slack is running (Socket Mode). Try /sequences");

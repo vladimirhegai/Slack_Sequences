@@ -33,7 +33,7 @@ export class McpClient {
   #exitError: Error | null = null;
 
   private constructor(projectDir: string) {
-    this.#child = spawn(process.execPath, ["--import", "tsx", SERVER_PATH, projectDir], {
+    this.#child = spawn(process.execPath, [SERVER_PATH, projectDir], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     }) as ChildProcessWithoutNullStreams;

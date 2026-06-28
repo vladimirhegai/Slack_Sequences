@@ -1,0 +1,25 @@
+# Build context for the Sequences-for-Slack image. npm ci only needs package
+# manifests + lockfile + source, so drop everything else to keep the context small.
+# Keep apps/slack/skills and apps/slack/vendor — runtime retrieval reads them.
+.git
+.github
+.claude
+.publish
+.spike
+**/node_modules
+**/.env
+**/.data
+**/dist
+**/renders
+**/*.mp4
+*.log
+coverage
+
+# Not used by the slack runtime or by `npm ci` (not workspace members).
+docs
+references
+examples
+fixtures
+projects
+**/test
+**/*.test.ts

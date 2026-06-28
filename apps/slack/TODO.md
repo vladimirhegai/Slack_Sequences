@@ -14,7 +14,8 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
 - [x] **Commit `apps/slack`.** Was untracked; now committed in the dev monorepo.
 - [x] **Harden `scripts/publish-public.sh`.** Replaced blind `--force` with
   `--force-with-lease`; refreshed the generated README/CLAUDE to describe demo,
-  two-tier delivery, MCP tool receipts, and the Undo / Approve & share controls.
+  two-tier delivery, the observable build path, and the Undo / Approve & share
+  controls.
 - [ ] **Decide publish cadence.** Script still mirrors to `main`. For reviewable
   changes prefer a branch + PR (as used for this change); keep the script for
   fast snapshot pushes only.
@@ -27,24 +28,28 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
 - [x] **Approve & share.** "Approve & share" appears once the reel is `ready` →
   `approve_open` → channel-picker modal (`buildShareModal`) → `share_video` →
   `runShare` reposts the MP4 to the chosen channel. [src/blocks.ts], [src/index.ts].
-- [ ] **Render HD on demand.** Lower priority. Add an HD button that re-runs
-  `render` at `quality: "high"` and replaces the draft MP4. Engine already
-  supports the quality arg (`renderProject` / MCP `render`).
+- [x] **Render HD on demand.** Ready results expose **Render HD**, which re-runs
+  the existing renderer at `quality: "high"`, uploads the replacement, and
+  makes it the canonical artifact used by **Approve & share**. No composition or
+  motion-design decisions change.
 
 ## 3. Make it feel agentic (review item #2)
 
 - [x] **Read the complete release thread.** The 🎬 shortcut now pulls
   `conversations.replies` and summarizes the whole thread into the brief
   ([src/thread.ts] `summarizeThread`, unit-tested), not just the clicked message.
-- [ ] **Conversational create / revise in-thread.** Reply in a draft's thread →
-  treat it as a revise (and `@Sequences make a video about …` → create).
-  Needs a `message.channels` event subscription (manifest change → **reinstall**)
-  plus loop-guards (ignore our own bot posts; dedupe). `findJobByThread` in
-  [src/jobStore.ts] already maps a thread → job, so the revise wiring is small.
-- [ ] **Stream tool/agent progress (Slack "Thinking Steps").** Today we post a
-  *receipt* after the fact (`toolCalls` in [src/blocks.ts]). Upgrade to live
-  status as `submit_plan → render_preview → render` run, using Slack's
-  assistant/thinking-steps surface. Highest "wow" for the demo video.
+- [x] **Conversational revise in-thread.** Human replies in a reel thread route
+  through `findJobByThread` → `runRevise`. Bot/system/self posts are ignored;
+  channel+message timestamps dedupe Socket Mode retries and overlapping
+  `message.channels` / `app_mention` delivery; a per-job lock prevents concurrent
+  mutation/render work. The manifest now subscribes to `message.channels` and
+  `message.groups`, so **reinstall the Slack app** after updating it.
+- [x] **Live "Thinking Steps" progress.** The orchestrator emits progress around
+  each real operation and the bot incrementally `chat.update`s the result as
+  `submit_plan`/`apply_commands` → `render_preview` → `render` complete. Success,
+  local fallback, failure, duration, and HD quality are represented. The final
+  message keeps a compact build trace rather than being the first time progress
+  becomes visible.
 - [ ] **RTS as a second challenge tech (optional).** When the sandbox enables the
   Real-Time Search API, use it to enrich thread context. Sandbox-gated; keep the
   current thread-read as the fallback.
@@ -54,7 +59,8 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
 - [ ] Screenshot upload → `assets/` → media-slot archetypes light up (SLACK_PLAN §5 day 9).
 - [ ] "Context used" receipt from `events.log` + the Undo trail (trust/audit story).
 - [ ] Register the same MCP server in Claude Desktop (portability demo beat).
-- [ ] Graceful empty/error/loading Block Kit states; demo workspace + scripted thread.
+- [~] Graceful empty/error/loading Block Kit states. Live progress, HD failures,
+  and busy-job notices are covered; a scripted demo workspace is still pending.
 
 ---
 
@@ -62,22 +68,17 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
 
 After this PR merges, in priority order:
 
-1. **Conversational in-thread revise** — the biggest "agentic" jump and it reuses
-   what's already here (`findJobByThread` + `runRevise`). Concrete first step:
-   add `message.channels` to [manifest.json](manifest.json) `bot_events`,
-   reinstall, then add an `app.message` listener that ignores bot posts, looks up
-   the thread's job, and routes the reply into `runRevise`. Guard against loops
-   (skip `bot_id`/self) and double-handling.
-2. **Live "Thinking Steps" progress** — highest demo wow. Replace the after-the-fact
-   tool receipt with live status as `submit_plan → render_preview → render` run.
-   First step: post incremental `chat.update`s (or Slack's assistant status API)
-   from the orchestrator via a progress callback, reusing the `toolCalls` data we
-   already collect.
-3. **HD render on demand** — small: an HD button that re-runs `render` at
-   `quality:"high"` and swaps the draft MP4.
-4. **Screenshot upload → media archetypes** — lets `feature-reveal` / `ui-walkthrough`
-   use real product UI, not just text.
-5. **RTS second tech** (sandbox-gated) and **Claude Desktop MCP registration**
+1. **Reinstall and sandbox-test the manifest** — `message.channels` and
+   `message.groups` are now declared, but Slack must issue a refreshed
+   installation before thread replies arrive. Exercise create → reply revise →
+   HD → share in one channel.
+2. **Screenshot upload → media archetypes** — lets `feature-reveal` / `ui-walkthrough`
+   use real product UI, not just text. Keep this separate from the current
+   workflow-only polish because it can change visual output.
+3. **Context / version receipt** — summarize the deterministic event journal and
+   current artifact quality without changing composition.
+4. **RTS second tech** (sandbox-gated) and **Claude Desktop MCP registration**
    (portability demo beat) — do when the sandbox/recording is being prepared.
 
-Cut-line: items 1–2 are what move the hackathon score; 3–5 are amplifiers.
+Cut-line: sandbox proof is next. Motion-system and creativity work intentionally
+remain deferred until the HyperFrames authoring direction is revisited.

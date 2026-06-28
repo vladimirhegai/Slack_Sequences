@@ -37,7 +37,12 @@ HyperFrames while keeping deterministic validation around the result.
 - `/sequences` opens the create modal.
 - `/sequences demo` builds the curated five-scene Relay reel with no model call.
 - The “🎬 Make a launch video” message shortcut prefills a brief from a message.
+- The shortcut reads the complete release thread, not only the clicked message.
 - Create and Revise both post real thumbnails and an inline MP4.
+- Human replies in a reel thread trigger Revise conversationally; self/bot posts,
+  event retries, and concurrent changes are guarded.
+- Live Thinking Steps update as mutation, storyboard, and render operations run.
+- Ready drafts expose Undo, Render HD, and Approve & share controls.
 - Public-channel `not_in_channel` failures auto-join/retry; background Slack API
   failures do not terminate the bot.
 
@@ -63,10 +68,11 @@ per-project stdio MCP server:
 | Revise | `apply_commands` → `render_preview` → `render` |
 | Deterministic demo | same tool path, but the plan is a curated preset and no planning model runs |
 
-Each result contains an argument-free **MCP tool receipt** with the tool name,
-outcome, and duration. Successful calls show `✓`; transport/tool failures show
-the in-process fallback. This is observable proof of the actual path, not a
-static “powered by MCP” badge.
+Each operation emits a progress event before and after it runs. Slack turns that
+into incremental `chat.update` Thinking Steps, including successful calls,
+in-process fallback, failures, duration, and render quality. The settled result
+contains a compact, argument-free **build trace**. This is observable proof of
+the actual path, not a static “powered by MCP” badge.
 
 The fallback stays intentionally narrow. It applies the same command through
 the same project store or invokes the same preview/render implementation
@@ -96,7 +102,7 @@ Slack displays the selected skill names as an **Agent context** receipt.
 
 ```mermaid
 flowchart TD
-  S[Slack command / shortcut / revise] --> B[Bolt app]
+  S[Slack command / shortcut / thread reply / revise] --> B[Bolt app]
   B --> O[orchestrator]
   K[Local HyperFrames skill retrieval] --> P[Planning brain]
   P -->|typed Plan or Commands| O
@@ -118,6 +124,7 @@ an MCP tool call. Project mutations, previews, and renders are MCP calls.
 | --- | --- |
 | [`src/index.ts`](src/index.ts) | Bolt listeners, two-tier delivery, uploads |
 | [`src/orchestrator.ts`](src/orchestrator.ts) | create/revise lifecycle, MCP-first fallback policy, receipts |
+| [`src/messageEvents.ts`](src/messageEvents.ts) | Human-reply filter and event deduplication |
 | [`src/engine/mcpClient.ts`](src/engine/mcpClient.ts) | stdio MCP client |
 | [`src/engine/mcp.ts`](src/engine/mcp.ts) | typed project/preview/render tools |
 | [`src/agent/skillContext.ts`](src/agent/skillContext.ts) | bounded HyperFrames skill retrieval |
@@ -140,7 +147,8 @@ Chrome/Edge and FFmpeg and verifies the asynchronous MP4 stage.
 
 ## Next priorities
 
-1. Prove the live Slack create/revise loop and receipts in the sandbox.
+1. Reinstall from the updated manifest and prove create → conversational revise
+   → HD → share in the Slack sandbox.
 2. Move from “Sequences plan enriched by HyperFrames skills” toward direct
    HyperFrames composition authoring with validation around it.
 3. Expose better deterministic tools: inspect composition, lint, render frame,
@@ -150,6 +158,7 @@ Chrome/Edge and FFmpeg and verifies the asynchronous MP4 stage.
 5. Curate SaaS-specific skills and retrieve only the context a scene needs.
 6. Later, add bounded sub-agents for component/frame construction.
 
-Not built yet: full-thread ingestion, conversational reply-to-revise, screenshot
-asset ingestion, Undo/Approve/Share controls, HD render controls, or component
-sub-agents. These stay out of the UI until their handlers exist end to end.
+Not built yet: screenshot asset ingestion, direct HyperFrames authoring,
+assistant-status API integration, or component sub-agents. Motion-system and
+creative-output changes are intentionally deferred; this pass only changes
+Slack workflow, observability, encoding quality, and reliability.
