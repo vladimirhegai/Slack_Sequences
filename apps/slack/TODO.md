@@ -58,5 +58,26 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
 
 ---
 
-_See the bottom-of-file **"What to do next"** section for the recommended order
-after this PR merges._
+## What to do next (recommended order)
+
+After this PR merges, in priority order:
+
+1. **Conversational in-thread revise** — the biggest "agentic" jump and it reuses
+   what's already here (`findJobByThread` + `runRevise`). Concrete first step:
+   add `message.channels` to [manifest.json](manifest.json) `bot_events`,
+   reinstall, then add an `app.message` listener that ignores bot posts, looks up
+   the thread's job, and routes the reply into `runRevise`. Guard against loops
+   (skip `bot_id`/self) and double-handling.
+2. **Live "Thinking Steps" progress** — highest demo wow. Replace the after-the-fact
+   tool receipt with live status as `submit_plan → render_preview → render` run.
+   First step: post incremental `chat.update`s (or Slack's assistant status API)
+   from the orchestrator via a progress callback, reusing the `toolCalls` data we
+   already collect.
+3. **HD render on demand** — small: an HD button that re-runs `render` at
+   `quality:"high"` and swaps the draft MP4.
+4. **Screenshot upload → media archetypes** — lets `feature-reveal` / `ui-walkthrough`
+   use real product UI, not just text.
+5. **RTS second tech** (sandbox-gated) and **Claude Desktop MCP registration**
+   (portability demo beat) — do when the sandbox/recording is being prepared.
+
+Cut-line: items 1–2 are what move the hackathon score; 3–5 are amplifiers.
