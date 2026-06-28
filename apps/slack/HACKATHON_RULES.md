@@ -40,8 +40,8 @@ RTS API is an optional stretch (e.g. pull live launch context from a channel).
 ## What to submit
 
 - Text description (features + functionality).
-- **~3-minute demo video** showing the working project (first 60 seconds matter
-  most — judges spend ~5–7 min/project).
+- **Demo video under 3 minutes** showing the working project (target ~2:45 so
+  export/upload timing cannot cross the limit; first 60 seconds matter most).
 - **Architecture diagram.**
 - **URL to your Slack developer sandbox**, with access granted to
   **`slackhack@salesforce.com`** and **`testing@devpost.com`**.
@@ -76,7 +76,7 @@ RTS API is an optional stretch (e.g. pull live launch context from a channel).
 - [ ] Joined Slack Developer Program; sandbox provisioned.
 - [ ] App uses **MCP** (≥1 required tech) — ✅ by design.
 - [ ] Fits **New Slack Agent** track — ✅.
-- [ ] Demo video (~3 min) recorded.
+- [ ] Demo video recorded, publicly hosted, and confirmed under 3 minutes.
 - [ ] Architecture diagram exported.
 - [ ] Sandbox URL shared with `slackhack@salesforce.com` + `testing@devpost.com`.
 - [ ] Devpost submission filled in before **Jul 13, 2026 8pm EDT**.

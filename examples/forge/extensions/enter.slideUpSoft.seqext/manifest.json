@@ -1,0 +1,8 @@
+{
+  "id": "enter.slideUpSoft",
+  "type": "primitive",
+  "version": "1.0.0",
+  "summary": "A small upward lift with a soft settle. Reliable for captions, bullets, and secondary text that should feel polished but quiet.",
+  "tags": { "energy": "calm", "style": "organic" },
+  "source": "forge"
+}

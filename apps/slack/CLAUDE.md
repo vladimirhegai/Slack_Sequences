@@ -4,10 +4,11 @@ This is the **active** app: a Slack agent for the **Slack Agent Builder
 Challenge** (~16 days). It turns product-launch context in Slack into an
 editable Sequences video draft.
 
-> **Spec:** [SLACK_PLAN.md](SLACK_PLAN.md) — read it first (start with
-> *Tonight's foundation sprint*). It maps every Slack action onto the real
-> Sequences engine. **Hackathon rules:** [HACKATHON_RULES.md](HACKATHON_RULES.md)
-> (deadline, tracks, judging). Don't re-derive any of this; it's there.
+> **Spec:** [SLACK_PLAN.md](SLACK_PLAN.md) — read it first. It is prioritized
+> hackathon-fit → use case → architecture → demo → 15-day timeline, and maps every
+> Slack action onto the real Sequences engine (§7 lists the foundation that already
+> exists). **Hackathon rules:** [HACKATHON_RULES.md](HACKATHON_RULES.md) (deadline,
+> tracks, judging). Don't re-derive any of this; it's there.
 
 The rest of the repo (Forge, Sequences, the shared engine) is **paused** — see
 [../../CLAUDE.md](../../CLAUDE.md) and [../../docs/paused/](../../docs/paused/).
@@ -79,10 +80,44 @@ and fill in `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` (Socket Mode app token).
 
 ```
 apps/slack/
+  manifest.json      Slack app manifest — create the app from this (scopes, /sequences,
+                     🎬 shortcut, Socket Mode). Reproducible setup; see SETUP.md.
   src/
-    index.ts      Bolt app: slash command, modal, buttons, events
-    engine/       (copied-in engine glue — render, projectIo — when wiring renders)
-  SLACK_PLAN.md   the hackathon spec
-  .env            secrets (gitignored)
-  .env.example    template
+    index.ts         Bolt app: /sequences (+ demo/help), modal, 🎬 message shortcut, revise
+    slackApi.ts      Slack API resilience: public-channel auto-join + actionable failures
+    orchestrator.ts  createVideo() / reviseVideo() — the engine seam (MCP + fallback; presetPlan path)
+    demo.ts          DEMO_BRIEF + buildDemoPlan() — the curated, model-free /sequences demo reel
+    jobStore.ts      Slack interaction ↔ project-dir map (.data/jobs.json)
+    blocks.ts        Block Kit builders (modal, result message)
+    engine/          copied-in engine glue (do not import apps/sequences):
+      projectIo.ts render.ts thumbs.ts projectTemplates.ts planRunner.ts tweakRunner.ts
+      mcp.ts mcpServer.ts mcpClient.ts  templates/dashboard.svg
+  scripts/
+    demoSmoke.ts     model-free: applies the demo plan, asserts real thumbnails (npm run demo)
+    smoke.ts         brief → plan → thumbnails → MP4, no Slack (npm run smoke)
+    mcpDemo.ts        drives the MCP server end-to-end (npm run mcp:demo)
+  .data/             per-project workspaces + jobs.json (gitignored, runtime)
+  SETUP.md           5-min sandbox setup (create app from manifest, tokens, run)
+  SLACK_PLAN.md      the hackathon spec
+  .env / .env.example  secrets (gitignored) + template
 ```
+
+Verify the foundation: `npm run typecheck --workspace @sequences/slack` and
+`npm run test --workspace @sequences/slack` (green), plus
+`npm run demo --workspace @sequences/slack` (model-free; writes real scene thumbnails
+to `.data/`). `npm run mcp:demo` additionally drives the MCP server end-to-end.
+
+## Entry points (what a user can do today)
+
+- **`/sequences demo`** — zero-setup, deterministic *Relay v2* reel (curated plan
+  → solver → thumbnails → MP4). No modal, no model, no API key. The bulletproof
+  demo path and the fastest end-to-end smoke.
+- **`/sequences`** — the create modal (product, what shipped, audience, tone,
+  length, context) → plan → preview.
+- **🎬 Make a launch video** — message shortcut; opens the modal prefilled from
+  the clicked message (full thread reading is a later day).
+- **`/sequences help`** — lists the above.
+- **Revise** — applies a natural-language tweak and regenerates the preview.
+
+Planned controls such as **Render HD**, **Approve & share**, and **Undo** stay
+hidden until their end-to-end handlers are implemented.
