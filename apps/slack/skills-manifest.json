@@ -1,0 +1,81 @@
+{
+  "source": "heygen-com/hyperframes",
+  "skills": {
+    "embedded-captions": {
+      "hash": "7fa25370f9fbb4b3",
+      "files": 144
+    },
+    "faceless-explainer": {
+      "hash": "8f89def06adfe745",
+      "files": 17
+    },
+    "general-video": {
+      "hash": "a30225e30ec7b06c",
+      "files": 1
+    },
+    "hyperframes": {
+      "hash": "55f1e72887f8f983",
+      "files": 1
+    },
+    "hyperframes-animation": {
+      "hash": "57458f4308708e21",
+      "files": 115
+    },
+    "hyperframes-cli": {
+      "hash": "e493e8902805efef",
+      "files": 7
+    },
+    "hyperframes-core": {
+      "hash": "6243b6f09c94cce1",
+      "files": 13
+    },
+    "hyperframes-creative": {
+      "hash": "bb248c1bc5cc28b5",
+      "files": 67
+    },
+    "hyperframes-media": {
+      "hash": "096b2ab0a43b05dd",
+      "files": 40
+    },
+    "hyperframes-registry": {
+      "hash": "e3b389526834109d",
+      "files": 10
+    },
+    "media-use": {
+      "hash": "f0edb0fd7cd513a5",
+      "files": 19
+    },
+    "motion-graphics": {
+      "hash": "be1d1f159d5eb0e4",
+      "files": 23
+    },
+    "music-to-video": {
+      "hash": "c188d0d159b926c2",
+      "files": 132
+    },
+    "pr-to-video": {
+      "hash": "f2014a51c7a052bd",
+      "files": 21
+    },
+    "product-launch-video": {
+      "hash": "5341508d185c091d",
+      "files": 18
+    },
+    "remotion-to-hyperframes": {
+      "hash": "9d959b31fa0fc9d0",
+      "files": 70
+    },
+    "slideshow": {
+      "hash": "ae8d8f3093ef0c04",
+      "files": 2
+    },
+    "talking-head-recut": {
+      "hash": "a3dc251f26be8a3e",
+      "files": 27
+    },
+    "website-to-video": {
+      "hash": "ac39931f9a7da749",
+      "files": 32
+    }
+  }
+}

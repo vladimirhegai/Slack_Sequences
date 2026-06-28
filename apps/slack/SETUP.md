@@ -64,12 +64,18 @@ still require `/invite @Sequences`. If Slack reports `not_in_channel` or
 `missing_scope`, update from the manifest, reinstall the app, copy the refreshed
 `xoxb-…` token into `.env`, and restart the process.
 
+Create/revise, thumbnails, and MP4 rendering use the local Sequences MCP server
+by default. Slack shows a tool-call receipt on each result. For diagnosis only,
+set `SLACK_SEQUENCES_USE_MCP=0` to force the equivalent in-process path.
+
 ## 6. Verify without Slack (optional)
 
 ```bash
 npm run demo  --workspace @sequences/slack   # model-free: applies the demo plan, writes real thumbnails
+npm run mcp:demo --workspace @sequences/slack # lists/calls the same MCP tools used by Slack
 npm run smoke --workspace @sequences/slack -- "Relay v2: sub-100ms traces"   # full pipeline incl. a planning brain
 npm run typecheck --workspace @sequences/slack
+npm run test --workspace @sequences/slack
 ```
 
 ## Planning brain (only needed for non-demo paths)
@@ -77,3 +83,7 @@ npm run typecheck --workspace @sequences/slack
 `/sequences demo` needs no model. The modal/shortcut paths plan with a brain:
 `claude-code-cli` (uses a Claude Code login, no key) by default, or set
 `ANTHROPIC_API_KEY` to use `anthropic-api`. See [.env.example](.env.example).
+
+Before a non-demo model call, the planner retrieves bounded context from the
+vendored HyperFrames skills in [`skills/`](skills). No separate skill install is
+needed.
