@@ -3,7 +3,7 @@
  * @slack/bolt so the modal and result message stay valid Block Kit.
  */
 import type { KnownBlock, View } from "@slack/types";
-import type { Tone } from "./orchestrator.ts";
+import type { Tone, ToolCallReceipt } from "./orchestrator.ts";
 
 export interface ModalContext {
   channel: string;
@@ -171,13 +171,23 @@ export function buildingBlocks(title: string, note = "Drafting a launch reel…"
   ];
 }
 
+/**
+ * The two-tier delivery stages, in order:
+ *  - `rendering`    — storyboard + thumbnails are up; the MP4 is still rendering.
+ *  - `ready`        — the draft MP4 has been uploaded below.
+ *  - `unavailable`  — render host couldn't produce the MP4; thumbnails stand.
+ */
+export type VideoStage = "rendering" | "ready" | "unavailable";
+
 export interface ResultView {
   jobId: string;
   title: string;
   outline: string;
   lint: string;
-  hasVideo: boolean;
+  videoStage: VideoStage;
   usedMcp: boolean;
+  toolCalls?: ToolCallReceipt[];
+  skillsUsed?: string[];
   /** True when the plan came from the curated demo preset (no planning brain). */
   usedPreset?: boolean;
   provider: string;
@@ -185,13 +195,24 @@ export interface ResultView {
 
 export function resultBlocks(view: ResultView): KnownBlock[] {
   const title = escapeMrkdwn(view.title);
-  const headline = view.hasVideo
-    ? `:movie_camera: *“${title}” is ready* — draft below.`
-    : `:movie_camera: *“${title}” — storyboard ready* (video rendering…).`;
-  const path = view.usedMcp ? "via MCP tools" : "in-process engine";
+  const headline =
+    view.videoStage === "ready"
+      ? `:movie_camera: *“${title}” is ready* — draft below.`
+      : view.videoStage === "unavailable"
+        ? `:movie_camera: *“${title}” — storyboard ready.* Couldn’t render the video on this host; thumbnails above.`
+        : `:hourglass_flowing_sand: *“${title}” — storyboard ready.* Rendering the video…`;
+  const path = view.usedMcp ? "through an MCP-first lifecycle" : "through the in-process engine";
   const planned = view.usedPreset
     ? `curated demo plan ${path}`
     : `planned by \`${view.provider}\` ${path}`;
+  const toolReceipt = (view.toolCalls ?? [])
+    .map((call) => {
+      const mark =
+        call.status === "succeeded" ? "✓" : call.status === "fallback" ? "↪ local fallback" : "✕ unavailable";
+      return `\`${call.tool}\` ${mark} ${call.durationMs}ms`;
+    })
+    .join("  ·  ");
+  const skillReceipt = (view.skillsUsed ?? []).map((name) => `\`/${name}\``).join(" · ");
   return [
     { type: "section", text: { type: "mrkdwn", text: headline } },
     { type: "section", text: { type: "mrkdwn", text: codeBlock(view.outline) } },
@@ -201,6 +222,18 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
         { type: "mrkdwn", text: `${view.lint}  ·  ${planned}` },
       ],
     },
+    ...(toolReceipt
+      ? [{
+          type: "context" as const,
+          elements: [{ type: "mrkdwn" as const, text: `*MCP tool receipt*  ·  ${toolReceipt}` }],
+        }]
+      : []),
+    ...(skillReceipt
+      ? [{
+          type: "context" as const,
+          elements: [{ type: "mrkdwn" as const, text: `*Agent context*  ·  ${skillReceipt}` }],
+        }]
+      : []),
     {
       type: "actions",
       elements: [
@@ -210,9 +243,52 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
           text: plain("Revise"),
           value: view.jobId,
         },
+        {
+          type: "button",
+          action_id: "undo_apply",
+          text: plain("Undo"),
+          value: view.jobId,
+        },
+        // Sharing a not-yet-rendered reel would be a lie — offer it only when ready.
+        ...(view.videoStage === "ready"
+          ? [
+              {
+                type: "button" as const,
+                action_id: "approve_open",
+                style: "primary" as const,
+                text: plain("Approve & share"),
+                value: view.jobId,
+              },
+            ]
+          : []),
       ],
     },
   ];
+}
+
+/** The "Approve & share" modal: pick a channel to post the finished reel into. */
+export function buildShareModal(jobId: string): View {
+  return {
+    type: "modal",
+    callback_id: "share_video",
+    private_metadata: JSON.stringify({ jobId }),
+    title: plain("Approve & share"),
+    submit: plain("Share"),
+    close: plain("Cancel"),
+    blocks: [
+      {
+        type: "input",
+        block_id: "channel",
+        label: plain("Post the launch reel to"),
+        element: {
+          type: "conversations_select",
+          action_id: "value",
+          default_to_current_conversation: true,
+          placeholder: plain("Pick a channel"),
+        },
+      },
+    ],
+  };
 }
 
 export function errorBlocks(title: string, message: string): KnownBlock[] {

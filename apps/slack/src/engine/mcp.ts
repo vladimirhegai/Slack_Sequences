@@ -262,9 +262,10 @@ export function startMcpServer(projectDir: string): void {
       handler: async () => {
         const project = await withCurrentProject(() => store.project);
         const result = await generateSceneThumbnails(projectDir, project);
-        return Object.entries(result.files)
-          .map(([sceneId, file]) => `${sceneId}: ${file}`)
-          .join("\n");
+        return JSON.stringify({
+          files: Object.values(result.files),
+          scenes: result.files,
+        });
       },
     },
     {
@@ -282,7 +283,10 @@ export function startMcpServer(projectDir: string): void {
           args.quality === "standard" || args.quality === "high" ? args.quality : "draft";
         const project = await withCurrentProject(() => store.project);
         const result = await renderProject(projectDir, project, { quality, quiet: true });
-        return `rendered ${result.manifest.durationSec}s → ${result.outputPath}`;
+        return JSON.stringify({
+          durationSec: result.manifest.durationSec,
+          outputPath: result.outputPath,
+        });
       },
     },
   ];

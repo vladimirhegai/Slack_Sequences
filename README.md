@@ -1,9 +1,9 @@
 # Sequences for Slack
 
 An agentic Slack bot for the **Slack Agent Builder Challenge** that turns a
-product-launch brief into a **revisable product demo video** — without leaving
-Slack. The agent plans from a constrained motion catalog, renders a draft, and
-posts the storyboard and video back to Slack.
+product-launch brief — or a whole release thread — into a **revisable product
+demo video**, without leaving Slack. The agent plans from a constrained motion
+catalog, renders a draft, and posts the storyboard and video back to Slack.
 
 > Track: **New Slack Agent** · Tech: **MCP / agentic video pipeline** on a real
 > deterministic engine — not a prompt-and-pray wrapper.
@@ -29,12 +29,13 @@ Read [apps/slack/CLAUDE.md](apps/slack/CLAUDE.md),
 - `/sequences demo` builds a deterministic five-scene Relay v2 reel with no
   model or API key.
 - `/sequences` and the **🎬 Make a launch video** message shortcut collect a
-  launch brief and run the planning pipeline.
-- Storyboard thumbnails are posted with `files.uploadV2`; MP4 export is posted
-  when FFmpeg is available.
-- **Revise** applies a deterministic or model-backed tweak and rebuilds the
-  preview.
-- The same engine can be driven over the included MCP server.
+  launch brief; the shortcut reads the whole release **thread** for context.
+- **Two-tier delivery**: storyboard thumbnails post in seconds (`files.uploadV2`),
+  then the rendered MP4 replaces them inline when it's ready.
+- **Revise**, **Undo**, and **Approve & share** (repost the finished reel to
+  another channel) run in-channel.
+- Plan / preview / render / undo are driven over the included **MCP server**
+  (with an in-process fallback); each result shows a tool receipt.
 
 ## Setup and run
 
