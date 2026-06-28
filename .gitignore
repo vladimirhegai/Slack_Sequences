@@ -1,0 +1,60 @@
+node_modules/
+.spike/
+# Staging checkout for the public Slack_Sequences mirror (see scripts/publish-public.sh)
+.publish/
+**/build/
+**/.sequences-build-*/
+**/.sequences-build-previous-*/
+**/renders/
+*.log
+!events.log
+.DS_Store
+
+# Build output / caches (regenerated)
+dist/
+**/dist/
+.cache/
+*.tsbuildinfo
+coverage/
+.vitest/
+
+# app-mode browser profile (sequences app/exe)
+**/.sequences-app-profile/
+
+# Forge's persistent local document workspace
+/examples/forge/workspace/
+
+# Secrets and credentials — never push these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*-key.json
+secrets.json
+**/apikeys*.json
+
+# OS / editor junk
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*~
+
+# Claude config/artifacts (skills + local memory stay on-machine)
+.claude/
+
+# Dev-only / internal notes — scratch markdown that should NOT be published.
+# Put working notes here; product/contract docs (CLAUDE.md, FORGE.md, etc.) stay tracked.
+/dev-docs/
+**/*.local.md
+**/NOTES.md
+**/TODO.local.md
+**/SCRATCH*.md
+
+# Optional local research material (third-party, not first-party source)
+/references/upstream/*/
+/references/agent-sources/
+Web-Prototype/

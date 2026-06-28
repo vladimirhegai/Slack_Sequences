@@ -1,0 +1,20 @@
+{
+  "name": "slack-sequences",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Sequences for Slack — an agentic Slack bot that turns launch context into editable product demo videos. Slack Agent Builder Challenge.",
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "dev": "npm run dev --workspace @sequences/slack",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "fast-check": "^4.8.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

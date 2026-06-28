@@ -1,0 +1,20 @@
+{
+  "name": "@sequences/platform",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Shared local-runtime services used by the Sequences and Forge applications.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./asset-metadata": "./src/assetMetadata.ts",
+    "./media": "./src/media.ts",
+    "./providers": "./src/providers.ts",
+    "./vendors": "./src/vendors.ts"
+  },
+  "dependencies": {
+    "@hyperframes/core": "0.6.86",
+    "@hyperframes/player": "0.6.86",
+    "@sequences/core": "*",
+    "gsap": "^3.15.0"
+  }
+}
