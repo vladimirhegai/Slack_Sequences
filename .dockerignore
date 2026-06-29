@@ -12,6 +12,9 @@
 **/dist
 **/renders
 **/*.mp4
+# Local Brag research checkout is not runtime input; bundled music licensing
+# must be verified before redistribution.
+apps/slack/vendor/brag
 *.log
 coverage
 

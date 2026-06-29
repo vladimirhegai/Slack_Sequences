@@ -4,6 +4,14 @@ The active hackathon app (Slack Agent Builder Challenge, deadline **Jul 13 2026*
 It turns a release thread into an on-brand launch video, in the channel. Bolt +
 Socket Mode; `tsx` runs the TS directly. Pitch: *from shipped to shown*.
 
+## GitHub destination
+
+Publish this app to **https://github.com/vladimirhegai/Slack_Sequences**.
+`vladimirhegai/Sequences` is the local/private development monorepo and is not
+the Slack app's GitHub delivery target. From the monorepo root, use
+`bash scripts/publish-public.sh "<message>"`; do not finish Slack work by pushing
+the monorepo branch and calling it published.
+
 **Deep docs (read only when this file is insufficient):**
 [ARCHITECTURE.md](ARCHITECTURE.md) (target design) ·
 [SLACK_PLAN.md](SLACK_PLAN.md) (current state / what's built) ·
@@ -21,20 +29,18 @@ This app runs **two distinct agents**. Keep them straight:
    pack. **Must be OpenAI** — the Responses `mcp` tool type is OpenAI-only, so
    OpenRouter/DeepSeek cannot drive it. Always needs `OPENAI_API_KEY`. This is the
    primary hackathon-qualifying MCP integration.
-2. **Planning / authoring bot — the main agent** ([src/engine/planRunner.ts](src/engine/planRunner.ts)).
+2. **Planning / authoring bot — the main agent** ([src/engine/compositionRunner.ts](src/engine/compositionRunner.ts)).
    Runs on `SLACK_SEQUENCES_PROVIDER` — Railway uses **`openrouter-api` (DeepSeek)**.
-   Turns brief + context into the video. **Today** it emits a typed Sequences
-   `Plan`; the **target** ([ARCHITECTURE.md](ARCHITECTURE.md)) is for it to author
-   HyperFrames directly. The video execution layer (apply/preview/render) is
-   additionally isolated behind an internal **stdio Sequences MCP** server.
+   Turns brief + context into a canonical, direct HyperFrames HTML composition.
+   The video execution layer (validate/checkpoint/preview/render) is additionally
+   isolated behind an internal **stdio Sequences MCP** server.
 
 ## Prompts live in [prompts/](prompts/)
 
 General, editable system prompts for both bots go in `prompts/*.md` — not buried
-in `src/`. Today: [prompts/context-retrieval.md](prompts/context-retrieval.md)
-(context bot). The planning bot's base prompt still comes from `@sequences/core`
-`buildPlanPrompt` (frozen); its future HyperFrames-authoring system prompt belongs
-in `prompts/`. **Not** in `prompts/`: RAG/skill retrieval
+in `src/`: [prompts/context-retrieval.md](prompts/context-retrieval.md) for the
+context bot and [prompts/planning-director.md](prompts/planning-director.md) for
+direct authoring. **Not** in `prompts/`: RAG/skill retrieval
 ([src/agent/skillContext.ts](src/agent/skillContext.ts)) and per-run
 deterministic context (color/typography picks, selected skills, brand tokens) —
 those are composed at runtime. See [prompts/README.md](prompts/README.md).
@@ -58,8 +64,8 @@ relative imports break after publishing.
 MCP is the **default** live path; `SLACK_SEQUENCES_USE_MCP=0` is a diagnostic
 opt-out. Normal flow:
 
-- create: `submit_plan` → `render_preview` → `render`;
-- revise: `apply_commands` → `render_preview` → `render`.
+- live create/revise: `submit_composition` → `render_preview` → `render`;
+- curated demo: `submit_plan` → `render_preview` → `render`.
 
 The in-process fallback ([src/orchestrator.ts](src/orchestrator.ts) `applyMutation`)
 is narrow and behaviorally equivalent — a flaky subprocess never breaks a demo.
@@ -95,8 +101,10 @@ thumbnails-only result. Background Slack errors must be logged and contained
 Wired end-to-end: `/sequences` create modal, `/sequences demo` (model-free),
 `/sequences mcp-test` self-check, 🎬 message shortcut (reads the whole thread),
 conversational reply-to-revise, live Thinking-Steps progress, Undo, Render HD,
-Approve & share. Per-user OAuth for hosted MCP. Not built yet: screenshot asset
-ingestion, direct HyperFrames authoring, component sub-agents.
+Approve & share. Per-user OAuth for hosted MCP. Direct HyperFrames create,
+revision, validation, checkpoint undo, thumbnails, and render are wired. Not
+built yet: Slack screenshot ingestion, frame.md presets/remapping, component
+sub-agents.
 
 ## Environment
 

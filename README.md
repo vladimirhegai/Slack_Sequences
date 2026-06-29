@@ -2,8 +2,12 @@
 
 An agentic Slack bot for the **Slack Agent Builder Challenge** that turns a
 product-launch brief — or a whole release thread — into a **revisable product
-demo video**, without leaving Slack. The agent plans from a constrained motion
-catalog, renders a draft, and posts the storyboard and video back to Slack.
+demo video**, without leaving Slack. The authoring bot writes native HyperFrames
+HTML/CSS/GSAP, a deterministic gate validates it, and Slack receives the
+storyboard followed by the rendered video.
+
+This is the canonical Slack app repository:
+**https://github.com/vladimirhegai/Slack_Sequences**.
 
 > Track: **New Slack Agent** · Tech: **MCP / agentic video pipeline** on a real
 > deterministic engine — not a prompt-and-pray wrapper.
@@ -34,7 +38,7 @@ Read [apps/slack/CLAUDE.md](apps/slack/CLAUDE.md),
   then the rendered MP4 replaces them inline when it's ready.
 - **Revise**, **Undo**, and **Approve & share** (repost the finished reel to
   another channel) run in-channel.
-- Plan / preview / render / undo are driven over the included **MCP server**
+- Composition checkpoint / preview / render / undo are driven over the included **MCP server**
   (with an in-process fallback); each result shows a tool receipt.
 
 ## Setup and run
@@ -60,4 +64,5 @@ npm run typecheck
 npm test
 npm run demo --workspace @sequences/slack
 npm run mcp:demo --workspace @sequences/slack
+npm run direct:demo --workspace @sequences/slack
 ```

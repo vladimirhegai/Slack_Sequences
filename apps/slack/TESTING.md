@@ -23,13 +23,16 @@ From the repository root:
 npm run typecheck --workspace @sequences/slack
 npm run test --workspace @sequences/slack
 npm run mcp:demo --workspace @sequences/slack
+npm run direct:demo --workspace @sequences/slack
 ```
 
 Expected:
 
 - TypeScript exits successfully.
 - All Slack tests pass.
-- MCP lists tools, applies a plan, reports `lint: clean`, and creates previews.
+- Legacy MCP applies the curated fallback plan.
+- Direct MCP validates/checkpoints authored HTML, reports clean lint, and creates
+  runtime-seeked scene previews.
 
 This gate does not require Slack credentials or a paid model.
 
@@ -41,7 +44,7 @@ HyperFrames, or media:
 ```powershell
 $env:VERIFY_RENDER = "1"
 try {
-  npm run demo --workspace @sequences/slack
+  npm run direct:demo --workspace @sequences/slack
 } finally {
   Remove-Item Env:VERIFY_RENDER -ErrorAction SilentlyContinue
 }
@@ -51,7 +54,7 @@ docker run --rm sequences-slack `
   npm run mcp:demo -w @sequences/slack
 ```
 
-The first command proves local MP4 rendering. The container command proves the
+The first command proves direct HyperFrames MP4 rendering. The container command proves the
 production Node/Docker MCP boundary without exposing sandbox credentials.
 
 ### 3. Monorepo CI gate

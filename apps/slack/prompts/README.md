@@ -13,11 +13,11 @@ Sequences for Slack. Keep them here so they can be tuned without hunting through
    (Must be OpenAI: the Responses `mcp` tool type is OpenAI-only — OpenRouter /
    DeepSeek cannot drive it.)
 
-2. **Planning / authoring bot — the main agent** (`src/engine/planRunner.ts`).
+2. **Planning / authoring bot — the main agent** (`src/engine/compositionRunner.ts`).
    Runs on the provider in `SLACK_SEQUENCES_PROVIDER` — Railway uses
    `openrouter-api` (DeepSeek). This is the agent that turns the brief + context
-   into the video. Today it emits a typed Sequences `Plan`; the target
-   (ARCHITECTURE.md) is for it to author HyperFrames directly.
+   into a direct HyperFrames composition. Its system prompt is
+   [`planning-director.md`](planning-director.md).
 
 ## What belongs here vs. what does not
 
@@ -36,8 +36,6 @@ assembled per-project from data or retrieval, it stays in `src/`.
 ## Current wiring
 
 - `context-retrieval.md` → read by `src/slackMcpContext.ts`.
-- The planning bot's **base** prompt currently comes from
-  `@sequences/core` `buildPlanPrompt` (a frozen shared package), with skill
-  context appended as `guidance`. When the planning bot is rewritten to author
-  HyperFrames directly, put its new system prompt + director guidance here as
-  `prompts/planning-*.md` and load it the same way `context-retrieval.md` is.
+- `planning-director.md` → read by `src/engine/compositionRunner.ts`; exact
+  HyperFrames core references, blueprints, motion rules, available assets, and
+  current revision state are appended deterministically per run.

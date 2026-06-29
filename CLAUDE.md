@@ -1,5 +1,13 @@
 # CLAUDE.md — Sequences for Slack (published repo)
 
+## GitHub destination
+
+This repository is **https://github.com/vladimirhegai/Slack_Sequences**. Push
+Slack app changes here. If you are working from the larger `Sequences`
+development monorepo, publish its standalone subset with
+`scripts/publish-public.sh`; do not use the monorepo GitHub remote as the Slack
+delivery destination.
+
 This is the **public subset** of a larger private monorepo. It contains only the
 Slack bot and the shared engine it depends on:
 

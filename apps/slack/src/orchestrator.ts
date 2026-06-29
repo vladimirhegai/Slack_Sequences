@@ -1,14 +1,13 @@
 /**
  * The video lifecycle — the seam between Slack and the Sequences engine.
  *
- *   createVideo()  messy brief  → plan → applied project → thumbnails → MP4
- *   reviseVideo()  NL revision  → commands → re-applied → thumbnails → MP4
+ *   createVideo()  messy brief  → authored HyperFrames → thumbnails → MP4
+ *   reviseVideo()  NL revision  → checkpointed source → thumbnails → MP4
  *
  * Live work routes through the Sequences MCP server (mcpClient) by default —
  * the bot acting as a real MCP client — and falls back to the copied in-process
- * glue if the subprocess can't start. Planning is still the brain's job: it
- * selects named building blocks from the catalog; the solver + linter own every
- * motion decision (the 9 laws).
+ * glue if the subprocess can't start. Live jobs author HyperFrames directly;
+ * the frozen Plan compiler remains only for the deterministic demo fallback.
  */
 import path from "node:path";
 import {
@@ -28,12 +27,23 @@ import {
   readEventSequence,
 } from "./engine/projectIo.ts";
 import { initializeProject, projectDirFor } from "./engine/projectTemplates.ts";
-import { requestPlanWith } from "./engine/planRunner.ts";
+import { requestDirectComposition } from "./engine/compositionRunner.ts";
 import { requestTweak } from "./engine/tweakRunner.ts";
 import { generateSceneThumbnails } from "./engine/thumbs.ts";
 import { renderProject, type RenderQuality } from "./engine/render.ts";
 import { McpClient } from "./engine/mcpClient.ts";
 import { retrieveHyperframesSkillContext } from "./agent/skillContext.ts";
+import {
+  commitDirectComposition,
+  directLintText,
+  directOutline,
+  generateDirectThumbnails,
+  hasDirectComposition,
+  loadDirectComposition,
+  renderDirectComposition,
+  undoDirectComposition,
+  type DirectCompositionDraft,
+} from "./engine/directComposition.ts";
 
 /* ----------------------------------------------------------- provider choice */
 
@@ -111,7 +121,13 @@ export interface VideoResult {
   provider: ProviderId;
 }
 
-export type McpToolName = "submit_plan" | "apply_commands" | "render_preview" | "render" | "undo";
+export type McpToolName =
+  | "submit_composition"
+  | "submit_plan"
+  | "apply_commands"
+  | "render_preview"
+  | "render"
+  | "undo";
 export type ToolCallStatus = "succeeded" | "fallback" | "failed";
 
 export interface ToolCallReceipt {
@@ -272,6 +288,57 @@ async function applyMutation(
   return { usedMcp: false };
 }
 
+async function applyDirectMutation(
+  dir: string,
+  title: string,
+  draft: DirectCompositionDraft,
+  preferMcp?: boolean,
+  onProgress?: ProgressCallback,
+): Promise<{ usedMcp: boolean; receipt?: ToolCallReceipt }> {
+  const tool = "submit_composition" as const;
+  await reportProgress(onProgress, { tool, phase: "started" });
+  const started = performance.now();
+  if (mcpEnabled(preferMcp)) {
+    try {
+      await applyViaMcp(dir, tool, {
+        title,
+        html: draft.html,
+        storyboard: draft.storyboard as unknown as Record<string, unknown>[],
+      });
+      const receipt: ToolCallReceipt = {
+        tool,
+        status: "succeeded",
+        durationMs: Math.round(performance.now() - started),
+      };
+      await reportProgress(onProgress, { tool, phase: "completed", receipt });
+      return { usedMcp: true, receipt };
+    } catch (error) {
+      process.stderr.write(`[orchestrator] MCP direct authoring failed, falling back in-process: ${String(error)}\n`);
+      try {
+        await commitDirectComposition(dir, title, draft);
+      } catch (fallbackError) {
+        const receipt: ToolCallReceipt = {
+          tool,
+          status: "failed",
+          durationMs: Math.round(performance.now() - started),
+        };
+        await reportProgress(onProgress, { tool, phase: "completed", receipt });
+        throw fallbackError;
+      }
+      const receipt: ToolCallReceipt = {
+        tool,
+        status: "fallback",
+        durationMs: Math.round(performance.now() - started),
+      };
+      await reportProgress(onProgress, { tool, phase: "completed", receipt });
+      return { usedMcp: false, receipt };
+    }
+  }
+  await commitDirectComposition(dir, title, draft);
+  await reportProgress(onProgress, { tool, phase: "completed" });
+  return { usedMcp: false };
+}
+
 /* --------------------------------------------------------------- previews */
 
 /**
@@ -317,9 +384,10 @@ export async function renderVideo(
       };
     } catch (error) {
       process.stderr.write(`[orchestrator] MCP render failed, falling back in-process: ${String(error)}\n`);
-      const project = loadProject(dir);
       try {
-        const result = await renderProject(dir, project, { quality, quiet: true });
+        const result = hasDirectComposition(dir)
+          ? await renderDirectComposition(dir, { quality, quiet: true })
+          : await renderProject(dir, loadProject(dir), { quality, quiet: true });
         const receipt: ToolCallReceipt = {
           tool: "render",
           status: "fallback",
@@ -357,10 +425,11 @@ export async function renderVideo(
     }
   }
 
-  const project = loadProject(dir);
   const started = performance.now();
   try {
-    const result = await renderProject(dir, project, { quality, quiet: true });
+    const result = hasDirectComposition(dir)
+      ? await renderDirectComposition(dir, { quality, quiet: true })
+      : await renderProject(dir, loadProject(dir), { quality, quiet: true });
     await reportProgress(options.onProgress, { tool: "render", phase: "completed", quality });
     return { mp4Path: result.outputPath, toolCalls: [], usedMcp: false };
   } catch (error) {
@@ -392,7 +461,8 @@ async function buildPreviews(
   toolCalls: ToolCallReceipt[];
   usedMcp: boolean;
 }> {
-  const project = loadProject(dir);
+  const direct = hasDirectComposition(dir);
+  const project = direct ? undefined : loadProject(dir);
   let thumbnailPaths: string[];
   let usedMcp = false;
   const toolCalls: ToolCallReceipt[] = [];
@@ -418,7 +488,9 @@ async function buildPreviews(
     } catch (error) {
       process.stderr.write(`[orchestrator] MCP preview failed, falling back in-process: ${String(error)}\n`);
       try {
-        const thumbs = await generateSceneThumbnails(dir, project);
+        const thumbs = direct
+          ? await generateDirectThumbnails(dir)
+          : await generateSceneThumbnails(dir, project!);
         thumbnailPaths = Object.values(thumbs.files).map((file) => path.join(dir, "build", file));
         const receipt: ToolCallReceipt = {
           tool: "render_preview",
@@ -440,7 +512,9 @@ async function buildPreviews(
   } else {
     const started = performance.now();
     try {
-      const thumbs = await generateSceneThumbnails(dir, project);
+      const thumbs = direct
+        ? await generateDirectThumbnails(dir)
+        : await generateSceneThumbnails(dir, project!);
       thumbnailPaths = Object.values(thumbs.files).map((file) => path.join(dir, "build", file));
       await reportProgress(options.onProgress, { tool: "render_preview", phase: "completed" });
     } catch (error) {
@@ -501,16 +575,49 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
   const project = loadProject(dir);
   const usedPreset = options.presetPlan !== undefined;
   let skillsUsed: string[] = [];
-  let plan: Plan;
-  if (options.presetPlan !== undefined) {
-    plan = typeof options.presetPlan === "function" ? options.presetPlan(project) : options.presetPlan;
-  } else {
+  if (options.presetPlan === undefined) {
     const provider = PROVIDERS[providerId];
     if (!provider) throw new Error(`unknown provider "${providerId}"`);
     const brief = assembleBrief(options);
     const skills = retrieveHyperframesSkillContext("create", brief);
     skillsUsed = skills.skillNames;
-    ({ plan } = await requestPlanWith(provider, brief, project, {}, skills.text));
+    const authored = await requestDirectComposition(provider, {
+      brief,
+      projectDir: dir,
+      skills,
+    });
+    const mutation = await applyDirectMutation(
+      dir,
+      options.product,
+      authored.draft,
+      options.preferMcp,
+      options.onProgress,
+    );
+    const previews = await buildPreviews(dir, {
+      render: options.render ?? true,
+      preferMcp: options.preferMcp,
+      onProgress: options.onProgress,
+    });
+    const current = loadDirectComposition(dir);
+    return {
+      ...previews,
+      projectDir: dir,
+      outline: directOutline(current.manifest),
+      lint: await directLintText(dir),
+      usedMcp: mutation.usedMcp || previews.usedMcp,
+      mcpRequested: mcpEnabled(options.preferMcp),
+      toolCalls: [...(mutation.receipt ? [mutation.receipt] : []), ...previews.toolCalls],
+      skillsUsed,
+      usedPreset: false,
+      provider: providerId,
+    };
+  }
+
+  let plan: Plan;
+  if (options.presetPlan !== undefined) {
+    plan = typeof options.presetPlan === "function" ? options.presetPlan(project) : options.presetPlan;
+  } else {
+    throw new Error("unreachable authoring mode");
   }
 
   const mutation = await applyMutation(
@@ -555,6 +662,48 @@ export interface ReviseVideoOptions {
 export async function reviseVideo(options: ReviseVideoOptions): Promise<VideoResult & { mode: string }> {
   const dir = options.projectDir;
   const providerId = resolveProvider(options.provider);
+  if (hasDirectComposition(dir)) {
+    const provider = PROVIDERS[providerId];
+    if (!provider) throw new Error(`unknown provider "${providerId}"`);
+    const current = loadDirectComposition(dir);
+    const skills = retrieveHyperframesSkillContext("revise", options.instruction);
+    const authored = await requestDirectComposition(provider, {
+      brief: `Product: ${current.manifest.title}\nRevise the existing launch composition.`,
+      projectDir: dir,
+      skills,
+      current: {
+        html: current.html,
+        storyboard: current.manifest.scenes,
+      },
+      revisionInstruction: options.instruction,
+    });
+    const mutation = await applyDirectMutation(
+      dir,
+      current.manifest.title,
+      authored.draft,
+      options.preferMcp,
+      options.onProgress,
+    );
+    const previews = await buildPreviews(dir, {
+      render: options.render ?? true,
+      preferMcp: options.preferMcp,
+      onProgress: options.onProgress,
+    });
+    const applied = loadDirectComposition(dir);
+    return {
+      ...previews,
+      projectDir: dir,
+      outline: directOutline(applied.manifest),
+      lint: await directLintText(dir),
+      usedMcp: mutation.usedMcp || previews.usedMcp,
+      mcpRequested: mcpEnabled(options.preferMcp),
+      toolCalls: [...(mutation.receipt ? [mutation.receipt] : []), ...previews.toolCalls],
+      skillsUsed: skills.skillNames,
+      usedPreset: false,
+      provider: providerId,
+      mode: "hyperframes-direct",
+    };
+  }
   const project = loadProject(dir);
 
   // Zero-token matcher resolves common edits ("shorter", "warmer") with no model
@@ -612,6 +761,7 @@ export async function undoVideo(
   const providerId = resolveProvider();
   const toolCalls: ToolCallReceipt[] = [];
   let usedMcp = false;
+  const direct = hasDirectComposition(dir);
 
   if (mcpEnabled(options.preferMcp)) {
     await reportProgress(options.onProgress, { tool: "undo", phase: "started" });
@@ -628,7 +778,8 @@ export async function undoVideo(
       await reportProgress(options.onProgress, { tool: "undo", phase: "completed", receipt });
     } catch (error) {
       process.stderr.write(`[orchestrator] MCP undo failed, falling back in-process: ${String(error)}\n`);
-      undoInProcess(dir);
+      if (direct) undoDirectComposition(dir);
+      else undoInProcess(dir);
       const receipt: ToolCallReceipt = {
         tool: "undo",
         status: "fallback",
@@ -639,7 +790,8 @@ export async function undoVideo(
     }
   } else {
     await reportProgress(options.onProgress, { tool: "undo", phase: "started" });
-    undoInProcess(dir);
+    if (direct) undoDirectComposition(dir);
+    else undoInProcess(dir);
     await reportProgress(options.onProgress, { tool: "undo", phase: "completed" });
   }
 
@@ -648,6 +800,21 @@ export async function undoVideo(
     preferMcp: options.preferMcp,
     onProgress: options.onProgress,
   });
+  if (direct) {
+    const applied = loadDirectComposition(dir);
+    return {
+      ...previews,
+      projectDir: dir,
+      outline: directOutline(applied.manifest),
+      lint: await directLintText(dir),
+      usedMcp: usedMcp || previews.usedMcp,
+      mcpRequested: mcpEnabled(options.preferMcp),
+      toolCalls: [...toolCalls, ...previews.toolCalls],
+      skillsUsed: [],
+      usedPreset: false,
+      provider: providerId,
+    };
+  }
   const applied = loadProject(dir);
   return {
     ...previews,

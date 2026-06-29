@@ -1,6 +1,5 @@
 /** @type {import("puppeteer").Configuration} */
 module.exports = {
-  // Sequences resolves an installed Chrome/Edge executable at runtime.
-  // Avoid Puppeteer's separate ~280 MB browser download during npm install.
+  // Runtime resolves system Chrome/Edge; avoid Puppeteer's separate download.
   skipDownload: true,
 };

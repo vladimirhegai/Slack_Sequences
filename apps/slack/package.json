@@ -10,6 +10,7 @@
     "demo": "tsx scripts/demoSmoke.ts",
     "smoke": "tsx scripts/smoke.ts",
     "mcp:demo": "tsx scripts/mcpDemo.ts",
+    "direct:demo": "tsx scripts/directAuthoringSmoke.ts",
     "mcp:server": "tsx src/engine/mcpServer.ts",
     "test": "vitest run --root ../.. apps/slack/test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -23,6 +24,7 @@
     "@sequences/platform": "*",
     "@slack/bolt": "^4.7.3",
     "dotenv": "^16.6.1",
+    "gsap": "^3.15.0",
     "puppeteer-core": "^24.43.1",
     "tsx": "^4.22.4"
   },

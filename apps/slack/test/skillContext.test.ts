@@ -30,8 +30,15 @@ describe("HyperFrames skill retrieval", () => {
       "hyperframes-animation",
       "motion-graphics",
     ]));
+    expect(result.blueprintIds).toEqual(expect.arrayContaining([
+      "kinetic-type-beats",
+      "dataviz-countup",
+    ]));
+    expect(result.ruleIds).toContain("counting-dynamic-scale");
     expect(result.text).toContain("<hyperframes_skill_context>");
-    expect(result.text).toContain("The current response contract remains the Sequences Plan/Command JSON");
+    expect(result.text).toContain("<blueprint id=");
+    expect(result.text).toContain("<motion-rule id=");
+    expect(result.text).toContain("direct storyboard_json + index_html");
     expect(result.text.length).toBeLessThanOrEqual(13_500);
   });
 

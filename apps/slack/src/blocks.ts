@@ -233,6 +233,7 @@ export interface ThinkingStep {
 }
 
 const TOOL_LABELS: Record<McpToolName, string> = {
+  submit_composition: "Publish HyperFrames composition",
   submit_plan: "Apply launch plan",
   apply_commands: "Apply revision",
   render_preview: "Render storyboard",
@@ -310,7 +311,7 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
   const path = view.usedMcp ? "through an MCP-first lifecycle" : "through the in-process engine";
   const planned = view.usedPreset
     ? `curated demo plan ${path}`
-    : `planned by \`${view.provider}\` ${path}`;
+    : `authored by \`${view.provider}\` ${path}`;
   const buildTrace = (view.toolCalls ?? [])
     .map((call) => {
       const mark =

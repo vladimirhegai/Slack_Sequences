@@ -10,9 +10,9 @@
  * tools/list, tools/call, ping) is ~100 lines and keeps the no-build,
  * no-extra-deps rule.
  *
- * Quality enforcement is identical to every other mutation path: tools apply
- * COMMANDS through the ProjectStore (validated, journaled as source "agent",
- * undoable), and submitted plans go through PlanSchema + planToCommands.
+ * Live source goes through the direct HyperFrames lint/invariant gate and exact
+ * revision checkpoints. The legacy Plan/Command tools remain available for the
+ * deterministic demo and compatibility path.
  *
  * Wire-up (Claude Code):
  *   claude mcp add sequences -- node <repo>/apps/sequences/src/cli.ts mcp <projectDir>
@@ -39,6 +39,17 @@ import {
 } from "./projectIo.ts";
 import { renderProject } from "./render.ts";
 import { generateSceneThumbnails } from "./thumbs.ts";
+import {
+  commitDirectComposition,
+  directLintText,
+  directOutline,
+  generateDirectThumbnails,
+  hasDirectComposition,
+  loadDirectComposition,
+  renderDirectComposition,
+  undoDirectComposition,
+  type DirectCompositionDraft,
+} from "./directComposition.ts";
 
 const PROTOCOL_VERSION = "2025-06-18";
 
@@ -122,6 +133,36 @@ export function startMcpServer(projectDir: string): void {
 
   const tools: ToolDef[] = [
     {
+      name: "submit_composition",
+      description:
+        "Validate and transactionally checkpoint a complete direct HyperFrames index.html plus its matching storyboard. Invalid scratch source is rejected without replacing the current revision.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          html: { type: "string", description: "Complete standalone HyperFrames index.html" },
+          storyboard: { type: "array", items: { type: "object" }, minItems: 2, maxItems: 8 },
+        },
+        required: ["title", "html", "storyboard"],
+        additionalProperties: false,
+      },
+      handler: (args) =>
+        withCurrentProject(async () => {
+          if (typeof args.title !== "string" || typeof args.html !== "string" || !Array.isArray(args.storyboard)) {
+            throw new Error("title, html, and storyboard are required");
+          }
+          const result = await commitDirectComposition(projectDir, args.title, {
+            html: args.html,
+            storyboard: args.storyboard as DirectCompositionDraft["storyboard"],
+          });
+          return [
+            `direct composition revision ${result.manifest.revision} applied.`,
+            directOutline(result.manifest),
+            await directLintText(projectDir),
+          ].join("\n");
+        }),
+    },
+    {
       name: "get_planning_context",
       description:
         "Returns everything needed to plan this video: the motion catalog (archetypes, primitives, profiles, camera moves, tokens), brand, assets, and the required plan JSON shape. Call this FIRST, then submit_plan.",
@@ -163,7 +204,12 @@ export function startMcpServer(projectDir: string): void {
       name: "get_project_outline",
       description: "Compact outline of the project: scenes, archetypes, durations, slots, profile.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
-      handler: () => withCurrentProject(() => outline(store.project)),
+      handler: () =>
+        withCurrentProject(() =>
+          hasDirectComposition(projectDir)
+            ? directOutline(loadDirectComposition(projectDir).manifest)
+            : outline(store.project),
+        ),
     },
     {
       name: "get_scene",
@@ -219,7 +265,10 @@ export function startMcpServer(projectDir: string): void {
       name: "lint_report",
       description: "Run the deterministic motion linter. Findings marked auto-fixable can be fixed with autofix.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
-      handler: () => withCurrentProject(() => lintText(store.project)),
+      handler: () =>
+        withCurrentProject(() =>
+          hasDirectComposition(projectDir) ? directLintText(projectDir) : lintText(store.project),
+        ),
     },
     {
       name: "autofix",
@@ -238,6 +287,12 @@ export function startMcpServer(projectDir: string): void {
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       handler: () =>
         withCurrentProject(() => {
+          if (hasDirectComposition(projectDir)) {
+            const moved = undoDirectComposition(projectDir);
+            return moved
+              ? `undone.\n${directOutline(loadDirectComposition(projectDir).manifest)}`
+              : "nothing to undo";
+          }
           const moved = store.undo("agent");
           if (moved) persist();
           return moved ? `undone.\n${outline(store.project)}` : "nothing to undo";
@@ -260,8 +315,12 @@ export function startMcpServer(projectDir: string): void {
         "Render deterministic scene preview PNGs from the current compiled project. Returns project-relative paths.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       handler: async () => {
-        const project = await withCurrentProject(() => store.project);
-        const result = await generateSceneThumbnails(projectDir, project);
+        const result = hasDirectComposition(projectDir)
+          ? await generateDirectThumbnails(projectDir)
+          : await generateSceneThumbnails(
+              projectDir,
+              await withCurrentProject(() => store.project),
+            );
         return JSON.stringify({
           files: Object.values(result.files),
           scenes: result.files,
@@ -281,6 +340,13 @@ export function startMcpServer(projectDir: string): void {
       handler: async (args) => {
         const quality =
           args.quality === "standard" || args.quality === "high" ? args.quality : "draft";
+        if (hasDirectComposition(projectDir)) {
+          const result = await renderDirectComposition(projectDir, { quality, quiet: true });
+          return JSON.stringify({
+            durationSec: result.durationSec,
+            outputPath: result.outputPath,
+          });
+        }
         const project = await withCurrentProject(() => store.project);
         const result = await renderProject(projectDir, project, { quality, quiet: true });
         return JSON.stringify({

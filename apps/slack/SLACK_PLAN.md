@@ -19,17 +19,16 @@ has changed:
   knowledge base.** Its native prompting already produces stronger motion
   graphics than the current Sequences/Forge abstractions.
 - **Sequences contributes deterministic guardrails and Slack workflow
-  plumbing:** typed plans/commands, validation, journaling, linting, repeatable
+  plumbing:** direct-source validation, revision checkpoints, linting, repeatable
   previews, and resilient delivery.
 - **Forge Stage remains useful as a component-making direction.** It is not the
   default visual system, but its component model can become a tool exposed to
   the agent later.
 
-This is a bridge state, not the final architecture: today the planning brain
-still emits a typed Sequences plan that compiles onto HyperFrames. The newly
-vendored HyperFrames skills now improve that brain’s motion/creative context.
-The next generation should let the agent author and compose more directly in
-HyperFrames while keeping deterministic validation around the result.
+The live planning brain now authors canonical HyperFrames HTML directly. The
+typed Sequences plan compiler remains only for the deterministic `/sequences
+demo` fallback while frame.md, richer asset ingestion, and component contracts
+are developed.
 
 ## What is built
 
@@ -65,9 +64,9 @@ per-project stdio MCP server:
 
 | Lifecycle | MCP calls |
 | --- | --- |
-| Create | `submit_plan` → `render_preview` → `render` |
-| Revise | `apply_commands` → `render_preview` → `render` |
-| Deterministic demo | same tool path, but the plan is a curated preset and no planning model runs |
+| Create | `submit_composition` → `render_preview` → `render` |
+| Revise | `submit_composition` → `render_preview` → `render` |
+| Deterministic demo | `submit_plan` → `render_preview` → `render`; no planning model runs |
 
 Each operation emits a progress event before and after it runs. Slack turns that
 into incremental `chat.update` Thinking Steps, including successful calls,
@@ -90,11 +89,12 @@ All 19 upstream skills live intact in [`skills/`](skills), including their
 references, scripts, assets, examples, and sub-agent prompts. The local
 [`src/agent/skillContext.ts`](src/agent/skillContext.ts) retriever:
 
-1. reads the HyperFrames router first;
-2. selects the launch workflow and relevant domain skills;
-3. ranks markdown sections against the brief/revision;
-4. injects a bounded excerpt into the model prompt;
-5. preserves the required Sequences Plan/Command JSON response contract.
+1. selects the launch workflow and relevant domain skills;
+2. deterministically chooses a bounded candidate set of scene blueprints and
+   motion rules from the brief/revision;
+3. loads only those exact recipe files plus the core composition contract;
+4. ranks a few supporting skill sections against the request;
+5. injects the bounded context into the direct storyboard + HTML authoring prompt.
 
 Slack displays the selected skill names as an **Agent context** receipt.
 `/sequences demo` reports no skills because it deliberately skips the brain.
@@ -110,17 +110,17 @@ flowchart TD
   WC --> P
   B --> O[orchestrator]
   K[Local HyperFrames skill retrieval] --> P[Planning brain]
-  P -->|typed Plan or Commands| O
+  P -->|storyboard + index.html| O
   O -->|JSON-RPC stdio| M[Sequences MCP tools]
-  M --> C[Sequences validation / journal / lint]
-  C --> H[HyperFrames compile + Chrome / FFmpeg]
+  M --> C[HyperFrames lint / invariant gate / revision checkpoint]
+  C --> H[HyperFrames source + Chrome / FFmpeg]
   M -->|render_preview| T[Scene thumbnails]
   M -->|render| V[MP4]
   T --> S
   V --> S
 ```
 
-Important honesty: model planning happens before `submit_plan`; it is not itself
+Important honesty: model authoring happens before `submit_composition`; it is not itself
 an internal Sequences MCP tool call. Slack workspace retrieval is a remote call
 to Slack's hosted MCP server; project mutations, previews, and renders are calls
 to the internal stdio Sequences MCP process. Railway does not expose a public
@@ -135,6 +135,8 @@ to the internal stdio Sequences MCP process. Railway does not expose a public
 | [`src/messageEvents.ts`](src/messageEvents.ts) | Human-reply filter and event deduplication |
 | [`src/engine/mcpClient.ts`](src/engine/mcpClient.ts) | stdio MCP client |
 | [`src/engine/mcp.ts`](src/engine/mcp.ts) | typed project/preview/render tools |
+| [`src/engine/compositionRunner.ts`](src/engine/compositionRunner.ts) | direct-authoring prompt, response parse, bounded retry |
+| [`src/engine/directComposition.ts`](src/engine/directComposition.ts) | canonical source, validation, checkpoints, direct previews/renders |
 | [`src/agent/skillContext.ts`](src/agent/skillContext.ts) | bounded HyperFrames skill retrieval |
 | [`src/blocks.ts`](src/blocks.ts) | modal/result UI and receipts |
 | [`skills/`](skills) | complete upstream HyperFrames agent-skill catalog |
@@ -146,8 +148,9 @@ to the internal stdio Sequences MCP process. Railway does not expose a public
 npm run typecheck --workspace @sequences/slack
 npm run test --workspace @sequences/slack
 npm run mcp:demo --workspace @sequences/slack
+npm run direct:demo --workspace @sequences/slack
 npm run demo --workspace @sequences/slack
-$env:VERIFY_RENDER='1'; npm run demo --workspace @sequences/slack
+$env:VERIFY_RENDER='1'; npm run direct:demo --workspace @sequences/slack
 ```
 
 The first four are the routine gate. The last command additionally requires
@@ -155,16 +158,12 @@ Chrome/Edge and FFmpeg and verifies the asynchronous MP4 stage.
 
 ## Next priorities
 
-The foundation (Slack workflow, two-tier delivery, both MCP planes, OAuth) is
-solid. The next phase is **core-first**: make the planning bot author real,
-high-quality HyperFrames instead of compiling a constrained Sequences `Plan`. See
-[ARCHITECTURE.md](ARCHITECTURE.md) for the target.
+The foundation and first direct-authoring spike are complete. The next phase is
+making the quality system repeatable around that working loop. See
+[ARCHITECTURE.md](ARCHITECTURE.md) and [TODO.md](TODO.md).
 
-1. **Direct HyperFrames authoring.** Move from “Sequences plan enriched by
-   HyperFrames skills” to the planning bot composing HyperFrames directly, with
-   deterministic validation around the result. Rewrite the old nine laws
-   (ARCHITECTURE.md “Revised architecture laws”) — they over-constrained
-   creativity in Sequences/Forge and produced sub-par output.
+1. **Frame presets + brand remapping.** Produce a compact `frame.md` per job and
+   feed it into the director.
 2. **Seed real SaaS-motion examples** for retrieval/inspiration (provenance
    tracked).
 3. Expose deterministic tools: inspect composition, lint, render frame, compare
@@ -173,6 +172,5 @@ high-quality HyperFrames instead of compiling a constrained Sequences `Plan`. Se
 5. Component tools inspired by Forge Stage (reusable, morph across scenes); later,
    bounded sub-agents for component/frame construction.
 
-Not built yet: direct HyperFrames authoring, screenshot ingestion, component
-sub-agents. The current code only covers Slack workflow, observability, encoding
-quality, and reliability — motion-system/creative output is the next frontier.
+Not built yet: Slack screenshot ingestion, per-scene second-pass retrieval,
+frame.md preset/remapping, Brag audio cues, or component sub-agents.

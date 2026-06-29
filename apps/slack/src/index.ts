@@ -369,7 +369,8 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     }
   }
 
-  // Execution plane: plan + Sequences MCP + thumbnails, then MP4.
+  // Execution plane: direct HyperFrames authoring + MCP validation/checkpointing
+  // + thumbnails, then MP4. The preset demo keeps the frozen Plan path.
   let result: VideoResult;
   try {
     result = await createVideo({
