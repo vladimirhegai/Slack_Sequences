@@ -298,6 +298,12 @@ export interface ResultView {
   usedPreset?: boolean;
   provider: string;
   renderQuality?: "draft" | "high";
+  /** The per-job frame.md design system chosen for this video, if any. */
+  frame?: {
+    label: string;
+    basis: "light" | "dark";
+    brandMatched: boolean;
+  };
 }
 
 export function resultBlocks(view: ResultView): KnownBlock[] {
@@ -321,6 +327,11 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
     .join("  ·  ");
   const skillReceipt = (view.skillsUsed ?? []).map((name) => `\`/${name}\``).join(" · ");
   const slackReceipt = (view.slackMcpTools ?? []).map((name) => `\`${name}\``).join(" · ");
+  const frameReceipt = view.frame
+    ? `*Design system*  ·  \`${escapeMrkdwn(view.frame.label)}\` (${view.frame.basis}) · ${
+        view.frame.brandMatched ? "brand-matched palette + type" : "house preset"
+      } · frame.md attached`
+    : "";
   return [
     { type: "section", text: { type: "mrkdwn", text: headline } },
     { type: "section", text: { type: "mrkdwn", text: `:clipboard: *Storyboard*\n${codeBlock(view.outline)}` } },
@@ -335,6 +346,12 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
       ? [{
           type: "context" as const,
           elements: [{ type: "mrkdwn" as const, text: `*Build trace*  ·  ${buildTrace}` }],
+        }]
+      : []),
+    ...(frameReceipt
+      ? [{
+          type: "context" as const,
+          elements: [{ type: "mrkdwn" as const, text: frameReceipt }],
         }]
       : []),
     ...(skillReceipt

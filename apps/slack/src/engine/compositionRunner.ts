@@ -85,6 +85,7 @@ function creationPrompt(args: {
   brief: string;
   projectDir: string;
   skills: RetrievedSkillContext;
+  frameMd?: string;
   current?: DirectCompositionDraft;
   revisionInstruction?: string;
   validationFeedback?: string[];
@@ -110,6 +111,17 @@ function creationPrompt(args: {
         ...args.validationFeedback.map((issue) => `- ${issue}`),
       ].join("\n")
     : "";
+  const frame = args.frameMd
+    ? [
+        "## Frame design system (BINDING palette + typography)",
+        "Use these exact colours and font families. They are the brand-matched",
+        "design system for this job. Constrain palette and type to this frame;",
+        "your motion, composition, and rhythm stay free.",
+        "<frame_md>",
+        args.frameMd,
+        "</frame_md>",
+      ].join("\n")
+    : "";
   return [
     "SYSTEM:",
     DIRECTOR_PROMPT,
@@ -117,6 +129,7 @@ function creationPrompt(args: {
     "## Job brief and trusted evidence",
     args.brief,
     "",
+    frame,
     "## Available project-local assets",
     availableAssets(args.projectDir),
     "",
@@ -133,6 +146,7 @@ export async function requestDirectComposition(
     brief: string;
     projectDir: string;
     skills: RetrievedSkillContext;
+    frameMd?: string;
     current?: DirectCompositionDraft;
     revisionInstruction?: string;
     options?: CompleteOptions;

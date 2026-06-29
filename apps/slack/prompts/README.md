@@ -28,6 +28,9 @@ want to read and edit as prose.
 - HyperFrames skill retrieval / RAG (`src/agent/skillContext.ts`).
 - Per-run, project-specific context: deterministic color/typography picks,
   the skills selected for that run, asset manifests, brand tokens.
+- The per-job `frame.md` design system (`src/engine/frameDesign.ts`): the curated
+  presets + the deterministic brand remap that produce the `<frame_md>` block the
+  director receives. It is data composed per job, not editable prose.
 - The deterministic brief assembly (`assembleBrief` in `orchestrator.ts`).
 
 Rule of thumb: if a human would tune it by editing prose, it lives here. If it is
@@ -37,5 +40,6 @@ assembled per-project from data or retrieval, it stays in `src/`.
 
 - `context-retrieval.md` → read by `src/slackMcpContext.ts`.
 - `planning-director.md` → read by `src/engine/compositionRunner.ts`; exact
-  HyperFrames core references, blueprints, motion rules, available assets, and
-  current revision state are appended deterministically per run.
+  HyperFrames core references, blueprints, motion rules, available assets, the
+  per-job `frame.md` design system, and current revision state are appended
+  deterministically per run.

@@ -287,6 +287,15 @@ until the new build is healthy, so a broken build never takes the bot down. Plai
 `railway redeploy` just restarts the same source (use it after a variables-only
 change).
 
+**⚠ Deploying kills in-flight requests.** When Railway swaps containers, any
+active video creation (model call, render, thumbnail capture) is terminated
+mid-flight. The Slack message freezes at its last state (e.g. "Drafting a launch
+reel…") and never updates. The user must re-run the command after the new
+deployment is healthy. **Do not deploy while a user is actively building a
+video.** If you just triggered a create/revise via Slack, wait for it to finish
+before running `railway up`. If you must deploy during active use, warn the user
+that their in-progress job will be lost and they should retry.
+
 GitHub publish and Railway deploy are both required release steps:
 `publish-public.sh` updates `Slack_Sequences`; `railway up` updates the live bot.
 

@@ -42,6 +42,56 @@ The current Sequences `Plan` is useful during migration but is not the target
 creative contract: it intentionally excludes cursor systems, morphs, custom
 micro-interactions, and direct timeline decisions that this product needs.
 
+## What HyperFrames already provides (the build boundary)
+
+Before adding anything, treat this verified inventory as already solved. The
+recurring Forge/Sequences mistake was rebuilding an engine capability behind a
+narrower interface and capping its ceiling. Build *around* these, never *over*
+them.
+
+- **Composition model.** HTML/CSS/JS compositions with explicit dimensions and
+  duration; clips, tracks, relative timing, overlaps, stacking; nested
+  sub-compositions; typed variables (string, number, color, boolean, enum) with
+  per-instance overrides; batch render from variable rows; source parsers that
+  read and rewrite composition HTML with stable `hf-id`s.
+- **Deterministic animation runtime.** GSAP (timelines, easing, stagger, labels,
+  effects, MotionPath), Lottie/dotLottie, Three.js, Anime.js, CSS animations,
+  WAAPI, TypeGPU/WebGPU, and HTML-captured-to-canvas — coexisting and seek-safe
+  under one render clock. The vendored skills ship **15 blueprints and ~36 atomic
+  motion rules** covering cursor demos, kinetic type, counters, charts, camera
+  moves, parallax, logo assembly, SVG draw, and transition families.
+- **`frame.md` design system.** `frame.md → design.md → DESIGN.md` precedence, a
+  library of ready `frame-presets/`, palette/typography guidance, contrast
+  reporting, and post-authoring design-adherence review.
+- **Website & brand capture.** `hyperframes capture <url>` extracts screenshots
+  at scroll depth, pixel-sampled palettes, CSS font stacks + woff2 files, images,
+  SVGs, Lottie, detected page animation, and optional vision descriptions.
+- **Component registry.** 50+ production blocks/components — 15 caption styles,
+  14 shader transitions, 13 CSS transitions, 24 code/terminal cards, animated
+  charts/maps, social overlays, lower thirds, liquid-glass/device-frame VFX —
+  with `hyperframes add`, discovery, dependency wiring, and a publish workflow.
+- **Audio & media (`media-use`).** One `resolve` verb for BGM, SFX, image, and
+  icon: catalog search, local freeze, SHA-256 cache, manifest, provenance. The
+  engine adds beat detection, waveforms, audio-reactive bands, TTS, Whisper
+  word-timing, captions, and final FFmpeg mixing.
+- **QA & rendering.** `lint`, `validate`, `inspect`, snapshots/contact sheets,
+  contrast/layout audits, render-time lint gates, and deterministic MP4/WebM/GIF/
+  PNG-sequence/ProRes rendering locally and in Docker.
+
+**Do not rebuild:** a composition format, an animation abstraction, a timeline/
+keyframe editor, a website extractor, a beat/asset/mix pipeline, or a render/lint
+layer. Two caveats shape how we *consume* these:
+
+1. **The registry catalog and the HeyGen media library are network resources,**
+   not vendored. `hyperframes.json` points `registry` at GitHub-raw; `media-use`
+   needs the `heygen` CLI + key. Our product is Railway/Docker, provenance-clean,
+   and does no network fetch at render time — so a **sync / vendor / allowlist
+   step** must front both before the planner may select from them. This is the
+   single largest real gap (see §9).
+2. **Studio's live keyframe / arc / gesture editing is a human, in-browser tool.**
+   It is excellent but neither headless nor reachable from Slack. Our editing
+   surface is the Slack audition → revise → critic loop, not the Studio timeline.
+
 ## Revised architecture laws
 
 The old nine laws still govern the compatibility path in `packages/core`; they
@@ -197,6 +247,12 @@ not live per-job RAG and never a license to copy trademarks or proprietary asset
 
 This stage should usually cost one small model decision: **which preset and what
 brand exceptions matter?** Everything else is a deterministic remix.
+
+> **Implemented.** `src/engine/frameDesign.ts` (+ `framePresets.ts`,
+> `brandTokens.ts`, `brandCapture.ts`) ships five curated SaaS presets, a
+> deterministic brand-token extractor (with optional URL capture and WCAG
+> contrast safety), exactly one small `chooseFrame` model decision, and a compact
+> `frame.md` renderer fed to the director via `<frame_md>`. See TODO.md §3.
 
 ## 3. Film-ready components
 
@@ -370,6 +426,84 @@ Deterministic repair must not make aesthetic decisions. A visual critic may
 request one bounded rebuild of a specific shot; it may not repeatedly restyle
 the whole video.
 
+## 9. Capability index, registry sync, and in-Slack audition
+
+The planner cannot reuse what it cannot see. Today the bot retrieves blueprints
+and rules but is **blind to the 50+ registry catalog** — exactly the
+duplicate-building risk this product must avoid.
+
+**Registry sync (deterministic).** A build step pulls the registry manifest plus
+each `registry-item.json`, vendors the approved subset locally with provenance,
+and emits a normalized `capability-index.json` spanning one schema across:
+registry blocks/components, animation rules, blueprints, transitions, frame
+presets, existing job components, and Sequences' own SaaS recipes. Each entry
+carries preview/contact-sheet, purpose and semantic tags, required inputs/assets,
+configurable variables, duration and aspect compatibility, supported transitions
+and continuity anchors, dependencies, provenance/quality status, and a reuse tier
+(parameter-swap | safe-composition | custom-build).
+
+**Capability-aware retrieval.** The planner queries this index *before* deciding
+to author anything. Retrieval extends the current `skillContext` router from
+skills-only to the full index, so a "search results" shot can resolve to an
+existing block instead of being rebuilt.
+
+**In-Slack audition (the human half).** Retrieval is shown, not just used. For a
+shot, the result message presents three to five candidate thumbnails with Block
+Kit actions — *Use this · Use structure only · Blend A+B · Build custom · Why
+this?* This turns the library into a creative instrument inside the thread and is
+directly demoable. It reuses the existing two-tier delivery and thumbnail upload
+path; no new surface.
+
+## 10. Visual critic and continuity QA
+
+§8 gates technical correctness; this gates *film* quality, over rendered
+evidence. A critic samples boundary/midpoint snapshots and flags, per shot: weak
+focal hierarchy, dead or overcrowded regions, sub-legible text, collisions/crop
+risk, palette drift from `frame.md`, repeated composition or repeated
+ease/entrance, frozen time after an early reveal, broken eye-trace across a cut,
+background/foreground transform coupling, and cursor paths that miss their
+target. It emits a **bounded, shot-specific repair request** — never a global
+"make it better."
+
+Continuity tooling is deterministic and cut-aware: anchor visualizer, before/
+after onion-skin at cut boundaries, focal-trajectory view, and the morph-
+compatibility checker from §3 (shared `morphGroup`, stable part IDs, matching
+anchors) that rejects impossible pairings before composition.
+
+## 11. Music and sound direction
+
+HyperFrames already finds beats and freezes/mixes audio; Sequences should reason
+about **edit structure**, not re-detect beats. A deterministic pass derives
+intro/build/drop/resolve sections, a cut-density curve, an energy envelope,
+protected narration zones, accent beats, and an SFX budget, then assigns cues by
+transition character. Cues snap to the §5 cut graph; each cut and major
+transition gets an optional matched sound. All audio resolves through `media-use`
+with provenance and the existing FFmpeg pass mixes it. Brag, if adopted, is
+scoped to musical direction only — not a second beat/asset/mix engine.
+
+## 12. Deterministic utilities, component foundry, and library learning
+
+**Small deterministic tools** around the engine remove recurring authoring toil
+without constraining composition: optical-center snapping and safe-area
+align/distribute, hierarchy-preserving text fit, responsive aspect variants
+(16:9 / 9:16 / 1:1), SVG viewbox normalization, device/window frame generation,
+chart-data import, cursor-path planning, seeded background generation, local-font
+matching, and raster-cost warnings for heavy shadow/blur.
+
+**Component foundry (P1).** When no registry item fits, AI constructs the product
+surface — import screenshot/DOM/SVG/mock → segment parts → assign stable IDs and
+anchors → identify states and actions → separate subject/backdrop/overlay → emit
+a native sub-composition → render state contact sheets → register it in the
+capability index for reuse. AI builds *understanding and structure*; HyperFrames
+still owns motion and rendering. Keep the contract minimal (§3) — add
+parts/actions/states only where a recipe actually needs them.
+
+**Library learning (P2).** After a video is *approved* (never from raw drafts),
+capture the selected recipe, the edits made, the rejected alternatives, the
+working parameter ranges, the critic findings, and the final snapshots; promote
+genuinely reusable shots/components back into the SaaS library and capability
+index.
+
 ## Hackathon and demo strategy
 
 The entry targets **New Slack Agent**. The official rules require at least one
@@ -407,12 +541,15 @@ UI; broad skill excerpts; and hidden stdio self-calls as the only MCP story.
 
 Recommended build order before the deadline:
 
-1. Prove the current create → revise → HD → share loop in the sandbox.
+1. Prove the current create → revise → HD → share loop in the sandbox. *(done)*
 2. Add real Slack file ingestion, `ContextBundle`, and asset provenance.
 3. Migrate one polished path to `frame.md` + direct HyperFrames authoring.
-4. Ship the P0 recipe subset needed by the scripted demo.
-5. Add component contracts, cut-centered planning, and deterministic QA.
-6. Consider exposing Sequences as a remote MCP server to the Slackbot MCP Client
+4. Sync the registry into a `capability-index.json` and add in-Slack audition
+   (§9) so the planner reuses known-good blocks before it authors anything.
+5. Ship the P0 recipe subset needed by the scripted demo.
+6. Add component contracts, cut-centered planning, the visual critic, and
+   deterministic QA.
+7. Consider exposing Sequences as a remote MCP server to the Slackbot MCP Client
    only after the core Bolt + Slack-hosted-MCP demo is reliable.
 
 ## Open review questions

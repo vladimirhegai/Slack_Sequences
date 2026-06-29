@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { App } from "@slack/bolt";
 import type { BlockAction, MessageShortcut, ViewSubmitAction } from "@slack/bolt";
@@ -190,6 +191,25 @@ function stageBlocks(
     usedPreset: result.usedPreset,
     provider: result.provider,
     renderQuality,
+    frame: result.frame
+      ? { label: result.frame.label, basis: result.frame.basis, brandMatched: result.frame.brandMatched }
+      : undefined,
+  });
+}
+
+/** Attach the job's frame.md design system so the user can read/keep it. */
+async function uploadFrame(
+  client: WebClient,
+  channel: string,
+  threadTs: string | undefined,
+  result: VideoResult,
+): Promise<void> {
+  if (!result.frame || !fs.existsSync(result.frame.path)) return;
+  await client.files.uploadV2({
+    ...dest(channel, threadTs),
+    file: result.frame.path,
+    filename: "frame.md",
+    initial_comment: `:art: Design system for this video — *${result.frame.label}* (${result.frame.basis}${result.frame.brandMatched ? ", brand-matched" : ""})`,
   });
 }
 
@@ -407,6 +427,7 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
   });
   try {
     await uploadThumbnails(client, args.channel, args.threadTs, result.thumbnailPaths);
+    await uploadFrame(client, args.channel, args.threadTs, result);
   } catch (error) {
     logBackgroundError("thumbnail upload failed", error);
     await safeNotify(args.notifyFailure, error);

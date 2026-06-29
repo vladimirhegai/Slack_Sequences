@@ -25,10 +25,11 @@ has changed:
   default visual system, but its component model can become a tool exposed to
   the agent later.
 
-The live planning brain now authors canonical HyperFrames HTML directly. The
-typed Sequences plan compiler remains only for the deterministic `/sequences
-demo` fallback while frame.md, richer asset ingestion, and component contracts
-are developed.
+The live planning brain now authors canonical HyperFrames HTML directly, dressed
+in a per-job `frame.md` design system (a curated preset deterministically remapped
+to the brand). The typed Sequences plan compiler remains only for the
+deterministic `/sequences demo` fallback while richer asset ingestion, capability
+sync, and component contracts are developed.
 
 ## What is built
 
@@ -110,6 +111,8 @@ flowchart TD
   WC --> P
   B --> O[orchestrator]
   K[Local HyperFrames skill retrieval] --> P[Planning brain]
+  WC --> F[frame.md design system: preset + deterministic brand remap]
+  F --> P
   P -->|storyboard + index.html| O
   O -->|JSON-RPC stdio| M[Sequences MCP tools]
   M --> C[HyperFrames lint / invariant gate / revision checkpoint]
@@ -135,8 +138,12 @@ to the internal stdio Sequences MCP process. Railway does not expose a public
 | [`src/messageEvents.ts`](src/messageEvents.ts) | Human-reply filter and event deduplication |
 | [`src/engine/mcpClient.ts`](src/engine/mcpClient.ts) | stdio MCP client |
 | [`src/engine/mcp.ts`](src/engine/mcp.ts) | typed project/preview/render tools |
-| [`src/engine/compositionRunner.ts`](src/engine/compositionRunner.ts) | direct-authoring prompt, response parse, bounded retry |
+| [`src/engine/compositionRunner.ts`](src/engine/compositionRunner.ts) | direct-authoring prompt (incl. frame.md), response parse, bounded retry |
 | [`src/engine/directComposition.ts`](src/engine/directComposition.ts) | canonical source, validation, checkpoints, direct previews/renders |
+| [`src/engine/frameDesign.ts`](src/engine/frameDesign.ts) | per-job `frame.md`: one preset decision + deterministic remap + render |
+| [`src/engine/framePresets.ts`](src/engine/framePresets.ts) | 5 curated SaaS presets (colour/comp DNA on embedded fonts) |
+| [`src/engine/brandTokens.ts`](src/engine/brandTokens.ts) | deterministic colour/font extraction + WCAG contrast utils |
+| [`src/engine/brandCapture.ts`](src/engine/brandCapture.ts) | optional best-effort URL palette/font capture (HyperFrames-style) |
 | [`src/agent/skillContext.ts`](src/agent/skillContext.ts) | bounded HyperFrames skill retrieval |
 | [`src/blocks.ts`](src/blocks.ts) | modal/result UI and receipts |
 | [`skills/`](skills) | complete upstream HyperFrames agent-skill catalog |
@@ -162,8 +169,8 @@ The foundation and first direct-authoring spike are complete. The next phase is
 making the quality system repeatable around that working loop. See
 [ARCHITECTURE.md](ARCHITECTURE.md) and [TODO.md](TODO.md).
 
-1. **Frame presets + brand remapping.** Produce a compact `frame.md` per job and
-   feed it into the director.
+1. **Capability index + registry sync + in-Slack audition** (TODO §9) — stop the
+   bot rebuilding registry blocks it can't yet see; most demoable next feature.
 2. **Seed real SaaS-motion examples** for retrieval/inspiration (provenance
    tracked).
 3. Expose deterministic tools: inspect composition, lint, render frame, compare
@@ -172,5 +179,11 @@ making the quality system repeatable around that working loop. See
 5. Component tools inspired by Forge Stage (reusable, morph across scenes); later,
    bounded sub-agents for component/frame construction.
 
+Built: per-job `frame.md` design system — a curated preset chosen by one small
+model decision, then a deterministic brand remap (colour/font extraction from the
+evidence pack, optional URL capture, WCAG contrast safety) that binds the
+director's palette + typography. The chosen frame.md is shown in the result
+message and attached to the thread.
+
 Not built yet: Slack screenshot ingestion, per-scene second-pass retrieval,
-frame.md preset/remapping, Brag audio cues, or component sub-agents.
+capability/registry sync, Brag audio cues, or component sub-agents.

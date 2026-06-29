@@ -28,6 +28,12 @@ import {
 } from "./engine/projectIo.ts";
 import { initializeProject, projectDirFor } from "./engine/projectTemplates.ts";
 import { requestDirectComposition } from "./engine/compositionRunner.ts";
+import {
+  buildJobFrame,
+  frameFilePath,
+  loadJobFrame,
+  readFrameMeta,
+} from "./engine/frameDesign.ts";
 import { requestTweak } from "./engine/tweakRunner.ts";
 import { generateSceneThumbnails } from "./engine/thumbs.ts";
 import { renderProject, type RenderQuality } from "./engine/render.ts";
@@ -119,6 +125,19 @@ export interface VideoResult {
   /** True when the plan came from a curated preset rather than a planning brain. */
   usedPreset: boolean;
   provider: ProviderId;
+  /** The per-job frame.md design system chosen for this video, if any. */
+  frame?: FrameInfo;
+}
+
+export interface FrameInfo {
+  presetId: string;
+  label: string;
+  thesis: string;
+  basis: "light" | "dark";
+  brandMatched: boolean;
+  exceptions: string[];
+  /** Absolute path to the job's frame.md (for Slack attachment). */
+  path: string;
 }
 
 export type McpToolName =
@@ -167,6 +186,23 @@ function outlineText(project: Project): string {
         )}s${scene.camera ? ` · camera:${scene.camera.move}` : ""}`,
     )
     .join("\n");
+}
+
+/** Read the job's existing frame.md metadata into a VideoResult.frame, if present. */
+function frameInfo(dir: string): { frame?: FrameInfo } {
+  const meta = readFrameMeta(dir);
+  if (!meta) return {};
+  return {
+    frame: {
+      presetId: meta.presetId,
+      label: meta.label,
+      thesis: meta.thesis,
+      basis: meta.basis,
+      brandMatched: meta.brandMatched,
+      exceptions: meta.exceptions,
+      path: frameFilePath(dir),
+    },
+  };
 }
 
 function lintText(project: Project): string {
@@ -581,10 +617,21 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     const brief = assembleBrief(options);
     const skills = retrieveHyperframesSkillContext("create", brief);
     skillsUsed = skills.skillNames;
+    // Per-job frame.md: deterministic brand remap + one small preset decision.
+    // Constrains palette/type for the director; never throws (house-preset fallback).
+    const frame = await buildJobFrame({
+      provider,
+      projectDir: dir,
+      brief,
+      tone: options.tone,
+      evidence: options.context,
+      brandName: options.brandName ?? options.product,
+    });
     const authored = await requestDirectComposition(provider, {
       brief,
       projectDir: dir,
       skills,
+      frameMd: frame.frameMd,
     });
     const mutation = await applyDirectMutation(
       dir,
@@ -610,6 +657,15 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       skillsUsed,
       usedPreset: false,
       provider: providerId,
+      frame: {
+        presetId: frame.presetId,
+        label: frame.label,
+        thesis: frame.thesis,
+        basis: frame.basis,
+        brandMatched: frame.brandMatched,
+        exceptions: frame.exceptions,
+        path: frameFilePath(dir),
+      },
     };
   }
 
@@ -667,10 +723,13 @@ export async function reviseVideo(options: ReviseVideoOptions): Promise<VideoRes
     if (!provider) throw new Error(`unknown provider "${providerId}"`);
     const current = loadDirectComposition(dir);
     const skills = retrieveHyperframesSkillContext("revise", options.instruction);
+    // Reuse the create-time frame.md — brand direction is unchanged on revise.
+    const frameMd = loadJobFrame(dir) ?? undefined;
     const authored = await requestDirectComposition(provider, {
       brief: `Product: ${current.manifest.title}\nRevise the existing launch composition.`,
       projectDir: dir,
       skills,
+      frameMd,
       current: {
         html: current.html,
         storyboard: current.manifest.scenes,
@@ -702,6 +761,7 @@ export async function reviseVideo(options: ReviseVideoOptions): Promise<VideoRes
       usedPreset: false,
       provider: providerId,
       mode: "hyperframes-direct",
+      ...frameInfo(dir),
     };
   }
   const project = loadProject(dir);
@@ -813,6 +873,7 @@ export async function undoVideo(
       skillsUsed: [],
       usedPreset: false,
       provider: providerId,
+      ...frameInfo(dir),
     };
   }
   const applied = loadProject(dir);
