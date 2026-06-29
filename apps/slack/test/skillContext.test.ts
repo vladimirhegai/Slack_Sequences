@@ -15,21 +15,16 @@ function fileCount(dir: string): number {
 }
 
 describe("HyperFrames skill retrieval", () => {
-  it("routes launch creation through the router, workflow, and core domains", () => {
+  it("routes launch creation through core domains with blueprints and rules", () => {
     const result = retrieveHyperframesSkillContext(
       "create",
       "Launch Relay with kinetic typography and a 40% stat",
-      12_000,
+      30_000,
     );
 
-    expect(result.skillNames).toEqual(expect.arrayContaining([
-      "hyperframes",
-      "product-launch-video",
-      "hyperframes-core",
-      "hyperframes-creative",
-      "hyperframes-animation",
-      "motion-graphics",
-    ]));
+    expect(result.skillNames).toContain("hyperframes-core");
+    expect(result.skillNames).toContain("hyperframes-animation");
+    expect(result.skillNames).toContain("hyperframes-creative");
     expect(result.blueprintIds).toEqual(expect.arrayContaining([
       "kinetic-type-beats",
       "dataviz-countup",
@@ -38,13 +33,18 @@ describe("HyperFrames skill retrieval", () => {
     expect(result.text).toContain("<hyperframes_skill_context>");
     expect(result.text).toContain("<blueprint id=");
     expect(result.text).toContain("<motion-rule id=");
-    expect(result.text).toContain("direct storyboard_json + index_html");
-    expect(result.text.length).toBeLessThanOrEqual(13_500);
+    expect(result.text).toContain("storyboard_json + index_html");
+    expect(result.text).toContain("Embedded fonts");
+    expect(result.text).toContain("Minimal composition skeleton");
+    expect(result.text).toContain("Determinism rules");
+    expect(result.text.length).toBeLessThanOrEqual(32_000);
   });
 
-  it("loads media knowledge only when a revision asks for it", () => {
+  it("selects fewer skills and recipes for revisions", () => {
     const result = retrieveHyperframesSkillContext("revise", "make the music softer");
-    expect(result.skillNames).toContain("hyperframes-media");
+    expect(result.skillNames).toContain("hyperframes-core");
+    expect(result.skillNames).toContain("hyperframes-animation");
+    expect(result.skillNames).not.toContain("hyperframes-creative");
   });
 
   it("keeps every upstream skill and file recorded by the manifest", () => {

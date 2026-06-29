@@ -44,6 +44,13 @@ the planning bot's actual system prompt.
 - [x] **Tone and creative direction.** The prompt should push for strong visual
   opinions — not safe/generic output. SaaS motion that looks like it was made by
   a motion designer, not a template engine.
+- [x] **Craft-specific guidance.** Scene composition density (3-layer model,
+  8–10 elements per scene, background/midground/foreground), typography rules
+  (embedded fonts only, weight/size for video, pair across boundaries), motion
+  variety (vary eases/entrances/speed, build/breathe/resolve structure), color
+  commitment (one accent hue, tint neutrals, no flat solids), and anti-patterns
+  to question (AI-video tells like gradient text, centered parades, same-ease
+  everywhere).
 
 ## 3. Design system — `frame.md` per job
 
@@ -69,14 +76,19 @@ overrides.
 The planning bot should receive only the knowledge it needs for a specific
 scene — not the entire skill catalog.
 
-- [~] **Upgrade `agent/skillContext.ts`.** It now deterministically selects and
-  injects exact core references, blueprints, and motion-rule recipes for the
-  brief/revision. True director-selected per-scene retrieval is still next.
-- [~] **Blueprint/rule selection.** A deterministic brief router now selects a
-  bounded candidate set and the director records its final choices in the
-  storyboard. Move selection fully into a validated director pass next.
+- [x] **Structured skill retrieval.** Replaced generic SKILL.md excerpting with
+  direct reference inclusion: composition skeleton, determinism rules, data
+  attributes, embedded fonts table, complete blueprint/rule indexes (all 15
+  blueprints, all 30+ rules with one-line summaries), and full recipe content
+  for keyword-selected blueprints (up to 4) and rules (up to 8). Budget: 45K
+  chars for create, 22K for revise — generous for DeepSeek.
+- [x] **Blueprint/rule selection.** Deterministic keyword router covers all 15
+  blueprints (expanded from 8) and derives associated rules. Create always
+  includes kinetic-type-beats, cta-morph-press, spring-pop-entrance, and
+  sine-wave-loop as defaults. Additional matches by brief keywords.
 - [x] **Skill context for revision.** Revise prompts receive the current
-  storyboard + canonical HTML and only revision-relevant skills/recipes.
+  storyboard + canonical HTML and only revision-relevant skills/recipes with
+  a tighter 22K budget.
 
 ## 5. Cut-centered motion direction
 
