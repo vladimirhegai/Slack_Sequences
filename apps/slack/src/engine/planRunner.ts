@@ -34,6 +34,7 @@ export async function requestPlanWith(
   brief: string,
   project: Project,
   options: CompleteOptions = {},
+  guidance = "",
 ): Promise<PlanRunResult> {
   if (!brief.trim()) throw new Error("brief is empty");
   const cacheKey = contentHash({
@@ -52,11 +53,12 @@ export async function requestPlanWith(
     // the prior model's plan. (apiKey is deliberately never hashed.)
     model: options.model?.trim() || null,
     thinkingMode: options.thinkingMode && options.thinkingMode !== "auto" ? options.thinkingMode : null,
+    guidance: guidance ? contentHash(guidance) : null,
   });
   const cacheable = Object.values(PROVIDERS).includes(provider);
   const cached = cacheable ? PLAN_CACHE.get(cacheKey) : undefined;
   if (cached) return structuredClone(cached);
-  const prompt = buildPlanPrompt(brief, project);
+  const prompt = [buildPlanPrompt(brief, project), guidance].filter(Boolean).join("\n\n");
   const raw = await provider.complete(prompt, { ...options, cacheHint: cacheKey });
   const plan = tightenPlanCopy(parsePlan(extractJsonObject(raw), { project }));
   const result = { provider: provider.id, plan, raw };

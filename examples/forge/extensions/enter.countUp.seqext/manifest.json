@@ -1,8 +1,0 @@
-{
-  "id": "enter.countUp",
-  "type": "primitive",
-  "version": "1.0.0",
-  "summary": "A number reveal that races to the final value and lands cleanly. Use for one hero metric that should feel earned.",
-  "tags": { "energy": "punchy", "style": "mechanical" },
-  "source": "forge"
-}

@@ -25,6 +25,9 @@ const result = await createVideo({
 console.log("=== /sequences demo (preset: %s) ===", result.usedPreset ? "yes" : "no");
 console.log(result.outline);
 console.log("\n%s", result.lint);
+for (const receipt of result.toolCalls) {
+  console.log(`MCP ${receipt.tool.padEnd(16)} ${receipt.status} (${receipt.durationMs}ms)`);
+}
 
 let ok = result.thumbnailPaths.length > 0;
 console.log("\nthumbnails (%d):", result.thumbnailPaths.length);

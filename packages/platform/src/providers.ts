@@ -28,6 +28,7 @@ export type ProviderId =
   | "antigravity-cli"
   | "deepseek-api"
   | "openmodel-api"
+  | "openrouter-api"
   | "openai-api"
   | "anthropic-api";
 
@@ -905,6 +906,62 @@ export const openaiApi: AgentProvider = {
   },
 };
 
+/**
+ * OpenRouter is an OpenAI-compatible gateway: one key fronts DeepSeek, GLM, and
+ * many other models, selected by the `vendor/model` id (e.g. `deepseek/deepseek-v4-pro`,
+ * `z-ai/glm-4.6`). Reasoning surfaces on `delta.reasoning(_content)`, already
+ * handled by streamOpenAiCompatibleChat. The optional X-Title header only affects
+ * OpenRouter's public rankings.
+ */
+export const openrouterApi: AgentProvider = {
+  id: "openrouter-api",
+  label: "OpenRouter API (key)",
+  kind: "api",
+  apiKeyEnv: "OPENROUTER_API_KEY",
+  async detect() {
+    return process.env.OPENROUTER_API_KEY
+      ? { available: true, detail: "OPENROUTER_API_KEY set" }
+      : { available: false, detail: "no OPENROUTER_API_KEY — optional gateway to DeepSeek/GLM/etc." };
+  },
+  async complete(prompt, options = {}) {
+    const key = options.apiKey || process.env.OPENROUTER_API_KEY;
+    if (!key) throw new Error("no OpenRouter API key (set OPENROUTER_API_KEY or pass one per request)");
+    const model = modelOverride(options) ?? process.env.SEQUENCES_OPENROUTER_MODEL ?? "deepseek/deepseek-v4-pro";
+    const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
+    const effort = openAiReasoningEffort(options);
+    if (effort) body.reasoning = { effort };
+    const json = (await postJson(
+      "https://openrouter.ai/api/v1/chat/completions",
+      { authorization: `Bearer ${key}`, "x-title": "Sequences for Slack" },
+      body,
+      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      options.signal,
+    )) as { choices?: Array<{ message?: { content?: string } }> };
+    const text = json.choices?.[0]?.message?.content?.trim();
+    if (!text) throw new Error("OpenRouter returned an empty completion");
+    return text;
+  },
+  async streamComplete(prompt, options = {}, onDelta, onThinking) {
+    const key = options.apiKey || process.env.OPENROUTER_API_KEY;
+    if (!key) throw new Error("no OpenRouter API key (set OPENROUTER_API_KEY or pass one per request)");
+    const model = modelOverride(options) ?? process.env.SEQUENCES_OPENROUTER_MODEL ?? "deepseek/deepseek-v4-pro";
+    const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
+    const effort = openAiReasoningEffort(options);
+    if (effort) body.reasoning = { effort };
+    const text = await streamOpenAiCompatibleChat(
+      "https://openrouter.ai/api/v1/chat/completions",
+      { authorization: `Bearer ${key}`, "x-title": "Sequences for Slack" },
+      body,
+      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      onDelta,
+      onThinking,
+      options.signal,
+    );
+    if (!text) throw new Error("OpenRouter returned an empty completion");
+    return text;
+  },
+};
+
 export const deepseekApi: AgentProvider = {
   id: "deepseek-api",
   label: "DeepSeek API (key)",
@@ -1076,6 +1133,7 @@ export const PROVIDERS: Record<ProviderId, AgentProvider> = {
   "antigravity-cli": antigravityCli,
   "deepseek-api": deepseekApi,
   "openmodel-api": openModelApi,
+  "openrouter-api": openrouterApi,
   "anthropic-api": anthropicApi,
   "openai-api": openaiApi,
 };

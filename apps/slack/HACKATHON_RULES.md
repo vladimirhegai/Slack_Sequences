@@ -1,82 +1,98 @@
-# Hackathon rules — Slack Agent Builder Challenge (agent brief)
+# Hackathon rules — Slack Agent Builder Challenge
 
-A compact, agent-readable summary of the hackathon we're building for. For the
-*product* plan, see [SLACK_PLAN.md](SLACK_PLAN.md).
+Concise project guidance based on the official Devpost challenge and Slack
+resources. Recheck the official rules before submission:
+<https://slackhack.devpost.com/rules>.
 
-## The facts
+## Facts
 
-- **Event:** Slack Agent Builder Challenge (Devpost, managed for Salesforce/Slack).
-- **Deadline:** **Jul 13, 2026 @ 8:00pm EDT** (~16 days). Online, public.
-- **Prize pool:** $42,000 cash + Dreamforce 2026 tickets, swag, features.
-- **Eligibility:** 18+, only specific countries/territories (check full rules).
-- **Team:** up to 4 people.
+- Submission deadline: July 13, 2026 at 5:00 PM PDT / 8:00 PM EDT.
+- Online, public challenge managed by Devpost for Salesforce/Slack.
+- Entrants must be eligible under the official country, age, and organization
+  rules.
+- Teams may contain up to four eligible people.
+- New Slack Agent and Agent for Good entries must be newly created projects.
 
-## What you must build
+## Required technology and track
 
-An app that uses **at least one** of these three technologies **and** fits **at
-least one** track.
+The app must meaningfully use at least one:
 
-**The three technologies (pick ≥1):**
-1. **Slack AI capabilities & Agent Builder** — built-in AI, starter templates (HR/IT/Sales/Support).
-2. **MCP (Model Context Protocol) server integration** — connect external tools/data/reasoning to a Slack agent.
-3. **Real-Time Search (RTS) API** — surface fresh in-workspace context on demand.
+1. Slack AI capabilities and Agent Builder;
+2. MCP server integration;
+3. Real-Time Search API.
 
-**The tracks (fit ≥1):**
-- **New Slack Agent** — automate workflows / connect systems / surface insights.
-- **Slack Agent for Good** — real social-impact problem (accessibility, education, sustainability, public health, nonprofits…); must explain measurable impact.
-- **Slack Agent for Organizations** — submit (or significantly update) a **Slack Marketplace** app *before the deadline*; requires a Slack **App ID**.
+It must enter one track:
 
-## Our positioning (decided)
+- **New Slack Agent**
+- **Slack Agent for Good**
+- **Slack Agent for Organizations**
 
-> **Sequences for Slack** → **New Slack Agent** track, powered by **MCP server
-> integration**. We expose Sequences' video engine as MCP tools the Slack agent
-> drives. This is the cleanest, strongest fit and uses a required tech in a way
-> that "wouldn't be possible without it."
+Sequences enters **New Slack Agent**.
 
-Also in reach (no extra tracks needed — these are bonus prizes judged across all
-entries): **Best Technological Implementation**, **Most Innovative**, **Best UX**.
-RTS API is an optional stretch (e.g. pull live launch context from a channel).
+## Sequences' MCP positioning
 
-## What to submit
+The primary qualifying integration is Slack's hosted MCP server. Sequences uses
+it to retrieve current, permission-scoped workspace context on behalf of the
+invoking Slack user. Video mutations, previews, and rendering are additionally
+isolated behind internal Sequences MCP tools.
 
-- Text description (features + functionality).
-- **Demo video under 3 minutes** showing the working project (target ~2:45 so
-  export/upload timing cannot cross the limit; first 60 seconds matter most).
-- **Architecture diagram.**
-- **URL to your Slack developer sandbox**, with access granted to
-  **`slackhack@salesforce.com`** and **`testing@devpost.com`**.
-- (Organizations track only) Slack **App ID** proving Marketplace submission.
+Railway hosts the Bolt/OAuth/render application. Slack hosts
+`https://mcp.slack.com/mcp`. Sequences currently does not publish a Railway
+`/mcp` endpoint for Slackbot.
 
-## Judging criteria (optimize all four)
+This is a stronger and more accurate story than presenting the internal stdio
+process as an external Slackbot integration.
 
-1. **Technological Implementation** — quality software; meaningfully uses ≥1 of
-   the three techs; clean code.
-2. **Design** — UX thought-through; balanced frontend + backend.
-3. **Potential Impact** — on the Slack community and beyond.
-4. **Quality of the Idea** — creative, unique, improves on what exists.
+## Submission requirements
 
-## What wins (from the brief's "Inspiration")
+- Select the New Slack Agent track.
+- Provide a text description of features and functionality.
+- Provide a public demonstration video under three minutes that shows the
+  working project.
+- Provide an architecture diagram showing the implemented system.
+- Provide the Slack developer sandbox URL.
+- Invite `slackhack@salesforce.com` and `testing@devpost.com` to that sandbox as
+  Members so they can test the complete flow.
+- Do not include confidential information, unauthorized third-party trademarks,
+  copyrighted music, or other material you lack permission to use.
 
-- Solve a **real, specific workflow problem inside Slack** — not a generic
-  chatbot wrapped in a Slack UI.
-- Use a required tech in a way that **wouldn't be possible without it**.
-- Show **clear impact / adoption potential**.
-- Ship a **polished demo video**.
+The Slack Marketplace and App ID requirements apply to the Organizations track,
+not this New Slack Agent submission.
 
-## Required setup / resources
+## Judging criteria
 
-- **Slack Developer Program** → unlocks a free **sandbox** workspace (required).
-- **Bolt SDK** (we use **JavaScript** — [apps/slack](.)).
-- **Slack CLI** (`slack create agent`), **Block Kit** for rich UI.
-- Docs: Slack Platform docs, MCP integration, RTS API, Marketplace guidelines.
-- Community: `#slack-agent-builder-challenge` in the Slack Community.
+All four are equally important:
 
-## Our compliance checklist
+1. Technological Implementation
+2. Design
+3. Potential Impact
+4. Quality of the Idea
 
-- [ ] Joined Slack Developer Program; sandbox provisioned.
-- [ ] App uses **MCP** (≥1 required tech) — ✅ by design.
-- [ ] Fits **New Slack Agent** track — ✅.
-- [ ] Demo video recorded, publicly hosted, and confirmed under 3 minutes.
-- [ ] Architecture diagram exported.
-- [ ] Sandbox URL shared with `slackhack@salesforce.com` + `testing@devpost.com`.
-- [ ] Devpost submission filled in before **Jul 13, 2026 8pm EDT**.
+The demo should make the workflow obvious in its first minute: a real release
+thread becomes a polished video draft, then a human revises and shares it
+without leaving Slack.
+
+## Required setup
+
+- Slack Developer Program membership and a provisioned developer sandbox.
+- A new internal Slack app installed in that sandbox.
+- Bolt for JavaScript and Block Kit.
+- Slack hosted MCP enabled for the app.
+- A live Railway deployment and test instructions for each judge.
+
+The Slack CLI and Agent Builder templates are optional resources, not
+requirements for this Bolt/Socket Mode implementation.
+
+## Compliance checklist
+
+- [ ] Every entrant joined the Devpost hackathon and is eligible.
+- [ ] Project is newly created for the New Slack Agent track.
+- [ ] Slack Developer Program joined and sandbox provisioned.
+- [ ] Sandbox app uses Slack hosted MCP in the real create flow.
+- [ ] Railway deployment is live and `/healthz` returns `ready`.
+- [ ] Both judge accounts are sandbox Members.
+- [ ] Judge instructions include the per-user `/slack/install` link.
+- [ ] Demo video is public, working, and under three minutes.
+- [ ] Architecture diagram depicts current implementation, not target ideas.
+- [ ] Assets, fonts, music, logos, and screenshots have acceptable provenance.
+- [ ] Devpost submission is complete before July 13, 2026 at 8:00 PM EDT.

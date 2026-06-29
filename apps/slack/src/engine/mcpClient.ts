@@ -31,6 +31,7 @@ export class McpClient {
   #nextId = 1;
   #closed = false;
   #exitError: Error | null = null;
+  #stderr = "";
 
   private constructor(projectDir: string) {
     this.#child = spawn(process.execPath, ["--import", "tsx", SERVER_PATH, projectDir], {
@@ -42,14 +43,18 @@ export class McpClient {
     this.#rl.on("line", (line) => this.#onLine(line));
     this.#child.on("exit", (code) => {
       this.#closed = true;
-      this.#exitError = new Error(`MCP server exited (code ${code ?? "null"})`);
+      const detail = this.#stderr.trim();
+      this.#exitError = new Error(
+        `MCP server exited (code ${code ?? "null"})${detail ? `: ${detail}` : ""}`,
+      );
       for (const { reject } of this.#pending.values()) reject(this.#exitError);
       this.#pending.clear();
     });
-    // Surface server diagnostics without polluting stdout (its JSON-RPC channel).
+    // Preserve a bounded stderr tail for diagnostics without polluting stdout
+    // (the JSON-RPC channel) or Railway logs during successful requests.
     this.#child.stderr.setEncoding("utf8");
-    this.#child.stderr.on("data", () => {
-      /* server logs readiness/errors here; intentionally quiet in production */
+    this.#child.stderr.on("data", (chunk: string) => {
+      this.#stderr = (this.#stderr + chunk).slice(-2_000);
     });
   }
 

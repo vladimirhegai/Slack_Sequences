@@ -20,6 +20,8 @@ export interface Job {
   status: JobStatus;
   title: string;
   mp4Path?: string;
+  /** Canonical artifact used by Approve & share. */
+  renderQuality?: "draft" | "high";
   createdAt: string;
   updatedAt: string;
 }

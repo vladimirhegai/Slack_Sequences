@@ -3,9 +3,7 @@
   "include": [
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
-    "apps/slack/src/**/*.ts",
-    "apps/slack/scripts/**/*.ts",
-    "apps/slack/test/**/*.ts"
+    "apps/slack/src/**/*.ts"
   ],
   "exclude": ["node_modules"]
 }

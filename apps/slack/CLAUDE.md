@@ -1,123 +1,124 @@
-# CLAUDE.md — Sequences for Slack (hackathon app)
+# Sequences for Slack — agent notes
 
-This is the **active** app: a Slack agent for the **Slack Agent Builder
-Challenge** (~16 days). It turns product-launch context in Slack into an
-editable Sequences video draft.
+The active hackathon app (Slack Agent Builder Challenge, deadline **Jul 13 2026**).
+It turns a release thread into an on-brand launch video, in the channel. Bolt +
+Socket Mode; `tsx` runs the TS directly. Pitch: *from shipped to shown*.
 
-> **Spec:** [SLACK_PLAN.md](SLACK_PLAN.md) — read it first. It is prioritized
-> hackathon-fit → use case → architecture → demo → 15-day timeline, and maps every
-> Slack action onto the real Sequences engine (§7 lists the foundation that already
-> exists). **Hackathon rules:** [HACKATHON_RULES.md](HACKATHON_RULES.md) (deadline,
-> tracks, judging). Don't re-derive any of this; it's there.
+**Deep docs (read only when this file is insufficient):**
+[ARCHITECTURE.md](ARCHITECTURE.md) (target design) ·
+[SLACK_PLAN.md](SLACK_PLAN.md) (current state / what's built) ·
+[OPERATIONS.md](OPERATIONS.md) (local setup + Railway deploy + recovery) ·
+[TESTING.md](TESTING.md) (verification ladder) ·
+[HACKATHON_RULES.md](HACKATHON_RULES.md) (challenge constraints).
 
-The rest of the repo (Forge, Sequences, the shared engine) is **paused** — see
-[../../CLAUDE.md](../../CLAUDE.md) and [../../docs/paused/](../../docs/paused/).
+## The two bots
 
-> **Two-repo reality:** this dev monorepo has `apps/sequences` and `apps/forge`
-> next to us. The **published repo (`Slack_Sequences`, public) ships only
-> `apps/slack` + `packages/core` + `packages/platform`** — `apps/sequences` is
-> NOT there. So links below to `../sequences/...` are dev-monorepo references for
-> *copying glue from*; the shipped bot must never import them. Copy what you need
-> into `src/engine/`.
+This app runs **two distinct agents**. Keep them straight:
 
-## The isolation rule (read this twice)
+1. **Context bot — Slack-hosted-MCP retrieval** ([src/slackMcpContext.ts](src/slackMcpContext.ts)).
+   OpenAI Responses API (`gpt-5-mini`) calling `https://mcp.slack.com/mcp` with
+   the **invoking user's** OAuth token. Reads messages/files, returns an evidence
+   pack. **Must be OpenAI** — the Responses `mcp` tool type is OpenAI-only, so
+   OpenRouter/DeepSeek cannot drive it. Always needs `OPENAI_API_KEY`. This is the
+   primary hackathon-qualifying MCP integration.
+2. **Planning / authoring bot — the main agent** ([src/engine/planRunner.ts](src/engine/planRunner.ts)).
+   Runs on `SLACK_SEQUENCES_PROVIDER` — Railway uses **`openrouter-api` (DeepSeek)**.
+   Turns brief + context into the video. **Today** it emits a typed Sequences
+   `Plan`; the **target** ([ARCHITECTURE.md](ARCHITECTURE.md)) is for it to author
+   HyperFrames directly. The video execution layer (apply/preview/render) is
+   additionally isolated behind an internal **stdio Sequences MCP** server.
 
-`apps/slack` is a **self-contained world.** The boundary:
+## Prompts live in [prompts/](prompts/)
 
-- ✅ **May depend on the shared packages**: `@sequences/core`,
-  `@sequences/platform`, and pinned `@hyperframes/*@0.6.86`. These are shared
-  infrastructure (the engine + host services), not the paused *apps*. Importing
-  them is allowed and expected.
-- ✅ **May copy files in and modify them.** Need `apps/sequences`'s render glue
-  ([render.ts](../sequences/src/render.ts)) or project IO
-  ([projectIo.ts](../sequences/src/projectIo.ts))? **Copy them into
-  `apps/slack/src/engine/` and adapt them here.** They depend only on
-  `@sequences/core` + `@sequences/platform` + `@hyperframes/producer`, all of
-  which `apps/slack` declares.
-- ❌ **Must NOT `import` from `apps/sequences/*` or `apps/forge/*`.** No reaching
-  across app boundaries (the same rule the rest of the repo enforces).
-- ❌ **Must NOT modify** `packages/core`, `packages/platform`, `apps/forge`, or
-  `apps/sequences`. They are frozen. If you think you need a change there, you
-  almost certainly want to copy-and-adapt inside `apps/slack` instead.
+General, editable system prompts for both bots go in `prompts/*.md` — not buried
+in `src/`. Today: [prompts/context-retrieval.md](prompts/context-retrieval.md)
+(context bot). The planning bot's base prompt still comes from `@sequences/core`
+`buildPlanPrompt` (frozen); its future HyperFrames-authoring system prompt belongs
+in `prompts/`. **Not** in `prompts/`: RAG/skill retrieval
+([src/agent/skillContext.ts](src/agent/skillContext.ts)) and per-run
+deterministic context (color/typography picks, selected skills, brand tokens) —
+those are composed at runtime. See [prompts/README.md](prompts/README.md).
 
-The one sanctioned way to *use* the frozen apps without importing them: **spawn
-the `sequences` CLI / MCP server as a subprocess** (`node ../sequences/src/cli.ts
-mcp <dir>`). That's a process boundary, not a source import — fine when it's the
-simplest path. Prefer copy-in for anything you'll iterate on.
+## App isolation (do not break)
 
-## Stack
+`apps/slack` must publish standalone, without the paused apps:
 
-- **[@slack/bolt](https://slack.dev/bolt-js/)** in **Socket Mode** (no public
-  URL needed for events) + `dotenv`. Entry: [src/index.ts](src/index.ts).
-- **`tsx`** runs the TypeScript directly (`npm run dev`). This app opts into
-  `tsx` rather than the repo's Node type-stripping, so it's free to move fast.
-- Node ≥ 22.18, ESM. If you import `@sequences/core`, the repo's no-build rules
-  still apply to that imported surface: explicit `.ts` import extensions,
-  `import type` for types, no TS enums/namespaces/parameter-properties.
-- HyperFrames is pinned **`0.6.86`** — **do not float it** (see the substrate
-  contract in [../../docs/paused/WORKSPACE.md](../../docs/paused/WORKSPACE.md)).
+- ✅ May import `@sequences/core`, `@sequences/platform`, and pinned
+  `@hyperframes/*@0.6.86`.
+- ❌ Never import `apps/sequences/*` or `apps/forge/*`. Need their glue? **Copy it
+  into [src/engine/](src/engine/) and adapt.**
+- ❌ Don't modify `packages/*`, `apps/forge`, `apps/sequences` unless the task
+  explicitly says so.
 
-## Engine quality still binds
+The public Slack repo contains this app plus shared packages, so cross-app
+relative imports break after publishing.
 
-If/when you drive the Sequences engine (plan → compile → render), the **9 laws**
-still hold — they live in `@sequences/core` and you get them for free as long as
-every project change goes through `ProjectStore.apply` / `planToCommands` and you
-never invent motion JSON. Reference: [../../docs/paused/WORKSPACE.md](../../docs/paused/WORKSPACE.md).
+## MCP execution path (the internal Sequences MCP)
 
-## Commands
+MCP is the **default** live path; `SLACK_SEQUENCES_USE_MCP=0` is a diagnostic
+opt-out. Normal flow:
+
+- create: `submit_plan` → `render_preview` → `render`;
+- revise: `apply_commands` → `render_preview` → `render`.
+
+The in-process fallback ([src/orchestrator.ts](src/orchestrator.ts) `applyMutation`)
+is narrow and behaviorally equivalent — a flaky subprocess never breaks a demo.
+Every MCP attempt is visible through an **argument-free** receipt. Never put plan
+content, command args, credentials, user tokens, workspace messages, or model
+output in a Slack receipt.
+
+## Determinism boundary
+
+- **No model:** `/sequences demo` (curated preset, [src/demo.ts](src/demo.ts));
+  the solver + linter; all delivery plumbing (thumbnails, render, uploads); the
+  zero-token tweak matcher in `tweakRunner.ts`; undo (journal replay).
+- **Uses a model:** real `/sequences` create (planning bot) and the context bot;
+  revise only when the zero-token matcher is unsure.
+
+Keep deterministic things deterministic: build new deterministic behavior in the
+plumbing layer or behind a preset/zero-token path. The 9 laws are **revised** for
+direct HyperFrames authoring — see ARCHITECTURE.md "Revised architecture laws";
+hard runtime invariants (deterministic seek, local assets, finite timelines,
+framework-owned playback) still bind.
+
+## Two-tier delivery contract
+
+In [src/index.ts](src/index.ts), create/revise preserve this order:
+1. apply plan/commands; 2. build + upload thumbnails; 3. update message to
+*rendering*; 4. render the MP4 async; 5. update to *ready*/*unavailable* and
+upload the MP4. Missing Chrome/FFmpeg or a render failure must leave a valid
+thumbnails-only result. Background Slack errors must be logged and contained
+(never crash the process).
+
+## Current feature state
+
+Wired end-to-end: `/sequences` create modal, `/sequences demo` (model-free),
+`/sequences mcp-test` self-check, 🎬 message shortcut (reads the whole thread),
+conversational reply-to-revise, live Thinking-Steps progress, Undo, Render HD,
+Approve & share. Per-user OAuth for hosted MCP. Not built yet: screenshot asset
+ingestion, direct HyperFrames authoring, component sub-agents.
+
+## Environment
+
+One live Slack app: the developer-sandbox app on Railway. Local work is source,
+deterministic MCP/demo, render, and Docker checks only. **Never** copy Railway
+credentials into `apps/slack/.env`, and never start a second Socket Mode process
+with sandbox tokens. Socket Mode carries Slack events; the HTTP server exists only
+for `/healthz`, `/slack/install`, `/slack/oauth_redirect` — do not add Events API
+/ interactivity request URLs. Railway is not a public `/mcp` endpoint.
+
+## Verification
+
+Routine source gate (no credentials, no paid model):
 
 ```powershell
-# from repo root
-npm run dev --workspace @sequences/slack
-# or from apps/slack
-npm run dev
+npm run typecheck --workspace @sequences/slack
+npm run test --workspace @sequences/slack
+npm run mcp:demo --workspace @sequences/slack
 ```
 
-Secrets live in `apps/slack/.env` (gitignored). Copy [.env.example](.env.example)
-and fill in `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` (Socket Mode app token).
-
-## Layout (grow as needed)
-
-```
-apps/slack/
-  manifest.json      Slack app manifest — create the app from this (scopes, /sequences,
-                     🎬 shortcut, Socket Mode). Reproducible setup; see SETUP.md.
-  src/
-    index.ts         Bolt app: /sequences (+ demo/help), modal, 🎬 message shortcut, revise
-    slackApi.ts      Slack API resilience: public-channel auto-join + actionable failures
-    orchestrator.ts  createVideo() / reviseVideo() — the engine seam (MCP + fallback; presetPlan path)
-    demo.ts          DEMO_BRIEF + buildDemoPlan() — the curated, model-free /sequences demo reel
-    jobStore.ts      Slack interaction ↔ project-dir map (.data/jobs.json)
-    blocks.ts        Block Kit builders (modal, result message)
-    engine/          copied-in engine glue (do not import apps/sequences):
-      projectIo.ts render.ts thumbs.ts projectTemplates.ts planRunner.ts tweakRunner.ts
-      mcp.ts mcpServer.ts mcpClient.ts  templates/dashboard.svg
-  scripts/
-    demoSmoke.ts     model-free: applies the demo plan, asserts real thumbnails (npm run demo)
-    smoke.ts         brief → plan → thumbnails → MP4, no Slack (npm run smoke)
-    mcpDemo.ts        drives the MCP server end-to-end (npm run mcp:demo)
-  .data/             per-project workspaces + jobs.json (gitignored, runtime)
-  SETUP.md           5-min sandbox setup (create app from manifest, tokens, run)
-  SLACK_PLAN.md      the hackathon spec
-  .env / .env.example  secrets (gitignored) + template
-```
-
-Verify the foundation: `npm run typecheck --workspace @sequences/slack` and
-`npm run test --workspace @sequences/slack` (green), plus
-`npm run demo --workspace @sequences/slack` (model-free; writes real scene thumbnails
-to `.data/`). `npm run mcp:demo` additionally drives the MCP server end-to-end.
-
-## Entry points (what a user can do today)
-
-- **`/sequences demo`** — zero-setup, deterministic *Relay v2* reel (curated plan
-  → solver → thumbnails → MP4). No modal, no model, no API key. The bulletproof
-  demo path and the fastest end-to-end smoke.
-- **`/sequences`** — the create modal (product, what shipped, audience, tone,
-  length, context) → plan → preview.
-- **🎬 Make a launch video** — message shortcut; opens the modal prefilled from
-  the clicked message (full thread reading is a later day).
-- **`/sequences help`** — lists the above.
-- **Revise** — applies a natural-language tweak and regenerates the preview.
-
-Planned controls such as **Render HD**, **Approve & share**, and **Undo** stay
-hidden until their end-to-end handlers are implemented.
+Run `npm run demo --workspace @sequences/slack` (`+ $env:VERIFY_RENDER=1` for MP4)
+after engine/render/delivery changes. Root `npm run typecheck` **excludes**
+apps/slack. Full ladder + sandbox checklist: [TESTING.md](TESTING.md). Never
+report live Slack/OAuth/provider/Railway behavior as verified from unit tests
+alone — state which layer actually ran.

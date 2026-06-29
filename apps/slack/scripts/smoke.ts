@@ -5,7 +5,7 @@
  *   npm run smoke --workspace @sequences/slack -- "Relay v2: sub-100ms traces"
  *
  * Renders only when SMOKE_RENDER=1 (MP4 needs FFmpeg + Chrome). Thumbnails need
- * Chrome/Edge. Set SLACK_SEQUENCES_USE_MCP=1 to route the mutation through MCP.
+ * Chrome/Edge. MCP is the default; set SLACK_SEQUENCES_USE_MCP=0 to force local.
  */
 import { createVideo } from "../src/orchestrator.ts";
 
@@ -25,6 +25,9 @@ const result = await createVideo({
 });
 
 console.log("\n=== Plan applied (%s, %s) ===", result.provider, result.usedMcp ? "via MCP" : "in-process");
+for (const receipt of result.toolCalls) {
+  console.log(`MCP ${receipt.tool.padEnd(16)} ${receipt.status} (${receipt.durationMs}ms)`);
+}
 console.log(result.outline);
 console.log("\n%s", result.lint);
 console.log("\nproject:", result.projectDir);

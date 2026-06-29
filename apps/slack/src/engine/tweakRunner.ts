@@ -47,6 +47,7 @@ export async function requestTweak(
   project: Project,
   context: TweakContext = {},
   options: CompleteOptions = {},
+  guidance = "",
 ): Promise<TweakResult> {
   const deterministic = matchZeroTokenTweak(project, text, context);
   if (deterministic) {
@@ -69,7 +70,10 @@ export async function requestTweak(
         {
           role: "system",
           content:
-            'Translate the tweak into the smallest valid Sequences command list. Return JSON only: {"commands":[...]}.',
+            [
+              'Translate the tweak into the smallest valid Sequences command list. Return JSON only: {"commands":[...]}.',
+              guidance,
+            ].filter(Boolean).join("\n\n"),
         },
         {
           role: "user",
