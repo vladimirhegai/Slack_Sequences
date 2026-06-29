@@ -617,8 +617,8 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     const brief = assembleBrief(options);
     const skills = retrieveHyperframesSkillContext("create", brief);
     skillsUsed = skills.skillNames;
-    // Per-job frame.md: deterministic brand remap + one small preset decision.
-    // Constrains palette/type for the director; never throws (house-preset fallback).
+    // Per-job frame.md: bounded art direction + deterministic design tools.
+    // Hard brand/contrast/font constraints, tunable recommendations, safe fallback.
     const frame = await buildJobFrame({
       provider,
       projectDir: dir,

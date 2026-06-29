@@ -229,8 +229,10 @@ workspace; rendering performs no network fetches.
 The canonical design artifact is `frame.md`, matching the current HyperFrames
 product-launch workflow. We should not maintain a parallel `DESIGN.md`.
 
-The designer chooses a local frame preset, then deterministic tools remap it to
-the brand. `frame.md` should stay compact and operational:
+The designer uses a local frame preset as mood/composition DNA, then chooses a
+palette strategy, typography, and spatial character. Deterministic tools extract
+brand truth, derive candidate tokens, validate contrast/font availability, and
+record repairs. `frame.md` should stay compact and operational:
 
 - visual thesis and light/dark basis;
 - semantic colors with safe text/surface pairings;
@@ -245,14 +247,16 @@ than inventing a half-brand. Apple-, Linear-, and editorial-style references
 belong in a small local, provenance-tracked taste library; they are inspiration,
 not live per-job RAG and never a license to copy trademarks or proprietary assets.
 
-This stage should usually cost one small model decision: **which preset and what
-brand exceptions matter?** Everything else is a deterministic remix.
+This stage should usually cost one bounded model decision: **which mood, harmony,
+type pairing, and spatial character fit?** Determinism belongs at extraction,
+derivation, validation, and fallback—not at the creative answer.
 
 > **Implemented.** `src/engine/frameDesign.ts` (+ `framePresets.ts`,
-> `brandTokens.ts`, `brandCapture.ts`) ships five curated SaaS presets, a
-> deterministic brand-token extractor (with optional URL capture and WCAG
-> contrast safety), exactly one small `chooseFrame` model decision, and a compact
-> `frame.md` renderer fed to the director via `<frame_md>`. See TODO.md §3.
+> `brandTokens.ts`, `brandCapture.ts`, `frameTools.ts`) ships five SaaS mood
+> boards, deterministic brand extraction, harmony-aware palette derivation,
+> contrast/font validation, spatial-token generation, one bounded art-direction
+> decision, and a compact `frame.md` fed to the director via `<frame_md>`. See
+> TODO.md §3.
 
 ## 3. Film-ready components
 

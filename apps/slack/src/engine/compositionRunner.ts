@@ -113,10 +113,11 @@ function creationPrompt(args: {
     : "";
   const frame = args.frameMd
     ? [
-        "## Frame design system (BINDING palette + typography)",
-        "Use these exact colours and font families. They are the brand-matched",
-        "design system for this job. Constrain palette and type to this frame;",
-        "your motion, composition, and rhythm stay free.",
+        "## Frame design system (art direction + deterministic constraints)",
+        "Start from this system. Preserve its committed brand hue/font families,",
+        "embedded-font requirement, contrast thresholds, and one-accent hierarchy.",
+        "Its recommended tints and spatial tokens may be adjusted deliberately as",
+        "the document allows; your motion, composition, and rhythm stay free.",
         "<frame_md>",
         args.frameMd,
         "</frame_md>",

@@ -28,9 +28,10 @@ want to read and edit as prose.
 - HyperFrames skill retrieval / RAG (`src/agent/skillContext.ts`).
 - Per-run, project-specific context: deterministic color/typography picks,
   the skills selected for that run, asset manifests, brand tokens.
-- The per-job `frame.md` design system (`src/engine/frameDesign.ts`): the curated
-  presets + the deterministic brand remap that produce the `<frame_md>` block the
-  director receives. It is data composed per job, not editable prose.
+- The per-job `frame.md` design system (`src/engine/frameDesign.ts` +
+  `src/engine/frameTools.ts`): curated mood DNA, bounded art direction, and
+  deterministic brand extraction/derivation/validation that produce the
+  `<frame_md>` block. It is data composed per job, not editable prose.
 - The deterministic brief assembly (`assembleBrief` in `orchestrator.ts`).
 
 Rule of thumb: if a human would tune it by editing prose, it lives here. If it is

@@ -1,6 +1,6 @@
 /**
  * Curated SaaS-fit frame presets — the house design systems a launch job starts
- * from before deterministic brand remapping.
+ * from before bounded art direction and deterministic validation.
  *
  * These are distilled from the vendored HyperFrames `frame-presets/` taste
  * library (skills/hyperframes-creative/frame-presets/), but expressed here in a
@@ -17,7 +17,7 @@
 
 export type FrameBasis = "light" | "dark";
 
-/** Semantic colour roles with guaranteed-safe text/surface pairings. */
+/** Semantic fallback colour roles; final pairings are validated by frameTools. */
 export interface FrameColors {
   /** The scene canvas / ground. */
   bg: string;
@@ -75,7 +75,7 @@ export interface FramePreset {
 /**
  * Five presets spanning the SaaS launch range: clean B2B, dark premium, editorial,
  * bold launch, and crisp dev-tool. Light/dark and serif/sans/mono are all covered
- * so the brand remap has a coherent base whatever the source brand looks like.
+ * so the deterministic fallback remains coherent whatever the source brand.
  */
 export const FRAME_PRESETS: FramePreset[] = [
   {

@@ -72,33 +72,40 @@ the planning bot's actual system prompt.
 
 ## 3. Design system — `frame.md` per job
 
-Each video job gets a `frame.md` that governs its visual identity. The designer
-(a deterministic step + one small model decision) picks a preset and applies brand
-overrides. **Highest visual-quality lever; mostly deterministic.**
+Each video job gets a `frame.md` that governs its visual identity. One bounded
+art-direction decision chooses mood, harmony, typography, and spatial character;
+deterministic tools extract brand truth, derive tokens, validate safety, and
+record repairs. **Highest visual-quality lever; deterministic tools, not
+deterministic answers.**
 
 - [x] **Frame preset library.** Five curated SaaS presets in
   [`src/engine/framePresets.ts`](src/engine/framePresets.ts) (clean-corporate,
   dark-premium, editorial, bold-launch, crisp-dev) distilled from the upstream
   `frame-presets/` taste library but expressed on the renderer's embedded fonts
   (the upstream FRAME.md fonts would silently fall back).
-- [x] **Deterministic brand remapping.** [`brandTokens.ts`](src/engine/brandTokens.ts)
+- [x] **Deterministic brand extraction + design tools.** [`brandTokens.ts`](src/engine/brandTokens.ts)
   extracts colours/fonts/URL/logo from the evidence pack (frequency-ranked, neutral
   detection, font→embedded alias map); [`brandCapture.ts`](src/engine/brandCapture.ts)
   optionally captures palette/fonts from a product URL reusing HyperFrames' capture
-  approach (best-effort, gated by `SLACK_BRAND_CAPTURE`); `remapPreset` applies the
-  brand accent (with WCAG contrast safety) + fonts onto the chosen preset.
+  approach (best-effort, gated by `SLACK_BRAND_CAPTURE`). [`frameTools.ts`](src/engine/frameTools.ts)
+  generates harmony-aware semantic palettes, validates/repairs exact colour
+  proposals, enforces WCAG contrast and embedded fonts, and turns density,
+  spacing, corner, and depth choices into bounded spatial tokens.
 - [x] **`frame.md` content.** [`frameDesign.ts`](src/engine/frameDesign.ts)
   `renderFrameMd` emits a compact operational frame.md: visual thesis, semantic
   colours with safe text/surface pairings, display/body/mono type,
   spacing/radius/shadow, background family, ≤5 do/don't, brand exceptions, and a
   metadata header for round-tripping.
 - [x] **Feed `frame.md` into the planning bot.** `compositionRunner` injects a
-  `<frame_md>` block; `planning-director.md` treats it as binding palette + type
-  (motion stays free). Create builds it; revise reuses the create-time frame.
+  `<frame_md>` block; `planning-director.md` distinguishes hard brand/font/contrast
+  constraints from tunable palette and spatial recommendations (motion stays
+  free). Create builds it; revise reuses the create-time frame.
   (Closes the §2 improve item's frame.md half.)
-- [x] **One small model decision.** Everything is deterministic except a single
-  small `chooseFrame` call (which preset + which brand exceptions), with a
-  deterministic keyword/tone-ranked fallback when no provider/decision is available.
+- [x] **One bounded art-direction decision.** `chooseFrame` treats presets as mood
+  boards and chooses basis, harmony, neutral temperature, contrast, accent use,
+  embedded type roles, density, spacing, corners, depth, optional semantic colour
+  proposals, and brand exceptions. Deterministic derivation/validation follows,
+  with a complete keyword/tone-ranked fallback when the decision is unavailable.
 - [x] **Slack test.** Verified via smoke: `/sequences` on a brand-y brief →
   authored composition binds `--accent:#1E2BFA` + the preset palette/embedded
   fonts; the chosen `frame.md` is shown in the result message and attached to the

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { AgentProvider } from "@sequences/platform/providers";
 import {
   contrastRatio,
   extractBrandTokens,
@@ -18,6 +19,11 @@ import {
   remapPreset,
   renderFrameMd,
 } from "../src/engine/frameDesign.ts";
+import {
+  generateLayout,
+  generatePalette,
+  validateTypography,
+} from "../src/engine/frameTools.ts";
 
 describe("brand token extraction (deterministic)", () => {
   it("pulls a hex accent and product URL from an evidence pack", () => {
@@ -106,12 +112,125 @@ describe("deterministic remap", () => {
     const md = renderFrameMd(design, "Acme");
     expect(md).toContain("# frame.md — Dark Premium for Acme");
     expect(md).toContain("## Visual thesis");
-    expect(md).toContain("## Semantic colours");
+    expect(md).toContain("## Recommended semantic palette");
     expect(md).toContain("## Typography");
     expect(md).toContain("Background family:");
-    expect(md).toContain("## Do / Don't");
+    expect(md).toContain("## Mood-board restraints");
     expect(md).toContain("keep dark basis");
     expect(md).toContain("sequences-frame:");
+    expect(md).toContain("Art-directed starting system");
+    expect(md).toContain("## Deterministic tool report");
+  });
+
+  it("honours creative harmony/layout choices while keeping brand hue and contrast safe", () => {
+    const preset = presetById("clean-corporate")!;
+    const tokens = extractBrandTokens("brand accent #1E2BFA");
+    const design = remapPreset(preset, tokens, null, [], {
+      presetId: preset.id,
+      basis: "dark",
+      harmony: "split-complementary",
+      temperature: "warm",
+      contrast: "soft",
+      accentUsage: "bold",
+      density: "airy",
+      spacing: "cinematic",
+      corners: "square",
+      depth: "atmospheric",
+      background: "Warm mineral grain with a restrained split-complementary edge light.",
+      exceptions: [],
+    });
+    expect(design.basis).toBe("dark");
+    expect(design.direction.harmony).toBe("split-complementary");
+    expect(design.direction.density).toBe("airy");
+    expect(design.radius).toContain("0px");
+    expect(design.background).toContain("mineral grain");
+    expect(contrastRatio(design.colors.text, design.colors.bg)).toBeGreaterThanOrEqual(7);
+    expect(design.colors.accent).toBe("#1E2BFA");
+  });
+
+  it("preserves captured heading/body font order for geometric brand type", () => {
+    const preset = presetById("clean-corporate")!;
+    const design = remapPreset(
+      preset,
+      extractBrandTokens(""),
+      { colors: [], accent: "#1E2BFA", fonts: ["Outfit", "Inter"] },
+      [],
+      {
+        presetId: preset.id,
+        typography: { display: "Oswald", body: "EB Garamond", mono: "Space Mono" },
+        exceptions: [],
+      },
+    );
+    expect(design.type.display).toBe("Outfit");
+    expect(design.type.body).toBe("Inter");
+    expect(design.type.mono).toBe("Space Mono");
+  });
+});
+
+describe("deterministic frame design tools", () => {
+  it("generates distinct harmony atmospheres from the same committed accent", () => {
+    const base = {
+      basis: "dark" as const,
+      temperature: "cool" as const,
+      contrast: "crisp" as const,
+      accentUsage: "balanced" as const,
+    };
+    const mono = generatePalette("#7C3AED", { ...base, harmony: "monochromatic" });
+    const complement = generatePalette("#7C3AED", { ...base, harmony: "complementary" });
+    expect(mono.value.accent).toBe(complement.value.accent);
+    expect(mono.value.atmosphere).not.toBe(complement.value.atmosphere);
+    expect(contrastRatio(complement.value.text, complement.value.bg)).toBeGreaterThanOrEqual(7);
+  });
+
+  it("repairs unsafe semantic text and rejects an unrelated proposed accent hue", () => {
+    const result = generatePalette("#1E2BFA", {
+      basis: "light",
+      harmony: "analogous",
+      temperature: "warm",
+      contrast: "balanced",
+      accentUsage: "bold",
+      proposed: {
+        bg: "#FFFFFF",
+        text: "#EEEEEE",
+        textMuted: "#F4F4F4",
+        accent: "#EF4444",
+      },
+    });
+    expect(contrastRatio(result.value.text, result.value.bg)).toBeGreaterThanOrEqual(7);
+    expect(contrastRatio(result.value.textMuted, result.value.bg)).toBeGreaterThanOrEqual(4.5);
+    expect(result.value.accent).not.toBe("#EF4444");
+    expect(result.repairs.some((repair) => repair.includes("committed brand hue"))).toBe(true);
+  });
+
+  it("keeps only embedded fonts and separates duplicate type roles", () => {
+    const preset = presetById("clean-corporate")!;
+    const result = validateTypography(
+      { display: "Comic Sans MS", body: "Outfit", mono: "Outfit" },
+      preset.type,
+      {},
+    );
+    expect(result.value.display).toBe(preset.type.display);
+    expect(result.value.body).not.toBe(result.value.display);
+    expect(result.value.mono).toBe("JetBrains Mono");
+    expect(result.repairs.length).toBeGreaterThan(0);
+  });
+
+  it("turns spatial choices into bounded, legible rhythm tokens", () => {
+    const compact = generateLayout({
+      density: "dense",
+      spacing: "compact",
+      corners: "crisp",
+      depth: "bordered",
+    });
+    const cinematic = generateLayout({
+      density: "airy",
+      spacing: "cinematic",
+      corners: "soft",
+      depth: "elevated",
+    });
+    expect(compact.tokens.edge).toBeLessThan(cinematic.tokens.edge);
+    expect(compact.tokens.radius).toBe(6);
+    expect(cinematic.tokens.radius).toBe(14);
   });
 });
 
@@ -138,5 +257,53 @@ describe("buildJobFrame end-to-end (no model, no network)", () => {
     const meta = readFrameMeta(dir);
     expect(meta?.presetId).toBe("crisp-dev");
     expect(meta?.label).toBe(result.label);
+  });
+
+  it("uses a bounded creative proposal instead of locking the preset answers", async () => {
+    let receivedPrompt = "";
+    const provider: AgentProvider = {
+      id: "openai-api",
+      label: "test",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete: async (prompt) => {
+        receivedPrompt = prompt;
+        return JSON.stringify({
+          presetId: "clean-corporate",
+          thesis: "Warm precision with generous editorial pacing.",
+          basis: "dark",
+          harmony: "complementary",
+          temperature: "warm",
+          contrast: "soft",
+          accentUsage: "restrained",
+          palette: { bg: "#171410", surface: "#211D18" },
+          typography: {
+            display: "Oswald",
+            body: "EB Garamond",
+            mono: "Space Mono",
+            note: "Condensed authority over a literary reading face.",
+          },
+          density: "airy",
+          spacing: "cinematic",
+          corners: "square",
+          depth: "atmospheric",
+          background: "Warm charcoal grain with a quiet complementary edge light.",
+          exceptions: [],
+        });
+      },
+    };
+    const result = await buildJobFrame({
+      provider,
+      projectDir: dir,
+      brief: "Launch Acme with brand accent #F97316",
+      brandName: "Acme",
+    });
+    expect(receivedPrompt).toContain("Deterministic tools available");
+    expect(receivedPrompt).toContain("Presets are mood and composition DNA");
+    expect(result.basis).toBe("dark");
+    expect(result.thesis).toContain("Warm precision");
+    expect(result.frameMd).toContain("harmony: **complementary**");
+    expect(result.frameMd).toContain("**Display / headlines:** Oswald");
+    expect(result.frameMd).toContain("Warm charcoal grain");
   });
 });

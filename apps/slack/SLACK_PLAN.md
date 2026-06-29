@@ -26,8 +26,8 @@ has changed:
   the agent later.
 
 The live planning brain now authors canonical HyperFrames HTML directly, dressed
-in a per-job `frame.md` design system (a curated preset deterministically remapped
-to the brand). The typed Sequences plan compiler remains only for the
+in a per-job `frame.md` design system (curated mood DNA plus art-directed tokens
+checked by deterministic design tools). The typed Sequences plan compiler remains only for the
 deterministic `/sequences demo` fallback while richer asset ingestion, capability
 sync, and component contracts are developed.
 
@@ -111,7 +111,7 @@ flowchart TD
   WC --> P
   B --> O[orchestrator]
   K[Local HyperFrames skill retrieval] --> P[Planning brain]
-  WC --> F[frame.md design system: preset + deterministic brand remap]
+  WC --> F[frame.md: art direction + deterministic design tools]
   F --> P
   P -->|storyboard + index.html| O
   O -->|JSON-RPC stdio| M[Sequences MCP tools]
@@ -140,7 +140,8 @@ to the internal stdio Sequences MCP process. Railway does not expose a public
 | [`src/engine/mcp.ts`](src/engine/mcp.ts) | typed project/preview/render tools |
 | [`src/engine/compositionRunner.ts`](src/engine/compositionRunner.ts) | direct-authoring prompt (incl. frame.md), response parse, bounded retry |
 | [`src/engine/directComposition.ts`](src/engine/directComposition.ts) | canonical source, validation, checkpoints, direct previews/renders |
-| [`src/engine/frameDesign.ts`](src/engine/frameDesign.ts) | per-job `frame.md`: one preset decision + deterministic remap + render |
+| [`src/engine/frameDesign.ts`](src/engine/frameDesign.ts) | per-job `frame.md`: bounded art direction + deterministic fallback/render |
+| [`src/engine/frameTools.ts`](src/engine/frameTools.ts) | palette derivation/contrast repair, embedded type validation, spatial tokens |
 | [`src/engine/framePresets.ts`](src/engine/framePresets.ts) | 5 curated SaaS presets (colour/comp DNA on embedded fonts) |
 | [`src/engine/brandTokens.ts`](src/engine/brandTokens.ts) | deterministic colour/font extraction + WCAG contrast utils |
 | [`src/engine/brandCapture.ts`](src/engine/brandCapture.ts) | optional best-effort URL palette/font capture (HyperFrames-style) |
@@ -179,11 +180,13 @@ making the quality system repeatable around that working loop. See
 5. Component tools inspired by Forge Stage (reusable, morph across scenes); later,
    bounded sub-agents for component/frame construction.
 
-Built: per-job `frame.md` design system — a curated preset chosen by one small
-model decision, then a deterministic brand remap (colour/font extraction from the
-evidence pack, optional URL capture, WCAG contrast safety) that binds the
-director's palette + typography. The chosen frame.md is shown in the result
-message and attached to the thread.
+Built: per-job `frame.md` design system — five curated mood boards plus one
+bounded art-direction decision over harmony, palette proposals, embedded type,
+spacing, density, corners, and depth. Deterministic tools extract brand truth,
+derive/validate tokens, repair unsafe contrast or unavailable fonts, and record
+the result. The director may tune recommendations within explicit brand,
+embedded-font, and contrast constraints. The chosen frame.md is shown in the
+result message and attached to the thread.
 
 Not built yet: Slack screenshot ingestion, per-scene second-pass retrieval,
 capability/registry sync, Brag audio cues, or component sub-agents.

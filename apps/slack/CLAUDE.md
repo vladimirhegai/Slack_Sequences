@@ -103,14 +103,15 @@ Wired end-to-end: `/sequences` create modal, `/sequences demo` (model-free),
 conversational reply-to-revise, live Thinking-Steps progress, Undo, Render HD,
 Approve & share. Per-user OAuth for hosted MCP. Direct HyperFrames create,
 revision, validation, checkpoint undo, thumbnails, and render are wired. Each job
-gets a per-job `frame.md` design system — a curated SaaS preset picked by one
-small model decision, then a **deterministic** brand remap (colour/font extraction
-from the evidence pack, optional URL capture, WCAG contrast safety) that binds the
-director's palette + typography without limiting motion; the chosen frame.md is
+gets a per-job `frame.md` design system — curated SaaS mood DNA plus one bounded
+art-direction decision over harmony, type, and spatial character. **Deterministic
+design tools** extract brand truth, derive and validate semantic tokens, repair
+unsafe contrast/unavailable fonts, and expose which values are committed versus
+tunable without limiting motion; the chosen frame.md is
 shown in the result and attached to the thread
 ([src/engine/frameDesign.ts](src/engine/frameDesign.ts) +
 [framePresets.ts](src/engine/framePresets.ts) /
-[brandTokens.ts](src/engine/brandTokens.ts) /
+[brandTokens.ts](src/engine/brandTokens.ts) / [frameTools.ts](src/engine/frameTools.ts) /
 [brandCapture.ts](src/engine/brandCapture.ts)). Not built yet: Slack screenshot
 ingestion, capability/registry sync + in-Slack audition, component sub-agents.
 
