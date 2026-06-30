@@ -46,8 +46,8 @@ The single most important task. Prove the loop before generalizing.
   The primary model authors every required artifact and repair by default; Flash
   is limited to the optional frame decision, which has a deterministic fallback.
   Operators may explicitly configure a separate exact-patch model; by default
-  the creative pass stays on DeepSeek while exact repair patches route to
-  `openai/gpt-5-mini` for tighter schema compliance. Storyboard
+  creative authoring and the rare structural repair stay on DeepSeek. Cursor
+  geometry repairs are deterministic, and OpenAI is never selected implicitly. Storyboard
   and patch payloads use provider-native strict JSON schemas. Repair calls emit
   bounded exact patches (4K ceiling), not another full document; every uniquely
   addressable edit survives even if a sibling edit is ambiguous. OpenRouter
@@ -259,6 +259,11 @@ everything HyperFrames already offers before it authors anything. (ARCHITECTURE 
   request — never global "make it better."
 - [ ] **Continuity tooling (deterministic).** Anchor visualizer, before/after cut
   onion-skin, focal-trajectory view, morph-compatibility checker (§8).
+- [x] **Deterministic cursor contract and QA.** Stable scene parts, typed
+  interaction intent, measured hotspot/target/ripple geometry under camera
+  transforms, interaction-time sampling, out-of-order seek checks, hard miss /
+  occlusion / camera-coupling failures, guide evidence, and Flash-routed safe
+  interaction revisions are implemented. The broader aesthetic critic remains.
 - [ ] **Slack test.** Critic findings post as a short receipt; an auto-repair of
   one flagged shot re-renders and updates the message in place.
 
@@ -280,9 +285,10 @@ everything HyperFrames already offers before it authors anything. (ARCHITECTURE 
 - [x] **Underline/marker contract.** Decorations attach to a measured word
   wrapper/pseudo-element, with `data-layout-attach` for the exceptional separate
   element.
-- [ ] **Figma-like guide snapshots.** Inject the safe area, columns, thirds,
-  baseline, and named anchors into internal snapshots/contact sheets. Keep them
-  out of delivered renders.
+- [x] **Interaction guide snapshots.** Persist an internal safe-area/part/
+  target/cursor overlay as `qa/spatial-guide.png`, kept out of delivery renders.
+- [ ] **Full Figma-like layout guides.** Add columns, thirds, baseline, and cut
+  anchors to contact sheets beyond the interaction-focused guide.
 - [ ] **Motion-plan sidecars.** Emit HyperFrames `*.motion.json` assertions from
   future cut-centered planning for appears-by, order, stays-in-frame, and
   liveness checks.
@@ -294,6 +300,9 @@ everything HyperFrames already offers before it authors anything. (ARCHITECTURE 
   (16:9 / 9:16 / 1:1), SVG viewbox normalization, device/window frame generation,
   chart-data import, cursor-path planning, seeded background generation, local-font
   matching, raster-cost warnings for heavy shadow/blur.
+- [x] **Cursor-path planning foundation.** `cursor-interaction-v1` is a local
+  capability/recipe with a versioned runtime and component-part-compatible
+  bindings. The remaining utilities above are still open.
 - [ ] **Component foundry (P1).** When no registry item fits: import screenshot/
   DOM/SVG/mock → segment parts → assign stable IDs/anchors → identify states/
   actions → split subject/backdrop/overlay → emit a native sub-composition →

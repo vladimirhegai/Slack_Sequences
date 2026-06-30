@@ -184,6 +184,34 @@ the guide deliberately. Do not turn every shot into the same grid.
   the region; wrap; use `fitTextFontSize`; shrink the type only as a last resort.
   Optical centering offsets are valid when explicitly declared.
 
+### Stable parts, camera worlds, and cursor interactions
+
+- Bind the storyboard's `spatialIntent.focalPart` and every interaction target
+  with scene-scoped `data-part="<stable-name>"`. These names are the bridge to
+  future component parts and cut anchors; do not replace them with positional
+  selectors.
+- Put product surfaces and camera-driven content inside `data-camera-world`.
+  Put cursors, ripples, and labels that must remain in screen space inside a
+  sibling `data-camera-overlay`.
+- A pointer cursor uses `data-cursor-id`, normalized
+  `data-cursor-hotspot-x/y`, `position:absolute;left:0;top:0`, and
+  `pointer-events:none`. It is a direct child of the camera overlay. Never hide
+  an active cursor or target with `data-layout-ignore`.
+- When the locked storyboard has interactions, load
+  `<script src="sequences-interactions.v1.js"></script>`, copy those interaction
+  objects exactly into one
+  `<script type="application/json" id="sequences-interactions">` JSON island,
+  and call `SequencesInteractions.compile(tl, root)` only after all authored
+  target and camera tweens have been added. Register and seek the timeline after
+  compilation.
+- The interaction runtime owns standard cursor translation, synchronized press,
+  drag, and ripple geometry. The target, approach, path family, bend, ease,
+  timing, normalized aim, and optical offset remain your creative choices.
+  Never author guessed `TARGET_X`/`TARGET_Y`, a second cursor movement tween, or
+  an independently positioned ripple for a declared standard interaction.
+- A `custom` interaction may use authored motion, but it must retain the same
+  semantic binding and pass hotspot/target/ripple QA at its declared times.
+
 ## Hard runtime contract
 
 - Return a complete HTML document with one root carrying
@@ -193,6 +221,8 @@ the guide deliberately. Do not turn every shot into the same grid.
   `window.__timelines["<composition-id>"]` after all tweens are authored.
 - Load GSAP only from `<script src="gsap.min.js"></script>`. It is supplied by
   the host. Do not use CDNs, remote fonts, fetches, or any network URL.
+- Interaction-enabled compositions also load the host-copied local
+  `sequences-interactions.v1.js`; no other interaction runtime is allowed.
 - Mark each storyboard scene with `class="scene clip"`, a stable `id`,
   `data-scene`, `data-start`, `data-duration`, and `data-track-index`.
 - The paused timeline must own scene-window opacity so exactly the intended

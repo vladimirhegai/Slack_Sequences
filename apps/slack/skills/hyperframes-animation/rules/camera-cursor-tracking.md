@@ -9,6 +9,12 @@ metadata:
 
 Keeps a horizontally-growing element (e.g. a search bar with typing text, a long URL animating in) visible by switching between two camera modes.
 
+> **Pointer distinction in Slack Sequences:** this rule's inline caret is not a
+> free mouse pointer. For click/hover/drag demos, keep the pointer in
+> `data-camera-overlay`, move product content in `data-camera-world`, and bind
+> endpoints with `cursor-interaction-v1`. The camera may follow the measured
+> target; it must not carry the pointer with it.
+
 ## How It Works
 
 Separate **World Space** (the full target element with all content) from **Screen Space** (the viewport). Two phases:

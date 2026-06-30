@@ -629,6 +629,19 @@ export function readFrameMeta(projectDir: string): FrameMeta | null {
  * mood-board fallback and never interrupt video creation.
  */
 export async function buildJobFrame(args: BuildJobFrameArgs): Promise<BuildJobFrameResult> {
+  const existingFrame = loadJobFrame(args.projectDir);
+  const existingMeta = readFrameMeta(args.projectDir);
+  if (existingFrame && existingMeta) {
+    return {
+      frameMd: existingFrame,
+      presetId: existingMeta.presetId,
+      label: existingMeta.label,
+      thesis: existingMeta.thesis,
+      basis: existingMeta.basis,
+      exceptions: existingMeta.exceptions,
+      brandMatched: existingMeta.brandMatched,
+    };
+  }
   const evidence = args.evidence ?? "";
   const tokens = extractBrandTokens([args.brief, evidence].filter(Boolean).join("\n\n"));
   const captured = tokens.url ? await captureBrandFromUrl(tokens.url) : null;

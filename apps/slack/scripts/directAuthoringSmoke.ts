@@ -12,6 +12,31 @@ const dir = projectDirFor("direct-authoring-smoke");
 fs.rmSync(dir, { recursive: true, force: true });
 initializeProject(dir, { name: "Relay Direct", brandName: "Relay", seedScreenshot: true });
 
+const closeInteraction = {
+  version: 1 as const,
+  id: "close-cta-click",
+  sceneId: "close",
+  cursorId: "main-pointer",
+  targetPart: "primary-action",
+  action: "click" as const,
+  startSec: 10.2,
+  arriveSec: 10.72,
+  pressSec: 10.84,
+  releaseSec: 11,
+  holdUntilSec: 11.7,
+  from: "frame:bottom-right" as const,
+  path: "human" as const,
+  bend: -0.14,
+  ease: "power3.out",
+  aimX: 0.56,
+  aimY: 0.48,
+  offsetX: 3,
+  offsetY: -2,
+  hitInsetPx: 6,
+  feedback: "press-ripple" as const,
+  ripplePart: "primary-action-ripple",
+};
+
 const storyboard = [
   {
     id: "hook",
@@ -42,6 +67,14 @@ const storyboard = [
     blueprint: "cta-morph-press",
     rules: ["physics-press-reaction"],
     outgoingCut: "Hold on the Relay lockup",
+    spatialIntent: {
+      version: 1 as const,
+      focalPart: "primary-action",
+      composition: "Centered brand resolve with a single tactile action",
+      frameAnchor: "frame:center" as const,
+      relationships: ["primary action remains centered under the lockup"],
+    },
+    interactions: [closeInteraction],
   },
 ];
 
@@ -52,6 +85,7 @@ const html = `<!doctype html>
   <meta name="viewport" content="width=1920, height=1080">
   <title>Relay Direct</title>
   <script src="gsap.min.js"></script>
+  <script src="sequences-interactions.v1.js"></script>
   <style>
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #06080c; }
@@ -68,6 +102,10 @@ const html = `<!doctype html>
     #close { display: grid; place-items: center; text-align: center; }
     .lockup { font-size: 42px; font-weight: 800; letter-spacing: -.03em; }
     .cta { margin-top: 44px; padding: 30px 54px; border-radius: 999px; background: #59f1d2; color: #06100e; font-size: 58px; font-weight: 800; }
+    [data-camera-world], [data-camera-overlay] { position: absolute; inset: 0; }
+    #close [data-camera-world] { display: grid; place-items: center; }
+    #main-pointer { position: absolute; left: 0; top: 0; width: 44px; height: 44px; z-index: 20; pointer-events: none; }
+    #cta-ripple { position: absolute; left: 0; top: 0; width: 90px; height: 90px; border: 3px solid #59f1d2; border-radius: 50%; pointer-events: none; opacity: 0; }
   </style>
 </head>
 <body>
@@ -82,9 +120,18 @@ const html = `<!doctype html>
       <div class="window" id="dashboard-window" data-layout-important><img src="assets/dashboard.svg" alt=""></div>
     </section>
     <section id="close" class="scene clip" data-scene="close" data-start="9" data-duration="3" data-track-index="1">
-      <div data-layout-important data-layout-anchor="frame:center"><div class="lockup">RELAY</div><div class="cta" id="cta">Rollback in one click</div></div>
+      <div data-camera-world>
+        <div data-layout-important data-layout-anchor="frame:center"><div class="lockup">RELAY</div><div class="cta" id="cta" data-part="primary-action">Rollback in one click</div></div>
+      </div>
+      <div data-camera-overlay>
+        <svg id="main-pointer" data-cursor-id="main-pointer" data-cursor-hotspot-x="0.08" data-cursor-hotspot-y="0.06" viewBox="0 0 24 24"><path d="M2 2L20 10L11 13L7 21Z" fill="#f5fbff" stroke="#06100e" stroke-width="1.2"/></svg>
+        <div id="cta-ripple" data-part="primary-action-ripple"></div>
+      </div>
     </section>
   </main>
+  <script type="application/json" id="sequences-interactions">${
+    JSON.stringify({ version: 1, interactions: [closeInteraction] })
+  }</script>
   <script>
     window.__timelines = window.__timelines || {};
     const tl = gsap.timeline({ paused: true });
@@ -102,9 +149,9 @@ const html = `<!doctype html>
     tl.to("#dashboard-window", { scale: 1.045, x: -24, duration: 2.4, ease: "sine.inOut" }, 5.65);
     tl.fromTo("#close .lockup", { y: -30, opacity: 0 }, { y: 0, opacity: 1, duration: .5, ease: "power3.out" }, 9.2);
     tl.fromTo("#cta", { scale: .68, opacity: 0 }, { scale: 1, opacity: 1, duration: .72, ease: "back.out(1.8)" }, 9.7);
-    tl.to("#cta", { scale: .94, duration: .12, ease: "power1.in" }, 10.75);
-    tl.to("#cta", { scale: 1, duration: .34, ease: "back.out(2)" }, 10.87);
+    SequencesInteractions.compile(tl, document.getElementById("root"));
     window.__timelines["relay-direct"] = tl;
+    tl.seek(0);
   </script>
 </body>
 </html>`;

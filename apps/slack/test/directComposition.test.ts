@@ -645,7 +645,7 @@ describe("direct HyperFrames composition", () => {
     }).responseFormat?.json_schema?.name).toBe("sequences_composition_patches");
   });
 
-  it("uses a schema-compliant repair model for OpenRouter bounded patches by default", async () => {
+  it("keeps OpenRouter bounded patches on the primary DeepSeek model by default", async () => {
     const dir = projectDir();
     const invalid = draft();
     invalid.html = invalid.html.replace(
@@ -672,11 +672,11 @@ describe("direct HyperFrames composition", () => {
     expect(result.attempts).toBe(3);
     expect(complete).toHaveBeenCalledTimes(3);
     expect((complete.mock.calls[1]?.[1] as { model?: string }).model)
-      .toBe("openai/gpt-5-mini");
+      .toBeUndefined();
     expect((complete.mock.calls[2]?.[1] as { model?: string }).model)
-      .toBe("openai/gpt-5-mini");
+      .toBeUndefined();
     expect((complete.mock.calls[1]?.[1] as { thinkingMode?: string }).thinkingMode)
-      .toBe("minimal");
+      .toBe("none");
   });
 
   it("uses an explicitly configured repair model only for patch calls", async () => {
@@ -936,6 +936,16 @@ describe("direct HyperFrames composition", () => {
     });
     expect(fs.existsSync(path.join(dir, "composition", "STORYBOARD.md"))).toBe(true);
     expect(fs.existsSync(path.join(dir, "composition", "motion-plan.json"))).toBe(true);
+    expect(fs.existsSync(
+      path.join(dir, "composition", "sequences-interactions.v1.js"),
+    )).toBe(true);
+    expect(fs.existsSync(path.join(dir, "composition", "qa", "spatial.json"))).toBe(true);
+    expect(fs.existsSync(path.join(
+      dir,
+      "revisions",
+      "0002",
+      "sequences-interactions.v1.js",
+    ))).toBe(true);
     expect(fs.readFileSync(path.join(dir, "composition", "STORYBOARD.md"), "utf8"))
       .toContain("The trace arrives");
 

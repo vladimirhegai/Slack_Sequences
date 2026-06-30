@@ -9,6 +9,13 @@ metadata:
 
 Models a real click: a cursor approaches a button, lands, and both compress IN SYNC, then release together. Two distinct timing events (down-frame and up-frame) bound by spring forces. Distinct from [press-release-spring](press-release-spring.md) (which has no cursor — just a press happening); this rule is the COMBINED cursor + element behavior.
 
+> **Slack Sequences binding:** use this rule for physical vocabulary, not
+> endpoint coordinates. `cursor-interaction-v1` resolves the cursor hotspot,
+> target anchor, synchronized scale, and feedback through
+> `SequencesInteractions.compile`. Do not copy the legacy
+> `CURSOR_START_X/Y`/target-center example into a Sequences composition, and do
+> not add a second x/y tween to a runtime-owned cursor.
+
 ## How It Works
 
 A single `PRESS_INTENSITY` value drives both cursor and button together:

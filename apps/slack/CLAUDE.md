@@ -112,7 +112,11 @@ shown in the result and attached to the thread
 ([src/engine/frameDesign.ts](src/engine/frameDesign.ts) +
 [framePresets.ts](src/engine/framePresets.ts) /
 [brandTokens.ts](src/engine/brandTokens.ts) / [frameTools.ts](src/engine/frameTools.ts) /
-[brandCapture.ts](src/engine/brandCapture.ts)). Not built yet: Slack screenshot
+[brandCapture.ts](src/engine/brandCapture.ts)). Direct shots may also carry
+typed spatial/focal intent and semantic cursor interactions. A versioned local
+runtime resolves hotspot/target/ripple geometry under camera transforms;
+interaction-time browser QA is enforced and persisted with each revision.
+Not built yet: Slack screenshot
 ingestion, capability/registry sync + in-Slack audition, component sub-agents.
 
 ## Environment

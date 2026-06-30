@@ -161,7 +161,15 @@ assume data-start hides DOM by itself.
 data-layout-important, data-layout-anchor, data-layout-align, data-layout-attach,
 or data-layout-gap. Mark intentional transformed entrance/exit overflow with
 data-layout-allow-overflow and intentional decorative text layering with
-data-layout-allow-overlap; use data-layout-ignore only for pure decoration.`;
+data-layout-allow-overlap; use data-layout-ignore only for pure decoration.
+
+**Stable parts + cursor geometry:** bind important subjects with scene-scoped
+data-part names. Camera-driven product content belongs in data-camera-world;
+screen-space cursor/feedback belongs in a sibling data-camera-overlay. Declared
+interactions load local sequences-interactions.v1.js, use a data-cursor-id plus
+normalized cursor hotspot, and call SequencesInteractions.compile(tl, root)
+after authored target/camera tweens. Never guess cursor TARGET_X/TARGET_Y or
+position its ripple independently.`;
 
 /* -------------------------------------------- blueprint/rule indexes */
 

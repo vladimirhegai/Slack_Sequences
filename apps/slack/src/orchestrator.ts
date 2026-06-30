@@ -51,8 +51,11 @@ import {
   loadDirectComposition,
   renderDirectComposition,
   undoDirectComposition,
+  validateDirectComposition,
   type DirectCompositionDraft,
 } from "./engine/directComposition.ts";
+import { inspectDirectComposition } from "./engine/layoutInspector.ts";
+import { tryDirectInteractionRevision } from "./engine/directRevisionRouter.ts";
 
 /* ----------------------------------------------------------- provider choice */
 
@@ -735,21 +738,42 @@ export async function reviseVideo(options: ReviseVideoOptions): Promise<VideoRes
     const skills = retrieveHyperframesSkillContext("revise", options.instruction);
     // Reuse the create-time frame.md — brand direction is unchanged on revise.
     const frameMd = loadJobFrame(dir) ?? undefined;
-    const authored = await requestDirectComposition(provider, {
-      brief: `Product: ${current.manifest.title}\nRevise the existing launch composition.`,
-      projectDir: dir,
-      skills,
-      frameMd,
-      current: {
-        html: current.html,
-        storyboard: current.manifest.scenes,
-      },
-      revisionInstruction: options.instruction,
-    });
+    const currentDraft: DirectCompositionDraft = {
+      html: current.html,
+      storyboard: current.manifest.scenes,
+    };
+    const routed = await tryDirectInteractionRevision(
+      provider,
+      options.instruction,
+      currentDraft,
+    );
+    let draft: DirectCompositionDraft | undefined;
+    let revisionMode = "hyperframes-direct";
+    if (routed) {
+      const staticValidation = await validateDirectComposition(dir, routed);
+      const browserValidation = staticValidation.ok
+        ? await inspectDirectComposition(dir, routed, { captureGuide: false })
+        : undefined;
+      if (staticValidation.ok && browserValidation?.ok) {
+        draft = routed;
+        revisionMode = "hyperframes-interaction-patch";
+      }
+    }
+    if (!draft) {
+      const authored = await requestDirectComposition(provider, {
+        brief: `Product: ${current.manifest.title}\nRevise the existing launch composition.`,
+        projectDir: dir,
+        skills,
+        frameMd,
+        current: currentDraft,
+        revisionInstruction: options.instruction,
+      });
+      draft = authored.draft;
+    }
     const mutation = await applyDirectMutation(
       dir,
       current.manifest.title,
-      authored.draft,
+      draft,
       options.preferMcp,
       options.onProgress,
     );
@@ -770,7 +794,7 @@ export async function reviseVideo(options: ReviseVideoOptions): Promise<VideoRes
       skillsUsed: skills.skillNames,
       usedPreset: false,
       provider: providerId,
-      mode: "hyperframes-direct",
+      mode: revisionMode,
       ...frameInfo(dir),
     };
   }

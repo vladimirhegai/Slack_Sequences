@@ -4,6 +4,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   ProviderOutputTruncatedError,
@@ -18,6 +19,11 @@ import {
   type DirectScene,
 } from "./directComposition.ts";
 import { inspectDirectComposition } from "./layoutInspector.ts";
+import {
+  INTERACTION_RUNTIME_FILE,
+  parseInteractionIntents,
+  parseSpatialIntent,
+} from "./interactionContract.ts";
 
 const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DIRECTOR_PROMPT = fs.readFileSync(
@@ -37,7 +43,6 @@ const REPAIR_MAX_TOKENS = 4_096;
 const MAX_REPAIR_PATCHES = 16;
 const STORYBOARD_MAX_TOKENS = 4_096;
 const MAX_AUTHOR_SEGMENTS = 3;
-const DEFAULT_OPENROUTER_REPAIR_MODEL = "openai/gpt-5-mini";
 
 function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat"]> {
   const capabilityIds = loadCapabilityIndex().capabilities.map((capability) => capability.id);
@@ -73,11 +78,106 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
                 },
                 continuityAnchor: { type: "string" },
                 outgoingCut: { type: "string" },
+                spatialIntent: {
+                  type: "object",
+                  properties: {
+                    version: { type: "number", enum: [1] },
+                    focalPart: { type: "string" },
+                    composition: { type: "string" },
+                    frameAnchor: {
+                      type: "string",
+                      enum: [
+                        "frame:center",
+                        "frame:top-left",
+                        "frame:top-right",
+                        "frame:bottom-left",
+                        "frame:bottom-right",
+                        "frame:left-third",
+                        "frame:right-third",
+                      ],
+                    },
+                    opticalBias: {
+                      type: "object",
+                      properties: {
+                        x: { type: "number" },
+                        y: { type: "number" },
+                      },
+                      required: ["x", "y"],
+                      additionalProperties: false,
+                    },
+                    relationships: {
+                      type: "array",
+                      items: { type: "string" },
+                    },
+                  },
+                  required: ["version", "focalPart", "composition", "relationships"],
+                  additionalProperties: false,
+                },
+                interactions: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      version: { type: "number", enum: [1] },
+                      id: { type: "string" },
+                      sceneId: { type: "string" },
+                      cursorId: { type: "string" },
+                      targetPart: { type: "string" },
+                      action: {
+                        type: "string",
+                        enum: ["move", "hover", "click", "focus", "drag"],
+                      },
+                      startSec: { type: "number" },
+                      arriveSec: { type: "number" },
+                      pressSec: { type: "number" },
+                      releaseSec: { type: "number" },
+                      holdUntilSec: { type: "number" },
+                      from: { type: "string" },
+                      path: {
+                        type: "string",
+                        enum: ["direct", "arc", "human", "custom"],
+                      },
+                      bend: { type: "number" },
+                      ease: { type: "string" },
+                      aimX: { type: "number" },
+                      aimY: { type: "number" },
+                      offsetX: { type: "number" },
+                      offsetY: { type: "number" },
+                      hitInsetPx: { type: "number" },
+                      feedback: {
+                        type: "string",
+                        enum: ["none", "press", "ripple", "press-ripple", "custom"],
+                      },
+                      ripplePart: { type: "string" },
+                      dragTargetPart: { type: "string" },
+                      cursorScale: { type: "number" },
+                      targetScale: { type: "number" },
+                      waypoints: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            x: { type: "number" },
+                            y: { type: "number" },
+                          },
+                          required: ["x", "y"],
+                          additionalProperties: false,
+                        },
+                      },
+                    },
+                    required: [
+                      "version", "id", "sceneId", "cursorId", "targetPart", "action",
+                      "startSec", "arriveSec", "from", "path", "aimX", "aimY", "feedback",
+                    ],
+                    additionalProperties: false,
+                  },
+                },
               },
               required: [
                 "id", "title", "purpose", "incomingIdea", "foreground", "background",
                 "cameraIntent", "startSec", "durationSec", "blueprint", "rules",
                 "capabilityIds", "continuityAnchor", "outgoingCut",
+                "spatialIntent", "interactions",
               ],
               additionalProperties: false,
             },
@@ -140,15 +240,15 @@ function authorMaxTokens(): number {
  * names a concrete defect, a fast/cheap model can repair the existing source
  * without re-directing the film.
  */
-function repairModel(provider: AgentProvider): string | undefined {
+function repairModel(_provider: AgentProvider): string | undefined {
   const configured = process.env.SLACK_SEQUENCES_REPAIR_MODEL?.trim();
   if (configured) return configured;
-  // DeepSeek is excellent at the creative source pass, but repeatedly ignores
-  // exact-patch schemas in production. Use a small schema-compliant model for
-  // the much shorter mechanical repair calls. Operators can still override it.
-  return provider.id === "openrouter-api"
-    ? DEFAULT_OPENROUTER_REPAIR_MODEL
-    : undefined;
+  // Structural repair stays on the configured primary model. Cursor endpoints,
+  // ripple origins, safe target points, and other mechanical geometry are owned
+  // by deterministic helpers and should not consume a second provider call.
+  // Operators may explicitly opt into a different patch model, including
+  // OpenAI, but it is never the default.
+  return undefined;
 }
 
 function repairThinkingMode(model: string | undefined): CompleteOptions["thinkingMode"] {
@@ -449,6 +549,63 @@ function applyDeterministicSourceRepairs(
       );
     }
   }
+  const interactions = lockedStoryboard?.flatMap((scene) => scene.interactions ?? []) ?? [];
+  if (interactions.length) {
+    let repairedBindings = 0;
+    if (
+      !html.includes(`src="${INTERACTION_RUNTIME_FILE}"`) &&
+      !html.includes(`src='${INTERACTION_RUNTIME_FILE}'`)
+    ) {
+      html = html.replace(
+        /(<script\b[^>]*\bsrc\s*=\s*(["'])gsap\.min\.js\2[^>]*>\s*<\/script>)/i,
+        `$1\n<script src="${INTERACTION_RUNTIME_FILE}"></script>`,
+      );
+      repairedBindings += 1;
+    }
+    const payload = JSON.stringify({ version: 1, interactions });
+    const islandPattern =
+      /(<script\b[^>]*\bid\s*=\s*(["'])sequences-interactions\2[^>]*>)([\s\S]*?)(<\/script>)/i;
+    if (islandPattern.test(html)) {
+      const updated = html.replace(islandPattern, `$1${payload}$4`);
+      if (updated !== html) {
+        html = updated;
+        repairedBindings += 1;
+      }
+    } else {
+      const timelineScript = /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
+      if (timelineScript?.index !== undefined) {
+        html = html.slice(0, timelineScript.index) +
+          `<script type="application/json" id="sequences-interactions">${payload}</script>\n` +
+          html.slice(timelineScript.index);
+        repairedBindings += 1;
+      }
+    }
+    if (!/\bSequencesInteractions\.compile\s*\(/.test(html)) {
+      const timelineName = html.match(
+        /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*gsap\.timeline\s*\(/,
+      )?.[1];
+      if (timelineName) {
+        const registration = new RegExp(
+          `(window\\.__timelines\\s*\\[[^\\]]+\\]\\s*=\\s*${timelineName.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            "\\$&",
+          )}\\s*;)`,
+        );
+        if (registration.test(html)) {
+          html = html.replace(
+            registration,
+            `SequencesInteractions.compile(${timelineName}, document.querySelector("[data-composition-id]"));\n$1`,
+          );
+          repairedBindings += 1;
+        }
+      }
+    }
+    if (repairedBindings) {
+      process.stderr.write(
+        `[author] normalized ${repairedBindings} deterministic interaction binding(s)\n`,
+      );
+    }
+  }
   return html === draft.html ? draft : { ...draft, html };
 }
 
@@ -531,6 +688,14 @@ function parseStoryboard(raw: string): DirectScene[] {
     if (!id || !title || !purpose || !Number.isFinite(startSec) || !Number.isFinite(durationSec)) {
       throw new Error(`storyboard_json[${index}] is missing id/title/purpose/finite timing`);
     }
+    const spatial = scene.spatialIntent === undefined
+      ? { intent: undefined, errors: [] }
+      : parseSpatialIntent(scene.spatialIntent, `storyboard_json[${index}].spatialIntent`);
+    const interactions = scene.interactions === undefined
+      ? { interactions: [], errors: [] }
+      : parseInteractionIntents(scene.interactions, `storyboard_json[${index}].interactions`);
+    const contractErrors = [...spatial.errors, ...interactions.errors];
+    if (contractErrors.length) throw new Error(contractErrors.join("; "));
     return {
       id,
       title,
@@ -565,6 +730,8 @@ function parseStoryboard(raw: string): DirectScene[] {
           }
         : {}),
       ...(typeof scene.outgoingCut === "string" ? { outgoingCut: scene.outgoingCut } : {}),
+      ...(spatial.intent ? { spatialIntent: spatial.intent } : {}),
+      ...(interactions.interactions.length ? { interactions: interactions.interactions } : {}),
     };
   });
 }
@@ -604,6 +771,26 @@ export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {
     for (const capability of scene.capabilityIds ?? []) {
       if (!knownCapabilities.has(capability)) {
         errors.push(`shot "${scene.id}" cites unknown capability "${capability}"`);
+      }
+    }
+    if (scene.spatialIntent && !scene.spatialIntent.focalPart.trim()) {
+      errors.push(`shot "${scene.id}" needs a stable focalPart`);
+    }
+    for (const interaction of scene.interactions ?? []) {
+      if (interaction.sceneId !== scene.id) {
+        errors.push(`interaction "${interaction.id}" must use sceneId "${scene.id}"`);
+      }
+      const sceneEnd = scene.startSec + scene.durationSec;
+      const interactionEnd =
+        interaction.holdUntilSec ?? interaction.releaseSec ?? interaction.arriveSec;
+      if (interaction.startSec < scene.startSec || interactionEnd > sceneEnd) {
+        errors.push(`interaction "${interaction.id}" timing escapes shot "${scene.id}"`);
+      }
+      if (
+        interaction.pressSec !== undefined &&
+        interaction.pressSec - interaction.arriveSec < 0.08
+      ) {
+        errors.push(`interaction "${interaction.id}" needs at least 80ms settle before press`);
       }
     }
     expectedStart = scene.startSec + scene.durationSec;
@@ -665,6 +852,32 @@ export async function requestStoryboardPlan(
   },
 ): Promise<DirectScene[]> {
   const structuredOutput = supportsStructuredOutputs(provider);
+  const model = storyboardModel();
+  const cacheKey = createHash("sha256").update(JSON.stringify({
+    provider: provider.id,
+    model: model ?? null,
+    brief: args.brief,
+    frameMd: args.frameMd ?? null,
+    registryVersion: args.skills.registryVersion,
+    blueprints: args.skills.blueprintIds,
+  })).digest("hex");
+  const planningDir = path.join(args.projectDir, "planning");
+  const cacheFile = path.join(planningDir, "storyboard.json");
+  if (fs.existsSync(cacheFile)) {
+    try {
+      const cached = JSON.parse(fs.readFileSync(cacheFile, "utf8")) as {
+        version?: number;
+        key?: string;
+        storyboard?: DirectScene[];
+      };
+      if (cached.version === 1 && cached.key === cacheKey && cached.storyboard) {
+        const errors = validateStoryboardPlan(cached.storyboard);
+        if (!errors.length) return cached.storyboard;
+      }
+    } catch {
+      // A partial cache from an interrupted write is ignored and replaced.
+    }
+  }
   const prompt = [
     "SYSTEM: You are the cut-first editor for a short SaaS launch film.",
     "Design the storyboard before any HTML is written. Make 3-5 distinct shots",
@@ -675,6 +888,8 @@ export async function requestStoryboardPlan(
     "Registry capabilities are a reuse-first vocabulary, not a mandatory quota.",
     "Use only capability ids that appear in the supplied synced index.",
     "",
+    storyboardReference(args.skills.text),
+    "",
     "## Brief and trusted evidence",
     args.brief,
     "",
@@ -684,8 +899,6 @@ export async function requestStoryboardPlan(
     "",
     "## Available project-local assets",
     availableAssets(args.projectDir),
-    "",
-    storyboardReference(args.skills.text),
     "",
     "## Response contract",
     structuredOutput
@@ -699,11 +912,19 @@ export async function requestStoryboardPlan(
     '"startSec":0,"durationSec":4,"blueprint":"known blueprint or compose",',
     '"rules":["known rule"],"capabilityIds":["zero or more exact index ids"],',
     '"continuityAnchor":"what the eye tracks across this boundary",',
-    '"outgoingCut":"cut mechanism and destination"}.',
+    '"outgoingCut":"cut mechanism and destination",',
+    '"spatialIntent":{"version":1,"focalPart":"stable semantic part",',
+    '"composition":"free-text compositional character","relationships":["important relationship"]},',
+    '"interactions":[]}.',
+    "For a cursor shot, interactions contains semantic movement/click intents with",
+    "version,id,sceneId,cursorId,targetPart,action,startSec,arriveSec,from,path,",
+    "aimX,aimY,feedback and action-specific pressSec/releaseSec/holdUntilSec,",
+    "ripplePart or dragTargetPart. Times are absolute composition seconds.",
+    "The aim is normalized inside the real target. Choose the target, approach,",
+    "path, timing, ease, and optical offset creatively; never choose canvas x/y.",
   ].filter(Boolean).join("\n");
   let raw: string;
   try {
-    const model = storyboardModel();
     process.stderr.write(
       `[storyboard] primary contract · ${model ? `explicit model ${model}` : "provider primary model"} · ` +
         `reasoning off · max ${STORYBOARD_MAX_TOKENS} tokens\n`,
@@ -731,7 +952,16 @@ export async function requestStoryboardPlan(
     }
     throw error;
   }
-  return parseStoryboardResponse(raw);
+  const storyboard = parseStoryboardResponse(raw);
+  fs.mkdirSync(planningDir, { recursive: true });
+  const temporary = `${cacheFile}.${process.pid}.tmp`;
+  fs.writeFileSync(
+    temporary,
+    JSON.stringify({ version: 1, key: cacheKey, storyboard }, null, 2) + "\n",
+    "utf8",
+  );
+  fs.renameSync(temporary, cacheFile);
+  return storyboard;
 }
 
 interface CompositionPatch {
@@ -954,6 +1184,8 @@ function creationPrompt(args: {
     "SYSTEM:",
     DIRECTOR_PROMPT,
     "",
+    args.compact ? compactSkillText(args.skills.text) : args.skills.text,
+    "",
     "## Job brief and trusted evidence",
     args.brief,
     "",
@@ -970,7 +1202,6 @@ function creationPrompt(args: {
     args.compact
       ? "This is a compact recovery pass: finish the complete document well before the limit."
       : "",
-    args.compact ? compactSkillText(args.skills.text) : args.skills.text,
     lockedStoryboard,
     current,
     revision,
@@ -1069,7 +1300,9 @@ export async function requestDirectComposition(
         lastError = new Error(validationFeedback.join("; "));
         continue;
       }
-      const browserQa = await inspectDirectComposition(args.projectDir, draft);
+      const browserQa = await inspectDirectComposition(args.projectDir, draft, {
+        captureGuide: false,
+      });
       if (browserQa.ok) {
         lastBrowserValid = { draft, raw, attempts: attempt };
       }

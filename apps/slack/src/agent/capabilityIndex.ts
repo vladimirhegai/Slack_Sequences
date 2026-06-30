@@ -14,7 +14,8 @@ export type CapabilityKind =
   | "registry-component"
   | "blueprint"
   | "motion-rule"
-  | "frame-preset";
+  | "frame-preset"
+  | "sequences-recipe";
 
 export interface CapabilityRecord {
   id: string;
@@ -53,6 +54,41 @@ const INDEX_PATH = path.resolve(
 
 let cached: CapabilityIndex | undefined;
 
+const SEQUENCES_CAPABILITIES: CapabilityRecord[] = [{
+  id: "cursor-interaction-v1",
+  kind: "sequences-recipe",
+  title: "Deterministic Cursor Interaction",
+  description:
+    "Semantic cursor move, hover, click, focus, drag, synchronized press, and ripple geometry resolved from stable component parts at render time.",
+  tags: [
+    "cursor",
+    "click",
+    "hover",
+    "drag",
+    "ui",
+    "product demo",
+    "camera",
+    "geometry",
+  ],
+  reuseTier: "parameter-swap",
+  configurableVariables: [
+    "targetPart",
+    "action",
+    "timing",
+    "path",
+    "bend",
+    "ease",
+    "aim",
+    "feedback",
+  ],
+  dependencies: ["gsap", "sequences-interactions.v1.js"],
+  files: ["src/engine/templates/sequences-interactions.v1.js"],
+  provenance: {
+    source: "Sequences",
+    ref: "local:cursor-interaction-v1",
+  },
+}];
+
 export function loadCapabilityIndex(): CapabilityIndex {
   if (cached) return cached;
   if (!fs.existsSync(INDEX_PATH)) {
@@ -64,6 +100,10 @@ export function loadCapabilityIndex(): CapabilityIndex {
   if (value.version !== 1 || !Array.isArray(value.capabilities)) {
     throw new Error("capability-index.json has an unsupported shape");
   }
+  const existing = new Set(value.capabilities.map((capability) => capability.id));
+  value.capabilities.push(
+    ...SEQUENCES_CAPABILITIES.filter((capability) => !existing.has(capability.id)),
+  );
   cached = value;
   return value;
 }

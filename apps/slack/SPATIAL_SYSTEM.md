@@ -137,6 +137,25 @@ Underlines, marker strokes, and highlights should be pseudo-elements or children
 of the measured text wrapper. A separate decoration is acceptable only when it
 targets a stable word id with `data-layout-attach`.
 
+### Stable parts and interaction geometry
+
+Shots may now add a typed `SpatialIntentV1` with a dominant `focalPart`,
+free-form compositional character, optional frame anchor/optical bias, and the
+few relationships that carry the layout. The builder binds those names with
+scene-scoped `data-part` attributes. This is the same namespace future component
+contracts use for their `parts` and `anchors`.
+
+Pointer interaction is described by `InteractionIntentV1`, not canvas
+coordinates. The director still chooses the target, approach, path family,
+bend, ease, timing, normalized aim, optical offset, and feedback. A versioned
+local `sequences-interactions.v1.js` helper resolves the cursor hotspot, target,
+drag destination, synchronized press, and ripple from browser geometry at every
+seek.
+
+Product content that receives camera motion belongs in `data-camera-world`.
+The pointer and screen-space feedback are direct children of a sibling
+`data-camera-overlay`. Active actors may not use `data-layout-ignore`.
+
 ## 5. Debug guides
 
 The debug view should be injected for snapshots/agent inspection, not baked
@@ -187,6 +206,15 @@ Repair order is:
 2. wrap;
 3. use `fitTextFontSize`;
 4. shrink type only as a last resort.
+
+Declared interactions add hard semantic checks at movement midpoint, arrival,
+press, release, and result hold. The cursor hotspot must land inside the inset
+target and within 2px of the authored aim; the ripple must share that point.
+Targets must be visible and unoccluded, bindings unique, pointer events disabled,
+and cursor/camera spaces separated. QA re-seeks arrival after forward/backward
+jumps to reject history-dependent motion. Compact evidence is stored in
+`qa/spatial.json`; `qa/spatial-guide.png` draws safe areas, parts, targets, and
+cursors without affecting delivery frames.
 
 ## 7. Evolution with cut-based planning and component builders
 

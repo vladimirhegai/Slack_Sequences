@@ -188,5 +188,15 @@ the result. The director may tune recommendations within explicit brand,
 embedded-font, and contrast constraints. The chosen frame.md is shown in the
 result message and attached to the thread.
 
+Built: semantic spatial/cursor foundation. Storyboards may declare a stable
+focal part and typed move/hover/click/focus/drag intent. A project-local,
+versioned helper measures targets under camera transforms and keeps the pointer
+in screen space; browser QA samples every interaction beat, rejects misses and
+occlusion, verifies out-of-order seeks, and persists `motion-plan.json`,
+`qa/spatial.json`, and an internal guide image. Cursor timing/path/aim-only
+revisions route through DeepSeek Flash and deterministic validation; structural
+authoring/repair stays on the primary model. OpenAI is no longer an implicit
+repair tier.
+
 Not built yet: Slack screenshot ingestion, per-scene second-pass retrieval,
 capability/registry sync, Brag audio cues, or component sub-agents.

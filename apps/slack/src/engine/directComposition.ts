@@ -16,6 +16,15 @@ import {
 import type { RenderQuality } from "./render.ts";
 import { ensureFfmpegOnPath, findBrowserExecutable } from "./render.ts";
 import { inspectDirectComposition } from "./layoutInspector.ts";
+import {
+  INTERACTION_RUNTIME_FILE,
+  INTERACTION_RUNTIME_VERSION,
+  interactionRuntimeHash,
+  interactionRuntimeSource,
+  validateInteractionContract,
+  type InteractionIntentV1,
+  type SpatialIntentV1,
+} from "./interactionContract.ts";
 import { validateCompositionAgainstFrame } from "./frameValidation.ts";
 
 const DIRECT_DIR = "composition";
@@ -38,6 +47,8 @@ export interface DirectScene {
   rules?: string[];
   capabilityIds?: string[];
   outgoingCut?: string;
+  spatialIntent?: SpatialIntentV1;
+  interactions?: InteractionIntentV1[];
 }
 
 export interface DirectCompositionDraft {
@@ -66,6 +77,11 @@ export interface DirectCompositionManifest {
     browserValidated: true;
     layoutSamples: number;
     warningCount: number;
+    interactionCount?: number;
+    interactionRuntime?: {
+      version: number;
+      sha256: string;
+    };
   };
   scenes: DirectScene[];
 }
@@ -225,6 +241,8 @@ function normalizeStoryboard(
       ...(proposed?.rules?.length ? { rules: proposed.rules } : {}),
       ...(proposed?.capabilityIds?.length ? { capabilityIds: proposed.capabilityIds } : {}),
       ...(proposed?.outgoingCut ? { outgoingCut: proposed.outgoingCut } : {}),
+      ...(proposed?.spatialIntent ? { spatialIntent: proposed.spatialIntent } : {}),
+      ...(proposed?.interactions?.length ? { interactions: proposed.interactions } : {}),
     };
   });
   if (tags.length < 2) errors.push("composition needs at least two elements marked data-scene");
@@ -326,6 +344,14 @@ export async function validateDirectComposition(
       }
     }
   }
+  if (durationSec !== undefined) {
+    const interactionValidation = validateInteractionContract(
+      html,
+      normalized.scenes,
+      durationSec,
+    );
+    errors.push(...interactionValidation.errors);
+  }
 
   const rootDir = compositionDir(projectDir);
   for (const ref of referencedLocalPaths(html)) {
@@ -339,7 +365,11 @@ export async function validateDirectComposition(
       errors.push(`asset reference escapes the composition: ${ref}`);
       continue;
     }
-    if (ref !== "gsap.min.js" && !fs.existsSync(resolved)) {
+    if (
+      ref !== "gsap.min.js" &&
+      ref !== INTERACTION_RUNTIME_FILE &&
+      !fs.existsSync(resolved)
+    ) {
       const staged = path.resolve(projectDir, ref);
       if (!fs.existsSync(staged)) errors.push(`referenced local asset does not exist: ${ref}`);
     }
@@ -386,6 +416,11 @@ function copyRuntimeAndAssets(projectDir: string, targetDir: string): void {
     require.resolve("gsap/dist/gsap.min.js"),
     path.join(targetDir, "gsap.min.js"),
   );
+  fs.writeFileSync(
+    path.join(targetDir, INTERACTION_RUNTIME_FILE),
+    interactionRuntimeSource(),
+    "utf8",
+  );
   const sourceAssets = path.join(projectDir, "assets");
   if (fs.existsSync(sourceAssets)) {
     fs.cpSync(sourceAssets, path.join(targetDir, "assets"), { recursive: true });
@@ -420,6 +455,15 @@ function storyboardMarkdown(title: string, scenes: DirectScene[]): string {
         : "",
       scene.continuityAnchor ? `- Eye trace: ${scene.continuityAnchor}` : "",
       scene.outgoingCut ? `- Outgoing cut: ${scene.outgoingCut}` : "",
+      scene.spatialIntent
+        ? `- Focal part: ${scene.spatialIntent.focalPart} Â· ${scene.spatialIntent.composition}`
+        : "",
+      ...(scene.interactions ?? []).map((interaction) =>
+        `- Interaction: ${interaction.action} ${interaction.cursorId} â†’ ` +
+        `${interaction.targetPart} (${interaction.startSec.toFixed(2)}â€“${
+          (interaction.holdUntilSec ?? interaction.releaseSec ?? interaction.arriveSec).toFixed(2)
+        }s, ${interaction.path})`
+      ),
       "",
     ].filter(Boolean)),
   ].join("\n").trimEnd() + "\n";
@@ -447,6 +491,8 @@ export async function commitDirectComposition(
   }
 
   const normalized = normalizeStoryboard(draft.storyboard, draft.html);
+  const interactionEvidence = browserQa.interactions ?? [];
+  const interactionCount = new Set(interactionEvidence.map((entry) => entry.id)).size;
   const previous = hasDirectComposition(dir) ? loadDirectComposition(dir).manifest : undefined;
   const revision = (previous?.revision ?? 0) + 1;
   const manifest: DirectCompositionManifest = {
@@ -470,6 +516,15 @@ export async function commitDirectComposition(
       browserValidated: true,
       layoutSamples: browserQa.samples.length,
       warningCount: browserQa.warnings.length,
+      ...(interactionCount
+        ? {
+            interactionCount,
+            interactionRuntime: {
+              version: INTERACTION_RUNTIME_VERSION,
+              sha256: interactionRuntimeHash(),
+            },
+          }
+        : {}),
     },
     scenes: normalized.scenes,
   };
@@ -490,8 +545,34 @@ export async function commitDirectComposition(
       version: 1,
       compositionId: manifest.compositionId,
       durationSec: manifest.durationSec,
-      shots: normalized.scenes,
+      shots: normalized.scenes.map((scene) => ({
+        ...scene,
+        interactions: scene.interactions ?? [],
+      })),
+      interactions: normalized.scenes.flatMap((scene) => scene.interactions ?? []),
+      interactionRuntime: {
+        version: INTERACTION_RUNTIME_VERSION,
+        sha256: interactionRuntimeHash(),
+      },
     });
+    const qaDir = path.join(staged, "qa");
+    fs.mkdirSync(qaDir, { recursive: true });
+    writeJson(path.join(qaDir, "spatial.json"), {
+      version: 1,
+      samples: browserQa.samples,
+      issues: browserQa.issues,
+      interactions: interactionEvidence,
+      runtime: {
+        version: INTERACTION_RUNTIME_VERSION,
+        sha256: interactionRuntimeHash(),
+      },
+    });
+    if (browserQa.guidePngBase64) {
+      fs.writeFileSync(
+        path.join(qaDir, "spatial-guide.png"),
+        Buffer.from(browserQa.guidePngBase64, "base64"),
+      );
+    }
     copyRuntimeAndAssets(dir, staged);
     if (fs.existsSync(target)) {
       fs.renameSync(target, backup);
@@ -515,6 +596,11 @@ export async function commitDirectComposition(
   writeJson(path.join(checkpoint, MANIFEST_FILE), manifest);
   fs.copyFileSync(path.join(target, "STORYBOARD.md"), path.join(checkpoint, "STORYBOARD.md"));
   fs.copyFileSync(path.join(target, "motion-plan.json"), path.join(checkpoint, "motion-plan.json"));
+  fs.copyFileSync(
+    path.join(target, INTERACTION_RUNTIME_FILE),
+    path.join(checkpoint, INTERACTION_RUNTIME_FILE),
+  );
+  fs.cpSync(path.join(target, "qa"), path.join(checkpoint, "qa"), { recursive: true });
   return { manifest, validation };
 }
 
@@ -529,9 +615,18 @@ export function undoDirectComposition(projectDir: string): boolean {
   const target = compositionDir(projectDir);
   fs.copyFileSync(path.join(checkpoint, "index.html"), path.join(target, "index.html"));
   fs.copyFileSync(path.join(checkpoint, MANIFEST_FILE), path.join(target, MANIFEST_FILE));
-  for (const sidecar of ["STORYBOARD.md", "motion-plan.json"]) {
+  for (const sidecar of [
+    "STORYBOARD.md",
+    "motion-plan.json",
+    INTERACTION_RUNTIME_FILE,
+  ]) {
     const source = path.join(checkpoint, sidecar);
     if (fs.existsSync(source)) fs.copyFileSync(source, path.join(target, sidecar));
+  }
+  const qaSource = path.join(checkpoint, "qa");
+  if (fs.existsSync(qaSource)) {
+    fs.rmSync(path.join(target, "qa"), { recursive: true, force: true });
+    fs.cpSync(qaSource, path.join(target, "qa"), { recursive: true });
   }
   return true;
 }
@@ -561,6 +656,8 @@ export async function directLintText(projectDir: string): Promise<string> {
   const qa = current.manifest.qa;
   if (!qa?.browserValidated) return `${staticText} · browser QA: legacy revision`;
   return `${staticText} · browser QA: ${qa.layoutSamples} samples${
+    qa.interactionCount ? ` · ${qa.interactionCount} interaction(s)` : ""
+  }${
     qa.warningCount ? ` · ${qa.warningCount} warning(s)` : " clean"
   }`;
 }

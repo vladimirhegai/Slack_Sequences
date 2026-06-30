@@ -194,6 +194,12 @@ assistant prefill, allowing one logical document to span multiple bounded
 completions without spending a repair attempt. Compact regeneration remains the
 fallback for providers that cannot return a partial completion.
 
+Flash also routes revisions that touch only an existing interaction's timing,
+path, approach, normalized aim, or press scale. The result is locally validated
+and applied to both storyboard intent and the HTML JSON island; ambiguity or any
+structural request falls back to the primary model. OpenAI remains exclusive to
+Slack-hosted MCP retrieval unless an operator explicitly configures it.
+
 General, editable system prompts for both bots live in `apps/slack/prompts/`
 (plain `.md`, loaded at runtime). Advanced per-run prompt material — skill/RAG
 retrieval and deterministic project-specific context such as color, typography,
@@ -291,6 +297,11 @@ actions     type, click, select, open, advance, complete
 states      named deterministic visual states
 anchors     stable geometry points used by camera and cuts
 ```
+
+The first shared binding is implemented: storyboard `SpatialIntentV1` names a
+scene-scoped focal part and `InteractionIntentV1` addresses cursor targets by
+that stable `data-part`, never by guessed canvas coordinates. Today's direct
+HTML therefore uses the same names that later foundry components expose.
 
 The model proposes the source; a parser derives the contract. Model-written
 contract claims are never trusted. Components may animate internal state, but
@@ -445,6 +456,14 @@ intent. HyperFrames remains the box/pixel inspector; Sequences adds safe-area,
 declared anchor/alignment, attachment, group-gap, and optical-offset checks. The
 guides are not placement slots and do not constrain shot composition.
 
+Cursor-enabled shots additionally use the local, versioned
+`sequences-interactions.v1.js` recipe. Product/camera motion stays in
+`data-camera-world`; the pointer stays in `data-camera-overlay`; its hotspot,
+target aim, press, drag endpoint, and ripple resolve from live deterministic
+geometry. Interaction times are first-class QA samples, misses/occlusion/camera
+coupling are hard contract failures, and revision checkpoints retain the runtime
+hash plus compact spatial evidence.
+
 For the hackathon artifact, HyperFrames runtime packages remain exactly pinned
 at `0.6.86`; startup rejects version drift. Browser QA uses committed local
 audit scripts and never downloads or invokes a newer CLI during judge runs.
@@ -520,6 +539,11 @@ align/distribute, hierarchy-preserving text fit, responsive aspect variants
 (16:9 / 9:16 / 1:1), SVG viewbox normalization, device/window frame generation,
 chart-data import, cursor-path planning, seeded background generation, local-font
 matching, and raster-cost warnings for heavy shadow/blur.
+
+> **Implemented foundation:** semantic cursor path planning, measured
+> hotspot/target/ripple placement, interaction seek-order QA, guide snapshots,
+> and Flash-routed typed interaction revisions now sit on the existing spacing
+> inspector. They are recipe/contract utilities, not a second animation engine.
 
 **Component foundry (P1).** When no registry item fits, AI constructs the product
 surface — import screenshot/DOM/SVG/mock → segment parts → assign stable IDs and
