@@ -333,6 +333,38 @@ describe("direct HyperFrames composition", () => {
     expect(repaired.html).toContain("#8b5cf6");
   });
 
+  it("applies a repair patch whose search reflowed whitespace", () => {
+    const value = draft();
+    // The model reproduced the rule but with collapsed/extra spacing — the most
+    // common reason an exact indexOf patch misses. The substantive characters are
+    // identical, so a whitespace-flexible match still applies it uniquely.
+    const repaired = applyCompositionRepair(
+      patchResponse(
+        "h1 {   margin: 0;  font-size: 124px;\n   line-height: .95; }",
+        "h1 { margin: 0; font-size: 110px; line-height: .95; }",
+      ),
+      value,
+    );
+    expect(repaired.html).toContain("font-size: 110px");
+    expect(repaired.html).not.toContain("font-size: 124px");
+  });
+
+  it("still rejects a repair patch whose search is genuinely absent", () => {
+    expect(() =>
+      applyCompositionRepair(
+        patchResponse("this text appears nowhere in the document", "x"),
+        draft(),
+      ),
+    ).toThrow(/was not found/);
+  });
+
+  it("still rejects a repair patch whose search is ambiguous", () => {
+    // ".scene" whitespace-flex-matches multiple class selectors / attributes.
+    expect(() =>
+      applyCompositionRepair(patchResponse("scene", "shot"), draft()),
+    ).toThrow(/not unique/);
+  });
+
   it("reserves the completion budget for source instead of DeepSeek reasoning", async () => {
     const dir = projectDir();
     const complete = vi.fn().mockResolvedValueOnce(response(draft()));

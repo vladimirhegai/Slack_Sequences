@@ -413,6 +413,43 @@ interface CompositionPatch {
   replace: string;
 }
 
+type PatchLocation =
+  | { kind: "ok"; start: number; end: number }
+  | { kind: "missing" }
+  | { kind: "ambiguous" };
+
+/**
+ * Find where a repair patch applies. Exact byte match wins. When that misses —
+ * overwhelmingly because the model reflowed indentation or newlines in the search
+ * snippet while keeping the substantive characters right — fall back to a
+ * whitespace-flexible match: every run of whitespace in the search matches any run
+ * in the source. The exactness guarantees are preserved: a fallback only applies
+ * when it resolves to exactly one span, so we never silently edit the wrong place.
+ */
+function locatePatch(html: string, search: string): PatchLocation {
+  const first = html.indexOf(search);
+  if (first >= 0) {
+    return html.indexOf(search, first + search.length) >= 0
+      ? { kind: "ambiguous" }
+      : { kind: "ok", start: first, end: first + search.length };
+  }
+  const trimmed = search.trim();
+  if (!trimmed) return { kind: "missing" };
+  const pattern = trimmed
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\s+/g, "\\s+");
+  let matches: RegExpMatchArray[];
+  try {
+    matches = [...html.matchAll(new RegExp(pattern, "g"))];
+  } catch {
+    return { kind: "missing" };
+  }
+  if (matches.length === 0) return { kind: "missing" };
+  if (matches.length > 1) return { kind: "ambiguous" };
+  const match = matches[0]!;
+  return { kind: "ok", start: match.index!, end: match.index! + match[0].length };
+}
+
 export function applyCompositionRepair(
   raw: string,
   scratch: DirectCompositionDraft,
@@ -439,12 +476,14 @@ export function applyCompositionRepair(
     ) {
       throw new Error(`patches_json[${index}] must contain non-empty search and string replace`);
     }
-    const first = html.indexOf(patch.search);
-    if (first < 0) throw new Error(`patches_json[${index}].search was not found in scratch HTML`);
-    if (html.indexOf(patch.search, first + patch.search.length) >= 0) {
+    const located = locatePatch(html, patch.search);
+    if (located.kind === "missing") {
+      throw new Error(`patches_json[${index}].search was not found in scratch HTML`);
+    }
+    if (located.kind === "ambiguous") {
       throw new Error(`patches_json[${index}].search is not unique in scratch HTML`);
     }
-    html = html.slice(0, first) + patch.replace + html.slice(first + patch.search.length);
+    html = html.slice(0, located.start) + patch.replace + html.slice(located.end);
   }
   return { storyboard: scratch.storyboard, html };
 }
