@@ -341,11 +341,17 @@
       ? tolerance
       : Math.max(tolerance, parsePx(elementStyle.fontSize) * 0.2);
     const containerOverflow = overflowFor(textRect, containerRect, tolerance, verticalTolerance);
-    if (containerOverflow && !hasAllowOverflowFlag(element)) {
+    // Root/canvas overflow is reported separately below as informational. It is
+    // common and intentional during entrances/exits. A hard text-box failure is
+    // only meaningful when text escapes a real inner layout constraint.
+    if (container !== root && containerOverflow && !hasAllowOverflowFlag(element)) {
       const style = elementStyle;
       issues.push({
         code: "text_box_overflow",
-        severity: "error",
+        // Escaping a non-clipping layout/safe-area wrapper is geometry guidance,
+        // not lost content. Actual clipping stays hard via either this branch
+        // (when the container clips) or clippedTextIssue on the text box itself.
+        severity: containerClips ? "error" : "warning",
         time,
         selector,
         containerSelector: selectorFor(container),

@@ -725,12 +725,20 @@ export async function inspectDirectComposition(
       warnings: [...new Set(warnings)],
     };
   } catch (error) {
+    const runtimeDetail = runtime
+      .slice(0, 5)
+      .map((entry) => `${entry.level}: ${entry.text}`)
+      .join(" | ");
     return {
       ok: false,
       strictOk: false,
       samples: [],
       issues: [],
-      errors: [`browser validate/layout inspect failed: ${error instanceof Error ? error.message : String(error)}`],
+      errors: [
+        `browser validate/layout inspect failed: ${
+          error instanceof Error ? error.message : String(error)
+        }${runtimeDetail ? ` | ${runtimeDetail}` : ""}`,
+      ],
       warnings: [],
     };
   } finally {

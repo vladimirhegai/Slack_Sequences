@@ -21,6 +21,7 @@ import {
   validateDirectComposition,
   type DirectCompositionDraft,
 } from "../src/engine/directComposition.ts";
+import { inspectDirectComposition } from "../src/engine/layoutInspector.ts";
 import { initializeProject } from "../src/engine/projectTemplates.ts";
 import { buildJobFrame } from "../src/engine/frameDesign.ts";
 
@@ -370,6 +371,28 @@ describe("direct HyperFrames composition", () => {
     expect(plan).toEqual(storyboard());
   });
 
+  it("retries an upstream idle timeout inside the same source attempt", async () => {
+    const dir = projectDir();
+    const complete = vi.fn()
+      .mockRejectedValueOnce(new Error("OpenRouter completion failed: Upstream idle timeout exceeded"))
+      .mockResolvedValueOnce(response(draft()));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: draft().storyboard,
+    });
+    expect(result.attempts).toBe(1);
+    expect(complete).toHaveBeenCalledTimes(2);
+  });
+
   it("surfaces an actionable message when storyboard timeouts exhaust retries", async () => {
     const dir = projectDir();
     const timeout = Object.assign(new Error("The operation was aborted due to timeout"), {
@@ -658,6 +681,61 @@ describe("direct HyperFrames composition", () => {
       .toBe("operator/patch-model");
   });
 
+  it("falls back to the last browser-valid draft when final polish regresses", async () => {
+    const dir = projectDir();
+    const initial = draft();
+    const complete = vi.fn()
+      .mockResolvedValueOnce(response(initial))
+      .mockResolvedValueOnce(patchResponse(
+        "border: 1px solid #8b5cf6",
+        "border: 1px solid #22d3ee",
+      ))
+      .mockResolvedValueOnce(patchResponse(
+        "border: 1px solid #22d3ee",
+        "border: 1px solid #ef4444",
+      ));
+    vi.mocked(inspectDirectComposition)
+      .mockResolvedValueOnce({
+        ok: true,
+        strictOk: false,
+        samples: [0, 2, 4],
+        issues: [],
+        errors: [],
+        warnings: ["layout warning"],
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        strictOk: false,
+        samples: [],
+        issues: [],
+        errors: ["browser runtime failed"],
+        warnings: [],
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        strictOk: false,
+        samples: [],
+        issues: [],
+        errors: ["browser runtime still failed"],
+        warnings: [],
+      });
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: initial.storyboard,
+    });
+    expect(result.attempts).toBe(3);
+    expect(result.draft.html).toBe(initial.html);
+  });
+
   it("mechanically replaces unseeded randomness before spending a model repair", async () => {
     const dir = projectDir();
     const invalid = draft();
@@ -712,6 +790,58 @@ describe("direct HyperFrames composition", () => {
     expect(result.attempts).toBe(1);
     expect(complete).toHaveBeenCalledTimes(1);
     expect(result.draft.html).toContain('window.__timelines["relay-launch"] = tl;');
+  });
+
+  it("removes unavailable font-face sources before spending a model repair", async () => {
+    const dir = projectDir();
+    const withMissingFont = draft();
+    withMissingFont.html = withMissingFont.html.replace(
+      "<style>",
+      "<style>@font-face{font-family:Inter;src:url('assets/inter.woff2') format('woff2')}",
+    );
+    const complete = vi.fn().mockResolvedValueOnce(response(withMissingFont));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: draft().storyboard,
+    });
+    expect(result.attempts).toBe(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.draft.html).not.toContain("@font-face");
+  });
+
+  it("reconciles a mistyped scene id from its locked timing window", async () => {
+    const dir = projectDir();
+    const mistyped = draft();
+    mistyped.html = mistyped.html.replaceAll("payoff", "payof");
+    const complete = vi.fn().mockResolvedValueOnce(response(mistyped));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: draft().storyboard,
+    });
+    expect(result.attempts).toBe(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.draft.html).toContain('id="payoff"');
+    expect(result.draft.html).toContain('"#payoff-title"');
+    expect(result.draft.html).not.toContain('id="payof"');
+    expect(result.draft.html).not.toContain('"#payof-title"');
   });
 
   it("passes deterministic validation and checkpoints exact revisions", async () => {

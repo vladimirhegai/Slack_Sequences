@@ -292,6 +292,10 @@ function appendContinuation(prefix: string, continuation: string): string {
   return prefix + continuation;
 }
 
+function htmlAttr(tag: string, name: string): string | undefined {
+  return tag.match(new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`, "i"))?.[2];
+}
+
 /**
  * OpenRouter can return a useful partial artifact with finish_reason=length.
  * Continue that exact assistant prefix instead of discarding it and spending a
@@ -337,8 +341,66 @@ async function completeSourceWithContinuation(
 
 function applyDeterministicSourceRepairs(
   draft: DirectCompositionDraft,
+  projectDir: string,
+  lockedStoryboard?: DirectScene[],
 ): DirectCompositionDraft {
   let html = draft.html;
+  if (lockedStoryboard?.length) {
+    const authoredScenes = [...html.matchAll(
+      /<([a-z][\w:-]*)\b[^>]*\bdata-scene(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?[^>]*>/gis,
+    )].map((match) => {
+      const tag = match[0];
+      const id = htmlAttr(tag, "id") ?? "";
+      return {
+        id,
+        scene: htmlAttr(tag, "data-scene") ?? id,
+        startSec: Number(htmlAttr(tag, "data-start")),
+        durationSec: Number(htmlAttr(tag, "data-duration")),
+      };
+    });
+    let repairedIds = 0;
+    for (const expected of lockedStoryboard) {
+      const matches = authoredScenes.filter((scene) =>
+        Math.abs(scene.startSec - expected.startSec) <= 0.01 &&
+        Math.abs(scene.durationSec - expected.durationSec) <= 0.01
+      );
+      if (matches.length !== 1) continue;
+      const authored = matches[0]!;
+      for (const current of new Set([authored.id, authored.scene])) {
+        if (!current || current === expected.id) continue;
+        html = html.replaceAll(current, expected.id);
+        repairedIds += 1;
+      }
+    }
+    if (repairedIds) {
+      process.stderr.write(
+        `[author] reconciled ${repairedIds} scene id reference(s) to the locked storyboard\n`,
+      );
+    }
+  }
+  let removedFontFaces = 0;
+  html = html.replace(/@font-face\s*\{[^{}]*\}/gi, (block) => {
+    const refs = [...block.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)]
+      .map((match) => match[2]!.trim());
+    const invalid = refs.some((ref) => {
+      if (/^data:/i.test(ref)) {
+        return /^data:font\/[^;,]+;base64,\s*$/i.test(ref);
+      }
+      if (/^(?:https?:)?\/\//i.test(ref)) return true;
+      const clean = ref.split(/[?#]/, 1)[0]!;
+      const fromProject = path.resolve(projectDir, clean);
+      const fromComposition = path.resolve(projectDir, "composition", clean);
+      return !fs.existsSync(fromProject) && !fs.existsSync(fromComposition);
+    });
+    if (!invalid) return block;
+    removedFontFaces += 1;
+    return "";
+  });
+  if (removedFontFaces) {
+    process.stderr.write(
+      `[author] removed ${removedFontFaces} unavailable or empty @font-face declaration(s)\n`,
+    );
+  }
   if (/\bMath\.random\s*\(\s*\)/.test(html)) {
     const generator = [
       "let __sequencesSeed = 0x6d2b79f5;",
@@ -390,7 +452,7 @@ function isTransientProviderError(error: unknown): boolean {
   return (
     name === "TimeoutError" ||
     name === "AbortError" ||
-    /aborted due to timeout|operation was aborted|the operation timed out|fetch failed|network|terminated|socket hang ?up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|503|502|429/i.test(
+    /aborted due to timeout|operation was aborted|the operation timed out|idle timeout|upstream.*timeout|fetch failed|network|terminated|socket hang ?up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|503|502|429/i.test(
       message,
     )
   );
@@ -908,6 +970,7 @@ export async function requestDirectComposition(
   let scratch: DirectCompositionDraft | undefined;
   let compact = false;
   let lastError: unknown;
+  let lastBrowserValid: CompositionRunResult | undefined;
   const structuredPatches = supportsStructuredOutputs(provider);
   // One initial authoring pass plus at most two bounded repairs.
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -951,7 +1014,11 @@ export async function requestDirectComposition(
               html: extractIndexHtmlSource(raw),
             }
           : parseCompositionResponse(raw);
-      const draft = applyDeterministicSourceRepairs(parsedDraft);
+      const draft = applyDeterministicSourceRepairs(
+        parsedDraft,
+        args.projectDir,
+        args.lockedStoryboard,
+      );
       const validation = await validateDirectComposition(args.projectDir, draft);
       if (!validation.ok) {
         process.stderr.write(
@@ -975,6 +1042,9 @@ export async function requestDirectComposition(
         continue;
       }
       const browserQa = await inspectDirectComposition(args.projectDir, draft);
+      if (browserQa.ok) {
+        lastBrowserValid = { draft, raw, attempts: attempt };
+      }
       // Warnings receive a repair opportunity, but the final pass may preserve
       // an intentional aesthetic choice. Hard browser/layout errors never pass.
       if (
@@ -1014,6 +1084,13 @@ export async function requestDirectComposition(
       }
       lastError = error;
     }
+  }
+  if (lastBrowserValid) {
+    process.stderr.write(
+      `[author] final repair regressed; publishing browser-valid attempt ` +
+        `${lastBrowserValid.attempts}/3 instead\n`,
+    );
+    return { ...lastBrowserValid, attempts: 3 };
   }
   throw new Error(
     `direct HyperFrames authoring failed after two bounded repairs: ${

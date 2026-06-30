@@ -52,6 +52,36 @@ window.__timelines["layout-test"]=tl;
   };
 }
 
+function offCanvasTextDraft(): DirectCompositionDraft {
+  const draft = unsafeDraft();
+  draft.html = draft.html
+    .replace(
+      '<div class="panel" data-layout-important><h1>Too close</h1></div>',
+      '<span id="live-badge" style="position:absolute;left:850px;top:200px;font:700 24px Arial">LIVE</span>',
+    )
+    .replace(
+      '<div class="panel" data-layout-important><h1>Still close</h1></div>',
+      '<span style="position:absolute;left:850px;top:200px;font:700 24px Arial">DONE</span>',
+    );
+  return draft;
+}
+
+function clippedTextDraft(): DirectCompositionDraft {
+  const draft = unsafeDraft();
+  draft.html = draft.html
+    .replace(
+      '<div class="panel" data-layout-important><h1>Too close</h1></div>',
+      '<div style="position:absolute;left:100px;top:200px;width:80px;height:40px;overflow:hidden">' +
+        '<span id="clipped-copy" style="white-space:nowrap;font:700 24px Arial">ACTUALLY CLIPPED COPY</span></div>',
+    )
+    .replace(
+      '<div class="panel" data-layout-important><h1>Still close</h1></div>',
+      '<div style="position:absolute;left:100px;top:200px;width:80px;height:40px;overflow:hidden">' +
+        '<span style="white-space:nowrap;font:700 24px Arial">ACTUALLY CLIPPED COPY</span></div>',
+    );
+  return draft;
+}
+
 describe("direct layout inspector", () => {
   it("combines hero, cut, tween-boundary, and midpoint samples deterministically", () => {
     const times = buildDirectLayoutSampleTimes(unsafeDraft().storyboard, [0.5, 1, 3.5], 6);
@@ -70,6 +100,35 @@ describe("direct layout inspector", () => {
       expect(result.strictOk).toBe(false);
       expect(result.samples.length).toBeGreaterThan(4);
       expect(result.issues.some((issue) => issue.code === "important_safe_area")).toBe(true);
+    },
+    30_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "keeps genuinely clipped text as a hard browser failure",
+    async () => {
+      const result = await inspectDirectComposition(projectDir(), clippedTextDraft());
+      expect(result.ok).toBe(false);
+      expect(result.issues.some((issue) =>
+        issue.severity === "error" &&
+        (issue.code === "clipped_text" || issue.code === "text_box_overflow") &&
+        issue.selector === "#clipped-copy"
+      )).toBe(true);
+    },
+    30_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "reports canvas-edge text motion as info without inventing a hard text-box failure",
+    async () => {
+      const result = await inspectDirectComposition(projectDir(), offCanvasTextDraft());
+      expect(result.ok).toBe(true);
+      expect(result.issues.some((issue) =>
+        issue.code === "canvas_overflow" && issue.selector === "#live-badge"
+      )).toBe(true);
+      expect(result.issues.some((issue) =>
+        issue.code === "text_box_overflow" && issue.selector === "#live-badge"
+      )).toBe(false);
     },
     30_000,
   );
