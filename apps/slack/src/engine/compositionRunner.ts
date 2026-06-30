@@ -26,9 +26,31 @@ export interface CompositionRunResult {
   attempts: number;
 }
 
+/**
+ * Output-token budget for the authoring call. A full composition (storyboard +
+ * a complete index.html with rich scenes and GSAP) far exceeds the ~4096-token
+ * default that DeepSeek-style chat models apply when none is requested — without
+ * this the response truncates mid-document and the tag parse fails. Override with
+ * SEQUENCES_MAX_OUTPUT_TOKENS if the model supports (and a composition needs) more.
+ */
+function authorMaxTokens(): number {
+  const parsed = Number(process.env.SEQUENCES_MAX_OUTPUT_TOKENS);
+  return Number.isFinite(parsed) && parsed >= 4096 ? Math.floor(parsed) : 16_384;
+}
+
 function tagged(raw: string, name: string): string {
   const match = raw.match(new RegExp(`<${name}>\\s*([\\s\\S]*?)\\s*</${name}>`, "i"));
-  if (!match?.[1]) throw new Error(`author response is missing <${name}>`);
+  if (!match?.[1]) {
+    const hasOpen = new RegExp(`<${name}>`, "i").test(raw);
+    const hasClose = new RegExp(`</${name}>`, "i").test(raw);
+    if (hasOpen && !hasClose) {
+      throw new Error(
+        `author response truncated: <${name}> opened but never closed — the model likely hit its ` +
+          `output token limit. Raise SEQUENCES_MAX_OUTPUT_TOKENS or request a more compact composition.`,
+      );
+    }
+    throw new Error(`author response is missing <${name}>`);
+  }
   return match[1].trim().replace(/^```(?:html|json)?\s*/i, "").replace(/\s*```$/, "");
 }
 
@@ -162,6 +184,10 @@ export async function requestDirectComposition(
     const prompt = creationPrompt({ ...args, validationFeedback });
     const raw = await provider.complete(prompt, {
       timeoutMs: 360_000,
+      // Enough room for a complete composition; bounded reasoning keeps a
+      // "-pro" reasoning model from spending minutes thinking before it answers.
+      maxTokens: authorMaxTokens(),
+      thinkingMode: "medium",
       ...args.options,
     });
     try {

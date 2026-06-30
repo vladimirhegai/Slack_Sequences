@@ -43,6 +43,13 @@ export interface CompleteOptions {
    * low|medium|high|xhigh|max — each provider clamps to its nearest valid level.
    */
   thinkingMode?: "auto" | "enabled" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  /**
+   * Maximum output (completion) tokens for api providers. When omitted the
+   * provider/model default applies — which for DeepSeek-style chat models is a
+   * small 4096-token cap that silently truncates a long structured response.
+   * Set this for any task that must emit a large, complete artifact.
+   */
+  maxTokens?: number;
   timeoutMs?: number;
   cacheHint?: string;
   /** Cancels an in-flight API request or local CLI subprocess. */
@@ -166,6 +173,22 @@ function deepSeekReasoningEffort(options: CompleteOptions): "low" | "medium" | "
 
 function openModelThinkingEnabled(options: CompleteOptions): boolean {
   return effortOverride(options) === "enabled";
+}
+
+/**
+ * Apply a caller-requested output-token cap to an OpenAI-/Anthropic-compatible
+ * request body. A no-op when the caller does not set one, so existing callers
+ * keep the provider/model default. `field` differs by API dialect.
+ */
+function withMaxTokens(
+  body: Record<string, unknown>,
+  options: CompleteOptions,
+  field: "max_tokens" | "max_completion_tokens" = "max_tokens",
+): Record<string, unknown> {
+  if (options.maxTokens && Number.isFinite(options.maxTokens) && options.maxTokens > 0) {
+    body[field] = Math.floor(options.maxTokens);
+  }
+  return body;
 }
 
 function openAiUserContent(prompt: string, options: CompleteOptions): unknown {
@@ -872,6 +895,7 @@ export const openaiApi: AgentProvider = {
     if (!key) throw new Error("no OpenAI API key (set OPENAI_API_KEY or pass one per request)");
     const model = modelOverride(options) ?? process.env.SEQUENCES_OPENAI_MODEL ?? "gpt-5.1-mini";
     const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
+    withMaxTokens(body, options, "max_completion_tokens");
     const effort = openAiReasoningEffort(options);
     if (effort) body.reasoning_effort = effort;
     const json = (await postJson(
@@ -890,6 +914,7 @@ export const openaiApi: AgentProvider = {
     if (!key) throw new Error("no OpenAI API key (set OPENAI_API_KEY or pass one per request)");
     const model = modelOverride(options) ?? process.env.SEQUENCES_OPENAI_MODEL ?? "gpt-5.1-mini";
     const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
+    withMaxTokens(body, options, "max_completion_tokens");
     const effort = openAiReasoningEffort(options);
     if (effort) body.reasoning_effort = effort;
     const text = await streamOpenAiCompatibleChat(
@@ -928,6 +953,7 @@ export const openrouterApi: AgentProvider = {
     if (!key) throw new Error("no OpenRouter API key (set OPENROUTER_API_KEY or pass one per request)");
     const model = modelOverride(options) ?? process.env.SEQUENCES_OPENROUTER_MODEL ?? "deepseek/deepseek-v4-pro";
     const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
+    withMaxTokens(body, options);
     const effort = openAiReasoningEffort(options);
     if (effort) body.reasoning = { effort };
     const json = (await postJson(
@@ -946,6 +972,7 @@ export const openrouterApi: AgentProvider = {
     if (!key) throw new Error("no OpenRouter API key (set OPENROUTER_API_KEY or pass one per request)");
     const model = modelOverride(options) ?? process.env.SEQUENCES_OPENROUTER_MODEL ?? "deepseek/deepseek-v4-pro";
     const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
+    withMaxTokens(body, options);
     const effort = openAiReasoningEffort(options);
     if (effort) body.reasoning = { effort };
     const text = await streamOpenAiCompatibleChat(
@@ -981,6 +1008,7 @@ export const deepseekApi: AgentProvider = {
       messages: [{ role: "user", content: openAiUserContent(prompt, options) }],
       stream: false,
     };
+    withMaxTokens(body, options);
     const effort = deepSeekReasoningEffort(options);
     if (effort) {
       body.thinking = { type: "enabled" };
@@ -1002,6 +1030,7 @@ export const deepseekApi: AgentProvider = {
     if (!key) throw new Error("no DeepSeek API key (add one in Forge settings or set DEEPSEEK_API_KEY)");
     const model = modelOverride(options) ?? process.env.SEQUENCES_DEEPSEEK_MODEL ?? "deepseek-v4-flash";
     const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
+    withMaxTokens(body, options);
     const effort = deepSeekReasoningEffort(options);
     if (effort) {
       body.thinking = { type: "enabled" };

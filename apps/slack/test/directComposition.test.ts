@@ -117,6 +117,37 @@ describe("direct HyperFrames composition", () => {
     expect(parseCompositionResponse(response(value))).toEqual(value);
   });
 
+  it("reports a truncated response as a token-limit problem, not a missing tag", () => {
+    const value = draft();
+    // The model opened the first tag but ran out of output budget before closing it.
+    const truncated = `<storyboard_json>${JSON.stringify(value.storyboard)}`;
+    expect(() => parseCompositionResponse(truncated)).toThrow(/truncated/i);
+    expect(() => parseCompositionResponse(truncated)).toThrow(/token limit/i);
+  });
+
+  it("still reports a genuinely absent tag as missing", () => {
+    expect(() => parseCompositionResponse("no tags here at all")).toThrow(/missing <storyboard_json>/);
+  });
+
+  it("requests an adequate output-token budget so the composition cannot truncate", async () => {
+    const dir = projectDir();
+    const complete = vi.fn().mockResolvedValueOnce(response(draft()));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: { skillNames: [], blueprintIds: [], ruleIds: [], text: "" },
+    });
+    const options = complete.mock.calls[0]?.[1] as { maxTokens?: number } | undefined;
+    expect(options?.maxTokens).toBeGreaterThanOrEqual(16_384);
+  });
+
   it("allows exactly one model repair after deterministic validation feedback", async () => {
     const dir = projectDir();
     const invalid = draft();

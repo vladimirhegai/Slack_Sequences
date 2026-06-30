@@ -145,6 +145,19 @@ function tokensSummary(tokens: BrandTokens, captured: CapturedBrand | null): str
   ].join("\n");
 }
 
+/**
+ * Light-task model for the bounded art-direction decision. This is a small JSON
+ * choice, not the heavy composition authoring, so route it to the cheap flash
+ * tier on the OpenRouter gateway instead of the expensive "-pro" model. Override
+ * (or enable for other providers) with SLACK_SEQUENCES_LIGHT_MODEL. Returns
+ * undefined for providers where a DeepSeek model id would be invalid.
+ */
+function lightModel(provider: AgentProvider): string | undefined {
+  const env = process.env.SLACK_SEQUENCES_LIGHT_MODEL?.trim();
+  if (env) return env;
+  return provider.id === "openrouter-api" ? "deepseek/deepseek-v4-flash" : undefined;
+}
+
 function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
   return typeof value === "string" && allowed.includes(value as T) ? value as T : undefined;
 }
@@ -234,6 +247,7 @@ async function chooseFrame(
     const raw = await provider.complete(prompt, {
       timeoutMs: 60_000,
       thinkingMode: "minimal",
+      model: lightModel(provider),
       ...options,
     });
     const match = raw.match(/\{[\s\S]*\}/);
