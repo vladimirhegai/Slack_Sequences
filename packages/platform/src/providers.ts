@@ -39,10 +39,11 @@ export interface CompleteOptions {
   model?: string;
   /**
    * Per-request thinking/effort override. "auto" keeps the provider default.
-   * Codex accepts minimal|low|medium|high|xhigh; Claude Code accepts
-   * low|medium|high|xhigh|max — each provider clamps to its nearest valid level.
+   * "none" explicitly disables optional API reasoning. Codex accepts
+   * minimal|low|medium|high|xhigh; Claude Code accepts low|medium|high|xhigh|max
+   * — each provider clamps to its nearest valid level.
    */
-  thinkingMode?: "auto" | "enabled" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  thinkingMode?: "auto" | "none" | "enabled" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   /**
    * Maximum output (completion) tokens for api providers. When omitted the
    * provider/model default applies — which for DeepSeek-style chat models is a
@@ -110,6 +111,22 @@ export interface ProviderInfo {
   detail: string;
 }
 
+/** The provider returned partial text because its completion budget was exhausted. */
+export class ProviderOutputTruncatedError extends Error {
+  readonly finishReason = "length";
+  readonly completionTokens?: number;
+
+  constructor(provider: string, completionTokens?: number) {
+    super(
+      `${provider} truncated the completion at its output-token limit${
+        completionTokens ? ` after ${completionTokens} tokens` : ""
+      }`,
+    );
+    this.name = "ProviderOutputTruncatedError";
+    this.completionTokens = completionTokens;
+  }
+}
+
 const DEFAULT_TIMEOUT_MS = 240_000;
 const ANTIGRAVITY_DIRECT_PROMPT_MAX_CHARS = 18_000;
 
@@ -161,14 +178,22 @@ function cliErrorDetail(stderr: string, stdout: string): string {
 
 function openAiReasoningEffort(options: CompleteOptions): "low" | "medium" | "high" | undefined {
   const effort = effortOverride(options);
-  if (!effort) return undefined;
+  if (!effort || effort === "none") return undefined;
   return effort === "low" || effort === "medium" ? effort : "high";
 }
 
 function deepSeekReasoningEffort(options: CompleteOptions): "low" | "medium" | "high" | undefined {
   const effort = effortOverride(options);
-  if (!effort || effort === "minimal") return undefined;
+  if (!effort || effort === "none" || effort === "minimal") return undefined;
   return effort === "low" || effort === "medium" ? effort : "high";
+}
+
+function openRouterReasoning(options: CompleteOptions): Record<string, unknown> | undefined {
+  const effort = effortOverride(options);
+  if (!effort) return undefined;
+  if (effort === "none") return { enabled: false };
+  if (effort === "enabled") return { enabled: true };
+  return { effort: effort === "max" ? "xhigh" : effort };
 }
 
 function openModelThinkingEnabled(options: CompleteOptions): boolean {
@@ -189,6 +214,36 @@ function withMaxTokens(
     body[field] = Math.floor(options.maxTokens);
   }
   return body;
+}
+
+interface OpenAiCompatibleCompletion {
+  choices?: Array<{
+    finish_reason?: string | null;
+    native_finish_reason?: string | null;
+    message?: { content?: string };
+    error?: { message?: string; code?: string | number };
+  }>;
+  usage?: { completion_tokens?: number };
+  error?: { message?: string; code?: string | number };
+}
+
+function completionText(
+  json: OpenAiCompatibleCompletion,
+  provider: string,
+): string {
+  const choice = json.choices?.[0];
+  if (choice?.finish_reason === "length") {
+    throw new ProviderOutputTruncatedError(provider, json.usage?.completion_tokens);
+  }
+  if (json.error || choice?.finish_reason === "error" || choice?.error) {
+    const error = choice?.error ?? json.error;
+    throw new Error(
+      `${provider} completion failed: ${error?.message ?? error?.code ?? choice?.native_finish_reason ?? "provider error"}`,
+    );
+  }
+  const text = choice?.message?.content?.trim();
+  if (!text) throw new Error(`${provider} returned an empty completion`);
+  return text;
 }
 
 function openAiUserContent(prompt: string, options: CompleteOptions): unknown {
@@ -515,7 +570,7 @@ export function claudeBaseArgs(options: CompleteOptions): string[] {
   const model = modelOverride(options);
   const effort = effortOverride(options);
   // Claude Code --effort is low|medium|high|xhigh|max — no "minimal".
-  const claudeEffort = effort === "minimal" ? "low" : effort;
+  const claudeEffort = effort === "none" ? undefined : effort === "minimal" ? "low" : effort;
   if (model) args.push("--model", model);
   if (claudeEffort) args.push("--effort", claudeEffort);
   return args;
@@ -767,6 +822,7 @@ async function streamOpenAiCompatibleChat(
   let buffer = "";
   let text = "";
   let streamError = "";
+  let streamTruncated = false;
   const consumeLine = (line: string): void => {
     const trimmed = line.trim();
     if (!trimmed.startsWith("data:")) return;
@@ -777,6 +833,7 @@ async function streamOpenAiCompatibleChat(
       choices?: Array<{
         delta?: { content?: string; reasoning_content?: string; reasoning?: string };
         message?: { content?: string };
+        finish_reason?: string | null;
       }>;
     };
     try {
@@ -786,6 +843,10 @@ async function streamOpenAiCompatibleChat(
     }
     if (json.error) {
       streamError = json.error.message || json.error.code || json.error.type || "provider stream error";
+      return;
+    }
+    if (json.choices?.[0]?.finish_reason === "length") {
+      streamTruncated = true;
       return;
     }
     // DeepSeek-style reasoning surfaces on delta.reasoning_content (or .reasoning).
@@ -808,6 +869,7 @@ async function streamOpenAiCompatibleChat(
   }
   buffer += decoder.decode();
   for (const line of buffer.split(/\r?\n/)) consumeLine(line);
+  if (streamTruncated) throw new ProviderOutputTruncatedError(new URL(url).hostname);
   if (streamError) throw new Error(`${url} stream failed: ${streamError}`);
   return text.trim();
 }
@@ -904,10 +966,8 @@ export const openaiApi: AgentProvider = {
       body,
       options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       options.signal,
-    )) as { choices?: Array<{ message?: { content?: string } }> };
-    const text = json.choices?.[0]?.message?.content?.trim();
-    if (!text) throw new Error("OpenAI returned an empty completion");
-    return text;
+    )) as OpenAiCompatibleCompletion;
+    return completionText(json, "OpenAI");
   },
   async streamComplete(prompt, options = {}, onDelta, onThinking) {
     const key = options.apiKey || process.env.OPENAI_API_KEY;
@@ -954,18 +1014,16 @@ export const openrouterApi: AgentProvider = {
     const model = modelOverride(options) ?? process.env.SEQUENCES_OPENROUTER_MODEL ?? "deepseek/deepseek-v4-pro";
     const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
     withMaxTokens(body, options);
-    const effort = openAiReasoningEffort(options);
-    if (effort) body.reasoning = { effort };
+    const reasoning = openRouterReasoning(options);
+    if (reasoning) body.reasoning = reasoning;
     const json = (await postJson(
       "https://openrouter.ai/api/v1/chat/completions",
       { authorization: `Bearer ${key}`, "x-title": "Sequences for Slack" },
       body,
       options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       options.signal,
-    )) as { choices?: Array<{ message?: { content?: string } }> };
-    const text = json.choices?.[0]?.message?.content?.trim();
-    if (!text) throw new Error("OpenRouter returned an empty completion");
-    return text;
+    )) as OpenAiCompatibleCompletion;
+    return completionText(json, "OpenRouter");
   },
   async streamComplete(prompt, options = {}, onDelta, onThinking) {
     const key = options.apiKey || process.env.OPENROUTER_API_KEY;
@@ -973,8 +1031,8 @@ export const openrouterApi: AgentProvider = {
     const model = modelOverride(options) ?? process.env.SEQUENCES_OPENROUTER_MODEL ?? "deepseek/deepseek-v4-pro";
     const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
     withMaxTokens(body, options);
-    const effort = openAiReasoningEffort(options);
-    if (effort) body.reasoning = { effort };
+    const reasoning = openRouterReasoning(options);
+    if (reasoning) body.reasoning = reasoning;
     const text = await streamOpenAiCompatibleChat(
       "https://openrouter.ai/api/v1/chat/completions",
       { authorization: `Bearer ${key}`, "x-title": "Sequences for Slack" },
@@ -1020,10 +1078,8 @@ export const deepseekApi: AgentProvider = {
       body,
       options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       options.signal,
-    )) as { choices?: Array<{ message?: { content?: string } }> };
-    const text = json.choices?.[0]?.message?.content?.trim();
-    if (!text) throw new Error("DeepSeek returned an empty completion");
-    return text;
+    )) as OpenAiCompatibleCompletion;
+    return completionText(json, "DeepSeek");
   },
   async streamComplete(prompt, options = {}, onDelta, onThinking) {
     const key = options.apiKey || process.env.DEEPSEEK_API_KEY;
@@ -1129,10 +1185,10 @@ export const anthropicApi: AgentProvider = {
     const effort = effortOverride(options);
     const body: Record<string, unknown> = {
       model,
-      max_tokens: 4096,
+      max_tokens: options.maxTokens ?? 4096,
       messages: [{ role: "user", content: anthropicUserContent(prompt, options) }],
     };
-    if (effort) {
+    if (effort && effort !== "none") {
       body.thinking = { type: "adaptive" };
       body.effort = effort;
     }

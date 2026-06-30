@@ -76,13 +76,13 @@ const COMPOSITION_SKELETON = `## Minimal composition skeleton
     <style>
       body { margin: 0; background: #0b0f14; color: white; font-family: Montserrat, sans-serif; }
       #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
-      .scene.clip { position: absolute; inset: 0; }
+      .scene.clip { position: absolute; inset: 0; opacity: 0; }
     </style>
   </head>
   <body>
     <div id="root" data-composition-id="launch" data-width="1920" data-height="1080" data-duration="15">
       <section id="hook" class="scene clip" data-scene="hook" data-start="0" data-duration="4" data-track-index="1">
-        <!-- scene content -->
+        <div data-layout-important data-layout-anchor="frame:left-third">Scene content</div>
       </section>
       <section id="feature" class="scene clip" data-scene="feature" data-start="4" data-duration="5" data-track-index="1">
         <!-- scene content -->
@@ -94,7 +94,10 @@ const COMPOSITION_SKELETON = `## Minimal composition skeleton
     <script>
       window.__timelines = window.__timelines || {};
       const tl = gsap.timeline({ paused: true });
-      // all tweens here...
+      tl.set("#hook", { opacity: 1 }, 0).set("#hook", { opacity: 0 }, 3.99);
+      tl.set("#feature", { opacity: 1 }, 4).set("#feature", { opacity: 0 }, 8.99);
+      tl.set("#cta", { opacity: 1 }, 9).set("#cta", { opacity: 0 }, 15);
+      // Add scene motion between those visibility boundaries.
       window.__timelines["launch"] = tl;
     </script>
   </body>
@@ -147,7 +150,15 @@ const DATA_ATTRIBUTES_COMPACT = `## Data attributes
 **Clips (scenes):** Must have class="clip" for visibility gating. Must be DIRECT children of root.
 - id (stable DOM id), data-start (seconds), data-duration (seconds), data-track-index (timeline track, same-track must not overlap), data-scene (scene identifier).
 
-**Visibility:** clip shows while start ≤ t ≤ start + duration. Final frame holds the animation's resolved end state.`;
+**Visibility:** in direct standalone authoring, the paused GSAP timeline must set
+each scene wrapper's opacity to 1 at data-start and back to 0 at the end. Do not
+assume data-start hides DOM by itself.
+
+**Spatial intent:** every scene needs at least one load-bearing declaration:
+data-layout-important, data-layout-anchor, data-layout-align, data-layout-attach,
+or data-layout-gap. Mark intentional transformed entrance/exit overflow with
+data-layout-allow-overflow and intentional decorative text layering with
+data-layout-allow-overlap; use data-layout-ignore only for pure decoration.`;
 
 /* -------------------------------------------- blueprint/rule indexes */
 
@@ -274,7 +285,7 @@ function readRecipe(type: "blueprints" | "rules", id: string, budget: number): s
 export function retrieveHyperframesSkillContext(
   intent: SkillIntent,
   query: string,
-  maxChars = intent === "create" ? 45_000 : 22_000,
+  maxChars = intent === "create" ? 28_000 : 16_000,
 ): RetrievedSkillContext {
   const blueprintIds = selectedBlueprints(intent, query);
   const ruleIds = selectedRules(blueprintIds, intent, query);

@@ -25,6 +25,7 @@ describe("HyperFrames skill retrieval", () => {
     expect(result.skillNames).toContain("hyperframes-core");
     expect(result.skillNames).toContain("hyperframes-animation");
     expect(result.skillNames).toContain("hyperframes-creative");
+    expect(result.text.length).toBeLessThanOrEqual(30_000);
     expect(result.blueprintIds).toEqual(expect.arrayContaining([
       "kinetic-type-beats",
       "dataviz-countup",

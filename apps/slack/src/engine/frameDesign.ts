@@ -246,7 +246,10 @@ async function chooseFrame(
   try {
     const raw = await provider.complete(prompt, {
       timeoutMs: 60_000,
-      thinkingMode: "minimal",
+      // This is a bounded JSON choice with deterministic fallback. DeepSeek V4
+      // only advertises high/xhigh reasoning, so "minimal" is promoted to high
+      // by OpenRouter and makes this tiny call needlessly slow.
+      thinkingMode: "none",
       model: lightModel(provider),
       ...options,
     });

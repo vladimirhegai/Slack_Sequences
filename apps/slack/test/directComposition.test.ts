@@ -2,8 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentProvider } from "@sequences/platform/providers";
 import {
+  ProviderOutputTruncatedError,
+  type AgentProvider,
+} from "@sequences/platform/providers";
+import {
+  applyCompositionRepair,
   parseCompositionResponse,
   requestDirectComposition,
 } from "../src/engine/compositionRunner.ts";
@@ -111,6 +115,10 @@ function response(value: DirectCompositionDraft): string {
 <index_html>${value.html}</index_html>`;
 }
 
+function patchResponse(search: string, replace: string): string {
+  return `<patches_json>${JSON.stringify([{ search, replace }])}</patches_json>`;
+}
+
 describe("direct HyperFrames composition", () => {
   it("parses the bounded author response contract", () => {
     const value = draft();
@@ -129,11 +137,22 @@ describe("direct HyperFrames composition", () => {
     expect(() => parseCompositionResponse("no tags here at all")).toThrow(/missing <storyboard_json>/);
   });
 
-  it("requests an adequate output-token budget so the composition cannot truncate", async () => {
+  it("applies bounded exact repair patches without regenerating the composition", () => {
+    const value = draft();
+    const repaired = applyCompositionRepair(
+      patchResponse("border: 1px solid #8b5cf6", "border: 1px solid #22d3ee"),
+      value,
+    );
+    expect(repaired.storyboard).toBe(value.storyboard);
+    expect(repaired.html).toContain("#22d3ee");
+    expect(repaired.html).toContain("#8b5cf6");
+  });
+
+  it("reserves the completion budget for source instead of DeepSeek reasoning", async () => {
     const dir = projectDir();
     const complete = vi.fn().mockResolvedValueOnce(response(draft()));
     const provider: AgentProvider = {
-      id: "openrouter-api",
+      id: "openai-api",
       label: "test author",
       kind: "api",
       detect: async () => ({ available: true, detail: "test" }),
@@ -144,8 +163,43 @@ describe("direct HyperFrames composition", () => {
       projectDir: dir,
       skills: { skillNames: [], blueprintIds: [], ruleIds: [], text: "" },
     });
-    const options = complete.mock.calls[0]?.[1] as { maxTokens?: number } | undefined;
-    expect(options?.maxTokens).toBeGreaterThanOrEqual(16_384);
+    const options = complete.mock.calls[0]?.[1] as {
+      maxTokens?: number;
+      thinkingMode?: string;
+    } | undefined;
+    expect(options?.maxTokens).toBe(10_240);
+    expect(options?.thinkingMode).toBe("none");
+  });
+
+  it("uses a compact recovery prompt after a provider reports finish_reason=length", async () => {
+    const dir = projectDir();
+    const complete = vi.fn()
+      .mockRejectedValueOnce(new ProviderOutputTruncatedError("OpenRouter", 16_384))
+      .mockResolvedValueOnce(response(draft()));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: {
+        skillNames: [],
+        blueprintIds: [],
+        ruleIds: [],
+        text: `<blueprint id="huge">${"recipe ".repeat(8_000)}</blueprint>`,
+      },
+    });
+    expect(result.attempts).toBe(2);
+    const firstPrompt = String(complete.mock.calls[0]?.[0]);
+    const secondPrompt = String(complete.mock.calls[1]?.[0]);
+    const secondOptions = complete.mock.calls[1]?.[1] as { model?: string } | undefined;
+    expect(secondPrompt).toContain("compact recovery pass");
+    expect(secondPrompt.length).toBeLessThan(firstPrompt.length / 2);
+    expect(secondOptions?.model).toBeUndefined();
   });
 
   it("allows exactly one model repair after deterministic validation feedback", async () => {
@@ -154,9 +208,12 @@ describe("direct HyperFrames composition", () => {
     invalid.html = invalid.html.replace("const tl =", "const noise = Math.random(); const tl =");
     const complete = vi.fn()
       .mockResolvedValueOnce(response(invalid))
-      .mockResolvedValueOnce(response(draft()));
+      .mockResolvedValueOnce(patchResponse(
+        "const noise = Math.random(); const tl =",
+        "const tl =",
+      ));
     const provider: AgentProvider = {
-      id: "openai-api",
+      id: "openrouter-api",
       label: "test author",
       kind: "api",
       detect: async () => ({ available: true, detail: "test" }),
@@ -170,6 +227,8 @@ describe("direct HyperFrames composition", () => {
     expect(result.attempts).toBe(2);
     expect(complete).toHaveBeenCalledTimes(2);
     expect(complete.mock.calls[1]?.[0]).toContain("Math.random is not deterministic");
+    expect(complete.mock.calls[1]?.[0]).toContain("<patches_json>");
+    expect((complete.mock.calls[1]?.[1] as { maxTokens?: number }).maxTokens).toBe(4_096);
   });
 
   it("allows at most two bounded model repairs", async () => {
@@ -178,10 +237,10 @@ describe("direct HyperFrames composition", () => {
     invalid.html = invalid.html.replace("const tl =", "const noise = Math.random(); const tl =");
     const complete = vi.fn()
       .mockResolvedValueOnce(response(invalid))
-      .mockResolvedValueOnce(response(invalid))
-      .mockResolvedValueOnce(response(draft()));
+      .mockResolvedValueOnce(patchResponse("Math.random()", "Date.now()"))
+      .mockResolvedValueOnce(patchResponse("Math.random()", "0"));
     const provider: AgentProvider = {
-      id: "openai-api",
+      id: "openrouter-api",
       label: "test author",
       kind: "api",
       detect: async () => ({ available: true, detail: "test" }),
@@ -194,6 +253,9 @@ describe("direct HyperFrames composition", () => {
     });
     expect(result.attempts).toBe(3);
     expect(complete).toHaveBeenCalledTimes(3);
+    expect((complete.mock.calls[1]?.[1] as { model?: string }).model).toBeUndefined();
+    expect((complete.mock.calls[2]?.[1] as { model?: string }).model)
+      .toBe("deepseek/deepseek-v4-flash");
   });
 
   it("passes deterministic validation and checkpoints exact revisions", async () => {

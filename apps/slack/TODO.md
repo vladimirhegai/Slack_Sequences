@@ -39,6 +39,16 @@ The single most important task. Prove the loop before generalizing.
 - [x] **Wire into the existing two-tier delivery.** The authored composition flows
   through the same thumbnail → render → upload path. `/sequences demo` stays
   deterministic and untouched as the bulletproof fallback.
+- [x] **Bound authoring cost and truncation.** OpenRouter code emission runs with
+  reasoning explicitly off (DeepSeek V4 otherwise maps medium/minimal to costly
+  high reasoning), receives a 10K completion ceiling with a 32K-character source
+  target, and sees ~28K rather than 45K characters of retrieved craft context.
+  Pro authors the first visual thesis and first targeted repair; Flash handles
+  the small frame decision and only the final repair fallback. Repair calls emit
+  bounded exact patches (4K ceiling), not another full 32K-character document.
+  `finish_reason=length` triggers a compact
+  recovery prompt with recipe bodies removed instead of repeating the same
+  oversized request.
 - [ ] ⚠ **Improve — multi-shot, not one composition.** Authoring currently emits a
   single canonical HTML composition. Move toward storyboard-first, multi-shot
   authoring (§5) and validate the output against the job `frame.md` (§3), not just

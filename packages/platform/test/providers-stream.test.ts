@@ -121,6 +121,52 @@ describe("provider streaming — reasoning vs output", () => {
   });
 });
 
+describe("OpenRouter bounded completions", () => {
+  it("turns reasoning off explicitly so max_tokens remain available for source", async () => {
+    const originalFetch = globalThis.fetch;
+    let body: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: "complete source" } }],
+        usage: { completion_tokens: 3 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      await expect(PROVIDERS["openrouter-api"].complete("author", {
+        apiKey: "or-test",
+        maxTokens: 16_384,
+        thinkingMode: "none",
+      })).resolves.toBe("complete source");
+      expect(body?.max_tokens).toBe(16_384);
+      expect(body?.reasoning).toEqual({ enabled: false });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("fails loudly on normalized finish_reason=length instead of returning partial HTML", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({
+        choices: [{
+          finish_reason: "length",
+          native_finish_reason: "max_tokens",
+          message: { content: "<html>partial" },
+        }],
+        usage: { completion_tokens: 16_384 },
+      }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+    try {
+      await expect(PROVIDERS["openrouter-api"].complete("author", {
+        apiKey: "or-test",
+        maxTokens: 16_384,
+      })).rejects.toThrow(/truncated.*16,?384 tokens/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 describe("claude one-shot argv hardening", () => {
   // Regression: a Stage/Create turn once hung the full timeout because `claude -p`
   // kept its agentic toolset under permissionMode "default" — a tool call blocked

@@ -176,9 +176,18 @@ Two different LLMs run, on two different providers; keep them distinct:
   and returns a bounded evidence pack. Always needs an OpenAI key.
 - **Planning / authoring bot — the main agent.** Selected by
   `SLACK_SEQUENCES_PROVIDER`; the live Railway deployment uses OpenRouter
-  (DeepSeek). Today it emits a typed Sequences `Plan`; the target is for it to
-  author HyperFrames directly. This is the agent the recipes and the revised
-  laws below govern.
+  (DeepSeek) and authors HyperFrames directly. This is the agent the recipes and
+  the revised laws below govern.
+
+The live cost/latency split is deliberate: Flash makes the small bounded
+`frame.md` art-direction choice; Pro gets one compact, reasoning-off creative
+authoring pass and the first fidelity-sensitive repair; only a final fallback
+uses Flash. Create retrieval is capped near 28K characters and authored source
+near 32K characters (10K output-token ceiling). Repairs are exact, validated
+search/replace patches capped at 4K output tokens instead of full-document
+regenerations. Provider `finish_reason=length` is a typed truncation
+failure, so the next attempt strips full recipe bodies and requests a compact
+complete replacement instead of blindly repeating the expensive prompt.
 
 General, editable system prompts for both bots live in `apps/slack/prompts/`
 (plain `.md`, loaded at runtime). Advanced per-run prompt material — skill/RAG

@@ -292,7 +292,7 @@ async function auditSequencesRelationships(
       if (overflow > 2) {
         issues.push(issue(
           "important_safe_area",
-          "error",
+          "warning",
           element,
           `Load-bearing content crosses the ${safe}px safe canvas inset by ${Math.round(overflow)}px.`,
           "Reflow or widen its region first, then wrap; use fitTextFontSize only after those options.",
@@ -326,7 +326,7 @@ async function auditSequencesRelationships(
       } else {
         issues.push(issue(
           "layout_anchor_invalid",
-          "error",
+          "warning",
           element,
           `Unknown layout anchor "${intent}".`,
           "Use frame:center, frame:left-third, frame:right-third, frame:top-third, or frame:bottom-third.",
@@ -336,7 +336,7 @@ async function auditSequencesRelationships(
       if (Math.abs(dx) > tolerance || Math.abs(dy) > tolerance) {
         issues.push(issue(
           "layout_anchor_mismatch",
-          "error",
+          "warning",
           element,
           `Declared ${intent} anchor misses by ${Math.round(dx)}px x / ${Math.round(dy)}px y.`,
           "Let Grid/Flexbox settle the declared anchor; reserve transforms for motion.",
@@ -360,7 +360,7 @@ async function auditSequencesRelationships(
       if (!target || !visible(target)) {
         issues.push(issue(
           "layout_target_missing",
-          "error",
+          "warning",
           element,
           `Alignment target "${targetSelector || "(missing)"}" is absent or invisible.`,
           "Use a stable id on the intended target.",
@@ -382,7 +382,7 @@ async function auditSequencesRelationships(
       if (!pair) {
         issues.push(issue(
           "layout_alignment_invalid",
-          "error",
+          "warning",
           element,
           `Unknown relational alignment "${edge}".`,
           "Use left, right, top, bottom, center-x, or center-y.",
@@ -391,7 +391,7 @@ async function auditSequencesRelationships(
       } else if (Math.abs(pair[0] - pair[1]) > tolerance) {
         issues.push(issue(
           "layout_alignment_mismatch",
-          "error",
+          "warning",
           element,
           `${edge} is ${Math.round(Math.abs(pair[0] - pair[1]))}px away from ${targetSelector}.`,
           "Put both elements in one Grid/Flex layout or derive them from the same inset variable.",
@@ -412,7 +412,7 @@ async function auditSequencesRelationships(
       if (!target || !visible(target)) {
         issues.push(issue(
           "layout_attachment_missing",
-          "error",
+          "warning",
           element,
           `Attachment target "${targetSelector || "(missing)"}" is absent or invisible.`,
           "Wrap the exact target word in a stable id and attach the decoration to that wrapper.",
@@ -428,7 +428,7 @@ async function auditSequencesRelationships(
       if (distance > tolerance) {
         issues.push(issue(
           "layout_attachment_detached",
-          "error",
+          "warning",
           element,
           `Decoration is ${Math.round(distance)}px from ${targetSelector}.`,
           "Move it inside the measured text wrapper or implement the stroke as a pseudo-element.",
@@ -443,7 +443,7 @@ async function auditSequencesRelationships(
       if (axis !== "x" && axis !== "y") {
         issues.push(issue(
           "layout_gap_invalid",
-          "error",
+          "warning",
           group,
           `Unknown gap axis "${axis ?? ""}".`,
           'Use data-layout-gap="x" or data-layout-gap="y".',
@@ -495,10 +495,12 @@ async function auditSequencesRelationships(
 
 function normalizeHyperframesIssue(value: Record<string, unknown>): DirectLayoutIssue {
   const code = String(value.code ?? "layout_issue");
-  const promoted = code === "content_overlap" || code === "container_overflow";
   return {
     code,
-    severity: promoted ? "error" : (value.severity as LayoutSeverity) ?? "warning",
+    // Preserve HyperFrames' own severity boundary. In particular, animated
+    // container excursions and text overlap are warnings because composition
+    // can deliberately layer/enter; hard text clipping and occlusion are errors.
+    severity: (value.severity as LayoutSeverity) ?? "warning",
     time: Number(value.time) || 0,
     selector: String(value.selector ?? "composition"),
     ...(value.containerSelector ? { containerSelector: String(value.containerSelector) } : {}),
@@ -705,7 +707,11 @@ export async function inspectDirectComposition(
     ];
     const repairWarnings = issues.filter((issue) =>
       issue.severity === "warning" &&
-      (issue.code === "layout_intent_missing" || issue.code === "layout_gap_inconsistent")
+      (
+        issue.source === "sequences" ||
+        issue.code === "content_overlap" ||
+        issue.code === "container_overflow"
+      )
     );
     return {
       ok: errors.length === 0,

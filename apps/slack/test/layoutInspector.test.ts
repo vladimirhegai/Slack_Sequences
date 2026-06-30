@@ -63,10 +63,11 @@ describe("direct layout inspector", () => {
   });
 
   it.skipIf(!findBrowserExecutable())(
-    "runs the vendored HyperFrames audit and blocks important content outside the safe area",
+    "runs the vendored audit and requests repair for important content outside the safe area",
     async () => {
       const result = await inspectDirectComposition(projectDir(), unsafeDraft());
-      expect(result.ok).toBe(false);
+      expect(result.ok).toBe(true);
+      expect(result.strictOk).toBe(false);
       expect(result.samples.length).toBeGreaterThan(4);
       expect(result.issues.some((issue) => issue.code === "important_safe_area")).toBe(true);
     },
