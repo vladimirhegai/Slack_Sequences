@@ -16,6 +16,7 @@ import {
 import type { RenderQuality } from "./render.ts";
 import { ensureFfmpegOnPath, findBrowserExecutable } from "./render.ts";
 import { inspectDirectComposition } from "./layoutInspector.ts";
+import { validateCompositionAgainstFrame } from "./frameValidation.ts";
 
 const DIRECT_DIR = "composition";
 const MANIFEST_FILE = "manifest.json";
@@ -26,10 +27,16 @@ export interface DirectScene {
   id: string;
   title: string;
   purpose: string;
+  incomingIdea?: string;
+  foreground?: string;
+  background?: string;
+  cameraIntent?: string;
+  continuityAnchor?: string;
   startSec: number;
   durationSec: number;
   blueprint?: string;
   rules?: string[];
+  capabilityIds?: string[];
   outgoingCut?: string;
 }
 
@@ -67,6 +74,8 @@ export interface DirectValidationResult {
   ok: boolean;
   errors: string[];
   warnings: string[];
+  frameErrors: string[];
+  frameWarnings: string[];
   findings: HyperframeLintFinding[];
   compositionId?: string;
   width?: number;
@@ -190,10 +199,18 @@ function normalizeStoryboard(
       id,
       title: proposed?.title?.trim() || `Scene ${index + 1}`,
       purpose: proposed?.purpose?.trim() || "Advance the launch story",
+      ...(proposed?.incomingIdea ? { incomingIdea: proposed.incomingIdea } : {}),
+      ...(proposed?.foreground ? { foreground: proposed.foreground } : {}),
+      ...(proposed?.background ? { background: proposed.background } : {}),
+      ...(proposed?.cameraIntent ? { cameraIntent: proposed.cameraIntent } : {}),
+      ...(proposed?.continuityAnchor
+        ? { continuityAnchor: proposed.continuityAnchor }
+        : {}),
       startSec: startSec ?? 0,
       durationSec: durationSec ?? 0,
       ...(proposed?.blueprint ? { blueprint: proposed.blueprint } : {}),
       ...(proposed?.rules?.length ? { rules: proposed.rules } : {}),
+      ...(proposed?.capabilityIds?.length ? { capabilityIds: proposed.capabilityIds } : {}),
       ...(proposed?.outgoingCut ? { outgoingCut: proposed.outgoingCut } : {}),
     };
   });
@@ -308,13 +325,23 @@ export async function validateDirectComposition(
   } catch (error) {
     errors.push(`HyperFrames lint failed: ${error instanceof Error ? error.message : String(error)}`);
   }
+  const frameFile = path.join(path.resolve(projectDir), "frame.md");
+  const frameValidation = fs.existsSync(frameFile)
+    ? validateCompositionAgainstFrame(html, fs.readFileSync(frameFile, "utf8"))
+    : { errors: [], warnings: [] };
+  errors.push(...frameValidation.errors);
 
   return {
     ok: errors.length === 0,
     errors: [...new Set(errors)],
-    warnings: findings
+    warnings: [...new Set([
+      ...findings
       .filter((finding) => finding.severity === "warning")
       .map((finding) => `${finding.code}: ${finding.message}`),
+      ...frameValidation.warnings,
+    ])],
+    frameErrors: frameValidation.errors,
+    frameWarnings: frameValidation.warnings,
     findings,
     compositionId,
     width,
@@ -341,6 +368,31 @@ function revisionName(revision: number): string {
 
 function writeJson(file: string, value: unknown): void {
   fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n");
+}
+
+function storyboardMarkdown(title: string, scenes: DirectScene[]): string {
+  return [
+    `# STORYBOARD.md — ${title}`,
+    "",
+    ...scenes.flatMap((scene, index) => [
+      `## ${index + 1}. ${scene.title} (${scene.startSec.toFixed(1)}–${
+        (scene.startSec + scene.durationSec).toFixed(1)
+      }s)`,
+      "",
+      scene.purpose,
+      "",
+      scene.incomingIdea ? `- Incoming idea: ${scene.incomingIdea}` : "",
+      scene.foreground ? `- Foreground: ${scene.foreground}` : "",
+      scene.background ? `- Background: ${scene.background}` : "",
+      scene.cameraIntent ? `- Camera: ${scene.cameraIntent}` : "",
+      scene.capabilityIds?.length
+        ? `- Capabilities: ${scene.capabilityIds.join(", ")}`
+        : "",
+      scene.continuityAnchor ? `- Eye trace: ${scene.continuityAnchor}` : "",
+      scene.outgoingCut ? `- Outgoing cut: ${scene.outgoingCut}` : "",
+      "",
+    ].filter(Boolean)),
+  ].join("\n").trimEnd() + "\n";
 }
 
 export async function commitDirectComposition(
@@ -399,6 +451,17 @@ export async function commitDirectComposition(
   try {
     fs.writeFileSync(path.join(staged, "index.html"), draft.html.trim() + "\n");
     writeJson(path.join(staged, MANIFEST_FILE), manifest);
+    fs.writeFileSync(
+      path.join(staged, "STORYBOARD.md"),
+      storyboardMarkdown(title, normalized.scenes),
+      "utf8",
+    );
+    writeJson(path.join(staged, "motion-plan.json"), {
+      version: 1,
+      compositionId: manifest.compositionId,
+      durationSec: manifest.durationSec,
+      shots: normalized.scenes,
+    });
     copyRuntimeAndAssets(dir, staged);
     if (fs.existsSync(target)) {
       fs.renameSync(target, backup);
@@ -420,6 +483,8 @@ export async function commitDirectComposition(
   fs.mkdirSync(checkpoint, { recursive: true });
   fs.copyFileSync(path.join(target, "index.html"), path.join(checkpoint, "index.html"));
   writeJson(path.join(checkpoint, MANIFEST_FILE), manifest);
+  fs.copyFileSync(path.join(target, "STORYBOARD.md"), path.join(checkpoint, "STORYBOARD.md"));
+  fs.copyFileSync(path.join(target, "motion-plan.json"), path.join(checkpoint, "motion-plan.json"));
   return { manifest, validation };
 }
 
@@ -434,6 +499,10 @@ export function undoDirectComposition(projectDir: string): boolean {
   const target = compositionDir(projectDir);
   fs.copyFileSync(path.join(checkpoint, "index.html"), path.join(target, "index.html"));
   fs.copyFileSync(path.join(checkpoint, MANIFEST_FILE), path.join(target, MANIFEST_FILE));
+  for (const sidecar of ["STORYBOARD.md", "motion-plan.json"]) {
+    const source = path.join(checkpoint, sidecar);
+    if (fs.existsSync(source)) fs.copyFileSync(source, path.join(target, sidecar));
+  }
   return true;
 }
 

@@ -29,11 +29,23 @@ WORKDIR /app
 ENV PUPPETEER_SKIP_DOWNLOAD=1 \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-COPY . .
+# Install dependencies as their own cached layer. Copying only the workspace
+# manifests + lockfile before `npm ci` means a source-only change does NOT bust
+# the install layer — `npm ci` (hundreds of packages, the slow + memory-hungry
+# step that OOMs/times out small Railway builders) is reused. `COPY . .` happens
+# after, so editing source no longer reinstalls the whole tree from scratch.
+COPY package.json package-lock.json ./
+COPY packages/core/package.json packages/core/
+COPY packages/platform/package.json packages/platform/
+COPY apps/forge/package.json apps/forge/
+COPY apps/sequences/package.json apps/sequences/
+COPY apps/slack/package.json apps/slack/
 
 # Install the whole workspace from the committed lockfile. There is no compile
 # step: the slack app runs `.ts` directly via tsx, and typecheck stays in CI.
 RUN npm ci
+
+COPY . .
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \

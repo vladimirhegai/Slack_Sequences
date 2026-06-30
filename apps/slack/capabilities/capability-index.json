@@ -1,0 +1,4864 @@
+{
+  "version": 1,
+  "registry": {
+    "commit": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344",
+    "version": "0.7.17",
+    "runtimeVersion": "0.6.86",
+    "itemCount": 134
+  },
+  "capabilities": [
+    {
+      "id": "comparison-split",
+      "kind": "blueprint",
+      "title": "Comparison Split",
+      "description": "Two paired items of equal weight enter from opposite wings with **mirrored 3D \"book-open\" tilts** and hold side-by-side, then an inner-edge pill badge spring-pops on each to punctuate. Reach for it for an A/B or \"X + Y together\" — two complementary capabilities weighed at once (not >2 items, not sequential steps).",
+      "tags": [
+        "key_feature"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/comparison-split.md (4–6s)"
+      }
+    },
+    {
+      "id": "constellation-hub",
+      "kind": "blueprint",
+      "title": "Constellation Hub",
+      "description": "Iconned **nodes spring into a ring around a center**, then resolve on the core — a camera push-IN (depth-of-field collapsing onto it) or a held hub mark with satellites orbiting it. Reach for it for \"it connects everything / one hub\" or \"sits at the center of your stack.\"",
+      "tags": [
+        "hook",
+        "social_proof"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/constellation-hub.md (5–6s)"
+      }
+    },
+    {
+      "id": "cta-morph-press",
+      "kind": "blueprint",
+      "title": "Cta Morph Press",
+      "description": "A resting brand mark **condenses at the same center into a brighter CTA**, then a cursor arrives and lands a human-aimed click with feedback. Reach for it for a focused \"click here\" sign-off that walks the eye from identity to action — no spatial set, no multi-step UI.",
+      "tags": [
+        "cta"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/cta-morph-press.md (4–6s)"
+      }
+    },
+    {
+      "id": "cursor-ui-demo",
+      "kind": "blueprint",
+      "title": "Cursor Ui Demo",
+      "description": "A visible custom **cursor drives a reconstructed app UI** through clicks/hovers/drags so the screen changes state shot-to-shot, while the camera chases each interaction. Reach for it for a first cursor-led look at the surface (Product_Intro) or one workflow demonstrated end-to-end onto the action button (Key_Feature).",
+      "tags": [
+        "product_intro",
+        "key_feature"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/cursor-ui-demo.md (4.0–9.3s)"
+      }
+    },
+    {
+      "id": "dataviz-countup",
+      "kind": "blueprint",
+      "title": "Dataviz Countup",
+      "description": "Numbers and charts are the hero — a **count-up ring/number, trend chart, tilted stat grid** — traversed by a camera that pushes THROUGH (or scrolls across) them to land on one hero metric. Reach for it when the data carries the argument: quantify a worsening problem, or open confidently on \"look at the result.\"",
+      "tags": [
+        "problem",
+        "product_intro"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/dataviz-countup.md (6–12s)"
+      }
+    },
+    {
+      "id": "device-surface-showcase",
+      "kind": "blueprint",
+      "title": "Device Surface Showcase",
+      "description": "A **device mockup or floating window held as hero** while its screens cycle through a real flow, presented by a camera ranging from a static hold to a continuous 3D push. Role-narrow (Key_Feature only) but mechanic-rich (static tour · floating-window push-scroll · 3D-hand demo). Reach for it to show a feature experienced *inside its real interface*.",
+      "tags": [
+        "key_feature"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/device-surface-showcase.md (7.8–9.6s)"
+      }
+    },
+    {
+      "id": "grid-card-assemble",
+      "kind": "blueprint",
+      "title": "Grid Card Assemble",
+      "description": "N items (tiles / cards / logos / list-lines) **self-assemble in a staggered cascade** into a grid or vertical list and hold; an optional camera zoom-OUT reveals the array inside a vaster whole. Reach for it to enumerate breadth at once — a feature grid, an accumulating benefit list, or a logo wall.",
+      "tags": [
+        "key_feature",
+        "benefits",
+        "social_proof"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/grid-card-assemble.md (3.0–10.5s)"
+      }
+    },
+    {
+      "id": "kinetic-type-beats",
+      "kind": "blueprint",
+      "title": "Kinetic Type Beats",
+      "description": "Flat, centered, bold-type shot where the **motion IS the words changing** — a fixed line swaps tokens in place by hard cut, or a statement builds across full-screen beats (each its own move) onto a spring-pop payoff. The workhorse (6 roles). Reach for it whenever the words carry the shot and there's no set, surface, or click.",
+      "tags": [
+        "hook",
+        "problem",
+        "product_intro",
+        "benefits",
+        "cta",
+        "brand_outro"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/kinetic-type-beats.md (3.4–12s)"
+      }
+    },
+    {
+      "id": "logo-assemble-lockup",
+      "kind": "blueprint",
+      "title": "Logo Assemble Lockup",
+      "description": "A brand mark / wordmark **builds itself from parts** (elements assemble/orbit, letters cascade, an outline draws on, or a camera pushes through negative space) and resolves into a centered lockup, optionally extended to a URL/CTA. Reach for it for a wordless premium brand sting, or a logo build leading into the final ask.",
+      "tags": [
+        "product_intro",
+        "cta",
+        "brand_outro"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/logo-assemble-lockup.md (4.6–11s)"
+      }
+    },
+    {
+      "id": "overwhelm-surround",
+      "kind": "blueprint",
+      "title": "Overwhelm Surround",
+      "description": "Overwhelm by accumulation — recognizable surfaces assemble, density-marker icons scatter in, the center one **morphs into the viewer's own avatar**, then elements close in from all sides (surrounded, not zoomed-into). Reach for it when the pain is \"you're buried in tools,\" ending on a claustrophobic crowd.",
+      "tags": [
+        "problem"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/overwhelm-surround.md (6–9s)"
+      }
+    },
+    {
+      "id": "spatial-pan-stations",
+      "kind": "blueprint",
+      "title": "Spatial Pan Stations",
+      "description": "Pre-placed labeled **stations on one oversized canvas, traversed by a single virtual camera** — repeated lateral/diagonal pans centering each station and revealing a callout, landing held on the last. Reach for it for a milestone timeline panned to \"us,\" or a connected web of pain stations ending in a tangled knot.",
+      "tags": [
+        "hook",
+        "problem"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/spatial-pan-stations.md (7–10s)"
+      }
+    },
+    {
+      "id": "ticker-takeover",
+      "kind": "blueprint",
+      "title": "Ticker Takeover",
+      "description": "A typed lead-in + an accent word cycling through options, then a hero **crashes in from off-screen and physically shoves the text aside** — a collision, not a fade — settling alone. Reach for it when a \"could be many things\" build should be violently replaced by \"this is it.\"",
+      "tags": [
+        "hook",
+        "brand_outro"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/ticker-takeover.md (5–7s)"
+      }
+    },
+    {
+      "id": "titlecard-reveal",
+      "kind": "blueprint",
+      "title": "Titlecard Reveal",
+      "description": "The calm **breather/landing beat** — one clean title or single brand/proof card revealed with exactly ONE restrained move (slide-up crossfade, or wipe-away-to-reveal), then a still hold. Low motion is the payload, not a deficiency. Reach for it for a two-line value title, or a busy open wiped to a clean lockup + a \"loved by N+ teams\" stat.",
+      "tags": [
+        "benefits",
+        "social_proof"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/titlecard-reveal.md (3–5s)"
+      }
+    },
+    {
+      "id": "typewriter-reveal",
+      "kind": "blueprint",
+      "title": "Typewriter Reveal",
+      "description": "A live text caret **types (and edits) a line as a human would**, then collapses it and pops a brand payoff, or holds it under a persistent mark while a sub-line types into the final CTA. Reach for it when \"someone is typing this\" should be the engine — a relatable typed pain → brand, or a standing logo + a typed CTA rail.",
+      "tags": [
+        "hook",
+        "brand_outro"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/typewriter-reveal.md (3.6–7s)"
+      }
+    },
+    {
+      "id": "video-text-pivot",
+      "kind": "blueprint",
+      "title": "Video Text Pivot",
+      "description": "A product video holds center and breathes, then **slides aside to hand its weight to a hero stat**, then both clear and kinetic text types into the vacated center, sealed by a gradient pill. Reach for it for \"see the feature → see the impact\" where the video must stay visible (slides, never cuts).",
+      "tags": [
+        "product_intro",
+        "key_feature"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/blueprints/video-text-pivot.md (6–8s)"
+      }
+    },
+    {
+      "id": "bold-launch",
+      "kind": "frame-preset",
+      "title": "Bold Launch",
+      "description": "Poster energy: oversized heavy display, one hot accent, high contrast. Built to stop the scroll for a loud, confident announcement.",
+      "tags": [
+        "bold-launch",
+        "light"
+      ],
+      "reuseTier": "parameter-swap",
+      "configurableVariables": [
+        "palette",
+        "typography",
+        "spacing",
+        "corners",
+        "depth",
+        "background"
+      ],
+      "provenance": {
+        "source": "sequences-frame-presets",
+        "ref": "src/engine/framePresets.ts"
+      }
+    },
+    {
+      "id": "clean-corporate",
+      "kind": "frame-preset",
+      "title": "Clean Corporate",
+      "description": "Consulting-grade restraint: a warm light canvas, one saturated accent carrying every highlight, and a tight grey ladder. Data-dense without crowding.",
+      "tags": [
+        "crisp-saas",
+        "warm-startup",
+        "light"
+      ],
+      "reuseTier": "parameter-swap",
+      "configurableVariables": [
+        "palette",
+        "typography",
+        "spacing",
+        "corners",
+        "depth",
+        "background"
+      ],
+      "provenance": {
+        "source": "sequences-frame-presets",
+        "ref": "src/engine/framePresets.ts"
+      }
+    },
+    {
+      "id": "crisp-dev",
+      "kind": "frame-preset",
+      "title": "Crisp Dev-Tool",
+      "description": "Cool dark precision for developer tools: terminal-adjacent, mono-accented, exact. Reads as fast, technical, and trustworthy.",
+      "tags": [
+        "crisp-saas",
+        "bold-launch",
+        "dark"
+      ],
+      "reuseTier": "parameter-swap",
+      "configurableVariables": [
+        "palette",
+        "typography",
+        "spacing",
+        "corners",
+        "depth",
+        "background"
+      ],
+      "provenance": {
+        "source": "sequences-frame-presets",
+        "ref": "src/engine/framePresets.ts"
+      }
+    },
+    {
+      "id": "dark-premium",
+      "kind": "frame-preset",
+      "title": "Dark Premium",
+      "description": "An editorial, warm near-black stage with a single warm accent and a serif display. Confident, expensive, unhurried — the register of a flagship launch.",
+      "tags": [
+        "bold-launch",
+        "warm-startup",
+        "dark"
+      ],
+      "reuseTier": "parameter-swap",
+      "configurableVariables": [
+        "palette",
+        "typography",
+        "spacing",
+        "corners",
+        "depth",
+        "background"
+      ],
+      "provenance": {
+        "source": "sequences-frame-presets",
+        "ref": "src/engine/framePresets.ts"
+      }
+    },
+    {
+      "id": "editorial",
+      "kind": "frame-preset",
+      "title": "Editorial",
+      "description": "A magazine-grade light layout: serif headlines, generous measure, one grounded accent. Thoughtful and human — for narrative, founder, or community launches.",
+      "tags": [
+        "warm-startup",
+        "crisp-saas",
+        "light"
+      ],
+      "reuseTier": "parameter-swap",
+      "configurableVariables": [
+        "palette",
+        "typography",
+        "spacing",
+        "corners",
+        "depth",
+        "background"
+      ],
+      "provenance": {
+        "source": "sequences-frame-presets",
+        "ref": "src/engine/framePresets.ts"
+      }
+    },
+    {
+      "id": "3d-page-scroll",
+      "kind": "motion-rule",
+      "title": "3d Page Scroll",
+      "description": "Full webpage rendered as a tilted 3D card whose internal content scrolls to reveal specific sections. Pair with asr-keyword-glow for on-page keyword highlighting. Tags: 3d, page, scroll, webpage, tilt, perspective, product-demo",
+      "tags": [
+        "3d",
+        "page",
+        "scroll",
+        "webpage",
+        "tilt",
+        "perspective",
+        "product-demo"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/3d-page-scroll.md"
+      }
+    },
+    {
+      "id": "3d-text-depth-layers",
+      "kind": "motion-rule",
+      "title": "3d Text Depth Layers",
+      "description": "Multiple offset text layers (N divs at `(i*dx, i*dy)` with decreasing alpha) create a stacked 3D extrusion illusion on large typography. Tags: text, 3d, depth, layers, shadow, typography, stacked",
+      "tags": [
+        "text",
+        "3d",
+        "depth",
+        "layers",
+        "shadow",
+        "typography",
+        "stacked"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/3d-text-depth-layers.md"
+      }
+    },
+    {
+      "id": "ai-tracking-box",
+      "kind": "motion-rule",
+      "title": "Ai Tracking Box",
+      "description": "AI detection overlay — yellow `#facc15` L-bracket corners + confidence label (fluctuating 95-99%) following a target on a sine arc path. Box position recomputed per-frame from target position (never tweened separately). Tags: ai, tracking, bounding-box, detection, corner, ml",
+      "tags": [
+        "ai",
+        "tracking",
+        "bounding-box",
+        "detection",
+        "corner",
+        "ml"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/ai-tracking-box.md"
+      }
+    },
+    {
+      "id": "ambient-glow-bloom",
+      "kind": "motion-rule",
+      "title": "Ambient Glow Bloom",
+      "description": "Un-triggered soft radial glow that blooms in behind a hero element and holds with a bounded idle breathe, or a single-pass traveling sheen across a surface. No click, no word-sync; peak opacity ≤ ~0.45, finite/deterministic. Tags: glow, bloom, ambient, radial, sheen, hero",
+      "tags": [
+        "glow",
+        "bloom",
+        "ambient",
+        "radial",
+        "sheen",
+        "hero"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/ambient-glow-bloom.md"
+      }
+    },
+    {
+      "id": "asr-keyword-glow",
+      "kind": "motion-rule",
+      "title": "Asr Keyword Glow",
+      "description": "Highlight keywords with glow + scale + color synced to ASR word timestamps. Two GSAP tweens per word drive a CSS custom property `--glow` through attack-decay-rest envelope. Tags: asr, audio-sync, highlight, glow, keyword, text",
+      "tags": [
+        "asr",
+        "audio-sync",
+        "highlight",
+        "glow",
+        "keyword",
+        "text"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/asr-keyword-glow.md"
+      }
+    },
+    {
+      "id": "avatar-cloud-network",
+      "kind": "motion-rule",
+      "title": "Avatar Cloud Network",
+      "description": "Avatars on an elliptical ring with SVG connection lines to a center point, staggered entry. Cloud center coordinates must match the centerpiece element exactly. Tags: avatar, cloud, network, social-proof, stagger",
+      "tags": [
+        "avatar",
+        "cloud",
+        "network",
+        "social-proof",
+        "stagger"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/avatar-cloud-network.md"
+      }
+    },
+    {
+      "id": "camera-cursor-tracking",
+      "kind": "motion-rule",
+      "title": "Camera Cursor Tracking",
+      "description": "Two-phase virtual camera that locks the viewport to a moving focal point (typing cursor) — static initial framing then focal-point-locked tracking. Uses browser-native `getBoundingClientRect()` / `ctx.measureText()` after `document.fonts.ready`. Tags: camera, tracking, viewport, two-phase, typing",
+      "tags": [
+        "camera",
+        "tracking",
+        "viewport",
+        "two-phase",
+        "typing"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/camera-cursor-tracking.md"
+      }
+    },
+    {
+      "id": "card-morph-anchor",
+      "kind": "motion-rule",
+      "title": "Card Morph Anchor",
+      "description": "Container morphs apparent size + corner radius + surface treatment between two shots, then fades to reveal the real target underneath. HyperFrames substitutes uniform `scale` for the forbidden `width`/`height` tween, plus paint-only `borderRadius`/`background`/`boxShadow`. Tags: morph, anchor, transition, border-radius, container, shape, handoff",
+      "tags": [
+        "morph",
+        "anchor",
+        "transition",
+        "border-radius",
+        "container",
+        "shape",
+        "handoff"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/card-morph-anchor.md"
+      }
+    },
+    {
+      "id": "center-outward-expansion",
+      "kind": "motion-rule",
+      "title": "Center Outward Expansion",
+      "description": "Elements start clustered at screen center and expand outward to final positions. Each element gets its target position via CSS once; GSAP tweens transform `x` / `y` offsets to 0 in lockstep with a shared driver. Tags: expansion, scatter, center, reveal, layout, sync",
+      "tags": [
+        "expansion",
+        "scatter",
+        "center",
+        "reveal",
+        "layout",
+        "sync"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/center-outward-expansion.md"
+      }
+    },
+    {
+      "id": "context-sensitive-cursor",
+      "kind": "motion-rule",
+      "title": "Context Sensitive Cursor",
+      "description": "Typing cursor whose `background-color` switches at segment boundaries plus square-wave blink via `(tl.time() % cycle) < cycle/2`. Tags: cursor, color, context, typewriter, styling, segment",
+      "tags": [
+        "cursor",
+        "color",
+        "context",
+        "typewriter",
+        "styling",
+        "segment"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/context-sensitive-cursor.md"
+      }
+    },
+    {
+      "id": "coordinate-target-zoom",
+      "kind": "motion-rule",
+      "title": "Coordinate Target Zoom",
+      "description": "Zoom into non-centered elements via scale (outer wrapper) + counter-translation (inner wrapper). Tags: camera, zoom, scale, translate",
+      "tags": [
+        "camera",
+        "zoom",
+        "scale",
+        "translate"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/coordinate-target-zoom.md"
+      }
+    },
+    {
+      "id": "counting-dynamic-scale",
+      "kind": "motion-rule",
+      "title": "Counting Dynamic Scale",
+      "description": "Counter where font size grows with the value for escalating emphasis. Single GSAP tween on a numeric proxy. Tags: counter, scale, font-size, number, dynamic",
+      "tags": [
+        "counter",
+        "scale",
+        "font-size",
+        "number",
+        "dynamic"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/counting-dynamic-scale.md"
+      }
+    },
+    {
+      "id": "css-marker-patterns",
+      "kind": "motion-rule",
+      "title": "Css Marker Patterns",
+      "description": "Pure CSS + GSAP implementations of marker-highlight drawing modes — highlight (yellow sweep), circle (hand-drawn ellipse), burst (radiating lines), scribble (chaotic), sketchout (rough rectangle outline). Tags: css, marker, highlight, text, emphasis",
+      "tags": [
+        "css",
+        "marker",
+        "highlight",
+        "text",
+        "emphasis"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/css-marker-patterns.md"
+      }
+    },
+    {
+      "id": "cursor-click-ripple",
+      "kind": "motion-rule",
+      "title": "Cursor Click Ripple",
+      "description": "Animated cursor moves to a target, depresses cursor + target together on click, emits an expanding ripple with attack-decay opacity envelope. Element lives in DOM from t=0 with `opacity: 0` (no conditional rendering). Tags: cursor, click, ripple, interaction, mouse, button, keyframes",
+      "tags": [
+        "cursor",
+        "click",
+        "ripple",
+        "interaction",
+        "mouse",
+        "button",
+        "keyframes"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/cursor-click-ripple.md"
+      }
+    },
+    {
+      "id": "depth-of-field-blur",
+      "kind": "motion-rule",
+      "title": "Depth Of Field Blur",
+      "description": "Selective rack-focus — GSAP-tween `filter: blur()` (+ slight opacity dim) on off-focus layers via a `--dof` var while the focal element stays sharp; single pull, two-plane rack, or blur-the-cluster-while-pushing-in. Finite, deterministic, seek-safe. Tags: blur, depth-of-field, focus, rack-focus, dim, spotlight",
+      "tags": [
+        "blur",
+        "depth-of-field",
+        "focus",
+        "rack-focus",
+        "dim",
+        "spotlight"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/depth-of-field-blur.md"
+      }
+    },
+    {
+      "id": "depth-scatter-assemble",
+      "kind": "motion-rule",
+      "title": "Depth Scatter Assemble",
+      "description": "N elements scatter into / reassemble from a rotating 3D depth-cloud — each starts at a deterministic index-derived 3D offset (translateZ + rotateX/Y + scatter) and settles to a clean flat layout; tumble-swap and radial-explode variants. preserve-3d + perspective, transform-only, seek-safe. Tags: 3d, scatter, assemble, tumble, depth, perspective, glyphs",
+      "tags": [
+        "3d",
+        "scatter",
+        "assemble",
+        "tumble",
+        "depth",
+        "perspective",
+        "glyphs"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/depth-scatter-assemble.md"
+      }
+    },
+    {
+      "id": "discrete-text-sequence",
+      "kind": "motion-rule",
+      "title": "Discrete Text Sequence",
+      "description": "Replace entire text states at time thresholds for non-linear typing (typos, holds, bulk additions, backspaces). GSAP onUpdate-driven reverse search. Tags: text, typing, discrete, threshold, non-linear",
+      "tags": [
+        "text",
+        "typing",
+        "discrete",
+        "threshold",
+        "non-linear"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/discrete-text-sequence.md"
+      }
+    },
+    {
+      "id": "dynamic-content-sequencing",
+      "kind": "motion-rule",
+      "title": "Dynamic Content Sequencing",
+      "description": "Pre-compute a flat `[{startTime, endTime, ...}]` array from a script of `{textMain, textAccent, charSpeed, hold}` entries. Each phrase's window = `chars × charSpeed + hold`. Content-driven duration, no hand-tuned offsets. Tags: timeline, sequencing, dynamic, duration, script-driven",
+      "tags": [
+        "timeline",
+        "sequencing",
+        "dynamic",
+        "duration",
+        "script-driven"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/dynamic-content-sequencing.md"
+      }
+    },
+    {
+      "id": "gsap-effects",
+      "kind": "motion-rule",
+      "title": "Gsap Effects",
+      "description": "Drop-in GSAP timeline patterns — typewriter, audio visualizer, and other reusable choreography blocks. Tags: gsap, recipe, drop-in, typewriter, audio-visualizer",
+      "tags": [
+        "gsap",
+        "recipe",
+        "drop-in",
+        "typewriter",
+        "audio-visualizer"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/gsap-effects.md"
+      }
+    },
+    {
+      "id": "hacker-flip-3d",
+      "kind": "motion-rule",
+      "title": "Hacker Flip 3d",
+      "description": "Character-level 3D rotation with deterministic glyph substitution (decryption). GSAP `back.out` ease + per-glyph `onUpdate` for the flicker hash. Tags: text, 3d, reveal, decode",
+      "tags": [
+        "text",
+        "3d",
+        "reveal",
+        "decode"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/hacker-flip-3d.md"
+      }
+    },
+    {
+      "id": "kinetic-beat-slam",
+      "kind": "motion-rule",
+      "title": "Kinetic Beat Slam",
+      "description": "Percussive kinetic typography — short phrases slam in on ONE shared beat array with DISTINCT per-phrase entrances (scale-slam / side-snap / rise-rotate), optional rhythm chrome (metronome ticks, beat bar), then a locked finale. The recipe for \"punchy / rhythmic\" taglines. Tags: text, kinetic, typography, beat, rhythm, slam, percussive, punchy",
+      "tags": [
+        "text",
+        "kinetic",
+        "typography",
+        "beat",
+        "rhythm",
+        "slam",
+        "percussive",
+        "punchy"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/kinetic-beat-slam.md"
+      }
+    },
+    {
+      "id": "motion-blur-streak",
+      "kind": "motion-rule",
+      "title": "Motion Blur Streak",
+      "description": "Fake directional velocity blur on a fast entrance / camera push-through — blur peaks at max speed, resolves to 0 at the settle. Two paths: SVG `feGaussianBlur` stdDeviation on the motion axis (proxy-tweened), or a deterministic echo/ghost trail that collapses into the lead. Entrances / mid-shot only. Tags: motion-blur, streak, velocity, ghost, echo, fast",
+      "tags": [
+        "motion-blur",
+        "streak",
+        "velocity",
+        "ghost",
+        "echo",
+        "fast"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/motion-blur-streak.md"
+      }
+    },
+    {
+      "id": "multi-phase-camera",
+      "kind": "motion-rule",
+      "title": "Multi Phase Camera",
+      "description": "Sequential camera-zoom system (pull-back / focus / push) plus continuous micro-drift. Tags: camera, zoom, phase, drift, scale, cinematic",
+      "tags": [
+        "camera",
+        "zoom",
+        "phase",
+        "drift",
+        "scale",
+        "cinematic"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/multi-phase-camera.md"
+      }
+    },
+    {
+      "id": "orbit-3d-entry",
+      "kind": "motion-rule",
+      "title": "Orbit 3d Entry",
+      "description": "Elements flip in from 3D space (`rotateX` + `rotateY` + `translateZ`) then settle into a continuous elliptical orbit. **Critical**: entry MUST flip in-place at the orbital starting position (`gsap.set` BEFORE phase 1), not at scene center. Tags: orbit, 3d, flip, ellipse, circular, icon, entry, continuous",
+      "tags": [
+        "orbit",
+        "3d",
+        "flip",
+        "ellipse",
+        "circular",
+        "icon",
+        "entry",
+        "continuous"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/orbit-3d-entry.md"
+      }
+    },
+    {
+      "id": "physics-press-reaction",
+      "kind": "motion-rule",
+      "title": "Physics Press Reaction",
+      "description": "Physical click simulation — two sequential GSAP scale tweens (down to 0.9, up to 1.0) approximate a spring with overshoot. Pass a single targets array `[\"#cta\", \"#cursor\"]` to compress both together for tactile contact feel. Tags: spring, click, physics, press, interaction, cursor",
+      "tags": [
+        "spring",
+        "click",
+        "physics",
+        "press",
+        "interaction",
+        "cursor"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/physics-press-reaction.md"
+      }
+    },
+    {
+      "id": "press-release-spring",
+      "kind": "motion-rule",
+      "title": "Press Release Spring",
+      "description": "Tactile button press: linear compression then spring recovery via two adjacent GSAP tweens on the same property. Variations: color transition, shadow depth via CSS vars, release burst, background glow. Tags: spring, press, button, interaction, physics, glow, burst",
+      "tags": [
+        "spring",
+        "press",
+        "button",
+        "interaction",
+        "physics",
+        "glow",
+        "burst"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/press-release-spring.md"
+      }
+    },
+    {
+      "id": "reactive-displacement",
+      "kind": "motion-rule",
+      "title": "Reactive Displacement",
+      "description": "Physical-collision transition where an entering element's GSAP tween drives the exiting element's displacement. Three concurrent tweens at the same timeline position with victim durations 40-50% of the intruder's. Tags: transition, physics, collision, displacement, push",
+      "tags": [
+        "transition",
+        "physics",
+        "collision",
+        "displacement",
+        "push"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/reactive-displacement.md"
+      }
+    },
+    {
+      "id": "scale-swap-transition",
+      "kind": "motion-rule",
+      "title": "Scale Swap Transition",
+      "description": "Coordinated morph between two DOM elements at the same screen center. Exit cluster shrinks + fades; entrance pops in with `back.out(2)` overshoot. Tags: transition, morph, scale, swap",
+      "tags": [
+        "transition",
+        "morph",
+        "scale",
+        "swap"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/scale-swap-transition.md"
+      }
+    },
+    {
+      "id": "sine-wave-loop",
+      "kind": "motion-rule",
+      "title": "Sine Wave Loop",
+      "description": "Continuous breathing/idle ambient motion. Two forms: GSAP `sine.inOut` yoyo with finite repeats (preferred when standalone) or onUpdate reading `tl.time()` (preferred when multiplying onto another live value). Tags: idle, loop, breathing, sine, ambient",
+      "tags": [
+        "idle",
+        "loop",
+        "breathing",
+        "sine",
+        "ambient"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/sine-wave-loop.md"
+      }
+    },
+    {
+      "id": "split-tilt-cards",
+      "kind": "motion-rule",
+      "title": "Split Tilt Cards",
+      "description": "Two cards side-by-side with opposing rotationY tilts (+/- baseTilt) and entry slides from their respective sides. Continuous floating runs in phase opposition (`Math.PI` offset). Tags: 3d, cards, split, tilt, comparison, symmetric",
+      "tags": [
+        "3d",
+        "cards",
+        "split",
+        "tilt",
+        "comparison",
+        "symmetric"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/split-tilt-cards.md"
+      }
+    },
+    {
+      "id": "spring-pop-entrance",
+      "kind": "motion-rule",
+      "title": "Spring Pop Entrance",
+      "description": "The canonical ENTRANCE pop — an element (or staggered group) arrives by springing `scale: 0 → 1` with `back.out` overshoot, `fromTo` so it's correct at t=0 under seek. Single hero, staggered group (≤500ms cap), overshoot tuned by personality. Distinct from `press-release-spring` (a click/press reaction). Tags: spring, entrance, pop, scale-in, overshoot, stagger, arrival",
+      "tags": [
+        "spring",
+        "entrance",
+        "pop",
+        "scale-in",
+        "overshoot",
+        "stagger",
+        "arrival"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/spring-pop-entrance.md"
+      }
+    },
+    {
+      "id": "stat-bars-and-fills",
+      "kind": "motion-rule",
+      "title": "Stat Bars And Fills",
+      "description": "Data-viz primitives that pair a number with a graphic — growth bars (CSS `scaleY` stagger), progress fill (bar `scaleX` or measured SVG ring), and fractional star-rating wipe (`clip-path`). Transforms only, seek-safe. Pick single-focus vs split-frame and hold it. Tags: data, stats, chart, bars, progress, ring, stars, rating, infographic",
+      "tags": [
+        "data",
+        "stats",
+        "chart",
+        "bars",
+        "progress",
+        "ring",
+        "stars",
+        "rating",
+        "infographic"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/stat-bars-and-fills.md"
+      }
+    },
+    {
+      "id": "svg-icon-enrichment",
+      "kind": "motion-rule",
+      "title": "Svg Icon Enrichment",
+      "description": "Animate internal SVG elements (rotating hands, oscillating blades, pulsing dots, dash-flow lines) so icons feel alive. **Critical**: use SVG `setAttribute('transform', 'rotate(deg cx cy)')` for explicit center — CSS `transform-origin` + `transform-box: fill-box` interprets origin in bbox-local coords (off-center for thin lines). Tags: svg, icon, animation, micro-animation, rotation, pulse",
+      "tags": [
+        "svg",
+        "icon",
+        "animation",
+        "micro-animation",
+        "rotation",
+        "pulse"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/svg-icon-enrichment.md"
+      }
+    },
+    {
+      "id": "svg-path-draw",
+      "kind": "motion-rule",
+      "title": "Svg Path Draw",
+      "description": "SVG outline draws itself stroke-by-stroke via `stroke-dasharray` / `stroke-dashoffset`. Measure with `getTotalLength()` at composition setup, set initial dashoffset = length, GSAP tweens to 0. For circular progress rings, rotate the stroke `-90deg` so drawing starts at 12 o'clock. Tags: svg, stroke, draw, vector, path, dasharray",
+      "tags": [
+        "svg",
+        "stroke",
+        "draw",
+        "vector",
+        "path",
+        "dasharray"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/svg-path-draw.md"
+      }
+    },
+    {
+      "id": "vertical-spring-ticker",
+      "kind": "motion-rule",
+      "title": "Vertical Spring Ticker",
+      "description": "Slot-machine vertical scrolling using stepped GSAP tweens within a masked column. Tags: text, ticker, scroll, vertical",
+      "tags": [
+        "text",
+        "ticker",
+        "scroll",
+        "vertical"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/vertical-spring-ticker.md"
+      }
+    },
+    {
+      "id": "viewport-change",
+      "kind": "motion-rule",
+      "title": "Viewport Change",
+      "description": "Virtual camera — simulate zoom / pan / focus-lock by transforming a single `.world` wrapper containing all scene content. Single-element composite transform `translate(x,y) scale(S)`; counter-translate math is `T = -offset × S` (DIFFERENT from coordinate-target-zoom's `T = -offset`). Tags: viewport, camera, zoom, pan, focus-lock",
+      "tags": [
+        "viewport",
+        "camera",
+        "zoom",
+        "pan",
+        "focus-lock"
+      ],
+      "reuseTier": "safe-composition",
+      "provenance": {
+        "source": "vendored-hyperframes-skill",
+        "ref": "hyperframes-animation/rules/viewport-change.md"
+      }
+    },
+    {
+      "id": "app-showcase",
+      "kind": "registry-block",
+      "title": "App Showcase",
+      "description": "Fitness app product showcase with three floating smartphone screens",
+      "tags": [
+        "showcase",
+        "app",
+        "3d"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 5.5,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/app-showcase.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/app-showcase.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/app-showcase.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/app-showcase/registry-item.json"
+      }
+    },
+    {
+      "id": "apple-money-count",
+      "kind": "registry-block",
+      "title": "Apple Money Count",
+      "description": "Apple-style finance counter that counts from $0 to $10,000, flashes green, and bursts money icons with sound.",
+      "tags": [
+        "showcase",
+        "finance",
+        "kinetic",
+        "youtube",
+        "sfx"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 5,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/apple-money-count.html",
+        "assets/sfx-production.wav"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/apple-money-count.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/apple-money-count.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/apple-money-count/registry-item.json"
+      }
+    },
+    {
+      "id": "blue-sweater-intro-video",
+      "kind": "registry-block",
+      "title": "Blue Sweater Intro Video",
+      "description": "Warm AI creator intro sequence that resolves into an X follow card for @_blue_sweater_.",
+      "tags": [
+        "showcase",
+        "ai",
+        "creator",
+        "sfx"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/blue-sweater-intro-video.html",
+        "assets/joe-sai-avatar.png",
+        "assets/sfx/integrated-melodic-tech-mix.wav"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/blue-sweater-intro-video.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/blue-sweater-intro-video.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/blue-sweater-intro-video/registry-item.json"
+      }
+    },
+    {
+      "id": "chromatic-radial-split",
+      "kind": "registry-block",
+      "title": "Chromatic Radial Split",
+      "description": "Shader transition with chromatic aberration radial split",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/chromatic-radial-split.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/chromatic-radial-split.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/chromatic-radial-split.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/chromatic-radial-split/registry-item.json"
+      }
+    },
+    {
+      "id": "cinematic-zoom",
+      "kind": "registry-block",
+      "title": "Cinematic Zoom",
+      "description": "Shader transition with dramatic zoom blur",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/cinematic-zoom.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/cinematic-zoom.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/cinematic-zoom.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/cinematic-zoom/registry-item.json"
+      }
+    },
+    {
+      "id": "code-3d-extrude",
+      "kind": "registry-block",
+      "title": "Code 3D Extrude",
+      "description": "Syntax-highlighted code on a lit, beveled 3D slab that rotates through real space and settles to a readable rest — true WebGL depth and lighting, not a 2D transform.",
+      "tags": [
+        "code",
+        "code-animation",
+        "3d",
+        "webgl",
+        "developer"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-3d-extrude.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-3d-extrude.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-3d-extrude.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-3d-extrude/registry-item.json"
+      }
+    },
+    {
+      "id": "code-diff",
+      "kind": "registry-block",
+      "title": "Code Diff",
+      "description": "An edit shown as a colored diff — removed lines collapse in red, added lines expand in green.",
+      "tags": [
+        "code",
+        "code-animation",
+        "diff",
+        "developer"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 6,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-diff.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-diff.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-diff.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-diff/registry-item.json"
+      }
+    },
+    {
+      "id": "code-highlight",
+      "kind": "registry-block",
+      "title": "Code Highlight Sweep",
+      "description": "A highlight band sweeps across a target line while the surrounding context dims — draws the eye to one line.",
+      "tags": [
+        "code",
+        "code-animation",
+        "highlight",
+        "developer"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 5,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-highlight.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-highlight.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-highlight.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-highlight/registry-item.json"
+      }
+    },
+    {
+      "id": "code-morph",
+      "kind": "registry-block",
+      "title": "Code Morph",
+      "description": "One snippet transforms into another — tokens glide between positions, leavers fade out, enterers fade in. Shiki Magic Move re-driven as a paused GSAP timeline.",
+      "tags": [
+        "code",
+        "code-animation",
+        "morph",
+        "refactor",
+        "developer"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 7,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-morph.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-morph.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-morph.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-morph/registry-item.json"
+      }
+    },
+    {
+      "id": "code-particle-assemble",
+      "kind": "registry-block",
+      "title": "Code Particle Assemble",
+      "description": "Thousands of GPU points scatter through space and fly to the exact glyph pixels of the code, resolving into readable syntax-highlighted text — a particle system, not a token tween.",
+      "tags": [
+        "code",
+        "code-animation",
+        "particles",
+        "gpu",
+        "webgl",
+        "developer"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-particle-assemble.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-particle-assemble.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-particle-assemble.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-particle-assemble/registry-item.json"
+      }
+    },
+    {
+      "id": "code-scroll",
+      "kind": "registry-block",
+      "title": "Code Scroll To Line",
+      "description": "The camera scrolls a long file to bring a target line to center and spotlights it — for walking through real modules.",
+      "tags": [
+        "code",
+        "code-animation",
+        "scroll",
+        "developer"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 6,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-scroll.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-scroll.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-scroll.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-scroll/registry-item.json"
+      }
+    },
+    {
+      "id": "code-shader-dissolve",
+      "kind": "registry-block",
+      "title": "Code Shader Dissolve",
+      "description": "The code compiles into existence: a GPU fragment shader resolves it out of seeded noise with a chromatic dissolve front and edge glow, then holds crisp.",
+      "tags": [
+        "code",
+        "code-animation",
+        "shader",
+        "webgl",
+        "developer"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 7,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-shader-dissolve.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-shader-dissolve.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-shader-dissolve.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-shader-dissolve/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-apple-terminal-basic",
+      "kind": "registry-block",
+      "title": "Code Snippet - Apple Terminal Basic",
+      "description": "Apple Terminal Basic profile: white background, black text, per-character typing animation of a shell session.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "terminal",
+        "apple",
+        "apple-terminal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-apple-terminal-basic.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-basic.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-basic.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-apple-terminal-basic/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-apple-terminal-clear-dark",
+      "kind": "registry-block",
+      "title": "Code Snippet - Apple Terminal Clear Dark",
+      "description": "Apple Terminal Clear Dark profile: semi-transparent dark background, per-character typing animation of a shell session.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "terminal",
+        "apple",
+        "apple-terminal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-apple-terminal-clear-dark.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-clear-dark.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-clear-dark.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-apple-terminal-clear-dark/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-apple-terminal-clear-light",
+      "kind": "registry-block",
+      "title": "Code Snippet - Apple Terminal Clear Light",
+      "description": "Apple Terminal Clear Light profile: semi-transparent light background, per-character typing animation of a shell session.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "terminal",
+        "apple",
+        "apple-terminal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-apple-terminal-clear-light.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-clear-light.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-clear-light.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-apple-terminal-clear-light/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-apple-terminal-grass",
+      "kind": "registry-block",
+      "title": "Code Snippet - Apple Terminal Grass",
+      "description": "Apple Terminal Grass profile: black background with green text, per-character typing animation of a shell session.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "terminal",
+        "apple",
+        "apple-terminal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-apple-terminal-grass.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-grass.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-grass.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-apple-terminal-grass/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-apple-terminal-homebrew",
+      "kind": "registry-block",
+      "title": "Code Snippet - Apple Terminal Homebrew",
+      "description": "Apple Terminal Homebrew profile: black background with bright green text and lime cursor, per-character typing animation of a shell session.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "terminal",
+        "apple",
+        "apple-terminal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-apple-terminal-homebrew.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-homebrew.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-homebrew.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-apple-terminal-homebrew/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-apple-terminal-man-page",
+      "kind": "registry-block",
+      "title": "Code Snippet - Apple Terminal Man Page",
+      "description": "Apple Terminal Man Page profile: pale yellow background with black text, per-character typing animation of a shell session.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "terminal",
+        "apple",
+        "apple-terminal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-apple-terminal-man-page.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-man-page.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-man-page.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-apple-terminal-man-page/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-apple-terminal-novel",
+      "kind": "registry-block",
+      "title": "Code Snippet - Apple Terminal Novel",
+      "description": "Apple Terminal Novel profile: warm parchment background with dark brown text, per-character typing animation of a shell session.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "terminal",
+        "apple",
+        "apple-terminal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-apple-terminal-novel.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-novel.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-novel.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-apple-terminal-novel/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-apple-terminal-ocean",
+      "kind": "registry-block",
+      "title": "Code Snippet - Apple Terminal Ocean",
+      "description": "Apple Terminal Ocean profile: deep blue background with white text, per-character typing animation of a shell session.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "terminal",
+        "apple",
+        "apple-terminal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-apple-terminal-ocean.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-ocean.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-ocean.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-apple-terminal-ocean/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-apple-terminal-pro",
+      "kind": "registry-block",
+      "title": "Code Snippet - Apple Terminal Pro",
+      "description": "Apple Terminal Pro profile: black background with grey text and lime green cursor, per-character typing animation of a shell session.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "terminal",
+        "apple",
+        "apple-terminal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-apple-terminal-pro.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-pro.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-pro.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-apple-terminal-pro/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-apple-terminal-red-sands",
+      "kind": "registry-block",
+      "title": "Code Snippet - Apple Terminal Red Sands",
+      "description": "Apple Terminal Red Sands profile: deep red background with sandy text, per-character typing animation of a shell session.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "terminal",
+        "apple",
+        "apple-terminal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-apple-terminal-red-sands.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-red-sands.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-red-sands.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-apple-terminal-red-sands/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-apple-terminal-silver-aerogel",
+      "kind": "registry-block",
+      "title": "Code Snippet - Apple Terminal Silver Aerogel",
+      "description": "Apple Terminal Silver Aerogel profile: dark grey background with white text, per-character typing animation of a shell session.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "terminal",
+        "apple",
+        "apple-terminal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-apple-terminal-silver-aerogel.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-silver-aerogel.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-silver-aerogel.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-apple-terminal-silver-aerogel/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-apple-terminal-solid-colors",
+      "kind": "registry-block",
+      "title": "Code Snippet - Apple Terminal Solid Colors",
+      "description": "Apple Terminal Solid Colors profile: deep purple background with white text, per-character typing animation of a shell session.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "terminal",
+        "apple",
+        "apple-terminal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-apple-terminal-solid-colors.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-solid-colors.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-apple-terminal-solid-colors.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-apple-terminal-solid-colors/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-dark-2026",
+      "kind": "registry-block",
+      "title": "Code Snippet - Dark 2026",
+      "description": "VS Code workbench with per-character typing animation in the Dark 2026 theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-dark-2026.html",
+        "assets/background.jpeg"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-dark-2026/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-dark-modern",
+      "kind": "registry-block",
+      "title": "Code Snippet - Dark Modern",
+      "description": "VS Code workbench with per-character typing animation in the Dark Modern theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-dark-modern.html",
+        "assets/background.jpeg"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-dark-modern/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-dark-plus",
+      "kind": "registry-block",
+      "title": "Code Snippet - Dark+",
+      "description": "VS Code workbench with per-character typing animation in the Dark+ theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-dark-plus.html",
+        "assets/background.jpeg"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-dark-plus/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-flight",
+      "kind": "registry-block",
+      "title": "Code Snippet Flight",
+      "description": "Discrete code snippets fly in from the side and assemble into a stacked program, staggered. Block-level FLIP.",
+      "tags": [
+        "code",
+        "code-animation",
+        "flight",
+        "developer"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 6,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-flight.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-flight.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-snippet-flight.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-flight/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-high-contrast",
+      "kind": "registry-block",
+      "title": "Code Snippet - High Contrast",
+      "description": "VS Code workbench with per-character typing animation in the High Contrast theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-high-contrast.html",
+        "assets/background.jpeg"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-high-contrast/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-high-contrast-light",
+      "kind": "registry-block",
+      "title": "Code Snippet - High Contrast Light",
+      "description": "VS Code workbench with per-character typing animation in the High Contrast Light theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-high-contrast-light.html",
+        "assets/background.jpeg"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-high-contrast-light/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-light-2026",
+      "kind": "registry-block",
+      "title": "Code Snippet - Light 2026",
+      "description": "VS Code workbench with per-character typing animation in the Light 2026 theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-light-2026.html",
+        "assets/background.jpeg"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-light-2026/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-light-modern",
+      "kind": "registry-block",
+      "title": "Code Snippet - Light Modern",
+      "description": "VS Code workbench with per-character typing animation in the Light Modern theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-light-modern.html",
+        "assets/background.jpeg"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-light-modern/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-light-plus",
+      "kind": "registry-block",
+      "title": "Code Snippet - Light+",
+      "description": "VS Code workbench with per-character typing animation in the Light+ theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-light-plus.html",
+        "assets/background.jpeg"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-light-plus/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-monokai",
+      "kind": "registry-block",
+      "title": "Code Snippet - Monokai",
+      "description": "VS Code workbench with per-character typing animation in the Monokai theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-monokai.html",
+        "assets/background.jpeg"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-monokai/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-solarized-light",
+      "kind": "registry-block",
+      "title": "Code Snippet - Solarized Light",
+      "description": "VS Code workbench with per-character typing animation in the Solarized Light theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-solarized-light.html",
+        "assets/background.jpeg"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-solarized-light/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-visual-studio-dark",
+      "kind": "registry-block",
+      "title": "Code Snippet - Visual Studio Dark",
+      "description": "VS Code workbench with per-character typing animation in the Visual Studio Dark theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-visual-studio-dark.html",
+        "assets/background.jpeg"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-visual-studio-dark/registry-item.json"
+      }
+    },
+    {
+      "id": "code-snippet-visual-studio-light",
+      "kind": "registry-block",
+      "title": "Code Snippet - Visual Studio Light",
+      "description": "VS Code workbench with per-character typing animation in the Visual Studio Light theme. Full editor chrome with activity bar, sidebar, tabs, terminal, and status bar.",
+      "tags": [
+        "code",
+        "developer",
+        "showcase",
+        "vscode"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-snippet-visual-studio-light.html",
+        "assets/background.jpeg"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-snippet-visual-studio-light/registry-item.json"
+      }
+    },
+    {
+      "id": "code-typing",
+      "kind": "registry-block",
+      "title": "Code Typing",
+      "description": "Token-streamed typing reveal with a caret that tracks the frontier — deterministic, no CSS animation.",
+      "tags": [
+        "code",
+        "code-animation",
+        "typing",
+        "developer"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 5,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/code-typing.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-typing.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/code-typing.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/code-typing/registry-item.json"
+      }
+    },
+    {
+      "id": "cross-warp-morph",
+      "kind": "registry-block",
+      "title": "Cross Warp Morph",
+      "description": "Shader transition with cross-warped morphing",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/cross-warp-morph.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/cross-warp-morph.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/cross-warp-morph.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/cross-warp-morph/registry-item.json"
+      }
+    },
+    {
+      "id": "data-chart",
+      "kind": "registry-block",
+      "title": "Data Chart",
+      "description": "Animated bar + line chart with staggered reveal, NYT-style typography, and value labels",
+      "tags": [
+        "data",
+        "chart",
+        "statistics"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 15,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "configurableVariables": [
+        "--bg-color",
+        "--text-color"
+      ],
+      "files": [
+        "compositions/data-chart.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/data-chart.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/data-chart.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/data-chart/registry-item.json"
+      }
+    },
+    {
+      "id": "domain-warp-dissolve",
+      "kind": "registry-block",
+      "title": "Domain Warp Dissolve",
+      "description": "Shader transition with fractal noise domain warping",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/domain-warp-dissolve.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/domain-warp-dissolve.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/domain-warp-dissolve.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/domain-warp-dissolve/registry-item.json"
+      }
+    },
+    {
+      "id": "flash-through-white",
+      "kind": "registry-block",
+      "title": "Flash Through White",
+      "description": "Shader transition with white flash crossfade",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/flash-through-white.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/flash-through-white.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/flash-through-white.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/flash-through-white/registry-item.json"
+      }
+    },
+    {
+      "id": "flowchart",
+      "kind": "registry-block",
+      "title": "Flowchart",
+      "description": "Animated decision tree with SVG connectors, sticky-note nodes, cursor interaction, and typing correction",
+      "tags": [
+        "diagram",
+        "flowchart",
+        "interactive"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/flowchart.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/flowchart.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/flowchart.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/flowchart/registry-item.json"
+      }
+    },
+    {
+      "id": "flowchart-vertical",
+      "kind": "registry-block",
+      "title": "Flowchart Vertical",
+      "description": "Portrait animated decision tree with SVG connectors, sticky-note nodes, cursor interaction, and typing correction",
+      "tags": [
+        "diagram",
+        "flowchart",
+        "interactive",
+        "portrait"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1440,
+        "height": 2560
+      },
+      "files": [
+        "compositions/flowchart-vertical.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/flowchart-vertical.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/flowchart-vertical.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/flowchart-vertical/registry-item.json"
+      }
+    },
+    {
+      "id": "glitch",
+      "kind": "registry-block",
+      "title": "Glitch",
+      "description": "Shader transition with digital glitch artifacts",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/glitch.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/glitch.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/glitch.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/glitch/registry-item.json"
+      }
+    },
+    {
+      "id": "gravitational-lens",
+      "kind": "registry-block",
+      "title": "Gravitational Lens",
+      "description": "Shader transition with gravitational lensing distortion",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/gravitational-lens.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/gravitational-lens.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/gravitational-lens.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/gravitational-lens/registry-item.json"
+      }
+    },
+    {
+      "id": "instagram-follow",
+      "kind": "registry-block",
+      "title": "Instagram Follow",
+      "description": "Animated Instagram follow overlay with profile card and follow button",
+      "tags": [
+        "social",
+        "overlay",
+        "instagram"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.5,
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "files": [
+        "compositions/instagram-follow.html",
+        "assets/avatar.jpg"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/instagram-follow.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/instagram-follow.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/instagram-follow/registry-item.json"
+      }
+    },
+    {
+      "id": "ios26-liquid-glass",
+      "kind": "registry-block",
+      "title": "iOS 26 Liquid Glass Home Screen",
+      "description": "3D iPhone with a normal iOS 26 home screen, liquid glass app icons, shader wallpaper, dock, and fluid glass notifications that drop from the status area onto a GLTF device model.",
+      "tags": [
+        "liquid-glass-html-in-canvas",
+        "webgpu",
+        "3d",
+        "iphone",
+        "ios26",
+        "notifications",
+        "gltf",
+        "html-in-canvas"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 15,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/ios26-liquid-glass.html",
+        "models/iphone.glb",
+        "lib/liquid-glass.iife.js",
+        "assets/icons/weather.jpg",
+        "assets/icons/stocks.jpg",
+        "assets/icons/find-my.jpg",
+        "assets/icons/home.jpg",
+        "assets/icons/books.jpg",
+        "assets/icons/itunes-store.jpg",
+        "assets/icons/fitness.jpg",
+        "assets/icons/watch.jpg",
+        "assets/icons/contacts.jpg",
+        "assets/icons/files.jpg",
+        "assets/icons/translate.jpg",
+        "assets/icons/calendar.jpg",
+        "assets/icons/chatgpt.jpg",
+        "assets/icons/slack.jpg",
+        "assets/icons/instagram.jpg",
+        "assets/icons/x.jpg",
+        "assets/icons/proton-mail.jpg",
+        "assets/icons/gmail.jpg",
+        "assets/icons/revolut.jpg",
+        "assets/icons/photos.jpg",
+        "assets/icons/phone.jpg",
+        "assets/icons/brave.jpg",
+        "assets/icons/messages.jpg",
+        "assets/icons/whatsapp.jpg",
+        "assets/icons/notify-messages.jpg",
+        "assets/icons/music.jpg"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/ios26-liquid-glass.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/ios26-liquid-glass.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/ios26-liquid-glass/registry-item.json"
+      }
+    },
+    {
+      "id": "light-leak",
+      "kind": "registry-block",
+      "title": "Light Leak",
+      "description": "Shader transition with cinematic light leak overlay",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/light-leak.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/light-leak.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/light-leak.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/light-leak/registry-item.json"
+      }
+    },
+    {
+      "id": "liquid-glass-context-menu",
+      "kind": "registry-block",
+      "title": "Liquid Glass Context Menu",
+      "description": "Frosted glass context menu panel drifting over an aurora shader background",
+      "tags": [
+        "html-in-canvas",
+        "liquid-glass-html-in-canvas",
+        "webgpu"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/liquid-glass-context-menu.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/liquid-glass-context-menu.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/liquid-glass-context-menu.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/liquid-glass-context-menu/registry-item.json"
+      }
+    },
+    {
+      "id": "liquid-glass-media-controls",
+      "kind": "registry-block",
+      "title": "Liquid Glass Media Controls",
+      "description": "Frosted glass media control panels spreading over an aurora shader background",
+      "tags": [
+        "html-in-canvas",
+        "liquid-glass-html-in-canvas",
+        "webgpu"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/liquid-glass-media-controls.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/liquid-glass-media-controls.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/liquid-glass-media-controls.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/liquid-glass-media-controls/registry-item.json"
+      }
+    },
+    {
+      "id": "liquid-glass-notification",
+      "kind": "registry-block",
+      "title": "Liquid Glass Notification",
+      "description": "Frosted glass notification cards floating over an aurora shader background",
+      "tags": [
+        "html-in-canvas",
+        "liquid-glass-html-in-canvas",
+        "webgpu"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/liquid-glass-notification.html",
+        "compositions/assets/hyperframes-logo-dark.svg"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/liquid-glass-notification.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/liquid-glass-notification.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/liquid-glass-notification/registry-item.json"
+      }
+    },
+    {
+      "id": "liquid-glass-widgets",
+      "kind": "registry-block",
+      "title": "Liquid Glass Widgets",
+      "description": "Frosted glass stat cards, showcase panel and pill chips over an aurora shader background",
+      "tags": [
+        "html-in-canvas",
+        "liquid-glass-html-in-canvas",
+        "webgpu"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/liquid-glass-widgets.html",
+        "compositions/assets/hyperframes-logo-dark.svg"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/liquid-glass-widgets.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/liquid-glass-widgets.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/liquid-glass-widgets/registry-item.json"
+      }
+    },
+    {
+      "id": "logo-outro",
+      "kind": "registry-block",
+      "title": "Logo Outro",
+      "description": "Cinematic logo reveal with piece-by-piece assembly, glow bloom, tagline fade-in, and URL pill",
+      "tags": [
+        "branding",
+        "outro",
+        "logo"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 6,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "configurableVariables": [
+        "--bg-color",
+        "--accent-color"
+      ],
+      "files": [
+        "compositions/logo-outro.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/logo-outro.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/logo-outro.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/logo-outro/registry-item.json"
+      }
+    },
+    {
+      "id": "lower-third-bild",
+      "kind": "registry-block",
+      "title": "Lower Third — BILD Style",
+      "description": "News-style lower third with tight-fit text boxes: white headline bar with red drop-shadow, red sub-line with white drop-shadow.",
+      "tags": [
+        "broadcast",
+        "lower-third",
+        "news",
+        "overlay"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/lower-third-bild.html",
+        "compositions/assets/fonts/BarlowCondensed-Bold.woff2",
+        "compositions/assets/fonts/BarlowCondensed-ExtraBold.woff2"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/lower-third-bild/registry-item.json"
+      }
+    },
+    {
+      "id": "lt-accent-underline",
+      "kind": "registry-block",
+      "title": "Lower Third — Accent Underline",
+      "description": "Cardless lower third for footage overlay: name rises, an accent rule draws left-to-right, role fades in; text-shadowed for legibility",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview",
+        "minimal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/lt-accent-underline.html"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/lt-accent-underline/registry-item.json"
+      }
+    },
+    {
+      "id": "lt-bold-block",
+      "kind": "registry-block",
+      "title": "Lower Third — Bold Block",
+      "description": "High-energy podcast lower third: solid dark block wipes in, uppercase name slams up, accent tag pops",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview",
+        "bold"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/lt-bold-block.html"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/lt-bold-block/registry-item.json"
+      }
+    },
+    {
+      "id": "lt-clean-bar",
+      "kind": "registry-block",
+      "title": "Lower Third — Clean Bar",
+      "description": "Minimal white-card lower third for podcasts/interviews: accent tab, name + role, clip-wipe entrance",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/lt-clean-bar.html"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/lt-clean-bar/registry-item.json"
+      }
+    },
+    {
+      "id": "lt-color-block",
+      "kind": "registry-block",
+      "title": "Lower Third — Color Block",
+      "description": "High-energy lower third: bold accent-color block slides in with overshoot, condensed name + mono role",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview",
+        "bold"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/lt-color-block.html"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/lt-color-block/registry-item.json"
+      }
+    },
+    {
+      "id": "lt-dark-card",
+      "kind": "registry-block",
+      "title": "Lower Third — Dark Card",
+      "description": "Charcoal card lower third for bright footage: name, drawn accent underline, role; slide-up entrance",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview",
+        "dark"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/lt-dark-card.html"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/lt-dark-card/registry-item.json"
+      }
+    },
+    {
+      "id": "lt-kicker-name",
+      "kind": "registry-block",
+      "title": "Lower Third — Kicker Name",
+      "description": "Cardless lower third with an accent eyebrow/kicker tag, heavy name, and a drawn baseline; for footage",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview",
+        "bold"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/lt-kicker-name.html"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/lt-kicker-name/registry-item.json"
+      }
+    },
+    {
+      "id": "lt-mask-reveal",
+      "kind": "registry-block",
+      "title": "Lower Third — Mask Reveal",
+      "description": "Cardless lower third: an accent sweep crosses and clip-path-reveals a heavy name, role fades up; for footage",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview",
+        "bold"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/lt-mask-reveal.html"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/lt-mask-reveal/registry-item.json"
+      }
+    },
+    {
+      "id": "lt-side-rule",
+      "kind": "registry-block",
+      "title": "Lower Third — Side Rule",
+      "description": "Cardless lower third with a vertical accent bar; condensed display name + mono role, text-shadowed for footage",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview",
+        "minimal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/lt-side-rule.html"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/lt-side-rule/registry-item.json"
+      }
+    },
+    {
+      "id": "lt-soft-pill",
+      "kind": "registry-block",
+      "title": "Lower Third — Soft Pill",
+      "description": "Rounded white pill lower third for podcasts/interviews: status dot, name + role, scale-pop entrance",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview",
+        "minimal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/lt-soft-pill.html"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/lt-soft-pill/registry-item.json"
+      }
+    },
+    {
+      "id": "lt-stack-bars",
+      "kind": "registry-block",
+      "title": "Lower Third — Stack Bars",
+      "description": "Two stacked bars: a dark name bar wipes from the left, an accent role bar wipes from the right",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "podcast",
+        "interview",
+        "bold"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/lt-stack-bars.html"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/lt-stack-bars/registry-item.json"
+      }
+    },
+    {
+      "id": "macos-notification",
+      "kind": "registry-block",
+      "title": "macOS Notification",
+      "description": "Animated macOS-style notification banner with app icon and message",
+      "tags": [
+        "social",
+        "overlay",
+        "notification"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 5,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/macos-notification.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/macos-notification.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/macos-notification.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/macos-notification/registry-item.json"
+      }
+    },
+    {
+      "id": "macos-tahoe-liquid-glass",
+      "kind": "registry-block",
+      "title": "macOS Tahoe Liquid Glass Desktop",
+      "description": "3D MacBook with a macOS Tahoe-style desktop, glass menu bar, Finder window, dock, and cinematic device camera move.",
+      "tags": [
+        "html-in-canvas",
+        "3d",
+        "macos",
+        "tahoe",
+        "gltf"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 15,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/macos-tahoe-liquid-glass.html",
+        "models/macbook.glb",
+        "assets/wallpapers/golden-gate-bridge-san-francisco-5k-0g.jpg",
+        "assets/icons/finder.png",
+        "assets/icons/safari.jpg",
+        "assets/icons/mail.jpg",
+        "assets/icons/calendar.jpg",
+        "assets/icons/photos.jpg",
+        "assets/icons/messages.jpg",
+        "assets/icons/toast-messages.jpg",
+        "assets/icons/music.jpg",
+        "assets/icons/brave.jpg",
+        "assets/icons/slack.jpg",
+        "assets/icons/files.jpg",
+        "assets/icons/dock-finder.png",
+        "assets/icons/dock-safari.jpg",
+        "assets/icons/dock-mail.jpg",
+        "assets/icons/dock-photos.jpg",
+        "assets/icons/dock-music.jpg"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/macos-tahoe-liquid-glass.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/macos-tahoe-liquid-glass.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/macos-tahoe-liquid-glass/registry-item.json"
+      }
+    },
+    {
+      "id": "news-ticker",
+      "kind": "registry-block",
+      "title": "News Ticker",
+      "description": "Premium broadcast-style lower-third ticker with live label, headline ribbon, and scrolling news crawl.",
+      "tags": [
+        "lower-third",
+        "overlay",
+        "news",
+        "ticker"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 7,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/news-ticker.html"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/news-ticker/registry-item.json"
+      }
+    },
+    {
+      "id": "north-korea-locked-down",
+      "kind": "registry-block",
+      "title": "North Korea Locked Down",
+      "description": "Realistic map zoom into North Korea with a red scribble circle, locked-down pop-up label, and reddish editorial wash.",
+      "tags": [
+        "showcase",
+        "map",
+        "annotation",
+        "youtube",
+        "kinetic"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 7,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/north-korea-locked-down.html",
+        "assets/korea-map.png"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/north-korea-locked-down.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/north-korea-locked-down.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/north-korea-locked-down/registry-item.json"
+      }
+    },
+    {
+      "id": "nyc-paris-flight",
+      "kind": "registry-block",
+      "title": "NYC Paris Flight",
+      "description": "Apple-style realistic map animation with a plane flying from New York to Paris, marker circle, landing pop, and sound effects.",
+      "tags": [
+        "showcase",
+        "travel",
+        "map",
+        "youtube",
+        "sfx"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 6,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/nyc-paris-flight.html",
+        "assets/map-nyc-paris.png",
+        "assets/sfx-mix.wav"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/nyc-paris-flight.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/nyc-paris-flight.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/nyc-paris-flight/registry-item.json"
+      }
+    },
+    {
+      "id": "reddit-post",
+      "kind": "registry-block",
+      "title": "Reddit Post Card",
+      "description": "Animated Reddit post card overlay with upvotes and comments",
+      "tags": [
+        "social",
+        "overlay",
+        "reddit"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 5,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/reddit-post.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/reddit-post.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/reddit-post.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/reddit-post/registry-item.json"
+      }
+    },
+    {
+      "id": "ridged-burn",
+      "kind": "registry-block",
+      "title": "Ridged Burn",
+      "description": "Shader transition with ridged turbulence burn effect",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/ridged-burn.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/ridged-burn.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/ridged-burn.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/ridged-burn/registry-item.json"
+      }
+    },
+    {
+      "id": "ripple-waves",
+      "kind": "registry-block",
+      "title": "Ripple Waves",
+      "description": "Shader transition with concentric ripple wave distortion",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/ripple-waves.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/ripple-waves.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/ripple-waves.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/ripple-waves/registry-item.json"
+      }
+    },
+    {
+      "id": "sdf-iris",
+      "kind": "registry-block",
+      "title": "SDF Iris",
+      "description": "Shader transition with signed distance field iris reveal",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/sdf-iris.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/sdf-iris.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/sdf-iris.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/sdf-iris/registry-item.json"
+      }
+    },
+    {
+      "id": "spain-map",
+      "kind": "registry-block",
+      "title": "Spain Map",
+      "description": "Animated Spain choropleth by autonomous community with staggered reveals and gradient legend — D3 conic conformal projection",
+      "tags": [
+        "data",
+        "map",
+        "geography",
+        "spain",
+        "europe",
+        "choropleth"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/spain-map.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/spain-map.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/spain-map.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/spain-map/registry-item.json"
+      }
+    },
+    {
+      "id": "spotify-card",
+      "kind": "registry-block",
+      "title": "Spotify Now Playing",
+      "description": "Animated Spotify now-playing card with album art and progress bar",
+      "tags": [
+        "social",
+        "overlay",
+        "spotify"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 5,
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "files": [
+        "compositions/spotify-card.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/spotify-card.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/spotify-card.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/spotify-card/registry-item.json"
+      }
+    },
+    {
+      "id": "swirl-vortex",
+      "kind": "registry-block",
+      "title": "Swirl Vortex",
+      "description": "Shader transition with swirling vortex distortion",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/swirl-vortex.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/swirl-vortex.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/swirl-vortex.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/swirl-vortex/registry-item.json"
+      }
+    },
+    {
+      "id": "thermal-distortion",
+      "kind": "registry-block",
+      "title": "Thermal Distortion",
+      "description": "Shader transition with heat haze thermal distortion",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/thermal-distortion.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/thermal-distortion.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/thermal-distortion.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/thermal-distortion/registry-item.json"
+      }
+    },
+    {
+      "id": "tiktok-follow",
+      "kind": "registry-block",
+      "title": "TikTok Follow",
+      "description": "Animated TikTok follow overlay with profile card and follow button",
+      "tags": [
+        "social",
+        "overlay",
+        "tiktok"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.5,
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "files": [
+        "compositions/tiktok-follow.html",
+        "assets/avatar.jpg"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/tiktok-follow.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/tiktok-follow.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/tiktok-follow/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-3d",
+      "kind": "registry-block",
+      "title": "3D Transitions",
+      "description": "Showcase of 3D perspective flip and rotate transitions",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-3d.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-3d.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-3d.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-3d/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-blur",
+      "kind": "registry-block",
+      "title": "Blur Transitions",
+      "description": "Showcase of blur-based transitions between scenes",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 20,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-blur.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-blur.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-blur.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-blur/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-cover",
+      "kind": "registry-block",
+      "title": "Cover Transitions",
+      "description": "Showcase of cover/uncover slide transitions",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 21,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-cover.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-cover.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-cover.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-cover/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-destruction",
+      "kind": "registry-block",
+      "title": "Destruction Transitions",
+      "description": "Showcase of destructive break-apart transitions",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 14,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-destruction.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-destruction.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-destruction.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-destruction/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-dissolve",
+      "kind": "registry-block",
+      "title": "Dissolve Transitions",
+      "description": "Showcase of dissolve and fade transitions",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 24,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-dissolve.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-dissolve.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-dissolve.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-dissolve/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-distortion",
+      "kind": "registry-block",
+      "title": "Distortion Transitions",
+      "description": "Showcase of warp and distortion transitions",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 21,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-distortion.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-distortion.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-distortion.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-distortion/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-grid",
+      "kind": "registry-block",
+      "title": "Grid Transitions",
+      "description": "Showcase of grid-based tile transitions",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 11,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-grid.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-grid.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-grid.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-grid/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-light",
+      "kind": "registry-block",
+      "title": "Light Transitions",
+      "description": "Showcase of light-based glow and flash transitions",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 21,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-light.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-light.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-light.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-light/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-mechanical",
+      "kind": "registry-block",
+      "title": "Mechanical Transitions",
+      "description": "Showcase of mechanical shutter and iris transitions",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 15,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-mechanical.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-mechanical.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-mechanical.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-mechanical/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-other",
+      "kind": "registry-block",
+      "title": "Other Transitions",
+      "description": "Showcase of miscellaneous creative transitions",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 20,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-other.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-other.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-other.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-other/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-push",
+      "kind": "registry-block",
+      "title": "Push Transitions",
+      "description": "Showcase of push and slide transitions",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 24,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-push.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-push.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-push.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-push/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-radial",
+      "kind": "registry-block",
+      "title": "Radial Transitions",
+      "description": "Showcase of radial wipe and reveal transitions",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 20,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-radial.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-radial.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-radial.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-radial/registry-item.json"
+      }
+    },
+    {
+      "id": "transitions-scale",
+      "kind": "registry-block",
+      "title": "Scale Transitions",
+      "description": "Showcase of scale and zoom transitions",
+      "tags": [
+        "transition",
+        "showcase"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 15,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/transitions-scale.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-scale.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/transitions-scale.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/transitions-scale/registry-item.json"
+      }
+    },
+    {
+      "id": "ui-3d-reveal",
+      "kind": "registry-block",
+      "title": "3D UI Reveal",
+      "description": "Perspective 3D reveal animation for UI elements",
+      "tags": [
+        "showcase",
+        "3d",
+        "reveal"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 13,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/ui-3d-reveal.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/ui-3d-reveal.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/ui-3d-reveal.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/ui-3d-reveal/registry-item.json"
+      }
+    },
+    {
+      "id": "us-map",
+      "kind": "registry-block",
+      "title": "US Map",
+      "description": "Animated US choropleth map with staggered state reveals, value labels, and gradient legend — pure inline SVG with GSAP",
+      "tags": [
+        "data",
+        "map",
+        "geography",
+        "usa",
+        "choropleth"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/us-map.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/us-map.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/us-map.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/us-map/registry-item.json"
+      }
+    },
+    {
+      "id": "us-map-bubble",
+      "kind": "registry-block",
+      "title": "US Bubble Map",
+      "description": "Animated US bubble map with proportional city markers, value callouts, and connection lines — composable with us-map",
+      "tags": [
+        "data",
+        "map",
+        "geography",
+        "usa",
+        "bubble",
+        "cities"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/us-map-bubble.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/us-map-bubble.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/us-map-bubble.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/us-map-bubble/registry-item.json"
+      }
+    },
+    {
+      "id": "us-map-flow",
+      "kind": "registry-block",
+      "title": "US Flow Map",
+      "description": "Animated connection arcs between US cities over a base map — composable origin-destination flow visualization",
+      "tags": [
+        "data",
+        "map",
+        "geography",
+        "usa",
+        "flow",
+        "connections",
+        "arcs"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/us-map-flow.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/us-map-flow.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/us-map-flow.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/us-map-flow/registry-item.json"
+      }
+    },
+    {
+      "id": "us-map-hex",
+      "kind": "registry-block",
+      "title": "US Hex Grid Map",
+      "description": "Animated hexagonal tile grid map — each state as an equal-weight hex with data fill and abbreviation label",
+      "tags": [
+        "data",
+        "map",
+        "geography",
+        "usa",
+        "hexgrid",
+        "tilegrid"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 10,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/us-map-hex.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/us-map-hex.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/us-map-hex.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/us-map-hex/registry-item.json"
+      }
+    },
+    {
+      "id": "vfx-iphone-device",
+      "kind": "registry-block",
+      "title": "iPhone & MacBook 3D Showcase",
+      "description": "Real GLTF iPhone 15 Pro Max and MacBook Pro models with live HTML-in-Canvas screen content, morphing glass lens, product review camera choreography, and 360° turntable.",
+      "tags": [
+        "html-in-canvas",
+        "3d",
+        "device",
+        "iphone",
+        "macbook",
+        "gltf"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 15,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/vfx-iphone-device.html",
+        "models/iphone.glb",
+        "models/macbook.glb",
+        "models/hyperframes-mobile.png",
+        "models/hyperframes-desktop.png"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-iphone-device.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-iphone-device.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/vfx-iphone-device/registry-item.json"
+      }
+    },
+    {
+      "id": "vfx-liquid-background",
+      "kind": "registry-block",
+      "title": "Liquid Background",
+      "description": "Organic liquid simulation with vertex displacement on a subdivided plane. HTML content floats above rippling fluid surface with real-time wave dynamics.",
+      "tags": [
+        "html-in-canvas",
+        "liquid",
+        "webgl",
+        "displacement",
+        "background"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "configurableVariables": [
+        "--bg-color",
+        "--text-color"
+      ],
+      "files": [
+        "compositions/vfx-liquid-background.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-liquid-background.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-liquid-background.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/vfx-liquid-background/registry-item.json"
+      }
+    },
+    {
+      "id": "vfx-liquid-glass",
+      "kind": "registry-block",
+      "title": "Liquid Glass",
+      "description": "VFX composition block",
+      "tags": [
+        "html-in-canvas",
+        "webgl"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 20,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "configurableVariables": [
+        "--bg-color",
+        "--accent-color"
+      ],
+      "files": [
+        "compositions/vfx-liquid-glass.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-liquid-glass.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-liquid-glass.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/vfx-liquid-glass/registry-item.json"
+      }
+    },
+    {
+      "id": "vfx-magnetic",
+      "kind": "registry-block",
+      "title": "Magnetic",
+      "description": "VFX composition block",
+      "tags": [
+        "html-in-canvas",
+        "webgl"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 15,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "configurableVariables": [
+        "--bg-color",
+        "--text-color"
+      ],
+      "files": [
+        "compositions/vfx-magnetic.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-magnetic.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-magnetic.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/vfx-magnetic/registry-item.json"
+      }
+    },
+    {
+      "id": "vfx-portal",
+      "kind": "registry-block",
+      "title": "Portal",
+      "description": "VFX composition block",
+      "tags": [
+        "html-in-canvas",
+        "webgl"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 10,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "configurableVariables": [
+        "--bg-color",
+        "--portal-color"
+      ],
+      "files": [
+        "compositions/vfx-portal.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-portal.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-portal.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/vfx-portal/registry-item.json"
+      }
+    },
+    {
+      "id": "vfx-shatter",
+      "kind": "registry-block",
+      "title": "Shatter",
+      "description": "VFX composition block",
+      "tags": [
+        "html-in-canvas",
+        "webgl"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 12,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/vfx-shatter.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-shatter.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-shatter.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/vfx-shatter/registry-item.json"
+      }
+    },
+    {
+      "id": "vfx-text-cursor",
+      "kind": "registry-block",
+      "title": "VFX Text Cursor",
+      "description": "Dramatic text reveal with cursor glow, chromatic shadow rays, and directional lighting on a black stage. Canvas-based shader post-processing with spectral color edges.",
+      "tags": [
+        "html-in-canvas",
+        "text",
+        "shader",
+        "cursor",
+        "chromatic"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 8,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/vfx-text-cursor.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-text-cursor.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vfx-text-cursor.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/vfx-text-cursor/registry-item.json"
+      }
+    },
+    {
+      "id": "vpn-youtube-spot",
+      "kind": "registry-block",
+      "title": "VPN YouTube Spot",
+      "description": "Snappy Apple-style YouTube insert showing a phone finding and installing a friendly VPN app with sound effects.",
+      "tags": [
+        "app",
+        "showcase",
+        "youtube",
+        "sfx"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 7,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/vpn-youtube-spot.html",
+        "assets/vpn-sfx.wav"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vpn-youtube-spot.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/vpn-youtube-spot.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/vpn-youtube-spot/registry-item.json"
+      }
+    },
+    {
+      "id": "whip-pan",
+      "kind": "registry-block",
+      "title": "Whip Pan",
+      "description": "Shader transition simulating a fast camera whip pan",
+      "tags": [
+        "transition",
+        "shader"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/whip-pan.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/whip-pan.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/whip-pan.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/whip-pan/registry-item.json"
+      }
+    },
+    {
+      "id": "world-map",
+      "kind": "registry-block",
+      "title": "World Map",
+      "description": "Animated world choropleth with country-by-country reveal, tooltip labels, and rotating globe inset — D3 Natural Earth projection",
+      "tags": [
+        "data",
+        "map",
+        "geography",
+        "world",
+        "choropleth"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 14,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/world-map.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/world-map.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/world-map.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/world-map/registry-item.json"
+      }
+    },
+    {
+      "id": "x-post",
+      "kind": "registry-block",
+      "title": "X Post Card",
+      "description": "Animated X/Twitter post card overlay with engagement metrics",
+      "tags": [
+        "social",
+        "overlay",
+        "twitter"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 5,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/x-post.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/x-post.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/x-post.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/x-post/registry-item.json"
+      }
+    },
+    {
+      "id": "yt-lower-third",
+      "kind": "registry-block",
+      "title": "YouTube Lower Third",
+      "description": "Animated YouTube subscribe lower third with avatar and channel info",
+      "tags": [
+        "social",
+        "overlay",
+        "youtube"
+      ],
+      "reuseTier": "parameter-swap",
+      "durationSec": 4.5,
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "files": [
+        "compositions/yt-lower-third.html",
+        "assets/avatar.jpg"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/yt-lower-third.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/blocks/yt-lower-third.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:blocks/yt-lower-third/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-blend-difference",
+      "kind": "registry-component",
+      "title": "Blend Difference",
+      "description": "Auto-inverting text using mix-blend-mode: difference — flips between white and black per-pixel against the background",
+      "tags": [
+        "text",
+        "text-effect",
+        "effect",
+        "blend-mode",
+        "contrast",
+        "inversion"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-blend-difference.html"
+      ],
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-blend-difference/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-clip-wipe",
+      "kind": "registry-component",
+      "title": "Clip Wipe",
+      "description": "Left-to-right clip-path wipe reveal per word",
+      "tags": [
+        "captions",
+        "caption-style",
+        "wipe",
+        "clip-path",
+        "reveal"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-clip-wipe.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-clip-wipe/preview-v2.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-clip-wipe.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-clip-wipe/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-editorial-emphasis",
+      "kind": "registry-component",
+      "title": "Editorial Emphasis",
+      "description": "Dual-font system with dramatic size contrast for emphasis words",
+      "tags": [
+        "captions",
+        "caption-style",
+        "editorial",
+        "typography",
+        "emphasis"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-editorial-emphasis.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-editorial-emphasis/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-editorial-emphasis.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-editorial-emphasis/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-emoji-pop",
+      "kind": "registry-component",
+      "title": "Emoji Pop",
+      "description": "Emoji integration with stroked text and horizontal squeeze entrance",
+      "tags": [
+        "captions",
+        "caption-style",
+        "emoji",
+        "social"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-emoji-pop.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-emoji-pop/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-emoji-pop.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-emoji-pop/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-glitch-rgb",
+      "kind": "registry-component",
+      "title": "Glitch RGB",
+      "description": "RGB chromatic aberration with CRT scanline overlay",
+      "tags": [
+        "captions",
+        "caption-style",
+        "glitch",
+        "cyber",
+        "tech"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-glitch-rgb.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-glitch-rgb/preview-v2.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-glitch-rgb.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-glitch-rgb/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-gradient-fill",
+      "kind": "registry-component",
+      "title": "Gradient Fill",
+      "description": "Gradient-clipped text with elastic bounce entrance",
+      "tags": [
+        "captions",
+        "caption-style",
+        "gradient",
+        "colorful"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-gradient-fill.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-gradient-fill/preview-v2.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-gradient-fill.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-gradient-fill/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-highlight",
+      "kind": "registry-component",
+      "title": "Highlight",
+      "description": "Red background sweep behind each active word, TikTok-style",
+      "tags": [
+        "captions",
+        "caption-style",
+        "highlight",
+        "social",
+        "tiktok"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-highlight.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-highlight/preview-v2.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-highlight.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-highlight/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-kinetic-slam",
+      "kind": "registry-component",
+      "title": "Kinetic Slam",
+      "description": "Full-screen single-word display with alternating entrance directions",
+      "tags": [
+        "captions",
+        "caption-style",
+        "kinetic",
+        "typography",
+        "slam"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-kinetic-slam.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-kinetic-slam/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-kinetic-slam.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-kinetic-slam/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-matrix-decode",
+      "kind": "registry-component",
+      "title": "Matrix Decode",
+      "description": "Character scramble animation before text reveal",
+      "tags": [
+        "captions",
+        "caption-style",
+        "matrix",
+        "scramble",
+        "decode"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-matrix-decode.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-matrix-decode/preview-v2.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-matrix-decode.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-matrix-decode/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-neon-accent",
+      "kind": "registry-component",
+      "title": "Neon Accent",
+      "description": "Multi-color neon glow accents with wiggle drift animation",
+      "tags": [
+        "captions",
+        "caption-style",
+        "neon",
+        "glow",
+        "accent"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-neon-accent.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-neon-accent/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-neon-accent.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-neon-accent/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-neon-glow",
+      "kind": "registry-component",
+      "title": "Neon Glow",
+      "description": "Cyan and magenta neon glow with keyword accent colors",
+      "tags": [
+        "captions",
+        "caption-style",
+        "neon",
+        "glow",
+        "gaming"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-neon-glow.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-neon-glow/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-neon-glow.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-neon-glow/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-parallax-layers",
+      "kind": "registry-component",
+      "title": "Parallax Layers",
+      "description": "Behind-subject 3D text layering with vertical stretch effect",
+      "tags": [
+        "captions",
+        "caption-style",
+        "parallax",
+        "3d",
+        "depth"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-parallax-layers.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-parallax-layers/preview.mp4?v=1779051692",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-parallax-layers.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-parallax-layers/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-particle-burst",
+      "kind": "registry-component",
+      "title": "Particle Burst",
+      "description": "Keyword words trigger colored particle explosions",
+      "tags": [
+        "captions",
+        "caption-style",
+        "particles",
+        "burst",
+        "effects"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-particle-burst.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-particle-burst/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-particle-burst.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-particle-burst/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-pill-karaoke",
+      "kind": "registry-component",
+      "title": "Pill Karaoke",
+      "description": "Pill-shaped container with per-word karaoke color highlight",
+      "tags": [
+        "captions",
+        "caption-style",
+        "karaoke",
+        "pill"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-pill-karaoke.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-pill-karaoke/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-pill-karaoke.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-pill-karaoke/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-texture",
+      "kind": "registry-component",
+      "title": "Texture",
+      "description": "Flowing texture mask over large uppercase text — ships with 6 textures (lava, marble, metal, wood, concrete, rock), configurable via the texture variable",
+      "tags": [
+        "captions",
+        "caption-style",
+        "texture",
+        "mask"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-texture.html",
+        "compositions/components/lava.png",
+        "compositions/components/marble-012.png",
+        "compositions/components/metal-046-b.png",
+        "compositions/components/wood-066.png",
+        "compositions/components/concrete-042-a.png",
+        "compositions/components/rock-058.png"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-texture-lava/preview.mp4?v=1779051416",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-texture.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-texture/registry-item.json"
+      }
+    },
+    {
+      "id": "caption-weight-shift",
+      "kind": "registry-component",
+      "title": "Weight Shift",
+      "description": "Elegant font-weight transition between caption lines",
+      "tags": [
+        "captions",
+        "caption-style",
+        "minimal",
+        "typography"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/caption-weight-shift.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/registry/components/caption-weight-shift/preview-v2.mp4",
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/caption-weight-shift.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/caption-weight-shift/registry-item.json"
+      }
+    },
+    {
+      "id": "grain-overlay",
+      "kind": "registry-component",
+      "title": "Grain Overlay",
+      "description": "Animated film grain texture overlay using CSS keyframes — adds warmth and analog character to any composition",
+      "tags": [
+        "texture",
+        "grain",
+        "overlay",
+        "film"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/grain-overlay.html"
+      ],
+      "preview": {
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/grain-overlay.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/grain-overlay/registry-item.json"
+      }
+    },
+    {
+      "id": "grid-pixelate-wipe",
+      "kind": "registry-component",
+      "title": "Grid Pixelate Wipe",
+      "description": "Transition effect where the screen dissolves into a grid of squares that fade out with staggered timing — use between scenes",
+      "tags": [
+        "transition",
+        "wipe",
+        "grid",
+        "pixelate"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/grid-pixelate-wipe.html"
+      ],
+      "preview": {
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/grid-pixelate-wipe.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/grid-pixelate-wipe/registry-item.json"
+      }
+    },
+    {
+      "id": "morph-text",
+      "kind": "registry-component",
+      "title": "Morph Text",
+      "description": "Gooey text morph — cycles through an editable word list using SVG threshold + GSAP-driven blur for a fluid, satisfying transition effect",
+      "tags": [
+        "text",
+        "text-effect",
+        "typography",
+        "morph",
+        "gooey",
+        "kinetic",
+        "animation"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/morph-text.html"
+      ],
+      "preview": {
+        "video": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/morph-text.mp4"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/morph-text/registry-item.json"
+      }
+    },
+    {
+      "id": "motion-blur",
+      "kind": "registry-component",
+      "title": "Motion Blur",
+      "description": "Velocity-driven motion blur — samples element position each frame and applies a one-sided SVG feGaussianBlur ghost trail proportional to speed",
+      "tags": [
+        "effect",
+        "motion-blur",
+        "velocity",
+        "animation",
+        "physics"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/motion-blur.html"
+      ],
+      "preview": {
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/motion-blur.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/motion-blur/registry-item.json"
+      }
+    },
+    {
+      "id": "parallax-unzoom",
+      "kind": "registry-component",
+      "title": "Parallax Unzoom",
+      "description": "Reveal transition — focus card scales down from full frame as siblings parallax in to form a grid (reverse of parallax-zoom)",
+      "tags": [
+        "transition",
+        "reveal",
+        "unzoom",
+        "parallax",
+        "grid",
+        "hero"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/parallax-unzoom.html"
+      ],
+      "preview": {
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/parallax-unzoom.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/parallax-unzoom/registry-item.json"
+      }
+    },
+    {
+      "id": "parallax-zoom",
+      "kind": "registry-component",
+      "title": "Parallax Zoom",
+      "description": "Center card scales up to fill the frame while siblings parallax outward — inspired by the eBay Playbook hero transition",
+      "tags": [
+        "transition",
+        "zoom",
+        "parallax",
+        "grid",
+        "hero"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/parallax-zoom.html"
+      ],
+      "preview": {
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/parallax-zoom.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/parallax-zoom/registry-item.json"
+      }
+    },
+    {
+      "id": "shimmer-sweep",
+      "kind": "registry-component",
+      "title": "Shimmer Sweep",
+      "description": "Animated light sweep across text or elements using a CSS gradient mask — ideal for AI accents and premium reveals",
+      "tags": [
+        "text",
+        "shimmer",
+        "highlight",
+        "effect"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/shimmer-sweep.html"
+      ],
+      "preview": {
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/shimmer-sweep.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/shimmer-sweep/registry-item.json"
+      }
+    },
+    {
+      "id": "texture-mask-text",
+      "kind": "registry-component",
+      "title": "Texture Mask Text",
+      "description": "CSS luminance masks that cut holes through letterforms - 66 pre-built texture masks from ambientCG PBR color maps",
+      "tags": [
+        "text",
+        "text-effect",
+        "effect",
+        "texture",
+        "mask"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/texture-mask-text/texture-mask-text.html",
+        "assets/texture-mask-text/masks/lava.png",
+        "assets/texture-mask-text/masks/rock.png",
+        "assets/texture-mask-text/masks/concrete.png",
+        "assets/texture-mask-text/masks/brick.png",
+        "assets/texture-mask-text/masks/wood.png",
+        "assets/texture-mask-text/masks/onyx.png",
+        "assets/texture-mask-text/masks/carpet.png",
+        "assets/texture-mask-text/masks/metal.png",
+        "assets/texture-mask-text/masks/snow.png",
+        "assets/texture-mask-text/masks/bricks-104.png",
+        "assets/texture-mask-text/masks/ground-103.png",
+        "assets/texture-mask-text/masks/grass-005.png",
+        "assets/texture-mask-text/masks/rock-063.png",
+        "assets/texture-mask-text/masks/wood-094.png",
+        "assets/texture-mask-text/masks/road-012-a.png",
+        "assets/texture-mask-text/masks/wood-092.png",
+        "assets/texture-mask-text/masks/metal-049-a.png",
+        "assets/texture-mask-text/masks/wood-floor-051.png",
+        "assets/texture-mask-text/masks/paving-stones-150.png",
+        "assets/texture-mask-text/masks/road-008-a.png",
+        "assets/texture-mask-text/masks/road-007.png",
+        "assets/texture-mask-text/masks/metal-055-a.png",
+        "assets/texture-mask-text/masks/concrete-034.png",
+        "assets/texture-mask-text/masks/grass-001.png",
+        "assets/texture-mask-text/masks/wood-051.png",
+        "assets/texture-mask-text/masks/asphalt-031.png",
+        "assets/texture-mask-text/masks/wood-floor-064.png",
+        "assets/texture-mask-text/masks/concrete-047-a.png",
+        "assets/texture-mask-text/masks/metal-046-b.png",
+        "assets/texture-mask-text/masks/grass-004.png",
+        "assets/texture-mask-text/masks/marble-012.png",
+        "assets/texture-mask-text/masks/ground-037.png",
+        "assets/texture-mask-text/masks/tiles-138.png",
+        "assets/texture-mask-text/masks/wood-066.png",
+        "assets/texture-mask-text/masks/concrete-046.png",
+        "assets/texture-mask-text/masks/wood-049.png",
+        "assets/texture-mask-text/masks/road-013-a.png",
+        "assets/texture-mask-text/masks/plaster-001.png",
+        "assets/texture-mask-text/masks/snow-015.png",
+        "assets/texture-mask-text/masks/road-012-b.png",
+        "assets/texture-mask-text/masks/concrete-042-a.png",
+        "assets/texture-mask-text/masks/bricks-102.png",
+        "assets/texture-mask-text/masks/rock-058.png",
+        "assets/texture-mask-text/masks/wood-floor-070.png",
+        "assets/texture-mask-text/masks/bricks-101.png",
+        "assets/texture-mask-text/masks/travertine-009.png",
+        "assets/texture-mask-text/masks/ground-054.png",
+        "assets/texture-mask-text/masks/wood-058.png",
+        "assets/texture-mask-text/masks/ground-104.png",
+        "assets/texture-mask-text/masks/painted-plaster-017.png",
+        "assets/texture-mask-text/masks/paving-stones-138.png",
+        "assets/texture-mask-text/masks/ground-068.png",
+        "assets/texture-mask-text/masks/bricks-075-a.png",
+        "assets/texture-mask-text/masks/ground-080.png",
+        "assets/texture-mask-text/masks/road-009-c.png",
+        "assets/texture-mask-text/masks/bark-014.png",
+        "assets/texture-mask-text/masks/marble-016.png",
+        "assets/texture-mask-text/masks/fabric-083.png",
+        "assets/texture-mask-text/masks/metal-061-b.png",
+        "assets/texture-mask-text/masks/metal-048-a.png",
+        "assets/texture-mask-text/masks/metal-032.png",
+        "assets/texture-mask-text/masks/metal-041-a.png",
+        "assets/texture-mask-text/masks/metal-038.png",
+        "assets/texture-mask-text/masks/diamond-plate-009.png",
+        "assets/texture-mask-text/masks/leather-037.png",
+        "assets/texture-mask-text/masks/fabric-080.png"
+      ],
+      "preview": {
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/texture-mask-text.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/texture-mask-text/registry-item.json"
+      }
+    },
+    {
+      "id": "vignette",
+      "kind": "registry-component",
+      "title": "Vignette",
+      "description": "Cinematic radial vignette overlay using a pure-CSS gradient — darkens the edges to pull focus toward the center",
+      "tags": [
+        "vignette",
+        "overlay",
+        "cinematic",
+        "effect"
+      ],
+      "reuseTier": "safe-composition",
+      "files": [
+        "compositions/components/vignette.html"
+      ],
+      "preview": {
+        "poster": "https://static.heygen.ai/hyperframes-oss/docs/images/catalog/components/vignette.png"
+      },
+      "provenance": {
+        "source": "hyperframes-registry",
+        "ref": "3351fb1a6d7f0202d07db9bf9ad335fd0d1ec344:components/vignette/registry-item.json"
+      }
+    }
+  ]
+}

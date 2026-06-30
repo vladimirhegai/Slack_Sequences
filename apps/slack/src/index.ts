@@ -1029,4 +1029,14 @@ const auth = await app.client.auth.test();
 botUserId = typeof auth.user_id === "string" ? auth.user_id : undefined;
 await app.start();
 console.log("⚡ Sequences for Slack is running (Socket Mode). Try /sequences");
-await recoverInterruptedJobs(app.client as WebClient);
+
+// Recover interrupted jobs in the background, NOT inline. start.ts marks the
+// /healthz endpoint ready only after this module finishes evaluating, and a
+// restart can leave many orphaned "building" jobs whose chat.update calls get
+// rate-limited (429) — awaiting that here can blow past Railway's health-check
+// timeout and roll the new deploy back as "failed". Socket Mode is already
+// connected and serving, so readiness should not wait on cleanup. Contained so
+// a failure can't take the process (and every in-flight job) down with it.
+void recoverInterruptedJobs(app.client as WebClient).catch((error) =>
+  logBackgroundError("recoverInterruptedJobs failed", error),
+);

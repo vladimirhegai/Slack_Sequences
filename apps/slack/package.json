@@ -12,6 +12,7 @@
     "mcp:demo": "tsx scripts/mcpDemo.ts",
     "direct:demo": "tsx scripts/directAuthoringSmoke.ts",
     "model:smoke": "tsx scripts/modelAuthoringSmoke.ts",
+    "capabilities:sync": "tsx scripts/syncCapabilityIndex.ts",
     "mcp:server": "tsx src/engine/mcpServer.ts",
     "test": "vitest run --root ../.. apps/slack/test",
     "typecheck": "tsc -p tsconfig.json --noEmit"

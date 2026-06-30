@@ -49,10 +49,13 @@ The single most important task. Prove the loop before generalizing.
   `finish_reason=length` triggers a compact
   recovery prompt with recipe bodies removed instead of repeating the same
   oversized request.
-- [ ] ⚠ **Improve — multi-shot, not one composition.** Authoring currently emits a
-  single canonical HTML composition. Move toward storyboard-first, multi-shot
-  authoring (§5) and validate the output against the job `frame.md` (§3), not just
-  the technical gate.
+- [x] **Storyboard-first, frame-validated multi-shot authoring.** Create now runs
+  a bounded Flash thinking pass that locks a validated 3–5 shot cut graph before
+  Pro writes source. Every shot declares foreground, background, camera intent,
+  capability choices, continuity anchor, and outgoing cut; commits persist
+  `STORYBOARD.md` + `motion-plan.json`. Static publication QA now checks the
+  authored source against committed `frame.md` accent/font facts and returns
+  softer palette/type misses as bounded repair warnings.
 
 ## 2. Revised architecture laws as the planning prompt
 
@@ -75,10 +78,10 @@ the planning bot's actual system prompt.
   commitment (one accent hue, tint neutrals, no flat solids), and anti-patterns
   to question (AI-video tells like gradient text, centered parades, same-ease
   everywhere).
-- [~] ⚠ **Improve — feed it `frame.md` + the capability index.** The director now
-  receives a per-job `frame.md` (§3 — done), so palette/type are constrained without
-  limiting motion. Still missing: the registry-backed capability index (§9) — the
-  prompt says "registry-driven" but the bot can't see the registry yet.
+- [x] **Feed it `frame.md` + the capability index.** The director receives the
+  per-job `frame.md` and the pinned, registry-backed offline capability index.
+  Palette/type remain bounded without limiting motion, and known registry
+  structures now outrank rebuilding from scratch.
 
 ## 3. Design system — `frame.md` per job
 
@@ -120,6 +123,9 @@ deterministic answers.**
   authored composition binds `--accent:#1E2BFA` + the preset palette/embedded
   fonts; the chosen `frame.md` is shown in the result message and attached to the
   thread (`uploadFrame` in [`src/index.ts`](src/index.ts)).
+  The attached public copy is now a concise visual-system digest; machine-facing
+  authoring guidance, layout attributes, provenance, and repair reports stay in
+  the canonical job file only.
 
 ## 4. Skills retrieval for HyperFrames
 
@@ -139,23 +145,22 @@ scene — not the entire skill catalog.
 - [x] **Skill context for revision.** Revise prompts receive the current
   storyboard + canonical HTML and only revision-relevant skills/recipes with
   a tighter 22K budget.
-- [ ] ⚠ **Improve — blind to the 50+ registry catalog.** `agent/skillContext.ts`
-  retrieves only the vendored *skills* (blueprints/rules); it never surfaces the
-  production registry **blocks/components** (x-post, data-chart, the 15 captions,
-  14 shader transitions, code cards, charts/maps, VFX) because that catalog is
-  network-only and unsynced. This is the exact "rebuild what HyperFrames already
-  has" risk. Wire retrieval to the synced capability index from §9.
+- [x] **Registry-aware retrieval.** `agent/skillContext.ts` queries the synced
+  index first and exposes the complete compact catalog plus scored job matches:
+  109 blocks, 25 components, 15 blueprints, motion rules, and frame presets.
+  This covers x-post/data-chart, captions, shader transitions, code, maps, VFX,
+  and the local craft vocabulary without author-time network access.
 
 ## 5. Cut-centered motion direction
 
 Planning begins with the edit, not with isolated pretty scenes. This is the core
 of ARCHITECTURE.md §5.
 
-- [ ] **Storyboard-first planning.** The director writes `STORYBOARD.md` (human-
+- [x] **Storyboard-first planning.** The director writes `STORYBOARD.md` (human-
   reviewable intent) + `motion-plan.json` (validated timing, assets, recipes,
   components, continuity). Each shot declares purpose, time window, foreground,
   background, recipe/blueprint, camera intent, and outgoing cut.
-- [ ] **Cut graph.** Each cut declares what the eye tracks across the boundary:
+- [x] **Cut graph.** Each cut declares what the eye tracks across the boundary:
   a component, anchor, direction, color field, or semantic idea. Cuts drive
   continuity — scenes don't exist in isolation.
 - [ ] **Execution passes** (separated to prevent transform fights):
@@ -216,17 +221,18 @@ rebuild those. Sequences adds the musical-direction layer only. (ARCHITECTURE §
 The duplicate-building problem this whole pass exists to fix. The bot must *see*
 everything HyperFrames already offers before it authors anything. (ARCHITECTURE §9.)
 
-- [ ] **Registry sync (deterministic).** Build step pulls the HyperFrames registry
-  manifest + each `registry-item.json`, vendors an approved, provenance-tracked
-  subset locally (no network at author or render time), and emits
-  `capability-index.json`.
-- [ ] **Normalized capability index.** One schema across registry blocks/
-  components, animation rules, blueprints, transitions, frame presets, job
-  components, and Sequences recipes: preview/contact-sheet, semantic tags, required
-  inputs/assets, configurable variables, duration/aspect fit, supported
-  transitions/anchors, dependencies, provenance/quality, and reuse tier
-  (parameter-swap | safe-composition | custom-build).
-- [ ] **Capability-aware retrieval.** Extend `agent/skillContext.ts` from
+- [~] **Registry sync (deterministic).** `npm run capabilities:sync` pulls the
+  manifest + all 134 block/component `registry-item.json` records from the pinned
+  `0.7.17` skill-snapshot commit and emits a provenance-tracked offline index.
+  Production packages remain frozen at `0.6.86`. Still missing: vendoring and
+  compatibility-approving reusable item source files themselves.
+- [~] **Normalized capability index.** One schema now covers registry blocks/
+  components (including transition blocks), animation rules, blueprints, and
+  frame presets with previews, tags, variables, dimensions/duration,
+  dependencies, provenance, and reuse tier. Still missing: job components,
+  Sequences recipes, local contact sheets, required-input/anchor contracts, and
+  compatibility quality scores.
+- [x] **Capability-aware retrieval.** Extend `agent/skillContext.ts` from
   skills-only to query the index first — reuse outranks invention. (Closes §4's
   improve item.)
 - [ ] **In-Slack audition.** Block Kit candidate thumbnails per shot with

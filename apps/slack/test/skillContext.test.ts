@@ -24,6 +24,7 @@ describe("HyperFrames skill retrieval", () => {
 
     expect(result.skillNames).toContain("hyperframes-core");
     expect(result.skillNames).toContain("hyperframes-animation");
+    expect(result.skillNames).toContain("hyperframes-registry");
     expect(result.skillNames).toContain("hyperframes-creative");
     expect(result.text.length).toBeLessThanOrEqual(30_000);
     expect(result.blueprintIds).toEqual(expect.arrayContaining([
@@ -31,7 +32,13 @@ describe("HyperFrames skill retrieval", () => {
       "dataviz-countup",
     ]));
     expect(result.ruleIds).toContain("counting-dynamic-scale");
+    expect(result.capabilityIds).toEqual(expect.arrayContaining(["data-chart"]));
     expect(result.text).toContain("<hyperframes_skill_context>");
+    expect(result.text).toContain("Synced HyperFrames capability index");
+    expect(result.text).toContain("x-post");
+    expect(result.text).toContain("caption-pill-karaoke");
+    expect(result.text).toContain("code-morph");
+    expect(result.text).toContain("vfx-portal");
     expect(result.text).toContain("<blueprint id=");
     expect(result.text).toContain("<motion-rule id=");
     expect(result.text).toContain("storyboard_json + index_html");

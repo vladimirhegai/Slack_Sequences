@@ -9,7 +9,9 @@ import {
 import {
   applyCompositionRepair,
   parseCompositionResponse,
+  parseStoryboardResponse,
   requestDirectComposition,
+  requestStoryboardPlan,
 } from "../src/engine/compositionRunner.ts";
 import {
   commitDirectComposition,
@@ -20,6 +22,7 @@ import {
   type DirectCompositionDraft,
 } from "../src/engine/directComposition.ts";
 import { initializeProject } from "../src/engine/projectTemplates.ts";
+import { buildJobFrame } from "../src/engine/frameDesign.ts";
 
 vi.mock("../src/engine/layoutInspector.ts", () => ({
   inspectDirectComposition: vi.fn(async () => ({
@@ -119,6 +122,67 @@ function patchResponse(search: string, replace: string): string {
   return `<patches_json>${JSON.stringify([{ search, replace }])}</patches_json>`;
 }
 
+function skills() {
+  return {
+    skillNames: [],
+    blueprintIds: [],
+    ruleIds: [],
+    capabilityIds: [],
+    registryVersion: "test",
+    text: "",
+  };
+}
+
+function storyboard(): DirectCompositionDraft["storyboard"] {
+  return [
+    {
+      id: "problem-signal",
+      title: "Signal",
+      purpose: "Expose the launch problem",
+      incomingIdea: "A noisy trace arrives",
+      foreground: "Diagonal trace rail and split headline",
+      background: "Dark grid with violet atmosphere",
+      cameraIntent: "Locked wide frame with a short lateral push",
+      continuityAnchor: "The violet trace exits frame right",
+      outgoingCut: "Match the trace into the product rail",
+      startSec: 0,
+      durationSec: 3,
+      blueprint: "kinetic-type-beats",
+      capabilityIds: ["grain-overlay"],
+    },
+    {
+      id: "product-proof",
+      title: "Proof",
+      purpose: "Show the product resolving the trace",
+      incomingIdea: "The trace becomes a product route",
+      foreground: "Product window with highlighted rollback path",
+      background: "Offset technical grid and metadata",
+      cameraIntent: "Push through the product window toward the action",
+      continuityAnchor: "The action button becomes the final lockup chip",
+      outgoingCut: "Scale-match the action into the brand close",
+      startSec: 3,
+      durationSec: 3,
+      blueprint: "cursor-ui-demo",
+      capabilityIds: ["ui-3d-reveal"],
+    },
+    {
+      id: "brand-close",
+      title: "Close",
+      purpose: "Resolve on the launch promise",
+      incomingIdea: "The action becomes the brand promise",
+      foreground: "Asymmetric logo lockup and CTA rail",
+      background: "Quiet violet field with registration marks",
+      cameraIntent: "Settle from a close crop into a held wide lockup",
+      continuityAnchor: "The CTA rail holds for the end frame",
+      outgoingCut: "End on a clean held frame",
+      startSec: 6,
+      durationSec: 3,
+      blueprint: "logo-assemble-lockup",
+      capabilityIds: ["logo-outro"],
+    },
+  ];
+}
+
 describe("direct HyperFrames composition", () => {
   it("parses the bounded author response contract", () => {
     const value = draft();
@@ -135,6 +199,68 @@ describe("direct HyperFrames composition", () => {
 
   it("still reports a genuinely absent tag as missing", () => {
     expect(() => parseCompositionResponse("no tags here at all")).toThrow(/missing <storyboard_json>/);
+  });
+
+  it("validates a storyboard-first cut graph before source authoring", () => {
+    const plan = storyboard();
+    const parsed = parseStoryboardResponse(
+      `<storyboard_json>${JSON.stringify(plan)}</storyboard_json>`,
+    );
+    expect(parsed).toEqual(plan);
+    expect(() => parseStoryboardResponse(
+      `<storyboard_json>${JSON.stringify(plan.slice(0, 2))}</storyboard_json>`,
+    )).toThrow(/3-5 distinct shots/);
+  });
+
+  it("recovers a bare or fenced storyboard array when the model omits the wrapper", () => {
+    const plan = storyboard();
+    // Flash-tier planners routinely ignore the <storyboard_json> wrapper.
+    expect(parseStoryboardResponse(JSON.stringify(plan))).toEqual(plan);
+    expect(
+      parseStoryboardResponse("Here is the plan:\n```json\n" + JSON.stringify(plan) + "\n```"),
+    ).toEqual(plan);
+  });
+
+  it("reports an unclosed storyboard tag as truncation, not a missing wrapper", () => {
+    const plan = storyboard();
+    expect(() => parseStoryboardResponse(`<storyboard_json>${JSON.stringify(plan)}`)).toThrow(
+      /truncated/i,
+    );
+  });
+
+  it("still reports a genuinely absent storyboard as missing", () => {
+    expect(() => parseStoryboardResponse("no array anywhere in this prose")).toThrow(
+      /missing <storyboard_json>/,
+    );
+  });
+
+  it("uses Flash thinking for the bounded storyboard pass", async () => {
+    const dir = projectDir();
+    const complete = vi.fn().mockResolvedValue(
+      `<storyboard_json>${JSON.stringify(storyboard())}</storyboard_json>`,
+    );
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    await requestStoryboardPlan(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+    });
+    const options = complete.mock.calls[0]?.[1] as {
+      maxTokens?: number;
+      thinkingMode?: string;
+      model?: string;
+    };
+    expect(options).toMatchObject({
+      maxTokens: 3_072,
+      thinkingMode: "medium",
+      model: "deepseek/deepseek-v4-flash",
+    });
   });
 
   it("applies bounded exact repair patches without regenerating the composition", () => {
@@ -161,7 +287,8 @@ describe("direct HyperFrames composition", () => {
     await requestDirectComposition(provider, {
       brief: "Launch Relay",
       projectDir: dir,
-      skills: { skillNames: [], blueprintIds: [], ruleIds: [], text: "" },
+      skills: skills(),
+      lockedStoryboard: draft().storyboard,
     });
     const options = complete.mock.calls[0]?.[1] as {
       maxTokens?: number;
@@ -187,11 +314,10 @@ describe("direct HyperFrames composition", () => {
       brief: "Launch Relay",
       projectDir: dir,
       skills: {
-        skillNames: [],
-        blueprintIds: [],
-        ruleIds: [],
+        ...skills(),
         text: `<blueprint id="huge">${"recipe ".repeat(8_000)}</blueprint>`,
       },
+      lockedStoryboard: draft().storyboard,
     });
     expect(result.attempts).toBe(2);
     const firstPrompt = String(complete.mock.calls[0]?.[0]);
@@ -222,7 +348,8 @@ describe("direct HyperFrames composition", () => {
     const result = await requestDirectComposition(provider, {
       brief: "Launch Relay",
       projectDir: dir,
-      skills: { skillNames: [], blueprintIds: [], ruleIds: [], text: "" },
+      skills: skills(),
+      lockedStoryboard: draft().storyboard,
     });
     expect(result.attempts).toBe(2);
     expect(complete).toHaveBeenCalledTimes(2);
@@ -249,7 +376,8 @@ describe("direct HyperFrames composition", () => {
     const result = await requestDirectComposition(provider, {
       brief: "Launch Relay",
       projectDir: dir,
-      skills: { skillNames: [], blueprintIds: [], ruleIds: [], text: "" },
+      skills: skills(),
+      lockedStoryboard: draft().storyboard,
     });
     expect(result.attempts).toBe(3);
     expect(complete).toHaveBeenCalledTimes(3);
@@ -274,6 +402,10 @@ describe("direct HyperFrames composition", () => {
       layoutSamples: 5,
       warningCount: 0,
     });
+    expect(fs.existsSync(path.join(dir, "composition", "STORYBOARD.md"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, "composition", "motion-plan.json"))).toBe(true);
+    expect(fs.readFileSync(path.join(dir, "composition", "STORYBOARD.md"), "utf8"))
+      .toContain("The trace arrives");
 
     expect(undoDirectComposition(dir)).toBe(true);
     expect(loadDirectComposition(dir).manifest.revision).toBe(1);
@@ -291,5 +423,22 @@ describe("direct HyperFrames composition", () => {
     expect(validation.errors.join("\n")).toContain("network URLs are not allowed");
     expect(validation.errors.join("\n")).toContain("Math.random is not deterministic");
     expect(hasDirectComposition(dir)).toBe(false);
+  });
+
+  it("gates committed frame facts and keeps softer frame guidance repairable", async () => {
+    const dir = projectDir();
+    await buildJobFrame({
+      projectDir: dir,
+      brief: "Launch Relay with brand accent #8B5CF6",
+      evidence: "Brand signals: primary accent #8B5CF6; font Inter.",
+      brandName: "Relay",
+    });
+    const matching = await validateDirectComposition(dir, draft("#8b5cf6"));
+    expect(matching.frameErrors).toEqual([]);
+    expect(matching.frameWarnings).toEqual(expect.any(Array));
+
+    const drifted = await validateDirectComposition(dir, draft("#22d3ee"));
+    expect(drifted.ok).toBe(false);
+    expect(drifted.frameErrors.join("\n")).toContain("committed frame accent #8B5CF6");
   });
 });

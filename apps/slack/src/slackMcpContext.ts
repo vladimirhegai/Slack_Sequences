@@ -28,6 +28,12 @@ interface ResponsesOutput {
   error?: { message?: string };
 }
 
+function boundedEnvInt(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(process.env[name]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
 function extractResponse(payload: ResponsesOutput): SlackMcpContext {
   const text = (payload.output ?? [])
     .filter((item) => item.type === "message")
@@ -69,6 +75,16 @@ export async function retrieveSlackMcpContext(input: {
     body: JSON.stringify({
       model: process.env.SLACK_MCP_CONTEXT_MODEL ?? "gpt-5-mini",
       store: false,
+      // Context retrieval is intentionally small: enough room for a compact
+      // evidence pack, not an open-ended research turn.
+      max_output_tokens: boundedEnvInt(
+        "SLACK_MCP_CONTEXT_MAX_OUTPUT_TOKENS",
+        1_600,
+        800,
+        4_000,
+      ),
+      max_tool_calls: boundedEnvInt("SLACK_MCP_CONTEXT_MAX_TOOL_CALLS", 4, 1, 8),
+      reasoning: { effort: "minimal" },
       instructions: CONTEXT_INSTRUCTIONS,
       input: [
         `Product: ${input.product}`,

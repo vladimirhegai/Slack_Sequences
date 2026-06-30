@@ -71,6 +71,7 @@ export interface FrameDesign {
   rules: string[];
   exceptions: string[];
   brandMatched: boolean;
+  accentCommitted: boolean;
   provenance: string;
   repairs: string[];
   direction: {
@@ -372,6 +373,7 @@ export function remapPreset(
     rules: choice?.rules?.length ? choice.rules : preset.rules,
     exceptions,
     brandMatched: Boolean(brandAccent || brandDisplay || brandBody),
+    accentCommitted: Boolean(brandAccent),
     provenance,
     repairs: [...paletteResult.repairs, ...typographyResult.repairs],
     direction: { harmony, temperature, contrast, accentUsage, density: layout.density },
@@ -388,6 +390,7 @@ export function renderFrameMd(design: FrameDesign, brandName?: string): string {
     thesis: design.thesis,
     exceptions: design.exceptions,
     brandMatched: design.brandMatched,
+    accentCommitted: design.accentCommitted,
   });
   const exceptions = design.exceptions.length
     ? design.exceptions.map((item) => `- ${item}`).join("\n")
@@ -515,11 +518,48 @@ export function loadJobFrame(projectDir: string): string | null {
  * later model turns retain the deterministic provenance.
  */
 export function publicFrameMd(frameMd: string): string {
-  return frameMd
+  const clean = frameMd
     .replace(/^[ \t]*<!--\s*sequences-frame:[\s\S]*?-->[ \t]*(?:\r?\n)?/m, "")
     .replace(/^[ \t]*<!--\s*provenance:[\s\S]*?-->[ \t]*(?:\r?\n)?/m, "")
-    .trimEnd()
-    .concat("\n");
+    .replace(/^>\s*Art-directed starting system[\s\S]*?(?=\n## Visual thesis)/m, "")
+    .trim();
+  const title = clean.match(/^# .+$/m)?.[0] ?? "# frame.md";
+  const section = (heading: string): string =>
+    clean.match(new RegExp(`^## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`, "m"))?.[1]?.trim() ?? "";
+  const paletteLines = section("Recommended semantic palette").split(/\r?\n/);
+  const lastTableLine = paletteLines.reduce(
+    (last, line, index) => line.trim().startsWith("|") ? index : last,
+    -1,
+  );
+  const typography = section("Typography \\(embedded fonts only\\)")
+    .split(/\r?\n/)
+    .filter((line) => line.trim().startsWith("- **"))
+    .join("\n");
+  const spatial = section("Spatial system")
+    .split(/\r?\n/)
+    .filter((line) => line.trim().startsWith("- **"))
+    .join("\n");
+  return [
+    title,
+    "",
+    "## Visual thesis",
+    section("Visual thesis"),
+    "",
+    "## Palette",
+    paletteLines.slice(0, lastTableLine + 1).join("\n"),
+    "",
+    "## Typography",
+    typography,
+    "",
+    "## Spatial character",
+    spatial,
+    "",
+    "## Mood-board restraints",
+    section("Mood-board restraints \\(≤5\\)"),
+    "",
+    "## Brand exceptions",
+    section("Brand exceptions"),
+  ].join("\n").trimEnd().concat("\n");
 }
 
 export interface FrameMeta {

@@ -27,7 +27,10 @@ import {
   readEventSequence,
 } from "./engine/projectIo.ts";
 import { initializeProject, projectDirFor } from "./engine/projectTemplates.ts";
-import { requestDirectComposition } from "./engine/compositionRunner.ts";
+import {
+  requestDirectComposition,
+  requestStoryboardPlan,
+} from "./engine/compositionRunner.ts";
 import {
   buildJobFrame,
   frameFilePath,
@@ -627,11 +630,18 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       evidence: options.context,
       brandName: options.brandName ?? options.product,
     });
+    const storyboard = await requestStoryboardPlan(provider, {
+      brief,
+      projectDir: dir,
+      skills,
+      frameMd: frame.frameMd,
+    });
     const authored = await requestDirectComposition(provider, {
       brief,
       projectDir: dir,
       skills,
       frameMd: frame.frameMd,
+      lockedStoryboard: storyboard,
     });
     const mutation = await applyDirectMutation(
       dir,

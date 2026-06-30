@@ -15,9 +15,15 @@ describe("Slack hosted MCP context", () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as {
         store: boolean;
+        max_output_tokens: number;
+        max_tool_calls: number;
+        reasoning: { effort: string };
         tools: Array<{ server_url: string; authorization: string }>;
       };
       expect(body.store).toBe(false);
+      expect(body.max_output_tokens).toBe(1_600);
+      expect(body.max_tool_calls).toBe(4);
+      expect(body.reasoning.effort).toBe("minimal");
       expect(body.tools[0]?.server_url).toBe("https://mcp.slack.com/mcp");
       expect(body.tools[0]?.authorization).toBe("xoxp-user");
       return new Response(JSON.stringify({

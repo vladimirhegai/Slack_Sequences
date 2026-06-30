@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { renderCapabilityContext } from "./capabilityIndex.ts";
 
 const SKILLS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../skills");
 
@@ -17,6 +18,8 @@ export interface RetrievedSkillContext {
   skillNames: string[];
   blueprintIds: string[];
   ruleIds: string[];
+  capabilityIds: string[];
+  registryVersion: string;
   text: string;
 }
 
@@ -289,6 +292,7 @@ export function retrieveHyperframesSkillContext(
 ): RetrievedSkillContext {
   const blueprintIds = selectedBlueprints(intent, query);
   const ruleIds = selectedRules(blueprintIds, intent, query);
+  const capabilityContext = renderCapabilityContext(query);
 
   // 1. Foundation (always included — compact technical reference)
   const foundation = [
@@ -310,7 +314,7 @@ export function retrieveHyperframesSkillContext(
   ].join("\n");
 
   // 3. Selected recipes (full content for the ones matched to this brief)
-  const usedFoundation = foundation.length + capabilities.length;
+  const usedFoundation = foundation.length + capabilities.length + capabilityContext.text.length;
   const recipeBudget = Math.max(8_000, maxChars - usedFoundation - 1_500);
   const recipeCount = blueprintIds.length + ruleIds.length;
   const perRecipe = Math.max(1_200, Math.floor(recipeBudget / Math.max(1, recipeCount)));
@@ -342,6 +346,8 @@ export function retrieveHyperframesSkillContext(
     "",
     foundation,
     "",
+    capabilityContext.text,
+    "",
     capabilities,
     "",
     selectedSection,
@@ -351,6 +357,7 @@ export function retrieveHyperframesSkillContext(
   const skillNames = [
     "hyperframes-core",
     "hyperframes-animation",
+    "hyperframes-registry",
     ...(intent === "create" ? ["hyperframes-creative"] : []),
   ];
 
@@ -358,6 +365,8 @@ export function retrieveHyperframesSkillContext(
     skillNames,
     blueprintIds,
     ruleIds,
-    text: trimTo(text, maxChars + 2_000),
+    capabilityIds: capabilityContext.capabilityIds,
+    registryVersion: capabilityContext.registryVersion,
+    text: trimTo(text, maxChars),
   };
 }
