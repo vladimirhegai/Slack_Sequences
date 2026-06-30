@@ -263,6 +263,65 @@ describe("direct HyperFrames composition", () => {
     });
   });
 
+  it("retries the storyboard pass through a transient provider timeout", async () => {
+    const dir = projectDir();
+    const timeout = Object.assign(new Error("The operation was aborted due to timeout"), {
+      name: "TimeoutError",
+    });
+    const complete = vi.fn()
+      .mockRejectedValueOnce(timeout)
+      .mockResolvedValueOnce(`<storyboard_json>${JSON.stringify(storyboard())}</storyboard_json>`);
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const plan = await requestStoryboardPlan(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+    });
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(plan).toEqual(storyboard());
+  });
+
+  it("surfaces an actionable message when storyboard timeouts exhaust retries", async () => {
+    const dir = projectDir();
+    const timeout = Object.assign(new Error("The operation was aborted due to timeout"), {
+      name: "TimeoutError",
+    });
+    const complete = vi.fn().mockRejectedValue(timeout);
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    await expect(
+      requestStoryboardPlan(provider, { brief: "Launch Relay", projectDir: dir, skills: skills() }),
+    ).rejects.toThrow(/planning model kept timing out/i);
+    expect(complete).toHaveBeenCalledTimes(3);
+  }, 15_000);
+
+  it("does not retry a genuine content error from the storyboard pass", async () => {
+    const dir = projectDir();
+    const complete = vi.fn().mockResolvedValue("no array anywhere in this prose");
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    await expect(
+      requestStoryboardPlan(provider, { brief: "Launch Relay", projectDir: dir, skills: skills() }),
+    ).rejects.toThrow(/missing <storyboard_json>/);
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
   it("applies bounded exact repair patches without regenerating the composition", () => {
     const value = draft();
     const repaired = applyCompositionRepair(

@@ -142,6 +142,59 @@ function isOutputTruncation(error: unknown): boolean {
     (error instanceof Error && /truncat|output-token limit|finish_reason.?length/i.test(error.message));
 }
 
+/**
+ * The streaming providers wrap each request in a single wall-clock
+ * `AbortSignal.timeout`, so a transient OpenRouter/DeepSeek stall or a dropped
+ * connection surfaces as a raw "operation was aborted due to timeout" / "fetch
+ * failed". On a one-shot call (the storyboard plan) that aborts the entire build
+ * with nothing changed. These are retryable transport faults — a long but healthy
+ * generation streams to completion and never trips this.
+ */
+function isTransientProviderError(error: unknown): boolean {
+  const name = error instanceof Error ? error.name : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    name === "TimeoutError" ||
+    name === "AbortError" ||
+    /aborted due to timeout|operation was aborted|the operation timed out|fetch failed|network|terminated|socket hang ?up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|503|502|429/i.test(
+      message,
+    )
+  );
+}
+
+/**
+ * Bounded retry for single-shot provider calls that otherwise have no recovery
+ * path. Retries only transient transport faults (never a genuine model/content
+ * error), with a short backoff, so a momentary provider hiccup no longer kills a
+ * build. Output truncation is NOT transient here — it must surface so the caller
+ * can shrink the request rather than blindly replay the same oversized prompt.
+ */
+async function completeWithRetry(
+  provider: AgentProvider,
+  prompt: string,
+  options: CompleteOptions,
+  label: string,
+  attempts = 3,
+): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await provider.complete(prompt, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || isOutputTruncation(error) || !isTransientProviderError(error)) {
+        throw error;
+      }
+      process.stderr.write(
+        `[${label}] attempt ${attempt}/${attempts} transient provider fault: ` +
+          `${error instanceof Error ? error.message : String(error)} — retrying\n`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1_500 * attempt));
+    }
+  }
+  throw lastError;
+}
+
 function compactSkillText(text: string): string {
   return text
     .replace(/<(blueprint|motion-rule)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
@@ -327,17 +380,31 @@ export async function requestStoryboardPlan(
     '"continuityAnchor":"what the eye tracks across this boundary",',
     '"outgoingCut":"cut mechanism and destination"}.',
   ].filter(Boolean).join("\n");
-  const raw = await provider.complete(prompt, {
-    ...args.options,
-    timeoutMs: 120_000,
-    maxTokens: STORYBOARD_MAX_TOKENS,
-    // A small Flash thinking pass makes the edit/cut graph before Pro spends
-    // its larger budget on source. Code emission and repairs remain reasoning-off.
-    thinkingMode: provider.id === "openrouter-api" || provider.id === "deepseek-api"
-      ? "medium"
-      : "none",
-    ...(storyboardModel(provider) ? { model: storyboardModel(provider) } : {}),
-  });
+  let raw: string;
+  try {
+    raw = await completeWithRetry(provider, prompt, {
+      ...args.options,
+      // A reasoning storyboard pass on a loaded provider can run long; give it more
+      // wall-clock headroom than a plain chat call, and let completeWithRetry absorb
+      // a transient stall instead of failing the whole build on the first abort.
+      timeoutMs: 180_000,
+      maxTokens: STORYBOARD_MAX_TOKENS,
+      // A small Flash thinking pass makes the edit/cut graph before Pro spends
+      // its larger budget on source. Code emission and repairs remain reasoning-off.
+      thinkingMode: provider.id === "openrouter-api" || provider.id === "deepseek-api"
+        ? "medium"
+        : "none",
+      ...(storyboardModel(provider) ? { model: storyboardModel(provider) } : {}),
+    }, "storyboard");
+  } catch (error) {
+    if (isTransientProviderError(error)) {
+      throw new Error(
+        "the planning model kept timing out while drafting the storyboard — this is usually a " +
+          "transient provider slowdown, not your brief. Run /sequences again in a moment.",
+      );
+    }
+    throw error;
+  }
   return parseStoryboardResponse(raw);
 }
 
