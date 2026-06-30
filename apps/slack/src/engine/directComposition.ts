@@ -158,16 +158,29 @@ function sceneTags(html: string): string[] {
     .map((match) => match[0]);
 }
 
+// Inline SVG patterns (e.g. Hero-Patterns backgrounds) arrive as `data:` URIs and
+// are self-contained, deterministic, and offline-safe — they are NOT local files.
+// A nested or backslash-escaped quote can leave a stray `"`/`'`/`\` clinging to the
+// captured value, which defeats a bare `startsWith("data:")` skip, so strip any
+// wrapping quote/backslash/whitespace before classifying the reference.
+function unwrapRef(value: string): string {
+  return value.trim().replace(/^[\s"'\\]+/, "").replace(/[\s"'\\]+$/, "");
+}
+
+function isInlineDataUri(value: string): boolean {
+  return /^data:/i.test(unwrapRef(value));
+}
+
 function referencedLocalPaths(html: string): string[] {
   const refs: string[] = [];
   for (const match of html.matchAll(/\b(?:src|href)\s*=\s*(["'])(.*?)\1/gi)) {
-    const value = match[2]!.trim();
-    if (!value || value.startsWith("#") || value.startsWith("data:")) continue;
+    const value = unwrapRef(match[2]!);
+    if (!value || value.startsWith("#") || isInlineDataUri(value)) continue;
     refs.push(value.split(/[?#]/, 1)[0]!);
   }
   for (const match of html.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
-    const value = match[2]!.trim();
-    if (!value || value.startsWith("data:")) continue;
+    const value = unwrapRef(match[2]!);
+    if (!value || isInlineDataUri(value)) continue;
     refs.push(value.split(/[?#]/, 1)[0]!);
   }
   return [...new Set(refs)];
@@ -300,6 +313,7 @@ export async function validateDirectComposition(
 
   const rootDir = compositionDir(projectDir);
   for (const ref of referencedLocalPaths(html)) {
+    if (isInlineDataUri(ref)) continue; // self-contained inline data: URI, not a file
     if (/^[a-z][a-z0-9+.-]*:/i.test(ref) || ref.startsWith("//")) {
       errors.push(`asset reference must be local: ${ref}`);
       continue;

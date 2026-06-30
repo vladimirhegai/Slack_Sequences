@@ -425,6 +425,27 @@ describe("direct HyperFrames composition", () => {
     expect(hasDirectComposition(dir)).toBe(false);
   });
 
+  it("accepts inline data: URI backgrounds even when quoting is mangled", async () => {
+    const dir = projectDir();
+    // A Hero-Patterns-style inline SVG. The model frequently emits it with the
+    // outer quotes backslash-escaped, which used to leave a stray quote clinging
+    // to the captured value and defeat the data: skip — failing the whole build
+    // with "referenced local asset does not exist".
+    const pattern =
+      "data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' " +
+      "xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23E4C6BE' fill-opacity='0.4'%3E" +
+      "%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4z'/%3E%3C/g%3E%3C/svg%3E";
+    const withPattern = draft();
+    withPattern.html = withPattern.html.replace(
+      "background: #10131d;",
+      `background: #10131d url(\\"${pattern}\\");`,
+    );
+    const validation = await validateDirectComposition(dir, withPattern);
+    expect(validation.errors.join("\n")).not.toContain("referenced local asset");
+    expect(validation.errors.join("\n")).not.toContain("asset reference must be local");
+    expect(validation.ok).toBe(true);
+  });
+
   it("gates committed frame facts and keeps softer frame guidance repairable", async () => {
     const dir = projectDir();
     await buildJobFrame({
