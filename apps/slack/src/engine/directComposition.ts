@@ -440,7 +440,7 @@ export async function commitDirectComposition(
   const browserQa = await inspectDirectComposition(dir, draft);
   if (!browserQa.ok) {
     throw new Error(
-      `composition failed browser validation/layout inspection:\n${
+      `composition failed browser runtime validation:\n${
         browserQa.errors.map((error) => `- ${error}`).join("\n")
       }`,
     );

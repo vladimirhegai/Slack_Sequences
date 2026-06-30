@@ -34,7 +34,9 @@ export interface DirectLayoutIssue {
 }
 
 export interface DirectBrowserQaResult {
+  /** True when the document loaded, initialized its timeline, and ran without browser errors. */
   ok: boolean;
+  /** True when runtime validation passed and no visual quality findings request polish. */
   strictOk: boolean;
   samples: number[];
   issues: DirectLayoutIssue[];
@@ -698,12 +700,19 @@ export async function inspectDirectComposition(
     }
 
     const issues = collapseIssues(rawIssues).slice(0, 60);
-    const errors = [
-      ...runtime.filter((entry) => entry.level === "error").map((entry) => `browser_runtime: ${entry.text}`),
-      ...issues.filter((issue) => issue.severity === "error").map(formatIssue),
-    ];
+    const errors = runtime
+      .filter((entry) => entry.level === "error")
+      .map((entry) => `browser_runtime: ${entry.text}`);
+    const visualErrors = issues
+      .filter((issue) => issue.severity === "error")
+      .map(formatIssue);
     const warnings = [
       ...runtime.filter((entry) => entry.level === "warning").map((entry) => `browser_warning: ${entry.text}`),
+      // Geometry, occlusion, overlap, and contrast are screenshot/layout
+      // heuristics. They are useful repair feedback but cannot prove that an
+      // authored composition is unusable, so they never become publication
+      // blockers. Keep the issue's original severity in `issues` for tooling.
+      ...visualErrors,
       ...issues.filter((issue) => issue.severity === "warning").map(formatIssue),
     ];
     const repairWarnings = issues.filter((issue) =>
@@ -715,10 +724,16 @@ export async function inspectDirectComposition(
       )
     );
     return {
+      // The hard browser boundary is objective runtime health. Visual audit
+      // findings may trigger bounded polish, but a runnable draft is always
+      // publishable if those repairs fail or regress it.
       ok: errors.length === 0,
       // HyperFrames contrast warnings include intentionally low-energy
       // decorative text; report them, but do not spend model retries on them.
-      strictOk: errors.length === 0 && repairWarnings.length === 0,
+      strictOk:
+        errors.length === 0 &&
+        visualErrors.length === 0 &&
+        repairWarnings.length === 0,
       samples,
       issues,
       errors: [...new Set(errors)],

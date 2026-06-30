@@ -105,15 +105,18 @@ describe("direct layout inspector", () => {
   );
 
   it.skipIf(!findBrowserExecutable())(
-    "keeps genuinely clipped text as a hard browser failure",
+    "reports genuinely clipped text for repair without blocking runnable output",
     async () => {
       const result = await inspectDirectComposition(projectDir(), clippedTextDraft());
-      expect(result.ok).toBe(false);
+      expect(result.ok).toBe(true);
+      expect(result.strictOk).toBe(false);
       expect(result.issues.some((issue) =>
         issue.severity === "error" &&
         (issue.code === "clipped_text" || issue.code === "text_box_overflow") &&
         issue.selector === "#clipped-copy"
       )).toBe(true);
+      expect(result.errors).toEqual([]);
+      expect(result.warnings.some((warning) => warning.includes("#clipped-copy"))).toBe(true);
     },
     30_000,
   );

@@ -37,6 +37,7 @@ const REPAIR_MAX_TOKENS = 4_096;
 const MAX_REPAIR_PATCHES = 16;
 const STORYBOARD_MAX_TOKENS = 4_096;
 const MAX_AUTHOR_SEGMENTS = 3;
+const DEFAULT_OPENROUTER_REPAIR_MODEL = "openai/gpt-5-mini";
 
 function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat"]> {
   const capabilityIds = loadCapabilityIndex().capabilities.map((capability) => capability.id);
@@ -139,8 +140,21 @@ function authorMaxTokens(): number {
  * names a concrete defect, a fast/cheap model can repair the existing source
  * without re-directing the film.
  */
-function repairModel(): string | undefined {
-  return process.env.SLACK_SEQUENCES_REPAIR_MODEL?.trim() || undefined;
+function repairModel(provider: AgentProvider): string | undefined {
+  const configured = process.env.SLACK_SEQUENCES_REPAIR_MODEL?.trim();
+  if (configured) return configured;
+  // DeepSeek is excellent at the creative source pass, but repeatedly ignores
+  // exact-patch schemas in production. Use a small schema-compliant model for
+  // the much shorter mechanical repair calls. Operators can still override it.
+  return provider.id === "openrouter-api"
+    ? DEFAULT_OPENROUTER_REPAIR_MODEL
+    : undefined;
+}
+
+function repairThinkingMode(model: string | undefined): CompleteOptions["thinkingMode"] {
+  // OpenRouter's GPT-5 endpoints require reasoning to be enabled. Minimal
+  // effort preserves nearly all of the small completion budget for patch JSON.
+  return model && /(?:^|\/)gpt-5(?:[.-]|$)/i.test(model) ? "minimal" : "none";
 }
 
 /**
@@ -766,9 +780,22 @@ export function applyCompositionRepair(
   raw: string,
   scratch: DirectCompositionDraft,
 ): DirectCompositionDraft {
+  // Some models ignore patch mode and return a complete replacement document.
+  // It is still safe to recover: the normal static and browser validation gates
+  // run immediately after this function, and the prior scratch stays available.
+  const replacementHtml = firstHtmlDocument(raw);
+  if (replacementHtml) {
+    process.stderr.write(
+      "[author] repair returned a complete document; recovered it for validation\n",
+    );
+    return { storyboard: scratch.storyboard, html: replacementHtml };
+  }
   let value: unknown;
   try {
-    value = structuredArray(raw, "patches") ?? JSON.parse(tagged(raw, "patches_json"));
+    const bareArray = firstJsonArray(raw);
+    value =
+      structuredArray(raw, "patches") ??
+      (bareArray ? JSON.parse(bareArray) : JSON.parse(tagged(raw, "patches_json")));
   } catch (error) {
     throw new Error(
       `patches_json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
@@ -978,7 +1005,7 @@ export async function requestDirectComposition(
     // Never downgrade a full-document recovery because of its attempt number.
     // A separately configured repair model is eligible only when a valid
     // scratch document exists and the task is a bounded exact patch.
-    const repairTier = patchMode ? repairModel() : undefined;
+    const repairTier = patchMode ? repairModel(provider) : undefined;
     const prompt = creationPrompt({
       ...args,
       validationFeedback,
@@ -989,7 +1016,8 @@ export async function requestDirectComposition(
     process.stderr.write(
       `[author] attempt ${attempt}/3 · prompt ${prompt.length} chars · ` +
       `${compact ? "compact repair" : "full context"} · ` +
-      `${repairTier ? "explicit repair tier" : "primary tier"} · reasoning off\n`,
+      `${repairTier ? "explicit repair tier" : "primary tier"} · ` +
+      `reasoning ${patchMode ? repairThinkingMode(repairTier) : "off"}\n`,
     );
     try {
       const completeOptions: CompleteOptions = {
@@ -998,7 +1026,7 @@ export async function requestDirectComposition(
         // Code emission does not benefit from DeepSeek's expensive high/xhigh
         // reasoning pass. Keeping it off reserves the whole budget for source.
         maxTokens: patchMode ? REPAIR_MAX_TOKENS : authorMaxTokens(),
-        thinkingMode: "none",
+        thinkingMode: patchMode ? repairThinkingMode(repairTier) : "none",
         ...(patchMode && structuredPatches ? { responseFormat: PATCH_RESPONSE_FORMAT } : {}),
         ...(repairTier ? { model: repairTier } : {}),
       };
@@ -1045,8 +1073,10 @@ export async function requestDirectComposition(
       if (browserQa.ok) {
         lastBrowserValid = { draft, raw, attempts: attempt };
       }
-      // Warnings receive a repair opportunity, but the final pass may preserve
-      // an intentional aesthetic choice. Hard browser/layout errors never pass.
+      // Visual findings receive a repair opportunity, but they are heuristic:
+      // failed polish must never discard a document that loaded and initialized
+      // correctly in the browser. `browserQa.ok` represents that objective
+      // runtime boundary; static validation remains the other hard gate.
       if (
         (browserQa.strictOk && validation.frameWarnings.length === 0) ||
         (attempt === 3 && browserQa.ok)

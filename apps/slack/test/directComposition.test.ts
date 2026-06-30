@@ -453,6 +453,32 @@ describe("direct HyperFrames composition", () => {
     expect(repaired.html).toContain("#22d3ee");
   });
 
+  it("recovers a bare repair array surrounded by model prose", () => {
+    const value = draft();
+    const repaired = applyCompositionRepair(
+      `Here are the edits:\n${JSON.stringify([{
+        search: "border: 1px solid #8b5cf6",
+        replace: "border: 1px solid #22d3ee",
+      }])}`,
+      value,
+    );
+    expect(repaired.html).toContain("#22d3ee");
+  });
+
+  it("recovers a complete HTML document returned by a model that ignored patch mode", () => {
+    const value = draft();
+    const replacement = value.html.replace(
+      "border: 1px solid #8b5cf6",
+      "border: 1px solid #22d3ee",
+    );
+    const repaired = applyCompositionRepair(
+      `I rewrote the document instead:\n${replacement}`,
+      value,
+    );
+    expect(repaired.storyboard).toBe(value.storyboard);
+    expect(repaired.html).toContain("#22d3ee");
+  });
+
   it("applies a repair patch whose search reflowed whitespace", () => {
     const value = draft();
     // The model reproduced the rule but with collapsed/extra spacing — the most
@@ -619,7 +645,7 @@ describe("direct HyperFrames composition", () => {
     }).responseFormat?.json_schema?.name).toBe("sequences_composition_patches");
   });
 
-  it("keeps both bounded repairs on the primary model by default", async () => {
+  it("uses a schema-compliant repair model for OpenRouter bounded patches by default", async () => {
     const dir = projectDir();
     const invalid = draft();
     invalid.html = invalid.html.replace(
@@ -645,8 +671,12 @@ describe("direct HyperFrames composition", () => {
     });
     expect(result.attempts).toBe(3);
     expect(complete).toHaveBeenCalledTimes(3);
-    expect((complete.mock.calls[1]?.[1] as { model?: string }).model).toBeUndefined();
-    expect((complete.mock.calls[2]?.[1] as { model?: string }).model).toBeUndefined();
+    expect((complete.mock.calls[1]?.[1] as { model?: string }).model)
+      .toBe("openai/gpt-5-mini");
+    expect((complete.mock.calls[2]?.[1] as { model?: string }).model)
+      .toBe("openai/gpt-5-mini");
+    expect((complete.mock.calls[1]?.[1] as { thinkingMode?: string }).thinkingMode)
+      .toBe("minimal");
   });
 
   it("uses an explicitly configured repair model only for patch calls", async () => {
@@ -734,6 +764,50 @@ describe("direct HyperFrames composition", () => {
     });
     expect(result.attempts).toBe(3);
     expect(result.draft.html).toBe(initial.html);
+  });
+
+  it("publishes runnable output when visual-QA polish patches are malformed", async () => {
+    const dir = projectDir();
+    const initial = draft();
+    const complete = vi.fn()
+      .mockResolvedValueOnce(response(initial))
+      .mockResolvedValueOnce('{"patches":[]}')
+      .mockResolvedValueOnce('{"patches":[]}');
+    vi.mocked(inspectDirectComposition).mockResolvedValueOnce({
+      ok: true,
+      strictOk: false,
+      samples: [0, 2, 4],
+      issues: [{
+        code: "text_occluded",
+        severity: "error",
+        time: 2,
+        selector: "#sell-btn-el",
+        message: "Text is hidden beneath an opaque element.",
+        source: "hyperframes",
+      }],
+      errors: [],
+      warnings: [
+        "text_occluded #sell-btn-el (t=2.00s): Text is hidden beneath an opaque element.",
+      ],
+    });
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: initial.storyboard,
+    });
+
+    expect(result.attempts).toBe(3);
+    expect(result.draft.html).toBe(initial.html);
+    expect(complete).toHaveBeenCalledTimes(3);
   });
 
   it("mechanically replaces unseeded randomness before spending a model repair", async () => {
