@@ -179,15 +179,20 @@ Two different LLMs run, on two different providers; keep them distinct:
   (DeepSeek) and authors HyperFrames directly. This is the agent the recipes and
   the revised laws below govern.
 
-The live cost/latency split is deliberate: Flash makes the small bounded
-`frame.md` art-direction choice; Pro gets one compact, reasoning-off creative
-authoring pass and the first fidelity-sensitive repair; only a final fallback
-uses Flash. Create retrieval is capped near 28K characters and authored source
-near 32K characters (10K output-token ceiling). Repairs are exact, validated
-search/replace patches capped at 4K output tokens instead of full-document
-regenerations. Provider `finish_reason=length` is a typed truncation
-failure, so the next attempt strips full recipe bodies and requests a compact
-complete replacement instead of blindly repeating the expensive prompt.
+The live reliability boundary is deliberate: Flash may make the small bounded
+`frame.md` art-direction choice because it has a deterministic preset fallback.
+Required storyboard, full-document authoring, and exact repairs stay on the
+primary model by default with reasoning off; operators can explicitly assign a
+separate model to storyboard or patch-only work. Create retrieval is capped near
+28K characters and authored source targets 32K characters per document. Small
+machine-readable artifacts use provider-native strict JSON schemas. Repairs are
+exact, validated search/replace patches capped at 4K output tokens instead of
+full-document regenerations; uniquely addressable edits apply independently, so
+one ambiguous sibling cannot discard the safe work. Provider
+`finish_reason=length` preserves partial source and resumes from it via
+assistant prefill, allowing one logical document to span multiple bounded
+completions without spending a repair attempt. Compact regeneration remains the
+fallback for providers that cannot return a partial completion.
 
 General, editable system prompts for both bots live in `apps/slack/prompts/`
 (plain `.md`, loaded at runtime). Advanced per-run prompt material — skill/RAG

@@ -35,7 +35,92 @@ const COMPOSITION_SOURCE_BUDGET_CHARS = 32_000;
 const COMPACT_SKILL_BUDGET_CHARS = 16_000;
 const REPAIR_MAX_TOKENS = 4_096;
 const MAX_REPAIR_PATCHES = 16;
-const STORYBOARD_MAX_TOKENS = 3_072;
+const STORYBOARD_MAX_TOKENS = 4_096;
+const MAX_AUTHOR_SEGMENTS = 3;
+
+function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat"]> {
+  const capabilityIds = loadCapabilityIndex().capabilities.map((capability) => capability.id);
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "sequences_storyboard",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: {
+          storyboard: {
+            type: "array",
+            minItems: 3,
+            maxItems: 5,
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                title: { type: "string" },
+                purpose: { type: "string" },
+                incomingIdea: { type: "string" },
+                foreground: { type: "string" },
+                background: { type: "string" },
+                cameraIntent: { type: "string" },
+                startSec: { type: "number" },
+                durationSec: { type: "number" },
+                blueprint: { type: "string" },
+                rules: { type: "array", items: { type: "string" } },
+                capabilityIds: {
+                  type: "array",
+                  items: { type: "string", enum: capabilityIds },
+                },
+                continuityAnchor: { type: "string" },
+                outgoingCut: { type: "string" },
+              },
+              required: [
+                "id", "title", "purpose", "incomingIdea", "foreground", "background",
+                "cameraIntent", "startSec", "durationSec", "blueprint", "rules",
+                "capabilityIds", "continuityAnchor", "outgoingCut",
+              ],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["storyboard"],
+        additionalProperties: false,
+      },
+    },
+  };
+}
+
+const PATCH_RESPONSE_FORMAT: NonNullable<CompleteOptions["responseFormat"]> = {
+  type: "json_schema",
+  json_schema: {
+    name: "sequences_composition_patches",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        patches: {
+          type: "array",
+          minItems: 1,
+          maxItems: MAX_REPAIR_PATCHES,
+          items: {
+            type: "object",
+            properties: {
+              search: { type: "string" },
+              replace: { type: "string" },
+            },
+            required: ["search", "replace"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["patches"],
+      additionalProperties: false,
+    },
+  },
+};
+
+function supportsStructuredOutputs(provider: AgentProvider): boolean {
+  return provider.id === "openrouter-api" || provider.id === "openai-api";
+}
 
 /**
  * Output-token budget for the authoring call. A full composition (storyboard +
@@ -54,20 +139,19 @@ function authorMaxTokens(): number {
  * names a concrete defect, a fast/cheap model can repair the existing source
  * without re-directing the film.
  */
-function repairModel(provider: AgentProvider, attempt: number): string | undefined {
-  const configured = process.env.SLACK_SEQUENCES_REPAIR_MODEL?.trim();
-  if (configured) return configured;
-  // Keep the first targeted repair on Pro for fidelity. Flash is the final,
-  // cheap fallback only if a second repair is actually necessary.
-  return provider.id === "openrouter-api" && attempt >= 3
-    ? "deepseek/deepseek-v4-flash"
-    : undefined;
+function repairModel(): string | undefined {
+  return process.env.SLACK_SEQUENCES_REPAIR_MODEL?.trim() || undefined;
 }
 
-function storyboardModel(provider: AgentProvider): string | undefined {
-  const configured = process.env.SLACK_SEQUENCES_STORYBOARD_MODEL?.trim();
-  if (configured) return configured;
-  return provider.id === "openrouter-api" ? "deepseek/deepseek-v4-flash" : undefined;
+/**
+ * The storyboard is a required production artifact, not an optional cheap
+ * classification. Keep it on the configured primary model unless an operator
+ * explicitly chooses a separate model. The old implicit Flash override was the
+ * common root of wrapper drift, oversized hidden reasoning, and exact
+ * 3,072-token truncation failures in production.
+ */
+function storyboardModel(): string | undefined {
+  return process.env.SLACK_SEQUENCES_STORYBOARD_MODEL?.trim() || undefined;
 }
 
 function tagged(raw: string, name: string): string {
@@ -112,6 +196,23 @@ function firstJsonArray(text: string): string | undefined {
   return undefined;
 }
 
+function structuredArray(raw: string, property: string): unknown[] | undefined {
+  const source = raw.trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
+  try {
+    const value = JSON.parse(source) as unknown;
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object") {
+      const nested = (value as Record<string, unknown>)[property];
+      if (Array.isArray(nested)) return nested;
+    }
+  } catch {
+    // Legacy tagged and bare-text responses continue through the existing parser.
+  }
+  return undefined;
+}
+
 /**
  * Extract the storyboard array source from a planner response. The contract asks
  * for a <storyboard_json> wrapper, but cheaper "Flash"-tier models routinely
@@ -122,6 +223,8 @@ function firstJsonArray(text: string): string | undefined {
  * strict tag boundary so a bare scan can't grab an array out of the HTML.
  */
 function extractStoryboardSource(raw: string): string {
+  const structured = structuredArray(raw, "storyboard");
+  if (structured) return JSON.stringify(structured);
   const match = raw.match(/<storyboard_json>\s*([\s\S]*?)\s*<\/storyboard_json>/i);
   if (match?.[1]) {
     return match[1].trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
@@ -174,6 +277,103 @@ function extractIndexHtmlSource(raw: string): string {
 function isOutputTruncation(error: unknown): boolean {
   return error instanceof ProviderOutputTruncatedError ||
     (error instanceof Error && /truncat|output-token limit|finish_reason.?length/i.test(error.message));
+}
+
+function appendContinuation(prefix: string, continuation: string): string {
+  if (!prefix) return continuation;
+  if (!continuation) return prefix;
+  if (continuation.startsWith(prefix)) return continuation;
+  const maxOverlap = Math.min(prefix.length, continuation.length, 16_000);
+  for (let size = maxOverlap; size > 0; size -= 1) {
+    if (prefix.endsWith(continuation.slice(0, size))) {
+      return prefix + continuation.slice(size);
+    }
+  }
+  return prefix + continuation;
+}
+
+/**
+ * OpenRouter can return a useful partial artifact with finish_reason=length.
+ * Continue that exact assistant prefix instead of discarding it and spending a
+ * validation attempt regenerating the same first segment. This makes complete
+ * HTML authoring independent of a route's per-completion output ceiling.
+ */
+async function completeSourceWithContinuation(
+  provider: AgentProvider,
+  prompt: string,
+  options: CompleteOptions,
+): Promise<string> {
+  let accumulated = "";
+  let lastTruncation: ProviderOutputTruncatedError | undefined;
+  for (let segment = 1; segment <= MAX_AUTHOR_SEGMENTS; segment += 1) {
+    try {
+      const output = await completeWithRetry(provider, prompt, {
+        ...options,
+        ...(accumulated ? { assistantPrefill: accumulated } : {}),
+      }, "author source");
+      return appendContinuation(accumulated, output);
+    } catch (error) {
+      if (
+        provider.id !== "openrouter-api" ||
+        !(error instanceof ProviderOutputTruncatedError) ||
+        !error.partialText
+      ) {
+        throw error;
+      }
+      accumulated = appendContinuation(accumulated, error.partialText);
+      lastTruncation = error;
+      process.stderr.write(
+        `[author] source segment ${segment}/${MAX_AUTHOR_SEGMENTS} reached the provider ceiling ` +
+          `after ${error.completionTokens ?? "unknown"} tokens; continuing ${accumulated.length} chars\n`,
+      );
+    }
+  }
+  throw new ProviderOutputTruncatedError(
+    "OpenRouter",
+    lastTruncation?.completionTokens,
+    accumulated,
+  );
+}
+
+function applyDeterministicSourceRepairs(
+  draft: DirectCompositionDraft,
+): DirectCompositionDraft {
+  let html = draft.html;
+  if (/\bMath\.random\s*\(\s*\)/.test(html)) {
+    const generator = [
+      "let __sequencesSeed = 0x6d2b79f5;",
+      "const __sequencesRandom = () => {",
+      "  __sequencesSeed = (__sequencesSeed * 1664525 + 1013904223) >>> 0;",
+      "  return __sequencesSeed / 4294967296;",
+      "};",
+    ].join("\n");
+    html = html
+      .replace(/\bMath\.random\s*\(\s*\)/g, "__sequencesRandom()")
+      .replace(
+        /<script\b(?![^>]*\bsrc\s*=)[^>]*>/i,
+        (tag) => `${tag}\n${generator}`,
+      );
+    process.stderr.write(
+      "[author] deterministically replaced Math.random() with a fixed seeded PRNG\n",
+    );
+  }
+  const compositionId = html.match(
+    /<[^>]+\bdata-composition-id\s*=\s*(["'])(.*?)\1[^>]*>/is,
+  )?.[2];
+  if (compositionId) {
+    const escapedId = compositionId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const normalized = html.replace(
+      /window\.__timelines\s*\[\s*[A-Za-z_$][\w$]*\s*\]\s*=\s*([^;]+);/g,
+      `window.__timelines["${escapedId}"] = $1;`,
+    );
+    if (normalized !== html) {
+      html = normalized;
+      process.stderr.write(
+        "[author] normalized computed timeline registration to the canonical composition id\n",
+      );
+    }
+  }
+  return html === draft.html ? draft : { ...draft, html };
 }
 
 /**
@@ -347,7 +547,15 @@ export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {
 }
 
 export function parseStoryboardResponse(raw: string): DirectScene[] {
-  const storyboard = parseStoryboard(extractStoryboardSource(raw));
+  const knownCapabilities = new Set(
+    loadCapabilityIndex().capabilities.map((capability) => capability.id),
+  );
+  const storyboard = parseStoryboard(extractStoryboardSource(raw)).map((scene) => ({
+    ...scene,
+    ...(scene.capabilityIds
+      ? { capabilityIds: scene.capabilityIds.filter((id) => knownCapabilities.has(id)) }
+      : {}),
+  }));
   const errors = validateStoryboardPlan(storyboard);
   if (errors.length) throw new Error(`invalid storyboard plan: ${errors.join("; ")}`);
   return storyboard;
@@ -380,6 +588,7 @@ export async function requestStoryboardPlan(
     options?: CompleteOptions;
   },
 ): Promise<DirectScene[]> {
+  const structuredOutput = supportsStructuredOutputs(provider);
   const prompt = [
     "SYSTEM: You are the cut-first editor for a short SaaS launch film.",
     "Design the storyboard before any HTML is written. Make 3-5 distinct shots",
@@ -403,7 +612,9 @@ export async function requestStoryboardPlan(
     storyboardReference(args.skills.text),
     "",
     "## Response contract",
-    "Return only <storyboard_json> containing a JSON array. No Markdown or prose.",
+    structuredOutput
+      ? 'Return only a JSON object with one "storyboard" array. No tags, Markdown, or prose.'
+      : "Return only <storyboard_json> containing a JSON array. No Markdown or prose.",
     "Shots must be contiguous, start at 0, total 6-60 seconds, and last 1.5-15 seconds each.",
     "Use this exact shape for every shot:",
     '{"id":"kebab-case","title":"human title","purpose":"viewer change",',
@@ -416,6 +627,11 @@ export async function requestStoryboardPlan(
   ].filter(Boolean).join("\n");
   let raw: string;
   try {
+    const model = storyboardModel();
+    process.stderr.write(
+      `[storyboard] primary contract · ${model ? `explicit model ${model}` : "provider primary model"} · ` +
+        `reasoning off · max ${STORYBOARD_MAX_TOKENS} tokens\n`,
+    );
     raw = await completeWithRetry(provider, prompt, {
       ...args.options,
       // A reasoning storyboard pass on a loaded provider can run long; give it more
@@ -423,12 +639,12 @@ export async function requestStoryboardPlan(
       // a transient stall instead of failing the whole build on the first abort.
       timeoutMs: 180_000,
       maxTokens: STORYBOARD_MAX_TOKENS,
-      // A small Flash thinking pass makes the edit/cut graph before Pro spends
-      // its larger budget on source. Code emission and repairs remain reasoning-off.
-      thinkingMode: provider.id === "openrouter-api" || provider.id === "deepseek-api"
-        ? "medium"
-        : "none",
-      ...(storyboardModel(provider) ? { model: storyboardModel(provider) } : {}),
+      // max_tokens includes hidden reasoning on OpenRouter/DeepSeek. This stage
+      // must emit a complete machine-readable artifact, so reserve the entire
+      // completion budget for that artifact just as the HTML authoring pass does.
+      thinkingMode: "none",
+      ...(structuredOutput ? { responseFormat: storyboardResponseFormat() } : {}),
+      ...(model ? { model } : {}),
     }, "storyboard");
   } catch (error) {
     if (isTransientProviderError(error)) {
@@ -490,7 +706,7 @@ export function applyCompositionRepair(
 ): DirectCompositionDraft {
   let value: unknown;
   try {
-    value = JSON.parse(tagged(raw, "patches_json"));
+    value = structuredArray(raw, "patches") ?? JSON.parse(tagged(raw, "patches_json"));
   } catch (error) {
     throw new Error(
       `patches_json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
@@ -501,6 +717,8 @@ export function applyCompositionRepair(
   }
   const patches = value as CompositionPatch[];
   let html = scratch.html;
+  let applied = 0;
+  const rejected: string[] = [];
   for (const [index, patch] of patches.entries()) {
     if (
       !patch ||
@@ -508,16 +726,31 @@ export function applyCompositionRepair(
       typeof patch.replace !== "string" ||
       !patch.search
     ) {
-      throw new Error(`patches_json[${index}] must contain non-empty search and string replace`);
+      rejected.push(
+        `patches_json[${index}] must contain non-empty search and string replace`,
+      );
+      continue;
     }
     const located = locatePatch(html, patch.search);
     if (located.kind === "missing") {
-      throw new Error(`patches_json[${index}].search was not found in scratch HTML`);
+      rejected.push(`patches_json[${index}].search was not found in scratch HTML`);
+      continue;
     }
     if (located.kind === "ambiguous") {
-      throw new Error(`patches_json[${index}].search is not unique in scratch HTML`);
+      rejected.push(`patches_json[${index}].search is not unique in scratch HTML`);
+      continue;
     }
     html = html.slice(0, located.start) + patch.replace + html.slice(located.end);
+    applied += 1;
+  }
+  if (applied === 0) {
+    throw new Error(rejected[0] ?? "patches_json contained no applicable edits");
+  }
+  if (rejected.length) {
+    process.stderr.write(
+      `[author] applied ${applied}/${patches.length} safe patches; skipped ` +
+        `${rejected.length}: ${rejected.slice(0, 3).join(" | ")}\n`,
+    );
   }
   return { storyboard: scratch.storyboard, html };
 }
@@ -542,6 +775,7 @@ function creationPrompt(args: {
   scratch?: DirectCompositionDraft;
   lockedStoryboard?: DirectScene[];
   compact?: boolean;
+  structuredPatches?: boolean;
 }): string {
   if (args.scratch) {
     return [
@@ -563,7 +797,9 @@ function creationPrompt(args: {
       "</scratch_index_html>",
       "",
       "## Response contract",
-      `Return only <patches_json> containing a JSON array of 1-${MAX_REPAIR_PATCHES} edits.`,
+      args.structuredPatches
+        ? `Return only a JSON object with a "patches" array of 1-${MAX_REPAIR_PATCHES} edits.`
+        : `Return only <patches_json> containing a JSON array of 1-${MAX_REPAIR_PATCHES} edits.`,
       'Each edit is {"search":"exact unique substring from the current scratch","replace":"replacement"}.',
       "Edits run sequentially. Keep each search as short as possible while still unique.",
       "Use JSON escaping correctly. Do not return storyboard_json, index_html, Markdown, comments,",
@@ -672,28 +908,42 @@ export async function requestDirectComposition(
   let scratch: DirectCompositionDraft | undefined;
   let compact = false;
   let lastError: unknown;
+  const structuredPatches = supportsStructuredOutputs(provider);
   // One initial authoring pass plus at most two bounded repairs.
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const patchMode = Boolean(scratch);
-    const prompt = creationPrompt({ ...args, validationFeedback, scratch, compact });
+    // Never downgrade a full-document recovery because of its attempt number.
+    // A separately configured repair model is eligible only when a valid
+    // scratch document exists and the task is a bounded exact patch.
+    const repairTier = patchMode ? repairModel() : undefined;
+    const prompt = creationPrompt({
+      ...args,
+      validationFeedback,
+      scratch,
+      compact,
+      structuredPatches,
+    });
     process.stderr.write(
       `[author] attempt ${attempt}/3 · prompt ${prompt.length} chars · ` +
       `${compact ? "compact repair" : "full context"} · ` +
-      `${repairModel(provider, attempt) ? "repair tier" : "primary tier"} · reasoning off\n`,
+      `${repairTier ? "explicit repair tier" : "primary tier"} · reasoning off\n`,
     );
     try {
-      const repairTier = attempt > 1 ? repairModel(provider, attempt) : undefined;
-      const raw = await provider.complete(prompt, {
+      const completeOptions: CompleteOptions = {
         ...args.options,
         timeoutMs: 360_000,
         // Code emission does not benefit from DeepSeek's expensive high/xhigh
         // reasoning pass. Keeping it off reserves the whole budget for source.
         maxTokens: patchMode ? REPAIR_MAX_TOKENS : authorMaxTokens(),
         thinkingMode: "none",
+        ...(patchMode && structuredPatches ? { responseFormat: PATCH_RESPONSE_FORMAT } : {}),
         ...(repairTier ? { model: repairTier } : {}),
-      });
+      };
+      const raw = patchMode
+        ? await completeWithRetry(provider, prompt, completeOptions, "author patch")
+        : await completeSourceWithContinuation(provider, prompt, completeOptions);
       process.stderr.write(`[author] attempt ${attempt}/3 response ${raw.length} chars\n`);
-      const draft = patchMode
+      const parsedDraft = patchMode
         ? applyCompositionRepair(raw, scratch!)
         : args.lockedStoryboard
           ? {
@@ -701,8 +951,13 @@ export async function requestDirectComposition(
               html: extractIndexHtmlSource(raw),
             }
           : parseCompositionResponse(raw);
+      const draft = applyDeterministicSourceRepairs(parsedDraft);
       const validation = await validateDirectComposition(args.projectDir, draft);
       if (!validation.ok) {
+        process.stderr.write(
+          `[author] attempt ${attempt}/3 static validation rejected: ` +
+            `${validation.errors.slice(0, 8).join(" | ").slice(0, 1_500)}\n`,
+        );
         const previousFeedback = validationFeedback ?? [];
         validationFeedback = patchMode
           ? [
@@ -719,25 +974,33 @@ export async function requestDirectComposition(
         lastError = new Error(validationFeedback.join("; "));
         continue;
       }
-      if (validation.frameWarnings.length && attempt < 3) {
-        validationFeedback = validation.frameWarnings.slice(0, 12);
-        scratch = draft;
-        compact = true;
-        lastError = new Error(validationFeedback.join("; "));
-        continue;
-      }
       const browserQa = await inspectDirectComposition(args.projectDir, draft);
       // Warnings receive a repair opportunity, but the final pass may preserve
       // an intentional aesthetic choice. Hard browser/layout errors never pass.
-      if (browserQa.strictOk || (attempt === 3 && browserQa.ok)) {
+      if (
+        (browserQa.strictOk && validation.frameWarnings.length === 0) ||
+        (attempt === 3 && browserQa.ok)
+      ) {
         return { draft, raw, attempts: attempt };
       }
-      validationFeedback = [...browserQa.errors, ...browserQa.warnings].slice(0, 20);
+      validationFeedback = [
+        ...validation.frameWarnings,
+        ...browserQa.errors,
+        ...browserQa.warnings,
+      ].slice(0, 20);
+      process.stderr.write(
+        `[author] attempt ${attempt}/3 browser QA requested repair: ` +
+          `${validationFeedback.slice(0, 8).join(" | ").slice(0, 1_500)}\n`,
+      );
       scratch = draft;
       compact = true;
       lastError = new Error(validationFeedback.join("; "));
     } catch (error) {
       const truncated = isOutputTruncation(error);
+      process.stderr.write(
+        `[author] attempt ${attempt}/3 failed: ` +
+          `${error instanceof Error ? error.message : String(error)}\n`,
+      );
       validationFeedback = [
         truncated
           ? `The previous response exhausted its output budget. Return a complete document under ${COMPOSITION_SOURCE_BUDGET_CHARS.toLocaleString("en-US")} characters; simplify source, not the visual thesis.`

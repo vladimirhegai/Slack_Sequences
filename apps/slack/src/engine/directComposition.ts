@@ -270,7 +270,23 @@ function invariantErrors(
   }
   if (compositionId) {
     const escaped = compositionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (!new RegExp(`window\\.__timelines\\s*\\[\\s*(["'])${escaped}\\1\\s*\\]\\s*=`, "s").test(html)) {
+    const literalRegistration = new RegExp(
+      `window\\.__timelines\\s*\\[\\s*(["'])${escaped}\\1\\s*\\]\\s*=`,
+      "s",
+    ).test(html);
+    const boundIds = [...html.matchAll(
+      new RegExp(
+        `\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*(["'])${escaped}\\2\\s*;?`,
+        "g",
+      ),
+    )].map((match) => match[1]!);
+    const boundRegistration = boundIds.some((name) =>
+      new RegExp(
+        `window\\.__timelines\\s*\\[\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\]\\s*=`,
+        "s",
+      ).test(html)
+    );
+    if (!literalRegistration && !boundRegistration) {
       errors.push(`register the paused timeline as window.__timelines["${compositionId}"]`);
     }
   }

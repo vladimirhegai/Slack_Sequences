@@ -51,6 +51,26 @@ export interface CompleteOptions {
    * Set this for any task that must emit a large, complete artifact.
    */
   maxTokens?: number;
+  /**
+   * Provider-native JSON response contract. OpenAI-compatible providers forward
+   * this as `response_format`; providers without native support may ignore it.
+   */
+  responseFormat?:
+    | { type: "json_object" }
+    | {
+        type: "json_schema";
+        json_schema: {
+          name: string;
+          strict?: boolean;
+          schema: Record<string, unknown>;
+        };
+      };
+  /**
+   * Existing assistant output to continue verbatim. OpenRouter supports this as
+   * an assistant-prefill message, which lets large artifacts span bounded
+   * provider completions without regenerating their prefix.
+   */
+  assistantPrefill?: string;
   timeoutMs?: number;
   cacheHint?: string;
   /** Cancels an in-flight API request or local CLI subprocess. */
@@ -115,8 +135,9 @@ export interface ProviderInfo {
 export class ProviderOutputTruncatedError extends Error {
   readonly finishReason = "length";
   readonly completionTokens?: number;
+  readonly partialText?: string;
 
-  constructor(provider: string, completionTokens?: number) {
+  constructor(provider: string, completionTokens?: number, partialText?: string) {
     super(
       `${provider} truncated the completion at its output-token limit${
         completionTokens ? ` after ${completionTokens} tokens` : ""
@@ -124,6 +145,7 @@ export class ProviderOutputTruncatedError extends Error {
     );
     this.name = "ProviderOutputTruncatedError";
     this.completionTokens = completionTokens;
+    this.partialText = partialText;
   }
 }
 
@@ -216,6 +238,14 @@ function withMaxTokens(
   return body;
 }
 
+function withResponseFormat(
+  body: Record<string, unknown>,
+  options: CompleteOptions,
+): Record<string, unknown> {
+  if (options.responseFormat) body.response_format = options.responseFormat;
+  return body;
+}
+
 interface OpenAiCompatibleCompletion {
   choices?: Array<{
     finish_reason?: string | null;
@@ -233,7 +263,11 @@ function completionText(
 ): string {
   const choice = json.choices?.[0];
   if (choice?.finish_reason === "length") {
-    throw new ProviderOutputTruncatedError(provider, json.usage?.completion_tokens);
+    throw new ProviderOutputTruncatedError(
+      provider,
+      json.usage?.completion_tokens,
+      choice.message?.content || undefined,
+    );
   }
   if (json.error || choice?.finish_reason === "error" || choice?.error) {
     const error = choice?.error ?? json.error;
@@ -869,7 +903,9 @@ async function streamOpenAiCompatibleChat(
   }
   buffer += decoder.decode();
   for (const line of buffer.split(/\r?\n/)) consumeLine(line);
-  if (streamTruncated) throw new ProviderOutputTruncatedError(new URL(url).hostname);
+  if (streamTruncated) {
+    throw new ProviderOutputTruncatedError(new URL(url).hostname, undefined, text.trim() || undefined);
+  }
   if (streamError) throw new Error(`${url} stream failed: ${streamError}`);
   return text.trim();
 }
@@ -956,8 +992,12 @@ export const openaiApi: AgentProvider = {
     const key = options.apiKey || process.env.OPENAI_API_KEY;
     if (!key) throw new Error("no OpenAI API key (set OPENAI_API_KEY or pass one per request)");
     const model = modelOverride(options) ?? process.env.SEQUENCES_OPENAI_MODEL ?? "gpt-5.1-mini";
-    const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
+    const body: Record<string, unknown> = {
+      model,
+      messages: [{ role: "user", content: openAiUserContent(prompt, options) }],
+    };
     withMaxTokens(body, options, "max_completion_tokens");
+    withResponseFormat(body, options);
     const effort = openAiReasoningEffort(options);
     if (effort) body.reasoning_effort = effort;
     const json = (await postJson(
@@ -973,8 +1013,12 @@ export const openaiApi: AgentProvider = {
     const key = options.apiKey || process.env.OPENAI_API_KEY;
     if (!key) throw new Error("no OpenAI API key (set OPENAI_API_KEY or pass one per request)");
     const model = modelOverride(options) ?? process.env.SEQUENCES_OPENAI_MODEL ?? "gpt-5.1-mini";
-    const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
+    const body: Record<string, unknown> = {
+      model,
+      messages: [{ role: "user", content: openAiUserContent(prompt, options) }],
+    };
     withMaxTokens(body, options, "max_completion_tokens");
+    withResponseFormat(body, options);
     const effort = openAiReasoningEffort(options);
     if (effort) body.reasoning_effort = effort;
     const text = await streamOpenAiCompatibleChat(
@@ -1012,8 +1056,15 @@ export const openrouterApi: AgentProvider = {
     const key = options.apiKey || process.env.OPENROUTER_API_KEY;
     if (!key) throw new Error("no OpenRouter API key (set OPENROUTER_API_KEY or pass one per request)");
     const model = modelOverride(options) ?? process.env.SEQUENCES_OPENROUTER_MODEL ?? "deepseek/deepseek-v4-pro";
-    const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
+    const messages = [
+      { role: "user", content: openAiUserContent(prompt, options) },
+      ...(options.assistantPrefill
+        ? [{ role: "assistant", content: options.assistantPrefill }]
+        : []),
+    ];
+    const body: Record<string, unknown> = { model, messages };
     withMaxTokens(body, options);
+    withResponseFormat(body, options);
     const reasoning = openRouterReasoning(options);
     if (reasoning) body.reasoning = reasoning;
     const json = (await postJson(
@@ -1029,8 +1080,15 @@ export const openrouterApi: AgentProvider = {
     const key = options.apiKey || process.env.OPENROUTER_API_KEY;
     if (!key) throw new Error("no OpenRouter API key (set OPENROUTER_API_KEY or pass one per request)");
     const model = modelOverride(options) ?? process.env.SEQUENCES_OPENROUTER_MODEL ?? "deepseek/deepseek-v4-pro";
-    const body: Record<string, unknown> = { model, messages: [{ role: "user", content: openAiUserContent(prompt, options) }] };
+    const messages = [
+      { role: "user", content: openAiUserContent(prompt, options) },
+      ...(options.assistantPrefill
+        ? [{ role: "assistant", content: options.assistantPrefill }]
+        : []),
+    ];
+    const body: Record<string, unknown> = { model, messages };
     withMaxTokens(body, options);
+    withResponseFormat(body, options);
     const reasoning = openRouterReasoning(options);
     if (reasoning) body.reasoning = reasoning;
     const text = await streamOpenAiCompatibleChat(

@@ -3,8 +3,9 @@
  *
  * The installed runtime is pinned at HyperFrames 0.6.86 while the vendored CLI
  * source is newer and intentionally not installed in Railway. This adapter uses
- * the vendored inspector's browser audit verbatim, then adds the small set of
- * Sequences-specific relational checks that HyperFrames cannot infer.
+ * the vendored inspector's browser audit (including local regression fixes),
+ * then adds the small set of Sequences-specific relational checks that
+ * HyperFrames cannot infer.
  */
 import fs from "node:fs";
 import http from "node:http";

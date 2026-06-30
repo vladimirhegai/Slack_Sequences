@@ -39,6 +39,7 @@ const roots: string[] = [];
 
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  vi.unstubAllEnvs();
 });
 
 function projectDir(): string {
@@ -189,6 +190,17 @@ describe("direct HyperFrames composition", () => {
     expect(parseCompositionResponse(response(value))).toEqual(value);
   });
 
+  it("accepts timeline registration through a statically bound composition id", async () => {
+    const dir = projectDir();
+    const value = draft();
+    value.html = value.html.replace(
+      'window.__timelines["relay-launch"] = tl;',
+      'const compId = "relay-launch"; window.__timelines[compId] = tl;',
+    );
+    const validation = await validateDirectComposition(dir, value);
+    expect(validation.errors).toEqual([]);
+  });
+
   it("reports a truncated response as a token-limit problem, not a missing tag", () => {
     const value = draft();
     // The model opened the first tag but ran out of output budget before closing it.
@@ -250,6 +262,18 @@ describe("direct HyperFrames composition", () => {
     ).toEqual(plan);
   });
 
+  it("parses a provider-native structured storyboard object", () => {
+    const plan = storyboard();
+    expect(parseStoryboardResponse(JSON.stringify({ storyboard: plan }))).toEqual(plan);
+  });
+
+  it("drops unknown optional capability citations instead of aborting the film", () => {
+    const plan = storyboard();
+    plan[0]!.capabilityIds = ["dashboard"];
+    const parsed = parseStoryboardResponse(JSON.stringify({ storyboard: plan }));
+    expect(parsed[0]?.capabilityIds).toEqual([]);
+  });
+
   it("reports an unclosed storyboard tag as truncation, not a missing wrapper", () => {
     const plan = storyboard();
     expect(() => parseStoryboardResponse(`<storyboard_json>${JSON.stringify(plan)}`)).toThrow(
@@ -263,7 +287,7 @@ describe("direct HyperFrames composition", () => {
     );
   });
 
-  it("uses Flash thinking for the bounded storyboard pass", async () => {
+  it("keeps the required storyboard artifact on the primary model with reasoning off", async () => {
     const dir = projectDir();
     const complete = vi.fn().mockResolvedValue(
       `<storyboard_json>${JSON.stringify(storyboard())}</storyboard_json>`,
@@ -284,11 +308,41 @@ describe("direct HyperFrames composition", () => {
       maxTokens?: number;
       thinkingMode?: string;
       model?: string;
+      responseFormat?: { type?: string; json_schema?: { name?: string } };
     };
     expect(options).toMatchObject({
-      maxTokens: 3_072,
-      thinkingMode: "medium",
-      model: "deepseek/deepseek-v4-flash",
+      maxTokens: 4_096,
+      thinkingMode: "none",
+    });
+    expect(options.model).toBeUndefined();
+    expect(options.responseFormat).toMatchObject({
+      type: "json_schema",
+      json_schema: { name: "sequences_storyboard" },
+    });
+  });
+
+  it("uses a separate storyboard model only when the operator explicitly configures one", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_STORYBOARD_MODEL", "operator/structured-planner");
+    const dir = projectDir();
+    const complete = vi.fn().mockResolvedValue(
+      `<storyboard_json>${JSON.stringify(storyboard())}</storyboard_json>`,
+    );
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    await requestStoryboardPlan(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+    });
+    expect(complete.mock.calls[0]?.[1]).toMatchObject({
+      model: "operator/structured-planner",
+      maxTokens: 4_096,
+      thinkingMode: "none",
     });
   });
 
@@ -362,6 +416,20 @@ describe("direct HyperFrames composition", () => {
     expect(repaired.html).toContain("#8b5cf6");
   });
 
+  it("parses provider-native structured repair patches without decorative tags", () => {
+    const value = draft();
+    const repaired = applyCompositionRepair(
+      JSON.stringify({
+        patches: [{
+          search: "border: 1px solid #8b5cf6",
+          replace: "border: 1px solid #22d3ee",
+        }],
+      }),
+      value,
+    );
+    expect(repaired.html).toContain("#22d3ee");
+  });
+
   it("applies a repair patch whose search reflowed whitespace", () => {
     const value = draft();
     // The model reproduced the rule but with collapsed/extra spacing — the most
@@ -392,6 +460,22 @@ describe("direct HyperFrames composition", () => {
     expect(() =>
       applyCompositionRepair(patchResponse("scene", "shot"), draft()),
     ).toThrow(/not unique/);
+  });
+
+  it("keeps unique edits when another independent patch is ambiguous", () => {
+    const value = draft();
+    const repaired = applyCompositionRepair(
+      `<patches_json>${JSON.stringify([
+        {
+          search: "border: 1px solid #8b5cf6",
+          replace: "border: 1px solid #22d3ee",
+        },
+        { search: "scene", replace: "shot" },
+      ])}</patches_json>`,
+      value,
+    );
+    expect(repaired.html).toContain("#22d3ee");
+    expect(repaired.html).toContain('class="scene clip"');
   });
 
   it("reserves the completion budget for source instead of DeepSeek reasoning", async () => {
@@ -448,14 +532,45 @@ describe("direct HyperFrames composition", () => {
     expect(secondOptions?.model).toBeUndefined();
   });
 
+  it("continues a partial OpenRouter document without spending a repair attempt", async () => {
+    const dir = projectDir();
+    const full = response(draft());
+    const split = Math.floor(full.length / 2);
+    const prefix = full.slice(0, split);
+    const continuation = full.slice(split);
+    const complete = vi.fn()
+      .mockRejectedValueOnce(new ProviderOutputTruncatedError("OpenRouter", 8_192, prefix))
+      .mockResolvedValueOnce(continuation);
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: draft().storyboard,
+    });
+    expect(result.attempts).toBe(1);
+    expect(result.draft).toEqual(draft());
+    expect((complete.mock.calls[1]?.[1] as { assistantPrefill?: string }).assistantPrefill)
+      .toBe(prefix);
+  });
+
   it("allows exactly one model repair after deterministic validation feedback", async () => {
     const dir = projectDir();
     const invalid = draft();
-    invalid.html = invalid.html.replace("const tl =", "const noise = Math.random(); const tl =");
+    invalid.html = invalid.html.replace(
+      "const tl =",
+      "const noise = setTimeout(() => {}, 1); const tl =",
+    );
     const complete = vi.fn()
       .mockResolvedValueOnce(response(invalid))
       .mockResolvedValueOnce(patchResponse(
-        "const noise = Math.random(); const tl =",
+        "const noise = setTimeout(() => {}, 1); const tl =",
         "const tl =",
       ));
     const provider: AgentProvider = {
@@ -473,19 +588,25 @@ describe("direct HyperFrames composition", () => {
     });
     expect(result.attempts).toBe(2);
     expect(complete).toHaveBeenCalledTimes(2);
-    expect(complete.mock.calls[1]?.[0]).toContain("Math.random is not deterministic");
-    expect(complete.mock.calls[1]?.[0]).toContain("<patches_json>");
+    expect(complete.mock.calls[1]?.[0]).toContain("timer-driven visual state is not seek-safe");
+    expect(complete.mock.calls[1]?.[0]).toContain('"patches" array');
     expect((complete.mock.calls[1]?.[1] as { maxTokens?: number }).maxTokens).toBe(4_096);
+    expect((complete.mock.calls[1]?.[1] as {
+      responseFormat?: { json_schema?: { name?: string } };
+    }).responseFormat?.json_schema?.name).toBe("sequences_composition_patches");
   });
 
-  it("allows at most two bounded model repairs", async () => {
+  it("keeps both bounded repairs on the primary model by default", async () => {
     const dir = projectDir();
     const invalid = draft();
-    invalid.html = invalid.html.replace("const tl =", "const noise = Math.random(); const tl =");
+    invalid.html = invalid.html.replace(
+      "const tl =",
+      "const noise = setTimeout(() => {}, 1); const tl =",
+    );
     const complete = vi.fn()
       .mockResolvedValueOnce(response(invalid))
-      .mockResolvedValueOnce(patchResponse("Math.random()", "Date.now()"))
-      .mockResolvedValueOnce(patchResponse("Math.random()", "0"));
+      .mockResolvedValueOnce(patchResponse("setTimeout(() => {}, 1)", "Date.now()"))
+      .mockResolvedValueOnce(patchResponse("setTimeout(() => {}, 1)", "0"));
     const provider: AgentProvider = {
       id: "openrouter-api",
       label: "test author",
@@ -502,8 +623,95 @@ describe("direct HyperFrames composition", () => {
     expect(result.attempts).toBe(3);
     expect(complete).toHaveBeenCalledTimes(3);
     expect((complete.mock.calls[1]?.[1] as { model?: string }).model).toBeUndefined();
-    expect((complete.mock.calls[2]?.[1] as { model?: string }).model)
-      .toBe("deepseek/deepseek-v4-flash");
+    expect((complete.mock.calls[2]?.[1] as { model?: string }).model).toBeUndefined();
+  });
+
+  it("uses an explicitly configured repair model only for patch calls", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_REPAIR_MODEL", "operator/patch-model");
+    const dir = projectDir();
+    const invalid = draft();
+    invalid.html = invalid.html.replace(
+      "const tl =",
+      "const noise = setTimeout(() => {}, 1); const tl =",
+    );
+    const complete = vi.fn()
+      .mockResolvedValueOnce(response(invalid))
+      .mockResolvedValueOnce(patchResponse(
+        "const noise = setTimeout(() => {}, 1); const tl =",
+        "const tl =",
+      ));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: draft().storyboard,
+    });
+    expect((complete.mock.calls[0]?.[1] as { model?: string }).model).toBeUndefined();
+    expect((complete.mock.calls[1]?.[1] as { model?: string }).model)
+      .toBe("operator/patch-model");
+  });
+
+  it("mechanically replaces unseeded randomness before spending a model repair", async () => {
+    const dir = projectDir();
+    const invalid = draft();
+    invalid.html = invalid.html.replace(
+      "const tl =",
+      "const noise = Math.random(); const tl =",
+    );
+    const complete = vi.fn().mockResolvedValueOnce(response(invalid));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: draft().storyboard,
+    });
+    expect(result.attempts).toBe(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.draft.html).toContain("const __sequencesRandom");
+    expect(result.draft.html).toContain("const noise = __sequencesRandom()");
+    expect(result.draft.html).not.toContain("Math.random()");
+  });
+
+  it("normalizes computed timeline registration before spending a model repair", async () => {
+    const dir = projectDir();
+    const computed = draft();
+    computed.html = computed.html.replace(
+      'window.__timelines["relay-launch"] = tl;',
+      "const root = document.getElementById('root'); " +
+        "const compId = root.getAttribute('data-composition-id'); " +
+        "window.__timelines[compId] = tl;",
+    );
+    const complete = vi.fn().mockResolvedValueOnce(response(computed));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: draft().storyboard,
+    });
+    expect(result.attempts).toBe(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.draft.html).toContain('window.__timelines["relay-launch"] = tl;');
   });
 
   it("passes deterministic validation and checkpoints exact revisions", async () => {

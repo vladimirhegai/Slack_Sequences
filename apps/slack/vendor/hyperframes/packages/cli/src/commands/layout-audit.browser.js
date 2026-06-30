@@ -122,7 +122,11 @@
     const text = textContentFor(element);
     if (!text) return false;
     for (const child of Array.from(element.children)) {
-      if (isVisibleElement(child) && textContentFor(child)) return false;
+      // Leaf-ness is structural, not animation-state dependent. If a child owns
+      // text but is currently below the visibility threshold during an
+      // entrance/exit, treating the parent as a leaf makes Range span every
+      // hidden descendant and produces a phantom wrapper overflow.
+      if (textContentFor(child)) return false;
     }
     return true;
   }

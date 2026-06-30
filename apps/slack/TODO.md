@@ -43,15 +43,20 @@ The single most important task. Prove the loop before generalizing.
   reasoning explicitly off (DeepSeek V4 otherwise maps medium/minimal to costly
   high reasoning), receives a 10K completion ceiling with a 32K-character source
   target, and sees ~28K rather than 45K characters of retrieved craft context.
-  Pro authors the first visual thesis and first targeted repair; Flash handles
-  the small frame decision and only the final repair fallback. Repair calls emit
-  bounded exact patches (4K ceiling), not another full 32K-character document.
-  `finish_reason=length` triggers a compact
-  recovery prompt with recipe bodies removed instead of repeating the same
-  oversized request.
+  The primary model authors every required artifact and repair by default; Flash
+  is limited to the optional frame decision, which has a deterministic fallback.
+  Operators may explicitly configure a separate exact-patch model. Storyboard
+  and patch payloads use provider-native strict JSON schemas. Repair calls emit
+  bounded exact patches (4K ceiling), not another full document; every uniquely
+  addressable edit survives even if a sibling edit is ambiguous. OpenRouter
+  `finish_reason=length` retains the partial source and continues it through an
+  assistant prefill, so provider output ceilings no longer consume repair turns.
+  Compact full-document regeneration remains the fallback when no partial source
+  is available.
 - [x] **Storyboard-first, frame-validated multi-shot authoring.** Create now runs
-  a bounded Flash thinking pass that locks a validated 3–5 shot cut graph before
-  Pro writes source. Every shot declares foreground, background, camera intent,
+  a bounded reasoning-off pass on the primary model that locks a validated 3–5
+  shot cut graph before source authoring. Every shot declares foreground,
+  background, camera intent,
   capability choices, continuity anchor, and outgoing cut; commits persist
   `STORYBOARD.md` + `motion-plan.json`. Static publication QA now checks the
   authored source against committed `frame.md` accent/font facts and returns

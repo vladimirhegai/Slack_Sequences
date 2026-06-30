@@ -145,6 +145,65 @@ describe("OpenRouter bounded completions", () => {
     }
   });
 
+  it("forwards a native strict JSON schema response contract", async () => {
+    const originalFetch = globalThis.fetch;
+    let body: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        choices: [{
+          finish_reason: "stop",
+          message: { content: '{"patches":[{"search":"a","replace":"b"}]}' },
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const responseFormat = {
+      type: "json_schema" as const,
+      json_schema: {
+        name: "composition_patches",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: { patches: { type: "array" } },
+          required: ["patches"],
+          additionalProperties: false,
+        },
+      },
+    };
+    try {
+      await PROVIDERS["openrouter-api"].complete("repair", {
+        apiKey: "or-test",
+        responseFormat,
+      });
+      expect(body?.response_format).toEqual(responseFormat);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("forwards an assistant prefill so a truncated artifact can continue", async () => {
+    const originalFetch = globalThis.fetch;
+    let body: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: "</html>" } }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      await PROVIDERS["openrouter-api"].complete("author", {
+        apiKey: "or-test",
+        assistantPrefill: "<!doctype html><html>",
+      });
+      expect(body?.messages).toEqual([
+        { role: "user", content: "author" },
+        { role: "assistant", content: "<!doctype html><html>" },
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("fails loudly on normalized finish_reason=length instead of returning partial HTML", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
@@ -157,10 +216,12 @@ describe("OpenRouter bounded completions", () => {
         usage: { completion_tokens: 16_384 },
       }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
     try {
-      await expect(PROVIDERS["openrouter-api"].complete("author", {
+      const promise = PROVIDERS["openrouter-api"].complete("author", {
         apiKey: "or-test",
         maxTokens: 16_384,
-      })).rejects.toThrow(/truncated.*16,?384 tokens/i);
+      });
+      await expect(promise).rejects.toThrow(/truncated.*16,?384 tokens/i);
+      await expect(promise).rejects.toMatchObject({ partialText: "<html>partial" });
     } finally {
       globalThis.fetch = originalFetch;
     }
