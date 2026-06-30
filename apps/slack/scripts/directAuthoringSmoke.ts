@@ -56,8 +56,8 @@ const html = `<!doctype html>
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #06080c; }
     body { color: #f5f7fb; font-family: Inter, Arial, sans-serif; }
-    #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: radial-gradient(circle at 76% 18%, #123840 0, #06080c 42%); }
-    .scene { position: absolute; inset: 0; padding: 120px 150px; }
+    #root { --space-safe: 72px; position: relative; width: 1920px; height: 1080px; overflow: hidden; background: radial-gradient(circle at 76% 18%, #123840 0, #06080c 42%); }
+    .scene { position: absolute; inset: 0; padding: 120px 150px; opacity: 0; }
     .eyebrow { color: #59f1d2; font: 700 28px/1 monospace; letter-spacing: .16em; text-transform: uppercase; }
     h1 { margin: 38px 0 0; max-width: 1420px; font-size: 148px; line-height: .88; letter-spacing: -.065em; }
     .rail { width: 820px; height: 7px; margin-top: 62px; background: #59f1d2; transform-origin: left; box-shadow: 0 0 32px #59f1d288; }
@@ -74,20 +74,26 @@ const html = `<!doctype html>
   <main id="root" data-composition-id="relay-direct" data-width="1920" data-height="1080" data-duration="12">
     <section id="hook" class="scene clip" data-scene="hook" data-start="0" data-duration="4" data-track-index="1">
       <div class="eyebrow">Relay v2 / now tracing</div>
-      <h1><span id="latency">Sub-100ms</span><br>or it never happened.</h1>
+      <h1 data-layout-important><span id="latency">Sub-100ms</span><br>or it never happened.</h1>
       <div class="rail" id="hook-rail"></div>
     </section>
-    <section id="surface" class="scene clip" data-scene="surface" data-start="4" data-duration="5" data-track-index="1">
-      <div class="side-copy"><div class="eyebrow">The evidence</div><h2>See the trace.<br>Keep the nerve.</h2></div>
-      <div class="window" id="dashboard-window"><img src="assets/dashboard.svg" alt=""></div>
+    <section id="surface" class="scene clip" data-scene="surface" data-start="4" data-duration="5" data-track-index="1" data-layout-allow-overflow>
+      <div class="side-copy" data-layout-important><div class="eyebrow">The evidence</div><h2>See the trace.<br>Keep the nerve.</h2></div>
+      <div class="window" id="dashboard-window" data-layout-important><img src="assets/dashboard.svg" alt=""></div>
     </section>
     <section id="close" class="scene clip" data-scene="close" data-start="9" data-duration="3" data-track-index="1">
-      <div><div class="lockup">RELAY</div><div class="cta" id="cta">Rollback in one click</div></div>
+      <div data-layout-important data-layout-anchor="frame:center"><div class="lockup">RELAY</div><div class="cta" id="cta">Rollback in one click</div></div>
     </section>
   </main>
   <script>
     window.__timelines = window.__timelines || {};
     const tl = gsap.timeline({ paused: true });
+    tl.set("#hook", { opacity: 1 }, 0);
+    tl.set("#hook", { opacity: 0 }, 3.99);
+    tl.set("#surface", { opacity: 1 }, 4);
+    tl.set("#surface", { opacity: 0 }, 8.99);
+    tl.set("#close", { opacity: 1 }, 9);
+    tl.set("#close", { opacity: 0 }, 12);
     tl.fromTo("#hook .eyebrow", { x: -48, opacity: 0 }, { x: 0, opacity: 1, duration: .45, ease: "power3.out" }, .15);
     tl.fromTo("#hook h1", { y: 110, opacity: 0 }, { y: 0, opacity: 1, duration: .8, ease: "power4.out" }, .42);
     tl.fromTo("#hook-rail", { scaleX: 0 }, { scaleX: 1, duration: 1.5, ease: "power3.inOut" }, 1.25);

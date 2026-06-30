@@ -55,13 +55,18 @@ export interface LayoutSystem {
   spacing: string;
   radius: string;
   shadow: string;
-  tokens: {
-    edge: number;
-    region: number;
-    element: number;
-    micro: number;
-    radius: number;
-  };
+  tokens: SpatialTokens;
+}
+
+export interface SpatialTokens {
+  edge: number;
+  region: number;
+  element: number;
+  micro: number;
+  radius: number;
+  safe: number;
+  gutter: number;
+  baseline: number;
 }
 
 export interface ToolResult<T> {
@@ -338,6 +343,9 @@ export function generateLayout(intent: LayoutIntent): LayoutSystem {
   const region = Math.round(40 * spacingFactor * densityFactor);
   const element = Math.round(24 * spacingFactor);
   const micro = Math.round(12 * spacingFactor);
+  const safe = edge;
+  const gutter = Math.max(element, Math.round(edge * 0.45));
+  const baseline = Math.max(6, Math.round(micro * 0.67));
   const radius = intent.corners === "square" ? 0 : intent.corners === "crisp" ? 6 : 14;
   const radiusText = intent.corners === "pill-accented"
     ? "8px content surfaces; pills reserved for controls, tags, and CTA chrome"
@@ -354,7 +362,7 @@ export function generateLayout(intent: LayoutIntent): LayoutSystem {
     spacing: `${intent.spacing}, ${intent.density}: ${edge}px frame edge, ${region}px region, ${element}px element, ${micro}px micro gaps. Use these as a rhythm, not a universal grid.`,
     radius: radiusText,
     shadow,
-    tokens: { edge, region, element, micro, radius },
+    tokens: { edge, region, element, micro, radius, safe, gutter, baseline },
   };
 }
 

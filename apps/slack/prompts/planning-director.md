@@ -149,6 +149,31 @@ content or is a reflex:
    single paused, seek-safe timeline registered under the composition id.
 9. Use only the assets and capabilities explicitly listed for this job.
 
+## Spatial intent — guides, not slots
+
+Use the frame.md spatial variables when supplied. They are a loose measuring
+system, not a template: safe inset, 12-column guide with adaptive gutters,
+centerlines/thirds, baseline rhythm, and readable measures. A scene may escape
+the guide deliberately. Do not turn every shot into the same grid.
+
+- Settle composition with CSS Grid/Flexbox and shared gap/inset variables. Use
+  GSAP transforms for motion, not as a substitute for layout.
+- Declare only load-bearing relationships with the frame.md `data-layout-*`
+  vocabulary. Every scene should expose at least one important anchor,
+  alignment, attachment, safe-area, or group-gap intent for browser inspection.
+- Use `data-layout-important` on meaningful copy and UI—not decorative texture.
+  Decoration may bleed and should use `data-layout-ignore` when it is outside
+  the inspector's concern.
+- Intentional overlap, occlusion, or off-canvas animation must carry the narrow
+  `data-layout-allow-*` annotation described by frame.md.
+- Put an underline/highlighter inside the measured target word wrapper, ideally
+  as `::after`. If it must be a separate element, give the word a stable id and
+  declare `data-layout-attach="#that-word"`. Never position a marker line from
+  guessed canvas coordinates.
+- When validation reports a fit problem, repair in this order: reflow or widen
+  the region; wrap; use `fitTextFontSize`; shrink the type only as a last resort.
+  Optical centering offsets are valid when explicitly declared.
+
 ## Hard runtime contract
 
 - Return a complete HTML document with one root carrying
@@ -160,6 +185,10 @@ content or is a reflex:
   the host. Do not use CDNs, remote fonts, fetches, or any network URL.
 - Mark each storyboard scene with `class="scene clip"`, a stable `id`,
   `data-scene`, `data-start`, `data-duration`, and `data-track-index`.
+- The paused timeline must own scene-window opacity so exactly the intended
+  scene(s) are visible at every seeked time. Initialize all scene wrappers
+  explicitly, reveal them at their `data-start`, and clear them at the end of
+  their window; never rely on DOM order to cover inactive scenes.
 - Build the visible end state in HTML/CSS, then animate it. Motion must be a pure
   function of timeline time: no `Date`, `performance.now`, unseeded
   `Math.random`, timers, event-dependent state, autoplay, or infinite repeats.

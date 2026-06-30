@@ -31,6 +31,7 @@ import {
   type DepthCharacter,
   type GeneratedPalette,
   type NeutralTemperature,
+  type SpatialTokens,
   type SpacingRhythm,
 } from "./frameTools.ts";
 
@@ -63,6 +64,7 @@ export interface FrameDesign {
   colors: GeneratedPalette;
   type: FrameType;
   spacing: string;
+  spatial: SpatialTokens;
   radius: string;
   shadow: string;
   background: string;
@@ -346,6 +348,7 @@ export function remapPreset(
     colors: paletteResult.value,
     type: typographyResult.value,
     spacing: layout.spacing,
+    spatial: layout.tokens,
     radius: layout.radius,
     shadow: layout.shadow,
     background: choice?.background || preset.background,
@@ -360,6 +363,7 @@ export function remapPreset(
 
 export function renderFrameMd(design: FrameDesign, brandName?: string): string {
   const c = design.colors;
+  const s = design.spatial;
   const meta = JSON.stringify({
     presetId: design.presetId,
     label: design.label,
@@ -426,6 +430,46 @@ measure, and role boundaries are creative decisions; unknown font families are i
 These are rhythms and ranges, not mandatory coordinates. Break the rhythm
 deliberately for a hero, cut, or focal transition—not accidentally.
 
+Use this loose coordinate system as measurement scaffolding:
+
+\`\`\`css
+:root {
+  --space-safe: ${s.safe}px;
+  --space-edge: ${s.edge}px;
+  --space-region: ${s.region}px;
+  --space-element: ${s.element}px;
+  --space-micro: ${s.micro}px;
+  --grid-columns: 12;
+  --grid-gutter: ${s.gutter}px;
+  --baseline: ${s.baseline}px;
+  --measure-display: 14ch;
+  --measure-copy: 34ch;
+  --measure-wide: 52ch;
+}
+.safe-area { position: absolute; inset: var(--space-safe); }
+.stack { display: flex; flex-direction: column; gap: var(--space-element); }
+.row { display: flex; align-items: center; gap: var(--space-element); }
+.anchor { position: absolute; }
+.overlay { position: absolute; inset: 0; pointer-events: none; }
+\`\`\`
+
+The 12-column guide, centerlines, thirds, and baseline are debug guides—not
+placement slots. Grid/Flexbox owns settled layout; GSAP transforms own motion.
+Declare only relationships that matter with:
+
+- \`data-layout-important\` for load-bearing text/UI that must clear the safe area.
+- \`data-layout-anchor="frame:center|frame:left-third|frame:right-third|frame:top-third|frame:bottom-third"\`.
+- \`data-layout-align="left:#hero|right:#hero|center-x:#hero|center-y:#hero|top:#hero|bottom:#hero"\`.
+- \`data-layout-attach="#word"\` for annotations or marker strokes.
+- \`data-layout-gap="x|y"\` on a group whose visible child gaps should stay consistent.
+- \`data-layout-optical-x="12"\` / \`data-layout-optical-y="-8"\` for a deliberate optical offset.
+
+Use \`data-layout-allow-overflow\`, \`data-layout-allow-overlap\`, or
+\`data-layout-allow-occlusion\` only on intentional exceptions; use
+\`data-layout-ignore\` for decoration. Underlines and marker strokes belong to
+the measured text wrapper or its pseudo-element, never to an unrelated
+absolutely positioned line.
+
 ## Mood-board restraints (≤5)
 ${design.rules.map((rule) => `- ${rule}`).join("\n")}
 
@@ -446,6 +490,19 @@ export function frameFilePath(projectDir: string): string {
 export function loadJobFrame(projectDir: string): string | null {
   const file = frameFilePath(projectDir);
   return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+}
+
+/**
+ * Remove machine-facing frame metadata from the copy shared with people.
+ * The canonical frame.md keeps both comments so selection can round-trip and
+ * later model turns retain the deterministic provenance.
+ */
+export function publicFrameMd(frameMd: string): string {
+  return frameMd
+    .replace(/^[ \t]*<!--\s*sequences-frame:[\s\S]*?-->[ \t]*(?:\r?\n)?/m, "")
+    .replace(/^[ \t]*<!--\s*provenance:[\s\S]*?-->[ \t]*(?:\r?\n)?/m, "")
+    .trimEnd()
+    .concat("\n");
 }
 
 export interface FrameMeta {

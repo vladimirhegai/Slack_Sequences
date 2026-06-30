@@ -424,6 +424,17 @@ Quality gates run before Slack receives a “ready” result:
 - midpoint/boundary snapshots plus a contact sheet;
 - deterministic draft render smoke test.
 
+Spatial QA follows [SPATIAL_SYSTEM.md](SPATIAL_SYSTEM.md): `frame.md` supplies a
+loose safe-area/column/thirds/baseline measuring system and optional composition
+primitives, while authored scenes declare only their load-bearing relational
+intent. HyperFrames remains the box/pixel inspector; Sequences adds safe-area,
+declared anchor/alignment, attachment, group-gap, and optical-offset checks. The
+guides are not placement slots and do not constrain shot composition.
+
+For the hackathon artifact, HyperFrames runtime packages remain exactly pinned
+at `0.6.86`; startup rejects version drift. Browser QA uses committed local
+audit scripts and never downloads or invokes a newer CLI during judge runs.
+
 Mechanical failures can be repaired automatically: malformed wrappers, missing
 attributes, unsafe paths, duration mismatches, or out-of-range parameters.
 Deterministic repair must not make aesthetic decisions. A visual critic may

@@ -59,6 +59,11 @@ export function getJob(id: string): Job | undefined {
   return readAll()[id];
 }
 
+/** Every persisted job. Used at startup to find jobs orphaned by a restart. */
+export function listJobs(): Job[] {
+  return Object.values(readAll());
+}
+
 export function updateJob(id: string, patch: Partial<Job>): Job | undefined {
   const jobs = readAll();
   const existing = jobs[id];

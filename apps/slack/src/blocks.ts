@@ -209,7 +209,7 @@ export function buildReviseModal(jobId: string): View {
   };
 }
 
-export function buildingBlocks(title: string, note = "Drafting a launch reel…"): KnownBlock[] {
+export function buildingBlocks(title: string, note = "Getting the launch details into focus…"): KnownBlock[] {
   return [
     {
       type: "section",

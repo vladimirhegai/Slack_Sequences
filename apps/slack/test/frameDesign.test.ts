@@ -14,6 +14,7 @@ import { FRAME_PRESETS, presetById } from "../src/engine/framePresets.ts";
 import {
   buildJobFrame,
   loadJobFrame,
+  publicFrameMd,
   rankPresets,
   readFrameMeta,
   remapPreset,
@@ -120,6 +121,23 @@ describe("deterministic remap", () => {
     expect(md).toContain("sequences-frame:");
     expect(md).toContain("Art-directed starting system");
     expect(md).toContain("## Deterministic tool report");
+    expect(md).toContain("--space-safe:");
+    expect(md).toContain("--grid-columns: 12");
+    expect(md).toContain('data-layout-anchor="frame:center');
+    expect(md).toContain('data-layout-attach="#word"');
+  });
+
+  it("removes internal metadata from the reader-facing Slack copy", () => {
+    const preset = presetById("bold-launch")!;
+    const design = remapPreset(preset, extractBrandTokens(""), null, []);
+    const internal = renderFrameMd(design, "Acme");
+    const shared = publicFrameMd(internal);
+
+    expect(internal).toContain("<!-- sequences-frame:");
+    expect(internal).toContain("<!-- provenance:");
+    expect(shared).not.toContain("<!-- sequences-frame:");
+    expect(shared).not.toContain("<!-- provenance:");
+    expect(shared).toContain("# frame.md — Bold Launch for Acme");
   });
 
   it("honours creative harmony/layout choices while keeping brand hue and contrast safe", () => {

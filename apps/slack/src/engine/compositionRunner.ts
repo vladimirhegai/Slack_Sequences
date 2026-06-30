@@ -12,6 +12,7 @@ import {
   type DirectCompositionDraft,
   type DirectScene,
 } from "./directComposition.ts";
+import { inspectDirectComposition } from "./layoutInspector.ts";
 
 const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DIRECTOR_PROMPT = fs.readFileSync(
@@ -156,7 +157,8 @@ export async function requestDirectComposition(
   if (!args.brief.trim()) throw new Error("brief is empty");
   let validationFeedback: string[] | undefined;
   let lastError: unknown;
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  // One initial authoring pass plus at most two bounded repairs.
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
     const prompt = creationPrompt({ ...args, validationFeedback });
     const raw = await provider.complete(prompt, {
       timeoutMs: 360_000,
@@ -165,8 +167,18 @@ export async function requestDirectComposition(
     try {
       const draft = parseCompositionResponse(raw);
       const validation = await validateDirectComposition(args.projectDir, draft);
-      if (validation.ok) return { draft, raw, attempts: attempt };
-      validationFeedback = validation.errors.slice(0, 20);
+      if (!validation.ok) {
+        validationFeedback = validation.errors.slice(0, 20);
+        lastError = new Error(validationFeedback.join("; "));
+        continue;
+      }
+      const browserQa = await inspectDirectComposition(args.projectDir, draft);
+      // Warnings receive a repair opportunity, but the final pass may preserve
+      // an intentional aesthetic choice. Hard browser/layout errors never pass.
+      if (browserQa.strictOk || (attempt === 3 && browserQa.ok)) {
+        return { draft, raw, attempts: attempt };
+      }
+      validationFeedback = [...browserQa.errors, ...browserQa.warnings].slice(0, 20);
       lastError = new Error(validationFeedback.join("; "));
     } catch (error) {
       validationFeedback = [error instanceof Error ? error.message : String(error)];
@@ -174,7 +186,7 @@ export async function requestDirectComposition(
     }
   }
   throw new Error(
-    `direct HyperFrames authoring failed after one bounded repair: ${
+    `direct HyperFrames authoring failed after two bounded repairs: ${
       lastError instanceof Error ? lastError.message : String(lastError)
     }`,
   );

@@ -1,6 +1,8 @@
 import "dotenv/config";
 import { startAppHttpServer } from "./httpServer.ts";
+import { assertHyperframesSubmissionCompatibility } from "./engine/hyperframesCompatibility.ts";
 
+assertHyperframesSubmissionCompatibility();
 const httpServer = await startAppHttpServer();
 
 try {

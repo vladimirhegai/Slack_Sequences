@@ -15,6 +15,7 @@ import {
 } from "@hyperframes/core";
 import type { RenderQuality } from "./render.ts";
 import { ensureFfmpegOnPath, findBrowserExecutable } from "./render.ts";
+import { inspectDirectComposition } from "./layoutInspector.ts";
 
 const DIRECT_DIR = "composition";
 const MANIFEST_FILE = "manifest.json";
@@ -53,6 +54,11 @@ export interface DirectCompositionManifest {
     source: "agent";
     operation: "create" | "revise";
     previousRevision: number | null;
+  };
+  qa?: {
+    browserValidated: true;
+    layoutSamples: number;
+    warningCount: number;
   };
   scenes: DirectScene[];
 }
@@ -349,6 +355,14 @@ export async function commitDirectComposition(
   if (!validation.ok) {
     throw new Error(`composition failed validation:\n${validation.errors.map((error) => `- ${error}`).join("\n")}`);
   }
+  const browserQa = await inspectDirectComposition(dir, draft);
+  if (!browserQa.ok) {
+    throw new Error(
+      `composition failed browser validation/layout inspection:\n${
+        browserQa.errors.map((error) => `- ${error}`).join("\n")
+      }`,
+    );
+  }
 
   const normalized = normalizeStoryboard(draft.storyboard, draft.html);
   const previous = hasDirectComposition(dir) ? loadDirectComposition(dir).manifest : undefined;
@@ -369,6 +383,11 @@ export async function commitDirectComposition(
       source: "agent",
       operation: previous ? "revise" : "create",
       previousRevision: previous?.revision ?? null,
+    },
+    qa: {
+      browserValidated: true,
+      layoutSamples: browserQa.samples.length,
+      warningCount: browserQa.warnings.length,
     },
     scenes: normalized.scenes,
   };
@@ -437,9 +456,14 @@ export async function directLintText(projectDir: string): Promise<string> {
     storyboard: current.manifest.scenes,
   });
   if (!validation.ok) return `lint: ${validation.errors.length} error(s)`;
-  return validation.warnings.length
-    ? `lint: clean · ${validation.warnings.length} warning(s)`
+  const staticText = validation.warnings.length
+    ? `lint: clean · ${validation.warnings.length} static warning(s)`
     : "lint: clean";
+  const qa = current.manifest.qa;
+  if (!qa?.browserValidated) return `${staticText} · browser QA: legacy revision`;
+  return `${staticText} · browser QA: ${qa.layoutSamples} samples${
+    qa.warningCount ? ` · ${qa.warningCount} warning(s)` : " clean"
+  }`;
 }
 
 function serveDir(dir: string): Promise<{ url: string; close: () => void }> {

@@ -238,6 +238,29 @@ everything HyperFrames already offers before it authors anything. (ARCHITECTURE 
 - [ ] **Slack test.** Critic findings post as a short receipt; an auto-repair of
   one flagged shot re-renders and updates the message in place.
 
+### Spatial foundation (implemented before the visual critic)
+
+- [x] **Loose `frame.md` coordinate system.** Existing edge/region/element/micro
+  rhythm now emits safe inset, 12-column/gutter, baseline, text measures, and
+  optional safe-area/stack/row/anchor/overlay CSS primitives. These are guides,
+  not required slots.
+- [x] **Relational scene intent.** The authoring contract supports important
+  safe-area content, frame center/third anchors, selector-to-selector alignment,
+  attached annotations, consistent group gaps, and explicit optical offsets.
+- [x] **Browser publication gate.** Direct drafts run runtime validation plus
+  the vendored HyperFrames browser layout audit at hero, cut, tween-boundary,
+  and midpoint evidence (48-frame cap), followed by Sequences-only relational
+  checks. Hard findings block; the author receives up to two repair attempts.
+- [x] **Underline/marker contract.** Decorations attach to a measured word
+  wrapper/pseudo-element, with `data-layout-attach` for the exceptional separate
+  element.
+- [ ] **Figma-like guide snapshots.** Inject the safe area, columns, thirds,
+  baseline, and named anchors into internal snapshots/contact sheets. Keep them
+  out of delivered renders.
+- [ ] **Motion-plan sidecars.** Emit HyperFrames `*.motion.json` assertions from
+  future cut-centered planning for appears-by, order, stays-in-frame, and
+  liveness checks.
+
 ## 11. Deterministic utilities · component foundry · library learning (P1/P2)
 
 - [ ] **Deterministic composition utilities (P1).** Optical-center snap, safe-area

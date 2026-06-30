@@ -287,14 +287,19 @@ until the new build is healthy, so a broken build never takes the bot down. Plai
 `railway redeploy` just restarts the same source (use it after a variables-only
 change).
 
-**⚠ Deploying kills in-flight requests.** When Railway swaps containers, any
-active video creation (model call, render, thumbnail capture) is terminated
-mid-flight. The Slack message freezes at its last state (e.g. "Drafting a launch
-reel…") and never updates. The user must re-run the command after the new
-deployment is healthy. **Do not deploy while a user is actively building a
-video.** If you just triggered a create/revise via Slack, wait for it to finish
-before running `railway up`. If you must deploy during active use, warn the user
-that their in-progress job will be lost and they should retry.
+**⚠ Deploying kills in-flight requests — but the bot now self-heals.** When
+Railway swaps containers, any active video creation (model call, render,
+thumbnail capture) is terminated mid-flight. As of the orphaned-job recovery
+work, the new container runs `recoverInterruptedJobs` on boot
+([src/index.ts](src/index.ts)): every job still marked `building` in `jobs.json`
+is replaced with a clear "interrupted by a restart — please re-run" message
+instead of freezing on "Drafting a launch reel…" forever. So an interrupted job
+is no longer silently lost — but the user still has to re-run it. **Prefer not to
+deploy while a user is actively building a video**; if you must, expect their
+in-progress job to be cancelled and recovered (they re-run). This recovery also
+covers crashes and OOM, not just deploys. Note: the live "Building" message also
+shows a heartbeat (phase + elapsed seconds) during the model turn, so a long but
+healthy authoring/render is no longer mistaken for a freeze.
 
 GitHub publish and Railway deploy are both required release steps:
 `publish-public.sh` updates `Slack_Sequences`; `railway up` updates the live bot.
