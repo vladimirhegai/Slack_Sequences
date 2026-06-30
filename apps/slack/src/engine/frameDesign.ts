@@ -526,33 +526,73 @@ export function publicFrameMd(frameMd: string): string {
   const title = clean.match(/^# .+$/m)?.[0] ?? "# frame.md";
   const section = (heading: string): string =>
     clean.match(new RegExp(`^## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`, "m"))?.[1]?.trim() ?? "";
+  const visual = section("Visual thesis");
+  const visualParts = visual.split(/\r?\n\r?\n/).map((part) => part.trim()).filter(Boolean);
+  const thesis = visualParts[0] ?? "";
+  const direction = visualParts.slice(1).join(" ");
   const paletteLines = section("Recommended semantic palette").split(/\r?\n/);
   const lastTableLine = paletteLines.reduce(
     (last, line, index) => line.trim().startsWith("|") ? index : last,
     -1,
   );
+  const paletteTable = paletteLines.slice(0, lastTableLine + 1).join("\n");
+  const paletteValue = (role: string): string | undefined => {
+    const row = paletteTable
+      .split(/\r?\n/)
+      .find((line) => line.trim().startsWith(`| ${role} |`));
+    if (!row) return undefined;
+    const cells = row.split("|").map((cell) => cell.trim()).filter(Boolean);
+    return cells[1]?.replace(/^`|`$/g, "");
+  };
   const typography = section("Typography \\(embedded fonts only\\)")
     .split(/\r?\n/)
     .filter((line) => line.trim().startsWith("- **"))
     .join("\n");
+  const typographyNotes = section("Typography \\(embedded fonts only\\)")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) =>
+      Boolean(line) &&
+      !line.startsWith("- **") &&
+      !line.startsWith("Font families are committed when brand-matched.")
+    )
+    .join(" ");
   const spatial = section("Spatial system")
     .split(/\r?\n/)
     .filter((line) => line.trim().startsWith("- **"))
     .join("\n");
+  const paletteNotes = [
+    `- ${paletteValue("Canvas") ?? "Canvas"} and ${paletteValue("Surface") ?? "surface"} carry the base field; ${paletteValue("Text") ?? "text"} stays the load-bearing copy color.`,
+    `- ${paletteValue("Committed accent") ?? "The accent"} is the single focal hue; ${paletteValue("Accent-soft") ?? "accent-soft"} supports panels/charts, and ${paletteValue("Atmosphere") ?? "atmosphere"} stays background-only.`,
+    `- ${paletteValue("Positive / negative") ?? "Positive / negative"} are reserved for inline directional signals, not CTA competition.`,
+  ].join("\n");
   return [
     title,
     "",
     "## Visual thesis",
-    section("Visual thesis"),
+    thesis,
+    "",
+    "## Design direction",
+    direction,
     "",
     "## Palette",
-    paletteLines.slice(0, lastTableLine + 1).join("\n"),
+    paletteTable,
+    "",
+    paletteNotes,
     "",
     "## Typography",
     typography,
+    ...(typographyNotes ? ["", typographyNotes] : []),
     "",
     "## Spatial character",
     spatial,
+    "",
+    "Use these as a rhythm, not a universal grid. Keep load-bearing content inside the safe area, let Grid/Flexbox settle the structure first, and treat transforms as motion rather than layout.",
+    "",
+    "## Composition cues",
+    "- One hero should dominate the frame; supporting elements exist to reinforce it.",
+    "- Intentional overflow, overlap, or occlusion should read as obviously deliberate, not like a cramped layout accident.",
+    "- Keep the one-accent hierarchy intact so the CTA, highlight, or metric still wins on first glance.",
     "",
     "## Mood-board restraints",
     section("Mood-board restraints \\(≤5\\)"),

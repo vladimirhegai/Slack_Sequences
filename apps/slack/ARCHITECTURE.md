@@ -453,7 +453,9 @@ Mechanical failures can be repaired automatically: malformed wrappers, missing
 attributes, unsafe paths, duration mismatches, or out-of-range parameters.
 Deterministic repair must not make aesthetic decisions. A visual critic may
 request one bounded rebuild of a specific shot; it may not repeatedly restyle
-the whole video.
+the whole video. Browser/runtime health is the hard publish boundary; visual
+layout and contrast findings are repair guidance first, and a later malformed
+repair must not discard the last browser-valid draft.
 
 ## 9. Capability index, registry sync, and in-Slack audition
 

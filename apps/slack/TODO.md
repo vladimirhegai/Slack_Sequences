@@ -45,7 +45,9 @@ The single most important task. Prove the loop before generalizing.
   target, and sees ~28K rather than 45K characters of retrieved craft context.
   The primary model authors every required artifact and repair by default; Flash
   is limited to the optional frame decision, which has a deterministic fallback.
-  Operators may explicitly configure a separate exact-patch model. Storyboard
+  Operators may explicitly configure a separate exact-patch model; by default
+  the creative pass stays on DeepSeek while exact repair patches route to
+  `openai/gpt-5-mini` for tighter schema compliance. Storyboard
   and patch payloads use provider-native strict JSON schemas. Repair calls emit
   bounded exact patches (4K ceiling), not another full document; every uniquely
   addressable edit survives even if a sibling edit is ambiguous. OpenRouter
@@ -128,7 +130,8 @@ deterministic answers.**
   authored composition binds `--accent:#1E2BFA` + the preset palette/embedded
   fonts; the chosen `frame.md` is shown in the result message and attached to the
   thread (`uploadFrame` in [`src/index.ts`](src/index.ts)).
-  The attached public copy is now a concise visual-system digest; machine-facing
+  The attached public copy is now a concise visual-system digest with design
+  direction, richer palette guidance, and composition cues; machine-facing
   authoring guidance, layout attributes, provenance, and repair reports stay in
   the canonical job file only.
 
@@ -271,7 +274,9 @@ everything HyperFrames already offers before it authors anything. (ARCHITECTURE 
 - [x] **Browser publication gate.** Direct drafts run runtime validation plus
   the vendored HyperFrames browser layout audit at hero, cut, tween-boundary,
   and midpoint evidence (48-frame cap), followed by Sequences-only relational
-  checks. Hard findings block; the author receives up to two repair attempts.
+  checks. Runtime/document health is the hard publication line; visual layout,
+  contrast, overlap, and occlusion findings feed bounded repair guidance and
+  never discard the last browser-valid draft.
 - [x] **Underline/marker contract.** Decorations attach to a measured word
   wrapper/pseudo-element, with `data-layout-attach` for the exceptional separate
   element.

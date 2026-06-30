@@ -140,8 +140,11 @@ describe("deterministic remap", () => {
     expect(shared).not.toContain("Art-directed starting system");
     expect(shared).not.toContain("data-layout-");
     expect(shared).not.toContain("Deterministic tool report");
+    expect(shared).toContain("## Design direction");
     expect(shared).toContain("## Palette");
     expect(shared).toContain("## Spatial character");
+    expect(shared).toContain("## Composition cues");
+    expect(shared).toContain("single focal hue");
     expect(shared).toContain("# frame.md — Bold Launch for Acme");
   });
 
