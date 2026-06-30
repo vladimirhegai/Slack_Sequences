@@ -201,6 +201,35 @@ describe("direct HyperFrames composition", () => {
     expect(() => parseCompositionResponse("no tags here at all")).toThrow(/missing <storyboard_json>/);
   });
 
+  it("recovers a bare HTML document when the index_html wrapper is dropped", () => {
+    const value = draft();
+    // After compact repairs the author often returns the document with no wrapper.
+    const raw = `<storyboard_json>${JSON.stringify(value.storyboard)}</storyboard_json>\n${value.html}`;
+    expect(parseCompositionResponse(raw)).toEqual(value);
+  });
+
+  it("recovers a ```html-fenced bare HTML document", () => {
+    const value = draft();
+    const raw =
+      `<storyboard_json>${JSON.stringify(value.storyboard)}</storyboard_json>\n` +
+      "```html\n" + value.html + "\n```";
+    expect(parseCompositionResponse(raw).html).toBe(value.html);
+  });
+
+  it("reports an unclosed index_html wrapper as truncation, not bare recovery", () => {
+    const value = draft();
+    const raw =
+      `<storyboard_json>${JSON.stringify(value.storyboard)}</storyboard_json>\n` +
+      `<index_html>${value.html.slice(0, 200)}`;
+    expect(() => parseCompositionResponse(raw)).toThrow(/truncated/i);
+  });
+
+  it("reports a genuinely absent HTML document as missing index_html", () => {
+    const value = draft();
+    const raw = `<storyboard_json>${JSON.stringify(value.storyboard)}</storyboard_json>\nno html here`;
+    expect(() => parseCompositionResponse(raw)).toThrow(/missing <index_html>/);
+  });
+
   it("validates a storyboard-first cut graph before source authoring", () => {
     const plan = storyboard();
     const parsed = parseStoryboardResponse(

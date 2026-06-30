@@ -137,6 +137,40 @@ function extractStoryboardSource(raw: string): string {
   throw new Error("author response is missing <storyboard_json>");
 }
 
+/** First complete HTML document in free text: `<!doctype html>` or `<html …>` … `</html>`. */
+function firstHtmlDocument(text: string): string | undefined {
+  const open = text.search(/<!doctype\s+html|<html[\s>]/i);
+  if (open < 0) return undefined;
+  const close = /<\/html\s*>/i.exec(text.slice(open));
+  if (!close) return undefined;
+  return text.slice(open, open + close.index + close[0].length).trim();
+}
+
+/**
+ * Extract the composition HTML from an author response. The contract asks for an
+ * <index_html> wrapper, but after compact repairs cheaper "Flash"-tier models
+ * routinely drop it and return the bare document (often inside a ```html fence).
+ * Recover a complete <!doctype html>…</html> document rather than failing the
+ * whole build — while still reporting an opened-but-unclosed wrapper as a genuine
+ * truncation. An HTML document is unambiguous (unlike a bare JSON array), so this
+ * recovery is safe even in the combined storyboard+html response.
+ */
+function extractIndexHtmlSource(raw: string): string {
+  const match = raw.match(/<index_html>\s*([\s\S]*?)\s*<\/index_html>/i);
+  if (match?.[1]) {
+    return match[1].trim().replace(/^```(?:html)?\s*/i, "").replace(/\s*```$/, "");
+  }
+  if (/<index_html>/i.test(raw) && !/<\/index_html>/i.test(raw)) {
+    throw new Error(
+      "author response truncated: <index_html> opened but never closed — the model likely hit " +
+        "its output token limit. The next attempt must emit a complete, more compact composition.",
+    );
+  }
+  const bare = firstHtmlDocument(raw);
+  if (bare) return bare;
+  throw new Error("author response is missing <index_html>");
+}
+
 function isOutputTruncation(error: unknown): boolean {
   return error instanceof ProviderOutputTruncatedError ||
     (error instanceof Error && /truncat|output-token limit|finish_reason.?length/i.test(error.message));
@@ -322,7 +356,7 @@ export function parseStoryboardResponse(raw: string): DirectScene[] {
 export function parseCompositionResponse(raw: string): DirectCompositionDraft {
   return {
     storyboard: parseStoryboard(tagged(raw, "storyboard_json")),
-    html: tagged(raw, "index_html"),
+    html: extractIndexHtmlSource(raw),
   };
 }
 
@@ -664,7 +698,7 @@ export async function requestDirectComposition(
         : args.lockedStoryboard
           ? {
               storyboard: args.lockedStoryboard,
-              html: tagged(raw, "index_html"),
+              html: extractIndexHtmlSource(raw),
             }
           : parseCompositionResponse(raw);
       const validation = await validateDirectComposition(args.projectDir, draft);
