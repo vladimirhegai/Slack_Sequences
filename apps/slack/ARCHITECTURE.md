@@ -179,13 +179,17 @@ Two different LLMs run, on two different providers; keep them distinct:
   (DeepSeek) and authors HyperFrames directly. This is the agent the recipes and
   the revised laws below govern.
 
-The live reliability boundary is deliberate: Flash may make the small bounded
-`frame.md` art-direction choice because it has a deterministic preset fallback.
-On OpenRouter, the required cut/storyboard decision uses one reasoning-enabled
-`z-ai/glm-5.2` call by default; this is the small, high-leverage creative task.
-Full-document authoring and exact repairs stay on the primary DeepSeek model
-with reasoning off. Operators can set the storyboard model to `primary` or
-explicitly assign another model. Create retrieval is capped near
+The OpenRouter author uses a deliberate three-role policy:
+
+| Role | Default model | Boundary |
+|---|---|---|
+| Creative direction and taste | `z-ai/glm-5.2` | Reasoning-enabled `frame.md` direction and cut/storyboard decisions: small outputs with outsized quality impact. |
+| Production brain | `deepseek/deepseek-v4-pro` | Full HTML/CSS/GSAP source and structural repair. Source emission keeps reasoning off so its output budget remains available to the document. |
+| Bounded helper | `deepseek/deepseek-v4-flash` | Tiny interaction-revision routing/JSON only; deterministic validation can reject the complete answer atomically. |
+
+GLM never emits the production document, and Flash never makes taste or
+structural decisions. Operators can override the shared creative model, each
+creative pass, the helper, or select `primary` explicitly. Create retrieval is capped near
 28K characters and authored source targets 32K characters per document. Small
 machine-readable artifacts use provider-native strict JSON schemas. Repairs are
 exact, validated search/replace patches capped at 4K output tokens instead of
@@ -460,12 +464,17 @@ guides are not placement slots and do not constrain shot composition.
 
 Cursor-enabled shots additionally use the local, versioned
 `sequences-interactions.v1.js` recipe. Product/camera motion stays in
-`data-camera-world`; the pointer stays in `data-camera-overlay`; its hotspot,
-target aim, press, drag endpoint, and ripple resolve from live deterministic
-geometry. Interaction times are first-class QA samples, misses/occlusion/camera
+`data-camera-world`. The author chooses the semantic target, entry, subtle path,
+timing, and interior aim; deterministic source normalization retires any
+model-authored cursor/ripple markup and installs the canonical high-contrast
+screen-space actors. The runtime owns hotspot, bounded curve amplitude,
+comfortable target inset, visibility lifecycle, press, drag endpoint, and
+ripple geometry. Interaction times are first-class QA samples, misses/occlusion/camera
 coupling are hard contract failures, and revision checkpoints retain the runtime
 hash plus compact spatial evidence. Interactions are optional typed enhancements:
-after bounded author repair, browser-proven invalid interactions are quarantined
+irrelevant strict-schema filler and duplicate approach intents are removed at
+ingestion; a purely interaction-scoped static failure is quarantined immediately.
+After bounded author repair, browser-proven invalid interactions are quarantined
 individually from both storyboard and HTML binding, followed by fresh static and
 browser validation. Healthy interactions and the complete visual film remain
 unchanged; browser/runtime faults are never quarantined.
@@ -546,9 +555,10 @@ align/distribute, hierarchy-preserving text fit, responsive aspect variants
 chart-data import, cursor-path planning, seeded background generation, local-font
 matching, and raster-cost warnings for heavy shadow/blur.
 
-> **Implemented foundation:** semantic cursor path planning, measured
-> hotspot/target/ripple placement, interaction seek-order QA, guide snapshots,
-> and Flash-routed typed interaction revisions now sit on the existing spacing
+> **Implemented foundation:** semantic cursor path planning, runtime-owned
+> pointer/ripple actors, measured hotspot/target placement, bounded human curves,
+> interaction seek-order QA, guide snapshots, annotation alignment checks, and
+> Flash-routed typed interaction revisions now sit on the existing spacing
 > inspector. They are recipe/contract utilities, not a second animation engine.
 
 **Component foundry (P1).** When no registry item fits, AI constructs the product

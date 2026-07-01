@@ -130,6 +130,32 @@ describe("interaction contract", () => {
     ), { numRuns: 500 });
   });
 
+  it("discards strict-schema filler fields and redundant movement before a click", () => {
+    const result = normalizeStoryboardInteractionIntents([
+      {
+        ...interaction,
+        id: "approach",
+        action: "move",
+        feedback: "none",
+        pressSec: undefined,
+        releaseSec: undefined,
+        holdUntilSec: undefined,
+        dragTargetPart: "none",
+      },
+      {
+        ...interaction,
+        dragTargetPart: "none",
+      },
+    ], {
+      sceneId: "cta",
+      startSec: 4,
+      durationSec: 2,
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe("cta-click");
+    expect(result[0]?.dragTargetPart).toBeUndefined();
+  });
+
   it("parses semantic cursor intent without canvas endpoint coordinates", () => {
     const result = parseInteractionPlan(html());
     expect(result.errors).toEqual([]);

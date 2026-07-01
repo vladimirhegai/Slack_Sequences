@@ -345,10 +345,10 @@ describe("direct HyperFrames composition", () => {
     );
     expect(interaction?.sceneId).toBe("product-proof");
     expect(interaction?.targetPart).toBe("the-get-live-view-cta-button");
-    expect(interaction?.from).toBe("frame:center");
+    expect(interaction?.from).toBe("frame:bottom-right");
     expect(interaction?.path).toBe("human");
-    expect(interaction?.aimX).toBe(1);
-    expect(interaction?.aimY).toBe(0);
+    expect(interaction?.aimX).toBe(0.85);
+    expect(interaction?.aimY).toBe(0.15);
     expect(interaction?.arriveSec).toBeGreaterThan(interaction!.startSec);
     expect(interaction?.pressSec).toBeGreaterThanOrEqual(interaction!.arriveSec + 0.08);
     expect(interaction?.releaseSec).toBeGreaterThan(interaction!.pressSec!);
@@ -445,7 +445,7 @@ describe("direct HyperFrames composition", () => {
     };
     expect(options).toMatchObject({
       maxTokens: 8_192,
-      thinkingMode: "enabled",
+      thinkingMode: "high",
       model: "z-ai/glm-5.2",
     });
     expect(options.responseFormat).toMatchObject({
@@ -797,7 +797,7 @@ describe("direct HyperFrames composition", () => {
     const secondOptions = complete.mock.calls[1]?.[1] as { model?: string } | undefined;
     expect(secondPrompt).toContain("compact recovery pass");
     expect(secondPrompt.length).toBeLessThan(firstPrompt.length / 2);
-    expect(secondOptions?.model).toBeUndefined();
+    expect(secondOptions?.model).toBe("deepseek/deepseek-v4-pro");
   });
 
   it("continues a partial OpenRouter document without spending a repair attempt", async () => {
@@ -891,9 +891,9 @@ describe("direct HyperFrames composition", () => {
     expect(result.attempts).toBe(3);
     expect(complete).toHaveBeenCalledTimes(3);
     expect((complete.mock.calls[1]?.[1] as { model?: string }).model)
-      .toBeUndefined();
+      .toBe("deepseek/deepseek-v4-pro");
     expect((complete.mock.calls[2]?.[1] as { model?: string }).model)
-      .toBeUndefined();
+      .toBe("deepseek/deepseek-v4-pro");
     expect((complete.mock.calls[1]?.[1] as { thinkingMode?: string }).thinkingMode)
       .toBe("none");
   });
@@ -925,7 +925,8 @@ describe("direct HyperFrames composition", () => {
       skills: skills(),
       lockedStoryboard: draft().storyboard,
     });
-    expect((complete.mock.calls[0]?.[1] as { model?: string }).model).toBeUndefined();
+    expect((complete.mock.calls[0]?.[1] as { model?: string }).model)
+      .toBe("deepseek/deepseek-v4-pro");
     expect((complete.mock.calls[1]?.[1] as { model?: string }).model)
       .toBe("operator/patch-model");
   });
@@ -1187,8 +1188,54 @@ describe("direct HyperFrames composition", () => {
     expect(result.attempts).toBe(1);
     expect(complete).toHaveBeenCalledTimes(1);
     expect(result.draft.html).toContain('data-part="primary-action-ripple"');
+    expect(result.draft.html).toContain("data-sequences-runtime-ripple");
+    expect(result.draft.html).toContain("data-sequences-runtime-cursor");
+    expect(result.draft.html).toContain('data-cursor-hotspot-x="0.1"');
+    expect(result.draft.html).toContain('data-sequences-retired-cursor="pointer"');
+    expect(result.draft.html).toContain("[data-sequences-retired-cursor]");
     expect(result.draft.html).toContain('<script src="sequences-interactions.v1.js"></script>');
     expect(result.draft.html).toContain("SequencesInteractions.compile");
+  });
+
+  it("lets a statically invalid optional interaction degrade without vetoing the film", async () => {
+    const dir = projectDir();
+    const value = draft();
+    value.storyboard[1]!.interactions = [{
+      version: 1,
+      id: "missing-target-click",
+      sceneId: "payoff",
+      cursorId: "pointer",
+      targetPart: "model-invented-target",
+      action: "click",
+      startSec: 4.4,
+      arriveSec: 5,
+      pressSec: 5.1,
+      releaseSec: 5.25,
+      from: "frame:bottom-right",
+      path: "human",
+      aimX: 0.5,
+      aimY: 0.5,
+      feedback: "press",
+    }];
+    const complete = vi.fn().mockResolvedValueOnce(response(value));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: value.storyboard,
+    });
+    expect(result.attempts).toBe(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.draft.storyboard[1]?.interactions).toBeUndefined();
+    expect(result.draft.html).toContain('"interactions":[]');
+    expect(result.draft.html).toContain("data-sequences-quarantine");
   });
 
   it("publishes the healthy film after bounded repairs cannot fix an optional interaction", async () => {

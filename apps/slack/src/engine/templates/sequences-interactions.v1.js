@@ -61,13 +61,17 @@
   function targetPoint(scene, intent, targetName) {
     var element = part(scene, targetName || intent.targetPart);
     if (!element) return null;
-    return pointInRect(
-      element.getBoundingClientRect(),
-      intent.aimX,
-      intent.aimY,
-      intent.offsetX,
-      intent.offsetY,
+    var rect = element.getBoundingClientRect();
+    var requested = pointInRect(rect, intent.aimX, intent.aimY, intent.offsetX, intent.offsetY);
+    var inset = Math.min(
+      Math.max(2, intent.hitInsetPx || Math.min(12, Math.min(rect.width, rect.height) * 0.14)),
+      Math.max(0, rect.width / 2 - 0.5),
+      Math.max(0, rect.height / 2 - 0.5),
     );
+    return {
+      x: Math.max(rect.left + inset, Math.min(rect.right - inset, requested.x)),
+      y: Math.max(rect.top + inset, Math.min(rect.bottom - inset, requested.y)),
+    };
   }
 
   function localize(root, point) {
@@ -117,9 +121,12 @@
     var bend = typeof intent.bend === "number"
       ? intent.bend
       : (hashUnit(intent.id) - 0.5) * (intent.path === "human" ? 0.32 : 0.5);
+    var rawOffset = length * bend;
+    var maximumOffset = intent.path === "human" ? 72 : 128;
+    var curveOffset = Math.max(-maximumOffset, Math.min(maximumOffset, rawOffset));
     var control = {
-      x: (start.x + end.x) / 2 - (dy / length) * length * bend,
-      y: (start.y + end.y) / 2 + (dx / length) * length * bend,
+      x: (start.x + end.x) / 2 - (dy / length) * curveOffset,
+      y: (start.y + end.y) / 2 + (dx / length) * curveOffset,
     };
     var inverse = 1 - progress;
     return {
@@ -246,9 +253,18 @@
       }
       var hotspot = cursorHotspot(cursorElement);
       var proxy = { p: 0 };
-      var ease = global.gsap.parseEase(intent.ease || "power2.inOut");
-      if (typeof ease !== "function") ease = global.gsap.parseEase("power2.inOut");
-      timeline.set(cursorElement, { opacity: 1 }, intent.startSec);
+      var ease = global.gsap.parseEase(intent.ease || "power2.out");
+      if (typeof ease !== "function") ease = global.gsap.parseEase("power2.out");
+      global.gsap.set(cursorElement, { opacity: 0 });
+      timeline.set(cursorElement, { opacity: 0 }, 0);
+      timeline.call(function () {
+        place(root, cursorElement, anchorPoint(root, scene, intent.from), hotspot);
+      }, null, intent.startSec);
+      timeline.to(cursorElement, {
+        opacity: 1,
+        duration: Math.min(0.14, (intent.arriveSec - intent.startSec) * 0.18),
+        ease: "none",
+      }, intent.startSec);
       timeline.to(proxy, {
         p: 1,
         duration: intent.arriveSec - intent.startSec,
@@ -316,6 +332,13 @@
           intent.dragTargetPart,
         );
       }
+      var visibleUntil = intent.holdUntilSec || intent.releaseSec || intent.arriveSec;
+      var sceneEnd = (parseFloat(scene.dataset.start || "0") || 0) +
+        (parseFloat(scene.dataset.duration || "0") || 0);
+      var hideAt = sceneEnd > visibleUntil
+        ? Math.min(visibleUntil + 0.08, sceneEnd - 0.001)
+        : visibleUntil;
+      timeline.set(cursorElement, { opacity: 0 }, hideAt);
       bindings.push({ intent: intent, scene: scene, cursor: cursorElement, target: target, ripple: ripple });
     });
     global.__sequencesInteractionBindings = bindings;

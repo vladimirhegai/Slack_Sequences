@@ -8,6 +8,7 @@ import {
   type InteractionIntentV1,
   type InteractionPath,
 } from "./interactionContract.ts";
+import { lightModel } from "./modelPolicy.ts";
 
 interface InteractionPatch {
   mode: "interaction-patch";
@@ -41,16 +42,6 @@ type DirectRevisionRoute = InteractionPatch | StructuralRoute;
 
 const ROUTABLE_CURSOR_REQUEST =
   /\b(cursor|pointer|click|press|ripple|hover|drag|aim|target|path|arc|approach|slower|faster)\b/i;
-
-function lightModel(provider: AgentProvider): string | undefined {
-  const configured = process.env.SLACK_SEQUENCES_LIGHT_MODEL?.trim();
-  if (configured) return configured;
-  return provider.id === "openrouter-api"
-    ? "deepseek/deepseek-v4-flash"
-    : provider.id === "deepseek-api"
-      ? "deepseek-v4-flash"
-      : undefined;
-}
 
 function parseRoute(raw: string): DirectRevisionRoute {
   const match = raw.match(/\{[\s\S]*\}/);

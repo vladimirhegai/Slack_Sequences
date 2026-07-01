@@ -325,7 +325,7 @@ export function normalizeStoryboardInteractionIntents(
   context: StoryboardInteractionContext,
 ): InteractionIntentV1[] {
   if (!Array.isArray(value)) return [];
-  return value.flatMap((entry, index) => {
+  const interactions = value.flatMap((entry, index) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
     const object = entry as Record<string, unknown>;
     const targetPart = stableToken(object.targetPart);
@@ -338,7 +338,8 @@ export function normalizeStoryboardInteractionIntents(
       : action === "click" || action === "focus"
         ? "press"
         : "none";
-    const dragTargetPart = stableToken(object.dragTargetPart);
+    const dragTargetPart =
+      action === "drag" ? stableToken(object.dragTargetPart) : "";
     if (action === "drag" && !dragTargetPart) return [];
     const timing = normalizeStoryboardTiming(object, action, feedback, context);
     if (!timing) return [];
@@ -348,7 +349,7 @@ export function normalizeStoryboardInteractionIntents(
       ? rawFrom as FrameAnchor
       : fromPart
         ? `part:${fromPart}` as const
-        : "frame:center";
+        : "frame:bottom-right";
     const rawPath = PATHS.has(object.path as InteractionPath)
       ? object.path as InteractionPath
       : "human";
@@ -384,13 +385,23 @@ export function normalizeStoryboardInteractionIntents(
       ...timing,
       from,
       path,
-      ...(finite(object.bend) ? { bend: clamp(object.bend, -1, 1) } : {}),
+      ...(finite(object.bend)
+        ? {
+            bend: clamp(
+              object.bend,
+              path === "human" ? -0.35 : -0.6,
+              path === "human" ? 0.35 : 0.6,
+            ),
+          }
+        : {}),
       ...(trimmed(object.ease) ? { ease: trimmed(object.ease) } : {}),
-      aimX: finite(object.aimX) ? clamp(object.aimX, 0, 1) : 0.5,
-      aimY: finite(object.aimY) ? clamp(object.aimY, 0, 1) : 0.5,
-      ...(finite(object.offsetX) ? { offsetX: object.offsetX } : {}),
-      ...(finite(object.offsetY) ? { offsetY: object.offsetY } : {}),
-      ...(finite(object.hitInsetPx) ? { hitInsetPx: Math.max(0, object.hitInsetPx) } : {}),
+      aimX: finite(object.aimX) ? clamp(object.aimX, 0.15, 0.85) : 0.5,
+      aimY: finite(object.aimY) ? clamp(object.aimY, 0.15, 0.85) : 0.5,
+      ...(finite(object.offsetX) ? { offsetX: clamp(object.offsetX, -24, 24) } : {}),
+      ...(finite(object.offsetY) ? { offsetY: clamp(object.offsetY, -24, 24) } : {}),
+      ...(finite(object.hitInsetPx)
+        ? { hitInsetPx: clamp(object.hitInsetPx, 0, 24) }
+        : {}),
       feedback,
       ...(ripplePart ? { ripplePart } : {}),
       ...(dragTargetPart ? { dragTargetPart } : {}),
@@ -403,6 +414,27 @@ export function normalizeStoryboardInteractionIntents(
       ...(waypoints.length ? { waypoints } : {}),
     };
     return parseInteractionIntents([candidate]).interactions;
+  });
+  // A click/focus/drag intent already includes its own approach movement. Some
+  // strict-schema responses redundantly emit a separate move/hover intent over
+  // the same interval; compiling both would make two timelines fight over one
+  // cursor. Preserve the richer actionable intent and drop only that mechanical
+  // duplicate.
+  return interactions.filter((interaction) => {
+    if (interaction.action !== "move" && interaction.action !== "hover") return true;
+    return !interactions.some((candidate) =>
+      candidate !== interaction &&
+      candidate.cursorId === interaction.cursorId &&
+      candidate.targetPart === interaction.targetPart &&
+      (
+        candidate.action === "click" ||
+        candidate.action === "focus" ||
+        candidate.action === "drag"
+      ) &&
+      Math.max(candidate.startSec, interaction.startSec) <
+        Math.min(candidate.arriveSec, interaction.arriveSec) &&
+      Math.abs(candidate.arriveSec - interaction.arriveSec) <= 0.25
+    );
   });
 }
 

@@ -34,6 +34,10 @@ import {
   type SpatialTokens,
   type SpacingRhythm,
 } from "./frameTools.ts";
+import {
+  creativeModel,
+  creativeThinkingMode,
+} from "./modelPolicy.ts";
 
 export type FrameTone = "crisp-saas" | "warm-startup" | "bold-launch";
 
@@ -146,21 +150,61 @@ function tokensSummary(tokens: BrandTokens, captured: CapturedBrand | null): str
   ].join("\n");
 }
 
-/**
- * Light-task model for the bounded art-direction decision. This is a small JSON
- * choice, not the heavy composition authoring, so route it to the cheap flash
- * tier on the OpenRouter gateway instead of the expensive "-pro" model. Override
- * (or enable for other providers) with SLACK_SEQUENCES_LIGHT_MODEL. Returns
- * undefined for providers where a DeepSeek model id would be invalid.
- */
-function lightModel(provider: AgentProvider): string | undefined {
-  const env = process.env.SLACK_SEQUENCES_LIGHT_MODEL?.trim();
-  if (env) return env;
-  return provider.id === "openrouter-api" ? "deepseek/deepseek-v4-flash" : undefined;
-}
-
 function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
   return typeof value === "string" && allowed.includes(value as T) ? value as T : undefined;
+}
+
+function frameChoiceResponseFormat(): NonNullable<CompleteOptions["responseFormat"]> {
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "sequences_frame_direction",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: {
+          presetId: { type: "string", enum: FRAME_PRESETS.map((preset) => preset.id) },
+          thesis: { type: "string" },
+          basis: { type: "string", enum: ["light", "dark"] },
+          harmony: { type: "string", enum: HARMONIES },
+          temperature: { type: "string", enum: TEMPERATURES },
+          contrast: { type: "string", enum: CONTRASTS },
+          accentUsage: { type: "string", enum: ACCENT_USAGES },
+          palette: {
+            type: "object",
+            properties: Object.fromEntries([
+              "bg", "surface", "text", "textMuted", "accent", "accentText",
+              "accentSoft", "atmosphere", "border", "positive", "negative",
+            ].map((key) => [key, { type: "string" }])),
+            additionalProperties: false,
+          },
+          typography: {
+            type: "object",
+            properties: {
+              display: { type: "string" },
+              body: { type: "string" },
+              mono: { type: "string" },
+              note: { type: "string" },
+            },
+            additionalProperties: false,
+          },
+          density: { type: "string", enum: DENSITIES },
+          spacing: { type: "string", enum: SPACINGS },
+          corners: { type: "string", enum: CORNERS },
+          depth: { type: "string", enum: DEPTHS },
+          background: { type: "string" },
+          rules: { type: "array", maxItems: 5, items: { type: "string" } },
+          exceptions: { type: "array", maxItems: 3, items: { type: "string" } },
+        },
+        required: [
+          "presetId", "thesis", "basis", "harmony", "temperature", "contrast",
+          "accentUsage", "palette", "typography", "density", "spacing", "corners",
+          "depth", "background", "rules", "exceptions",
+        ],
+        additionalProperties: false,
+      },
+    },
+  };
 }
 
 function cleanPalette(value: unknown): FrameChoice["palette"] {
@@ -200,6 +244,11 @@ async function chooseFrame(
   options?: CompleteOptions,
 ): Promise<FrameChoice | null> {
   if (!provider) return null;
+  const model = creativeModel(
+    provider,
+    process.env.SLACK_SEQUENCES_FRAME_MODEL,
+  );
+  const thinkingMode = creativeThinkingMode(provider, model);
   const catalog = FRAME_PRESETS.map((preset) =>
     `- ${preset.id} (${preset.basis}, ${preset.tones.join("/")}): ${preset.thesis}`,
   ).join("\n");
@@ -245,14 +294,19 @@ async function chooseFrame(
   ].filter(Boolean).join("\n");
 
   try {
+    process.stderr.write(
+      `[frame] creative direction · ${model ? `model ${model}` : "provider primary model"} · ` +
+        `reasoning ${thinkingMode}\n`,
+    );
     const raw = await provider.complete(prompt, {
-      timeoutMs: 60_000,
-      // This is a bounded JSON choice with deterministic fallback. DeepSeek V4
-      // only advertises high/xhigh reasoning, so "minimal" is promoted to high
-      // by OpenRouter and makes this tiny call needlessly slow.
-      thinkingMode: "none",
-      model: lightModel(provider),
       ...options,
+      timeoutMs: 180_000,
+      maxTokens: 4_096,
+      thinkingMode,
+      ...(provider.id === "openrouter-api" || provider.id === "openai-api"
+        ? { responseFormat: frameChoiceResponseFormat() }
+        : {}),
+      ...(model ? { model } : {}),
     });
     const match = raw.match(/\{[\s\S]*\}/);
     if (!match) return null;
@@ -480,15 +534,17 @@ Declare only relationships that matter with:
 - \`data-layout-important\` for load-bearing text/UI that must clear the safe area.
 - \`data-layout-anchor="frame:center|frame:left-third|frame:right-third|frame:top-third|frame:bottom-third"\`.
 - \`data-layout-align="left:#hero|right:#hero|center-x:#hero|center-y:#hero|top:#hero|bottom:#hero"\`.
-- \`data-layout-attach="#word"\` for annotations or marker strokes.
+- \`data-layout-attach="#word"\` plus \`data-layout-role="underline|highlight"\`
+  for separate annotations or marker strokes.
 - \`data-layout-gap="x|y"\` on a group whose visible child gaps should stay consistent.
 - \`data-layout-optical-x="12"\` / \`data-layout-optical-y="-8"\` for a deliberate optical offset.
 
 Use \`data-layout-allow-overflow\`, \`data-layout-allow-overlap\`, or
 \`data-layout-allow-occlusion\` only on intentional exceptions; use
 \`data-layout-ignore\` for decoration. Underlines and marker strokes belong to
-the measured text wrapper or its pseudo-element, never to an unrelated
-absolutely positioned line.
+the measured text wrapper or its pseudo-element. Prefer
+\`left:0;right:0;bottom:.06em\`; never use an unrelated absolutely positioned
+line or guessed canvas coordinates.
 
 ## Mood-board restraints (≤5)
 ${design.rules.map((rule) => `- ${rule}`).join("\n")}

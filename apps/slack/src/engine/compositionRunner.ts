@@ -28,6 +28,11 @@ import {
   normalizeStoryboardInteractionIntents,
   normalizeStoryboardSpatialIntent,
 } from "./interactionContract.ts";
+import {
+  creativeModel,
+  creativeThinkingMode,
+  productionModel,
+} from "./modelPolicy.ts";
 
 const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DIRECTOR_PROMPT = fs.readFileSync(
@@ -270,22 +275,17 @@ function repairThinkingMode(model: string | undefined): CompleteOptions["thinkin
  * 3,072-token truncation failures in production.
  */
 function storyboardModel(provider: AgentProvider): string | undefined {
-  const configured = process.env.SLACK_SEQUENCES_STORYBOARD_MODEL?.trim();
-  if (configured?.toLowerCase() === "primary") return undefined;
-  if (configured) return configured;
-  // The storyboard is the one small, high-leverage creative decision in a
-  // build. On OpenRouter, spend the stronger cheap model here while leaving
-  // the much larger HTML authoring turn on the configured DeepSeek primary.
-  return provider.id === "openrouter-api" ? "z-ai/glm-5.2" : undefined;
+  return creativeModel(
+    provider,
+    process.env.SLACK_SEQUENCES_STORYBOARD_MODEL,
+  );
 }
 
 function storyboardThinkingMode(
   provider: AgentProvider,
   model: string | undefined,
 ): CompleteOptions["thinkingMode"] {
-  return provider.id === "openrouter-api" && model === "z-ai/glm-5.2"
-    ? "enabled"
-    : "none";
+  return creativeThinkingMode(provider, model);
 }
 
 function tagged(raw: string, name: string): string {
@@ -430,6 +430,128 @@ function htmlAttr(tag: string, name: string): string | undefined {
   return tag.match(new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`, "i"))?.[2];
 }
 
+function regexpEscape(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * The model chooses interaction intent; the runtime owns the mechanical actors.
+ * Retiring model-authored pointers/ripples prevents guessed hotspots, zero-size
+ * ripples, duplicate visibility tweens, and inherited camera transforms from
+ * leaking into an otherwise deterministic interaction.
+ */
+function normalizeInteractionActors(
+  source: string,
+  interactions: NonNullable<DirectScene["interactions"]>,
+): { html: string; repairs: number } {
+  let html = source;
+  let repairs = 0;
+  const cursorIds = [...new Set(interactions.map((interaction) => interaction.cursorId))];
+  // Authored CSS/JS selectors should keep addressing the retired decoration,
+  // never accidentally grab the canonical actor injected below.
+  html = html.replace(
+    /\[data-cursor-id(?=[\]=])/gi,
+    "[data-sequences-retired-cursor",
+  );
+  for (const cursorId of cursorIds) {
+    const cursorAttribute = new RegExp(
+      `\\bdata-cursor-id\\s*=\\s*(["'])${regexpEscape(cursorId)}\\1`,
+      "i",
+    );
+    html = html.replace(/<[a-z][\w:-]*\b[^>]*>/gi, (tag) => {
+      if (
+        tag.includes("data-sequences-runtime-cursor") ||
+        !cursorAttribute.test(tag)
+      ) {
+        return tag;
+      }
+      repairs += 1;
+      return tag.replace(
+        cursorAttribute,
+        `data-sequences-retired-cursor="${cursorId}"`,
+      );
+    });
+  }
+  const missingCursorIds = cursorIds.filter((cursorId) =>
+    !new RegExp(
+      `\\bdata-cursor-id\\s*=\\s*(["'])${regexpEscape(cursorId)}\\1`,
+      "i",
+    ).test(html)
+  );
+  if (missingCursorIds.length) {
+    const actors = missingCursorIds.map((cursorId) =>
+      `<svg aria-hidden="true" data-sequences-runtime-cursor ` +
+      `data-cursor-id="${cursorId}" data-cursor-hotspot-x="0.1" ` +
+      `data-cursor-hotspot-y="0.06" viewBox="0 0 32 32" ` +
+      `style="position:absolute;left:0;top:0;width:32px;height:32px;opacity:0;` +
+      `overflow:visible;pointer-events:none;z-index:2147483000;color:#fff;` +
+      `filter:drop-shadow(0 1px 2px rgba(0,0,0,.72))">` +
+      `<path d="M3 2.2 4.2 26l6.3-5.7 5.7 10.1 4.5-2.5-5.8-10.2 8.5-1.7Z" ` +
+      `fill="currentColor" stroke="#090b0f" stroke-width="2" stroke-linejoin="round"/>` +
+      `</svg>`
+    ).join("");
+    const overlay =
+      `<div aria-hidden="true" data-camera-overlay data-sequences-interaction-layer ` +
+      `style="position:absolute;inset:0;overflow:visible;pointer-events:none;z-index:2147483000">` +
+      `${actors}</div>`;
+    const rootPattern =
+      /<[a-z][\w:-]*\b(?=[^>]*\bdata-composition-id\s*=)[^>]*>/i;
+    if (rootPattern.test(html)) {
+      html = html.replace(rootPattern, (tag) => `${tag}\n${overlay}`);
+      repairs += missingCursorIds.length;
+    }
+  }
+
+  for (const interaction of interactions) {
+    if (!interaction.ripplePart) continue;
+    const rippleAttribute = new RegExp(
+      `\\bdata-part\\s*=\\s*(["'])${regexpEscape(interaction.ripplePart)}\\1`,
+      "i",
+    );
+    html = html.replace(/<[a-z][\w:-]*\b[^>]*>/gi, (tag) => {
+      if (
+        tag.includes("data-sequences-runtime-ripple") ||
+        !rippleAttribute.test(tag)
+      ) {
+        return tag;
+      }
+      repairs += 1;
+      return tag.replace(
+        rippleAttribute,
+        `data-sequences-retired-ripple="${interaction.ripplePart}"`,
+      );
+    });
+    if (rippleAttribute.test(html)) continue;
+    const scenePattern = new RegExp(
+      `<[a-z][\\w:-]*\\b(?=[^>]*\\bdata-scene\\s*=\\s*(["'])${
+        regexpEscape(interaction.sceneId)
+      }\\1)[^>]*>`,
+      "i",
+    );
+    if (!scenePattern.test(html)) continue;
+    const ripple =
+      `<span aria-hidden="true" data-sequences-runtime-ripple ` +
+      `data-part="${interaction.ripplePart}" style="position:absolute;left:0;top:0;` +
+      `width:72px;height:72px;border:3px solid var(--accent,#3b82f6);` +
+      `border-radius:999px;opacity:0;pointer-events:none;z-index:2147482999;` +
+      `box-sizing:border-box;filter:drop-shadow(0 0 1px #000)"></span>`;
+    html = html.replace(scenePattern, (tag) => `${tag}\n${ripple}`);
+    repairs += 1;
+  }
+  if (
+    repairs &&
+    !html.includes("<style data-sequences-runtime-actors>")
+  ) {
+    html = html.replace(
+      /<\/head>/i,
+      `<style data-sequences-runtime-actors>` +
+        `[data-sequences-retired-cursor],[data-sequences-retired-ripple]` +
+        `{display:none!important}</style></head>`,
+    );
+  }
+  return { html, repairs };
+}
+
 /**
  * OpenRouter can return a useful partial artifact with finish_reason=length.
  * Continue that exact assistant prefix instead of discarding it and spending a
@@ -572,6 +694,9 @@ function applyDeterministicSourceRepairs(
   const interactions = lockedStoryboard?.flatMap((scene) => scene.interactions ?? []) ?? [];
   if (interactions.length) {
     let repairedBindings = 0;
+    const actors = normalizeInteractionActors(html, interactions);
+    html = actors.html;
+    repairedBindings += actors.repairs;
     if (
       !html.includes(`src="${INTERACTION_RUNTIME_FILE}"`) &&
       !html.includes(`src='${INTERACTION_RUNTIME_FILE}'`)
@@ -619,28 +744,6 @@ function applyDeterministicSourceRepairs(
           repairedBindings += 1;
         }
       }
-    }
-    for (const interaction of interactions) {
-      if (!interaction.ripplePart) continue;
-      const escapedPart = interaction.ripplePart.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const partPattern = new RegExp(
-        `\\bdata-part\\s*=\\s*(["'])${escapedPart}\\1`,
-        "i",
-      );
-      if (partPattern.test(html)) continue;
-      const escapedScene = interaction.sceneId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const scenePattern = new RegExp(
-        `<[a-z][\\w:-]*\\b(?=[^>]*\\bdata-scene\\s*=\\s*(["'])${escapedScene}\\1)[^>]*>`,
-        "i",
-      );
-      if (!scenePattern.test(html)) continue;
-      const ripple =
-        `<span aria-hidden="true" data-part="${interaction.ripplePart}" ` +
-        `style="position:absolute;left:0;top:0;width:72px;height:72px;` +
-        `border:2px solid currentColor;border-radius:999px;opacity:0;` +
-        `pointer-events:none;z-index:30"></span>`;
-      html = html.replace(scenePattern, (tag) => `${tag}\n${ripple}`);
-      repairedBindings += 1;
     }
     if (repairedBindings) {
       process.stderr.write(
@@ -918,7 +1021,7 @@ export async function requestStoryboardPlan(
   const model = storyboardModel(provider);
   const thinkingMode = storyboardThinkingMode(provider, model);
   const maxTokens =
-    thinkingMode === "enabled" ? REASONING_STORYBOARD_MAX_TOKENS : STORYBOARD_MAX_TOKENS;
+    thinkingMode === "none" ? STORYBOARD_MAX_TOKENS : REASONING_STORYBOARD_MAX_TOKENS;
   const cacheKey = createHash("sha256").update(JSON.stringify({
     provider: provider.id,
     model: model ?? null,
@@ -989,7 +1092,11 @@ export async function requestStoryboardPlan(
     "press-ripple feedback; dragTargetPart is mandatory for drag. Times are",
     "absolute composition seconds.",
     "The aim is normalized inside the real target. Choose the target, approach,",
-    "path, timing, ease, and optical offset creatively; never choose canvas x/y.",
+    "path, timing, ease, and restrained optical offset creatively; never choose canvas x/y.",
+    "Keep pointer aim within the target's comfortable interior (normally 0.2-0.8",
+    "on each axis), use an edge/third entry anchor rather than frame:center, and",
+    "prefer a subtle human path with power2.out over a theatrical arc. The runtime owns the",
+    "cursor actor, hotspot, endpoint, press, visibility lifecycle, and ripple.",
   ].filter(Boolean).join("\n");
   let raw: string;
   try {
@@ -1206,6 +1313,44 @@ export function quarantineFailedInteractions(
   return { draft: { storyboard, html }, removedIds };
 }
 
+function quarantineStaticInteractionErrors(
+  draft: DirectCompositionDraft,
+  errors: string[],
+): { draft: DirectCompositionDraft; removedIds: string[] } | undefined {
+  const interactions = draft.storyboard.flatMap((scene) => scene.interactions ?? []);
+  if (!interactions.length || !errors.length) return undefined;
+  const interactionError = (error: string): boolean =>
+    /^(?:interaction\b|storyboard declares .*interactions|HTML bind(?:s|ing)\b|duplicate interaction id\b|sequences-interactions\b|interaction composition must\b)/i
+      .test(error);
+  if (!errors.every(interactionError)) return undefined;
+  const knownIds = new Set(interactions.map((interaction) => interaction.id));
+  const mentionedIds = new Set<string>();
+  let hasGeneralContractError = false;
+  for (const error of errors) {
+    const id = error.match(
+      /(?:interaction|HTML binds undeclared interaction|HTML binding for interaction)\s+"([^"]+)"/i,
+    )?.[1];
+    if (id && knownIds.has(id)) mentionedIds.add(id);
+    else hasGeneralContractError = true;
+  }
+  const removeIds = hasGeneralContractError || !mentionedIds.size
+    ? [...knownIds]
+    : [...mentionedIds];
+  return quarantineFailedInteractions(
+    draft,
+    removeIds.map((interactionId): DirectLayoutIssue => ({
+      code: "interaction_static_contract",
+      severity: "error",
+      time: 0,
+      interactionId,
+      selector: `[interaction="${interactionId}"]`,
+      message: "Optional interaction failed the static publication contract.",
+      fixHint: "Publish the visual film without this optional interaction.",
+      source: "sequences",
+    })),
+  );
+}
+
 async function recoverByQuarantiningInteractions(
   projectDir: string,
   candidate: {
@@ -1397,6 +1542,7 @@ export async function requestDirectComposition(
     browserQa: DirectBrowserQaResult;
   }> = [];
   const structuredPatches = supportsStructuredOutputs(provider);
+  const productionTier = productionModel(provider);
   // One initial authoring pass plus at most two bounded repairs.
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const patchMode = Boolean(scratch);
@@ -1404,6 +1550,7 @@ export async function requestDirectComposition(
     // A separately configured repair model is eligible only when a valid
     // scratch document exists and the task is a bounded exact patch.
     const repairTier = patchMode ? repairModel(provider) : undefined;
+    const selectedTier = repairTier ?? productionTier;
     const prompt = creationPrompt({
       ...args,
       validationFeedback,
@@ -1414,7 +1561,7 @@ export async function requestDirectComposition(
     process.stderr.write(
       `[author] attempt ${attempt}/3 · prompt ${prompt.length} chars · ` +
       `${compact ? "compact repair" : "full context"} · ` +
-      `${repairTier ? "explicit repair tier" : "primary tier"} · ` +
+      `${repairTier ? "explicit repair tier" : selectedTier ?? "provider primary tier"} · ` +
       `reasoning ${patchMode ? repairThinkingMode(repairTier) : "off"}\n`,
     );
     try {
@@ -1426,7 +1573,7 @@ export async function requestDirectComposition(
         maxTokens: patchMode ? REPAIR_MAX_TOKENS : authorMaxTokens(),
         thinkingMode: patchMode ? repairThinkingMode(repairTier) : "none",
         ...(patchMode && structuredPatches ? { responseFormat: PATCH_RESPONSE_FORMAT } : {}),
-        ...(repairTier ? { model: repairTier } : {}),
+        ...(selectedTier ? { model: selectedTier } : {}),
       };
       const raw = patchMode
         ? await completeWithRetry(provider, prompt, completeOptions, "author patch")
@@ -1440,12 +1587,23 @@ export async function requestDirectComposition(
               html: extractIndexHtmlSource(raw),
             }
           : parseCompositionResponse(raw);
-      const draft = applyDeterministicSourceRepairs(
+      let draft = applyDeterministicSourceRepairs(
         parsedDraft,
         args.projectDir,
         args.lockedStoryboard,
       );
-      const validation = await validateDirectComposition(args.projectDir, draft);
+      let validation = await validateDirectComposition(args.projectDir, draft);
+      if (!validation.ok) {
+        const recovered = quarantineStaticInteractionErrors(draft, validation.errors);
+        if (recovered?.removedIds.length) {
+          process.stderr.write(
+            `[author] quarantining ${recovered.removedIds.length} statically invalid optional ` +
+              `interaction(s): ${recovered.removedIds.join(", ")}\n`,
+          );
+          draft = recovered.draft;
+          validation = await validateDirectComposition(args.projectDir, draft);
+        }
+      }
       if (!validation.ok) {
         process.stderr.write(
           `[author] attempt ${attempt}/3 static validation rejected: ` +

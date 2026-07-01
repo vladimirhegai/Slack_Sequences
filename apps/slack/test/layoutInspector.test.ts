@@ -82,6 +82,19 @@ function clippedTextDraft(): DirectCompositionDraft {
   return draft;
 }
 
+function misalignedUnderlineDraft(): DirectCompositionDraft {
+  const draft = unsafeDraft();
+  draft.html = draft.html.replace(
+    '<div class="panel" data-layout-important><h1>Too close</h1></div>',
+    '<div style="position:absolute;left:180px;top:200px">' +
+      '<span id="measured-word" style="display:inline-block;font:700 56px Arial">Signal</span>' +
+      '<span id="hero-underline" data-layout-attach="#measured-word" ' +
+      'data-layout-role="underline" style="position:absolute;left:145px;top:58px;' +
+      'width:42px;height:6px;background:#74f7c5"></span></div>',
+  );
+  return draft;
+}
+
 function interactionDraft(
   endpointNudge = 0,
   ease = "power3.out",
@@ -235,6 +248,22 @@ describe("direct layout inspector", () => {
       expect(result.issues.some((issue) =>
         issue.code === "text_box_overflow" && issue.selector === "#live-badge"
       )).toBe(false);
+    },
+    60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "detects a visible underline whose position is detached from the measured word",
+    async () => {
+      const result = await inspectDirectComposition(projectDir(), misalignedUnderlineDraft());
+      expect(result.ok).toBe(true);
+      expect(result.issues.some((issue) =>
+        issue.selector === "#hero-underline" &&
+        (
+          issue.code === "layout_annotation_width_mismatch" ||
+          issue.code === "layout_annotation_alignment_mismatch"
+        )
+      )).toBe(true);
     },
     60_000,
   );

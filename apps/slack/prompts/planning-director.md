@@ -177,9 +177,11 @@ the guide deliberately. Do not turn every shot into the same grid.
 - Intentional overlap, occlusion, or off-canvas animation must carry the narrow
   `data-layout-allow-*` annotation described by frame.md.
 - Put an underline/highlighter inside the measured target word wrapper, ideally
-  as `::after`. If it must be a separate element, give the word a stable id and
-  declare `data-layout-attach="#that-word"`. Never position a marker line from
-  guessed canvas coordinates.
+  as `::after` with `left:0;right:0;bottom:.06em` so its width follows the word.
+  If it must be a separate element, give the word a stable id, declare
+  `data-layout-attach="#that-word"` and `data-layout-role="underline|highlight"`,
+  and derive its inline size from the wrapper. Never position a marker line
+  from guessed canvas coordinates.
 - When validation reports a fit problem, repair in this order: reflow or widen
   the region; wrap; use `fitTextFontSize`; shrink the type only as a last resort.
   Optical centering offsets are valid when explicitly declared.
@@ -193,10 +195,10 @@ the guide deliberately. Do not turn every shot into the same grid.
 - Put product surfaces and camera-driven content inside `data-camera-world`.
   Put cursors, ripples, and labels that must remain in screen space inside a
   sibling `data-camera-overlay`.
-- A pointer cursor uses `data-cursor-id`, normalized
-  `data-cursor-hotspot-x/y`, `position:absolute;left:0;top:0`, and
-  `pointer-events:none`. It is a direct child of the camera overlay. Never hide
-  an active cursor or target with `data-layout-ignore`.
+- Do not draw or tween a standard pointer or ripple. The host replaces authored
+  interaction actors with its canonical high-contrast pointer/ripple layer.
+  Author the target parts and semantic JSON intent; never hide an active target
+  with `data-layout-ignore`.
 - When the locked storyboard has interactions, load
   `<script src="sequences-interactions.v1.js"></script>`, copy those interaction
   objects exactly into one
@@ -205,9 +207,11 @@ the guide deliberately. Do not turn every shot into the same grid.
   target and camera tweens have been added. Register and seek the timeline after
   compilation.
 - The interaction runtime owns standard cursor translation, synchronized press,
-  drag, and ripple geometry. The target, approach, path family, bend, ease,
-  timing, normalized aim, and optical offset remain your creative choices.
-  Never author guessed `TARGET_X`/`TARGET_Y`, a second cursor movement tween, or
+  drag, actor visibility, cursor hotspot, and ripple geometry. The target,
+  approach, path family, subtle bend, ease, timing, normalized interior aim,
+  and restrained optical offset remain your creative choices. Prefer an
+  edge/third entry over `frame:center`. Never author guessed `TARGET_X`/
+  `TARGET_Y`, a second cursor movement/opacity tween, a target press tween, or
   an independently positioned ripple for a declared standard interaction.
 - A `custom` interaction may use authored motion, but it must retain the same
   semantic binding and pass hotspot/target/ripple QA at its declared times.

@@ -332,4 +332,49 @@ describe("buildJobFrame end-to-end (no model, no network)", () => {
     expect(result.frameMd).toContain("**Display / headlines:** Oswald");
     expect(result.frameMd).toContain("Warm charcoal grain");
   });
+
+  it("routes high-impact frame taste to reasoning-enabled GLM, not Flash", async () => {
+    let receivedOptions: Record<string, unknown> | undefined;
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete: async (_prompt, options) => {
+        receivedOptions = options as Record<string, unknown>;
+        return JSON.stringify({
+          presetId: "crisp-dev",
+          thesis: "A precise instrument panel that resolves noise into one calm signal.",
+          basis: "dark",
+          harmony: "analogous",
+          temperature: "cool",
+          contrast: "crisp",
+          accentUsage: "restrained",
+          palette: {},
+          typography: {},
+          density: "balanced",
+          spacing: "cinematic",
+          corners: "crisp",
+          depth: "atmospheric",
+          background: "A quiet radial field with one measured scan line.",
+          rules: ["One dominant signal per shot."],
+          exceptions: [],
+        });
+      },
+    };
+    await buildJobFrame({
+      provider,
+      projectDir: dir,
+      brief: "Launch RADAR for product teams",
+    });
+    expect(receivedOptions).toMatchObject({
+      model: "z-ai/glm-5.2",
+      thinkingMode: "high",
+      maxTokens: 4_096,
+    });
+    expect(receivedOptions?.responseFormat).toMatchObject({
+      type: "json_schema",
+      json_schema: { name: "sequences_frame_direction" },
+    });
+  });
 });

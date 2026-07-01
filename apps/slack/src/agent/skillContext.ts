@@ -159,17 +159,19 @@ assume data-start hides DOM by itself.
 
 **Spatial intent:** every scene needs at least one load-bearing declaration:
 data-layout-important, data-layout-anchor, data-layout-align, data-layout-attach,
-or data-layout-gap. Mark intentional transformed entrance/exit overflow with
+or data-layout-gap. Separate underlines/highlights also use
+data-layout-role="underline|highlight" and derive their width from the attached
+text wrapper. Mark intentional transformed entrance/exit overflow with
 data-layout-allow-overflow and intentional decorative text layering with
 data-layout-allow-overlap; use data-layout-ignore only for pure decoration.
 
 **Stable parts + cursor geometry:** bind important subjects with scene-scoped
 data-part names. Camera-driven product content belongs in data-camera-world;
-screen-space cursor/feedback belongs in a sibling data-camera-overlay. Declared
-interactions load local sequences-interactions.v1.js, use a data-cursor-id plus
-normalized cursor hotspot, and call SequencesInteractions.compile(tl, root)
-after authored target/camera tweens. Never guess cursor TARGET_X/TARGET_Y or
-position its ripple independently.`;
+the host owns the standard screen-space cursor/feedback layer. Declared
+interactions load local sequences-interactions.v1.js and call
+SequencesInteractions.compile(tl, root) after authored target/camera tweens.
+Never draw or tween the standard cursor, target press, or ripple; never guess
+cursor TARGET_X/TARGET_Y.`;
 
 /* -------------------------------------------- blueprint/rule indexes */
 

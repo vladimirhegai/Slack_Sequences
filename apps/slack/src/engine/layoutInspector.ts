@@ -497,6 +497,59 @@ async function auditSequencesRelationships(
           target,
         ));
       }
+      const identity = [
+        element.id,
+        element.className,
+        element.dataset.layoutRole,
+      ].join(" ").toLowerCase();
+      const annotationKind = /\b(?:underline|underbar|marker|highlight|stroke)\b/.test(identity);
+      const lineLike =
+        a.width >= Math.max(8, a.height * 2) &&
+        a.height <= Math.min(32, Math.max(8, b.height * 0.45));
+      if (annotationKind || lineLike) {
+        const widthRatio = b.width > 0 ? a.width / b.width : 1;
+        const centerDelta = Math.abs(
+          (a.left + a.width / 2) - (b.left + b.width / 2),
+        );
+        const centerTolerance = Math.max(12, b.width * 0.18);
+        if (widthRatio < 0.55 || widthRatio > 1.45) {
+          issues.push(issue(
+            "layout_annotation_width_mismatch",
+            "warning",
+            element,
+            `Attached annotation is ${Math.round(widthRatio * 100)}% of ${targetSelector}'s width.`,
+            "Size the marker from its measured text wrapper with left/right or inline-size:100%.",
+            target,
+          ));
+        }
+        if (centerDelta > centerTolerance) {
+          issues.push(issue(
+            "layout_annotation_alignment_mismatch",
+            "warning",
+            element,
+            `Attached annotation is horizontally offset from ${targetSelector} by ${Math.round(centerDelta)}px.`,
+            "Keep the marker inside the text wrapper and derive both horizontal edges from that wrapper.",
+            target,
+          ));
+        }
+        const underlineLike = /\b(?:underline|underbar|stroke)\b/.test(identity);
+        if (
+          underlineLike &&
+          (
+            a.top + a.height / 2 < b.top + b.height * 0.55 ||
+            a.top + a.height / 2 > b.bottom + b.height * 0.35
+          )
+        ) {
+          issues.push(issue(
+            "layout_annotation_vertical_mismatch",
+            "warning",
+            element,
+            `Underline is outside ${targetSelector}'s lower text band.`,
+            "Anchor it to the wrapper baseline (for example bottom:.06em), not to canvas coordinates.",
+            target,
+          ));
+        }
+      }
     }
 
     for (const group of Array.from(root.querySelectorAll<HTMLElement>("[data-layout-gap]"))) {
@@ -712,7 +765,14 @@ async function auditInteractions(
           "Set pointer-events:none on the cursor.",
         );
       }
-      if (!visible(cursor) || !visible(target)) {
+      const entryFadeSec = Math.min(
+        0.14,
+        (intent.arriveSec - intent.startSec) * 0.18,
+      );
+      const inEntryFade =
+        entry.phase === "path" &&
+        payload.time <= intent.startSec + entryFadeSec + 0.01;
+      if ((!visible(cursor) && !inEntryFade) || !visible(target)) {
         add(
           "interaction_not_visible",
           !visible(cursor) ? cursor : target,
@@ -736,15 +796,29 @@ async function auditInteractions(
         x: cursorRect.left + cursorRect.width * hotspotX,
         y: cursorRect.top + cursorRect.height * hotspotY,
       };
-      const targetPoint = {
+      const requestedTargetPoint = {
         x: targetRect.left + targetRect.width * intent.aimX + (intent.offsetX ?? 0),
         y: targetRect.top + targetRect.height * intent.aimY + (intent.offsetY ?? 0),
       };
       const inset = Math.min(
-        intent.hitInsetPx ?? 2,
+        Math.max(
+          2,
+          intent.hitInsetPx ??
+            Math.min(12, Math.min(targetRect.width, targetRect.height) * 0.14),
+        ),
         Math.max(0, targetRect.width / 2 - 0.5),
         Math.max(0, targetRect.height / 2 - 0.5),
       );
+      const targetPoint = {
+        x: Math.max(
+          targetRect.left + inset,
+          Math.min(targetRect.right - inset, requestedTargetPoint.x),
+        ),
+        y: Math.max(
+          targetRect.top + inset,
+          Math.min(targetRect.bottom - inset, requestedTargetPoint.y),
+        ),
+      };
       const hit =
         cursorPoint.x >= targetRect.left + inset &&
         cursorPoint.x <= targetRect.right - inset &&
