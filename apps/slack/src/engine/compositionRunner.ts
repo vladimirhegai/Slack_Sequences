@@ -21,8 +21,8 @@ import {
 import { inspectDirectComposition } from "./layoutInspector.ts";
 import {
   INTERACTION_RUNTIME_FILE,
-  parseInteractionIntents,
-  parseSpatialIntent,
+  normalizeStoryboardInteractionIntents,
+  normalizeStoryboardSpatialIntent,
 } from "./interactionContract.ts";
 
 const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -600,6 +600,28 @@ function applyDeterministicSourceRepairs(
         }
       }
     }
+    for (const interaction of interactions) {
+      if (!interaction.ripplePart) continue;
+      const escapedPart = interaction.ripplePart.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const partPattern = new RegExp(
+        `\\bdata-part\\s*=\\s*(["'])${escapedPart}\\1`,
+        "i",
+      );
+      if (partPattern.test(html)) continue;
+      const escapedScene = interaction.sceneId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const scenePattern = new RegExp(
+        `<[a-z][\\w:-]*\\b(?=[^>]*\\bdata-scene\\s*=\\s*(["'])${escapedScene}\\1)[^>]*>`,
+        "i",
+      );
+      if (!scenePattern.test(html)) continue;
+      const ripple =
+        `<span aria-hidden="true" data-part="${interaction.ripplePart}" ` +
+        `style="position:absolute;left:0;top:0;width:72px;height:72px;` +
+        `border:2px solid currentColor;border-radius:999px;opacity:0;` +
+        `pointer-events:none;z-index:30"></span>`;
+      html = html.replace(scenePattern, (tag) => `${tag}\n${ripple}`);
+      repairedBindings += 1;
+    }
     if (repairedBindings) {
       process.stderr.write(
         `[author] normalized ${repairedBindings} deterministic interaction binding(s)\n`,
@@ -677,7 +699,7 @@ function parseStoryboard(raw: string): DirectScene[] {
     throw new Error(`storyboard_json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!Array.isArray(value)) throw new Error("storyboard_json must be an array");
-  return value.map((item, index) => {
+  const scenes = value.map((item, index) => {
     if (!item || typeof item !== "object") throw new Error(`storyboard_json[${index}] must be an object`);
     const scene = item as Record<string, unknown>;
     const id = typeof scene.id === "string" ? scene.id.trim() : "";
@@ -688,14 +710,12 @@ function parseStoryboard(raw: string): DirectScene[] {
     if (!id || !title || !purpose || !Number.isFinite(startSec) || !Number.isFinite(durationSec)) {
       throw new Error(`storyboard_json[${index}] is missing id/title/purpose/finite timing`);
     }
-    const spatial = scene.spatialIntent === undefined
-      ? { intent: undefined, errors: [] }
-      : parseSpatialIntent(scene.spatialIntent, `storyboard_json[${index}].spatialIntent`);
-    const interactions = scene.interactions === undefined
-      ? { interactions: [], errors: [] }
-      : parseInteractionIntents(scene.interactions, `storyboard_json[${index}].interactions`);
-    const contractErrors = [...spatial.errors, ...interactions.errors];
-    if (contractErrors.length) throw new Error(contractErrors.join("; "));
+    const spatialIntent = normalizeStoryboardSpatialIntent(scene.spatialIntent);
+    const interactions = normalizeStoryboardInteractionIntents(scene.interactions, {
+      sceneId: id,
+      startSec,
+      durationSec,
+    });
     return {
       id,
       title,
@@ -730,10 +750,28 @@ function parseStoryboard(raw: string): DirectScene[] {
           }
         : {}),
       ...(typeof scene.outgoingCut === "string" ? { outgoingCut: scene.outgoingCut } : {}),
-      ...(spatial.intent ? { spatialIntent: spatial.intent } : {}),
-      ...(interactions.interactions.length ? { interactions: interactions.interactions } : {}),
+      ...(spatialIntent ? { spatialIntent } : {}),
+      ...(interactions.length ? { interactions } : {}),
     };
   });
+  const usedInteractionIds = new Set<string>();
+  return scenes.map((scene) => ({
+    ...scene,
+    ...(scene.interactions?.length
+      ? {
+          interactions: scene.interactions.map((interaction) => {
+            let id = interaction.id;
+            let suffix = 2;
+            while (usedInteractionIds.has(id)) {
+              id = `${interaction.id}-${suffix}`;
+              suffix += 1;
+            }
+            usedInteractionIds.add(id);
+            return id === interaction.id ? interaction : { ...interaction, id };
+          }),
+        }
+      : {}),
+  }));
 }
 
 export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {

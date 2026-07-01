@@ -82,7 +82,11 @@ function clippedTextDraft(): DirectCompositionDraft {
   return draft;
 }
 
-function interactionDraft(endpointNudge = 0, ease = "power3.out"): DirectCompositionDraft {
+function interactionDraft(
+  endpointNudge = 0,
+  ease = "power3.out",
+  nestedCursor = false,
+): DirectCompositionDraft {
   const interaction = {
     version: 1 as const,
     id: "feature-click",
@@ -143,7 +147,9 @@ html,body{margin:0;width:800px;height:600px;overflow:hidden;background:#10131a}
       <button id="target" data-part="primary-action" data-layout-important>Deploy</button>
     </div>
     <div data-camera-overlay>
+      ${nestedCursor ? "<span class=\"cursor-shell\">" : ""}
       <svg id="cursor" data-cursor-id="pointer" data-cursor-hotspot-x="0.08" data-cursor-hotspot-y="0.06" viewBox="0 0 24 24"><path d="M2 2L20 10L11 13L7 21Z" fill="white"/></svg>
+      ${nestedCursor ? "</span>" : ""}
       <div id="ripple" data-part="click-ripple"></div>
     </div>
   </section>
@@ -273,6 +279,25 @@ describe("direct layout inspector", () => {
         JSON.stringify({ errors: result.errors, issues: result.issues }),
       ).toBe(true);
       expect(result.interactions?.some((entry) => entry.phase === "arrival")).toBe(true);
+    },
+    30_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "canonicalizes a cursor nested inside a decorative overlay wrapper",
+    async () => {
+      const result = await inspectDirectComposition(
+        projectDir(),
+        interactionDraft(0, "power3.out", true),
+      );
+      expect(
+        result.ok,
+        JSON.stringify({ errors: result.errors, issues: result.issues }),
+      ).toBe(true);
+      expect(result.issues.some((issue) =>
+        issue.code === "interaction_overlay_invalid" ||
+        issue.code === "interaction_target_miss"
+      )).toBe(false);
     },
     30_000,
   );

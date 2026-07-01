@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import fc from "fast-check";
 import type { AgentProvider, CompleteOptions } from "@sequences/platform/providers";
 import {
+  normalizeStoryboardInteractionIntents,
   parseInteractionPlan,
+  parseInteractionIntents,
   validateInteractionContract,
   type InteractionIntentV1,
   type SpatialIntentV1,
@@ -95,6 +98,36 @@ describe("interaction contract", () => {
       "interaction[0].from must be a frame anchor or part:<name>",
     );
     expect(result.errors).toContain("interaction[0].drag requires dragTargetPart");
+  });
+
+  it("normalizes arbitrary planner timing into a strict scene-bounded contract", () => {
+    fc.assert(fc.property(
+      fc.record({
+        startSec: fc.double({ min: -100, max: 100, noNaN: true }),
+        arriveSec: fc.double({ min: -100, max: 100, noNaN: true }),
+        pressSec: fc.double({ min: -100, max: 100, noNaN: true }),
+        releaseSec: fc.double({ min: -100, max: 100, noNaN: true }),
+        holdUntilSec: fc.double({ min: -100, max: 100, noNaN: true }),
+      }),
+      (timing) => {
+        const normalized = normalizeStoryboardInteractionIntents([{
+          ...interaction,
+          ...timing,
+        }], {
+          sceneId: "cta",
+          startSec: 4,
+          durationSec: 2,
+        });
+        expect(normalized).toHaveLength(1);
+        const value = normalized[0]!;
+        expect(parseInteractionIntents([value]).errors).toEqual([]);
+        expect(value.startSec).toBeGreaterThanOrEqual(4);
+        expect(value.pressSec! - value.arriveSec).toBeGreaterThanOrEqual(0.08);
+        expect(value.releaseSec).toBeGreaterThan(value.pressSec!);
+        expect(value.holdUntilSec).toBeGreaterThanOrEqual(value.releaseSec!);
+        expect(value.holdUntilSec).toBeLessThanOrEqual(6);
+      },
+    ), { numRuns: 500 });
   });
 
   it("parses semantic cursor intent without canvas endpoint coordinates", () => {

@@ -277,7 +277,7 @@ describe("direct HyperFrames composition", () => {
     expect(parsed[1]?.interactions?.[0]?.ripplePart).toBe("primary-action-ripple");
   });
 
-  it("rejects duplicate interaction ids before source authoring", () => {
+  it("makes duplicate planner interaction ids unique before source authoring", () => {
     const plan = storyboard();
     const shared = {
       version: 1 as const,
@@ -304,9 +304,85 @@ describe("direct HyperFrames composition", () => {
       pressSec: 6.6,
       releaseSec: 6.75,
     }];
-    expect(() => parseStoryboardResponse(JSON.stringify(plan))).toThrow(
-      /interaction id "shared-click" is duplicated/,
+    const parsed = parseStoryboardResponse(JSON.stringify(plan));
+    expect(parsed[1]?.interactions?.[0]?.id).toBe("shared-click");
+    expect(parsed[2]?.interactions?.[0]?.id).toBe("shared-click-2");
+  });
+
+  it("normalizes out-of-order planner interaction timing inside its scene", () => {
+    const plan = storyboard();
+    plan[1]!.spatialIntent = {
+      version: 1,
+      focalPart: "a live, updating metric: 'Incidents -99.7%'",
+      composition: "Metric-led product proof",
+      relationships: [],
+    };
+    plan[1]!.interactions = [{
+      version: 1,
+      id: "bad-timing-click",
+      sceneId: "wrong-scene",
+      cursorId: "pointer",
+      targetPart: "the 'Get Live View' CTA button",
+      action: "click",
+      startSec: 3.2,
+      arriveSec: 4.4,
+      pressSec: 4.1,
+      releaseSec: 3.9,
+      holdUntilSec: 99,
+      from: "nowhere" as never,
+      path: "custom",
+      aimX: 4,
+      aimY: -2,
+      feedback: "press-ripple",
+      ripplePart: "the CTA button surface",
+    }];
+    const parsed = parseStoryboardResponse(JSON.stringify(plan));
+    const interaction = parsed[1]?.interactions?.[0];
+    expect(interaction).toBeDefined();
+    expect(parsed[1]?.spatialIntent?.focalPart).toBe(
+      "a-live-updating-metric-incidents-99-7",
     );
+    expect(interaction?.sceneId).toBe("product-proof");
+    expect(interaction?.targetPart).toBe("the-get-live-view-cta-button");
+    expect(interaction?.from).toBe("frame:center");
+    expect(interaction?.path).toBe("human");
+    expect(interaction?.aimX).toBe(1);
+    expect(interaction?.aimY).toBe(0);
+    expect(interaction?.arriveSec).toBeGreaterThan(interaction!.startSec);
+    expect(interaction?.pressSec).toBeGreaterThanOrEqual(interaction!.arriveSec + 0.08);
+    expect(interaction?.releaseSec).toBeGreaterThan(interaction!.pressSec!);
+    expect(interaction?.holdUntilSec).toBeLessThanOrEqual(6);
+    expect(interaction?.ripplePart).toBe("the-get-live-view-cta-button-ripple");
+  });
+
+  it("drops unusable optional planner metadata instead of failing the video", () => {
+    const plan = storyboard();
+    plan[1]!.spatialIntent = {
+      version: 1,
+      focalPart: "",
+      composition: "",
+      relationships: [],
+    };
+    plan[1]!.interactions = [{
+      version: 1,
+      id: "missing-target",
+      sceneId: plan[1]!.id,
+      cursorId: "pointer",
+      targetPart: "",
+      action: "click",
+      startSec: 3.2,
+      arriveSec: 3.5,
+      pressSec: 3.6,
+      releaseSec: 3.8,
+      from: "frame:center",
+      path: "human",
+      aimX: 0.5,
+      aimY: 0.5,
+      feedback: "press",
+    }];
+    const parsed = parseStoryboardResponse(JSON.stringify(plan));
+    expect(parsed[1]?.spatialIntent).toBeUndefined();
+    expect(parsed[1]?.interactions).toBeUndefined();
   });
 
   it("recovers a bare or fenced storyboard array when the model omits the wrapper", () => {
@@ -971,6 +1047,60 @@ describe("direct HyperFrames composition", () => {
     expect(result.draft.html).toContain('"#payoff-title"');
     expect(result.draft.html).not.toContain('id="payof"');
     expect(result.draft.html).not.toContain('"#payof-title"');
+  });
+
+  it("creates a missing standard ripple binding without spending a model repair", async () => {
+    const dir = projectDir();
+    const value = draft();
+    const interaction = {
+      version: 1 as const,
+      id: "payoff-click",
+      sceneId: "payoff",
+      cursorId: "pointer",
+      targetPart: "primary-action",
+      action: "click" as const,
+      startSec: 4.4,
+      arriveSec: 5,
+      pressSec: 5.1,
+      releaseSec: 5.25,
+      from: "frame:bottom-right" as const,
+      path: "human" as const,
+      aimX: 0.5,
+      aimY: 0.5,
+      feedback: "press-ripple" as const,
+      ripplePart: "primary-action-ripple",
+    };
+    value.storyboard[1]!.interactions = [interaction];
+    value.html = value.html
+      .replace(
+        '<div class="panel" data-layout-important data-layout-anchor="frame:center"><h1 id="payoff-title">',
+        '<div data-camera-world><div class="panel" data-part="primary-action" data-layout-important data-layout-anchor="frame:center"><h1 id="payoff-title">',
+      )
+      .replace(
+        '<p>Ship with nerve.</p></div>\n    </section>',
+        '<p>Ship with nerve.</p></div></div><div data-camera-overlay>' +
+          '<span><i data-cursor-id="pointer" style="position:absolute;left:0;top:0;' +
+          'width:24px;height:24px;pointer-events:none"></i></span></div>\n    </section>',
+      );
+    const complete = vi.fn().mockResolvedValueOnce(response(value));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: value.storyboard,
+    });
+    expect(result.attempts).toBe(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.draft.html).toContain('data-part="primary-action-ripple"');
+    expect(result.draft.html).toContain('<script src="sequences-interactions.v1.js"></script>');
+    expect(result.draft.html).toContain("SequencesInteractions.compile");
   });
 
   it("passes deterministic validation and checkpoints exact revisions", async () => {

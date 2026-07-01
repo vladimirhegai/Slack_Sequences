@@ -230,9 +230,19 @@
       if (!scene || !cursorElement || !target) {
         throw new Error('could not bind interaction "' + intent.id + '"');
       }
-      var overlay = cursorElement.parentElement;
-      if (!overlay || !overlay.hasAttribute("data-camera-overlay")) {
+      var overlay = cursorElement.closest("[data-camera-overlay]");
+      if (!overlay) {
         throw new Error('cursor "' + intent.cursorId + '" must be inside data-camera-overlay');
+      }
+      // Model-authored markup often adds a decorative wrapper around the
+      // cursor or camera overlay. Canonicalize those mechanical relationships
+      // before measuring so placement remains root-relative and QA sees one
+      // unambiguous screen-space actor.
+      if (overlay.parentElement !== scene && overlay.parentElement !== root) {
+        scene.appendChild(overlay);
+      }
+      if (cursorElement.parentElement !== overlay) {
+        overlay.appendChild(cursorElement);
       }
       var hotspot = cursorHotspot(cursorElement);
       var proxy = { p: 0 };

@@ -932,7 +932,10 @@ async function auditFocalParts(
     );
     const issue = (code: string, message: string, fixHint: string): DirectLayoutIssue => ({
       code,
-      severity: "error",
+      // Spatial intent helps explain and inspect the composition, but it is
+      // optional planner metadata. Missing focal bindings must not discard an
+      // otherwise valid, runnable video.
+      severity: "info",
       time: payload.time,
       selector: focal?.id ? `#${CSS.escape(focal.id)}` : `[data-part="${payload.focalPart}"]`,
       message,
@@ -1216,7 +1219,7 @@ export async function inspectDirectComposition(
 
     const issues = collapseIssues(rawIssues).slice(0, 80);
     const interactionIssues = issues.filter((issue) =>
-      issue.code.startsWith("interaction_") || issue.code.startsWith("spatial_focal_")
+      issue.code.startsWith("interaction_")
     );
     const enforceInteractions =
       process.env.SLACK_SEQUENCES_INTERACTION_QA?.trim().toLowerCase() !== "audit";

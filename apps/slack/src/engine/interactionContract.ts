@@ -172,6 +172,240 @@ function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function trimmed(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function stableToken(value: unknown): string {
+  const raw = trimmed(value);
+  if (/^[a-z][a-z0-9-]{0,63}$/.test(raw)) return raw;
+  const slug = raw
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64)
+    .replace(/-+$/g, "");
+  if (!slug) return "";
+  return /^[a-z]/.test(slug) ? slug : `part-${slug}`.slice(0, 64);
+}
+
+export function normalizeStoryboardSpatialIntent(
+  value: unknown,
+): SpatialIntentV1 | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const object = value as Record<string, unknown>;
+  const rawFocalPart = trimmed(object.focalPart);
+  const focalPart = stableToken(rawFocalPart);
+  if (!focalPart) return undefined;
+  const composition = trimmed(object.composition) || `Focus composition on ${rawFocalPart}`;
+  const relationships = Array.isArray(object.relationships)
+    ? object.relationships
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .slice(0, 8)
+    : [];
+  const frameAnchor = FRAME_ANCHORS.has(object.frameAnchor as FrameAnchor)
+    ? object.frameAnchor as FrameAnchor
+    : undefined;
+  const bias = object.opticalBias as Record<string, unknown> | undefined;
+  const opticalBias = bias && finite(bias.x) && finite(bias.y)
+    ? { x: bias.x, y: bias.y }
+    : undefined;
+  return {
+    version: 1,
+    focalPart,
+    composition,
+    ...(frameAnchor ? { frameAnchor } : {}),
+    ...(opticalBias ? { opticalBias } : {}),
+    relationships,
+  };
+}
+
+interface StoryboardInteractionContext {
+  sceneId: string;
+  startSec: number;
+  durationSec: number;
+}
+
+function normalizeStoryboardTiming(
+  object: Record<string, unknown>,
+  action: InteractionAction,
+  feedback: InteractionFeedback,
+  context: StoryboardInteractionContext,
+): Pick<
+  InteractionIntentV1,
+  "startSec" | "arriveSec" | "pressSec" | "releaseSec" | "holdUntilSec"
+> | undefined {
+  if (
+    !Number.isFinite(context.startSec) ||
+    !Number.isFinite(context.durationSec) ||
+    context.durationSec <= 0.4
+  ) {
+    return undefined;
+  }
+  const low = context.startSec + Math.min(0.05, context.durationSec * 0.03);
+  const high = context.startSec + context.durationSec -
+    Math.min(0.05, context.durationSec * 0.03);
+  const span = high - low;
+  const needsPress =
+    action === "click" ||
+    action === "focus" ||
+    action === "drag" ||
+    feedback === "press" ||
+    feedback === "ripple" ||
+    feedback === "press-ripple";
+  const hasHold = finite(object.holdUntilSec);
+  const minimumGap = Math.min(0.1, span / (needsPress ? 8 : 4));
+
+  let startSec = finite(object.startSec)
+    ? clamp(object.startSec, low, high - minimumGap)
+    : low + span * 0.12;
+  let arriveSec = finite(object.arriveSec)
+    ? Math.max(object.arriveSec, startSec + minimumGap)
+    : startSec + span * 0.28;
+  let pressSec = needsPress
+    ? finite(object.pressSec)
+      ? Math.max(object.pressSec, arriveSec + minimumGap)
+      : arriveSec + Math.max(0.12, minimumGap)
+    : undefined;
+  let releaseSec = needsPress
+    ? finite(object.releaseSec)
+      ? Math.max(object.releaseSec, pressSec! + minimumGap)
+      : pressSec! + Math.max(0.14, minimumGap)
+    : undefined;
+  let holdUntilSec = hasHold
+    ? Math.max(object.holdUntilSec as number, releaseSec ?? arriveSec)
+    : undefined;
+
+  const end = holdUntilSec ?? releaseSec ?? arriveSec;
+  if (end > high) {
+    const shift = end - high;
+    startSec -= shift;
+    arriveSec -= shift;
+    if (pressSec !== undefined) pressSec -= shift;
+    if (releaseSec !== undefined) releaseSec -= shift;
+    if (holdUntilSec !== undefined) holdUntilSec -= shift;
+  }
+  if (startSec < low) {
+    startSec = low + span * 0.08;
+    arriveSec = low + span * (needsPress ? 0.44 : 0.68);
+    if (needsPress) {
+      pressSec = Math.max(arriveSec + minimumGap, low + span * 0.56);
+      releaseSec = Math.max(pressSec + minimumGap, low + span * 0.7);
+      if (hasHold) holdUntilSec = Math.max(releaseSec, low + span * 0.84);
+    } else if (hasHold) {
+      holdUntilSec = Math.max(arriveSec, low + span * 0.84);
+    }
+  }
+  return {
+    startSec,
+    arriveSec,
+    ...(pressSec !== undefined ? { pressSec } : {}),
+    ...(releaseSec !== undefined ? { releaseSec } : {}),
+    ...(holdUntilSec !== undefined ? { holdUntilSec } : {}),
+  };
+}
+
+/**
+ * Storyboard interactions are optional model-authored enhancements. Normalize
+ * recoverable schema/timing drift and omit an unusable entry instead of
+ * aborting the core video build. The resulting intents still pass the strict
+ * runtime contract before any composition can be published.
+ */
+export function normalizeStoryboardInteractionIntents(
+  value: unknown,
+  context: StoryboardInteractionContext,
+): InteractionIntentV1[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const object = entry as Record<string, unknown>;
+    const targetPart = stableToken(object.targetPart);
+    const action = ACTIONS.has(object.action as InteractionAction)
+      ? object.action as InteractionAction
+      : undefined;
+    if (!targetPart || !action) return [];
+    const feedback = FEEDBACK.has(object.feedback as InteractionFeedback)
+      ? object.feedback as InteractionFeedback
+      : action === "click" || action === "focus"
+        ? "press"
+        : "none";
+    const dragTargetPart = stableToken(object.dragTargetPart);
+    if (action === "drag" && !dragTargetPart) return [];
+    const timing = normalizeStoryboardTiming(object, action, feedback, context);
+    if (!timing) return [];
+    const rawFrom = trimmed(object.from);
+    const fromPart = rawFrom.startsWith("part:") ? stableToken(rawFrom.slice(5)) : "";
+    const from = FRAME_ANCHORS.has(rawFrom as FrameAnchor)
+      ? rawFrom as FrameAnchor
+      : fromPart
+        ? `part:${fromPart}` as const
+        : "frame:center";
+    const rawPath = PATHS.has(object.path as InteractionPath)
+      ? object.path as InteractionPath
+      : "human";
+    const waypoints = Array.isArray(object.waypoints)
+      ? object.waypoints.flatMap((waypoint) => {
+          if (
+            !waypoint ||
+            typeof waypoint !== "object" ||
+            !finite((waypoint as Record<string, unknown>).x) ||
+            !finite((waypoint as Record<string, unknown>).y)
+          ) {
+            return [];
+          }
+          const point = waypoint as { x: number; y: number };
+          return [{ x: clamp(point.x, 0, 1), y: clamp(point.y, 0, 1) }];
+        })
+      : [];
+    const path = rawPath === "custom" && !waypoints.length ? "human" : rawPath;
+    const suppliedRipplePart = stableToken(object.ripplePart);
+    const ripplePart =
+      feedback === "ripple" || feedback === "press-ripple"
+        ? /(?:^|-)(?:ripple|pulse|wave)(?:-|$)/.test(suppliedRipplePart)
+          ? suppliedRipplePart
+          : `${targetPart}-ripple`
+        : "";
+    const candidate = {
+      version: 1,
+      id: stableToken(object.id) || `${context.sceneId}-${action}-${index + 1}`,
+      sceneId: context.sceneId,
+      cursorId: stableToken(object.cursorId) || "pointer",
+      targetPart,
+      action,
+      ...timing,
+      from,
+      path,
+      ...(finite(object.bend) ? { bend: clamp(object.bend, -1, 1) } : {}),
+      ...(trimmed(object.ease) ? { ease: trimmed(object.ease) } : {}),
+      aimX: finite(object.aimX) ? clamp(object.aimX, 0, 1) : 0.5,
+      aimY: finite(object.aimY) ? clamp(object.aimY, 0, 1) : 0.5,
+      ...(finite(object.offsetX) ? { offsetX: object.offsetX } : {}),
+      ...(finite(object.offsetY) ? { offsetY: object.offsetY } : {}),
+      ...(finite(object.hitInsetPx) ? { hitInsetPx: Math.max(0, object.hitInsetPx) } : {}),
+      feedback,
+      ...(ripplePart ? { ripplePart } : {}),
+      ...(dragTargetPart ? { dragTargetPart } : {}),
+      ...(finite(object.cursorScale)
+        ? { cursorScale: clamp(object.cursorScale, 0.5, 1) }
+        : {}),
+      ...(finite(object.targetScale)
+        ? { targetScale: clamp(object.targetScale, 0.75, 1) }
+        : {}),
+      ...(waypoints.length ? { waypoints } : {}),
+    };
+    return parseInteractionIntents([candidate]).interactions;
+  });
+}
+
 function optionalFinite(
   object: Record<string, unknown>,
   key: string,
@@ -288,6 +522,13 @@ function parseInteraction(
   const needsPress = object.action === "click" || object.action === "focus" || object.action === "drag";
   if (needsPress && (pressSec === undefined || releaseSec === undefined)) {
     errors.push(`${label}.${String(object.action)} requires pressSec and releaseSec`);
+  }
+  const feedbackNeedsPress =
+    object.feedback === "press" ||
+    object.feedback === "ripple" ||
+    object.feedback === "press-ripple";
+  if (feedbackNeedsPress && (pressSec === undefined || releaseSec === undefined)) {
+    errors.push(`${label}.${String(object.feedback)} requires pressSec and releaseSec`);
   }
   if (pressSec !== undefined && pressSec < arriveSec) {
     errors.push(`${label}.pressSec must be at or after arriveSec`);
@@ -477,13 +718,6 @@ export function validateInteractionContract(
           `HTML binding for interaction "${interaction.id}" differs from locked storyboard`,
         );
       }
-    }
-  }
-  for (const scene of scenes) {
-    if (scene.spatialIntent && !partPattern(scene.spatialIntent.focalPart).test(html)) {
-      errors.push(
-        `scene "${scene.id}" focal part "${scene.spatialIntent.focalPart}" is absent from index_html`,
-      );
     }
   }
   return { plan: parsed.plan, errors: [...new Set(errors)] };
