@@ -1166,7 +1166,7 @@ export function quarantineFailedInteractions(
   if (!removedIds.length) return { draft, removedIds: [] };
 
   const removed = new Set(removedIds);
-  const storyboard = draft.storyboard.map((scene) => {
+  const storyboard: DirectScene[] = draft.storyboard.map((scene): DirectScene => {
     if (!scene.interactions?.some((interaction) => removed.has(interaction.id))) {
       return scene;
     }
