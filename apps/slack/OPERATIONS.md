@@ -3,7 +3,7 @@
 Everything for running, deploying, and recovering the bot. One Slack developer
 sandbox and one Railway deployment serve all live development — there is no
 separate normal-workspace app. Edit and test source locally; exercise Slack
-commands only in the sandbox. Verification ladder: [TESTING.md](TESTING.md).
+commands only in the sandbox. Verification ladder: [CLAUDE.md](CLAUDE.md#verification--testing-ladder).
 
 - [1. Local setup & source loop](#1-local-setup--source-loop)
 - [2. First-time creation (Slack app + Railway)](#2-first-time-creation-slack-app--railway)

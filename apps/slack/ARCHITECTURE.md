@@ -6,8 +6,8 @@
 > user-value, or hackathon-demo testing.
 
 > **Submission warning:** this is a target architecture, not the hackathon
-> submission diagram. Use the "Current architecture" section of
-> [SLACK_PLAN.md](SLACK_PLAN.md) to document what is implemented. Railway
+> submission diagram. Use the "Current Architecture" section of
+> [ROADMAP.md](ROADMAP.md) to document what is implemented. Railway
 > currently hosts the Bolt app, OAuth callback, renderer, and internal stdio
 > Sequences MCP process. Slack hosts the workspace-context MCP server; there is
 > no public Railway `/mcp` endpoint for Slackbot.
@@ -282,7 +282,7 @@ derivation, validation, and fallback—not at the creative answer.
 > boards, deterministic brand extraction, harmony-aware palette derivation,
 > contrast/font validation, spatial-token generation, one bounded art-direction
 > decision, and a compact `frame.md` fed to the director via `<frame_md>`. See
-> TODO.md §3.
+> ROADMAP.md §3.
 
 ## 3. Film-ready components
 
@@ -455,33 +455,50 @@ Quality gates run before Slack receives a “ready” result:
 - midpoint/boundary snapshots plus a contact sheet;
 - deterministic draft render smoke test.
 
-Spatial QA follows [SPATIAL_SYSTEM.md](SPATIAL_SYSTEM.md): `frame.md` supplies a
-loose safe-area/column/thirds/baseline measuring system and optional composition
-primitives, while authored scenes declare only their load-bearing relational
-intent. HyperFrames remains the box/pixel inspector; Sequences adds safe-area,
-declared anchor/alignment, attachment, group-gap, and optical-offset checks. The
-guides are not placement slots and do not constrain shot composition.
+### Spatial coordinate system & relational intent
+The layout uses a measurement and intent system where `frame.md` supplies a loose safe-area, 12-column rhythm, and center/third guidelines, while authored HTML scenes declare only their relational layout intent. 
 
-Cursor-enabled shots additionally use the local, versioned
-`sequences-interactions.v1.js` recipe. Product/camera motion stays in
-`data-camera-world`. The author chooses the semantic target, entry, subtle path,
-timing, and interior aim; deterministic source normalization retires any
-model-authored cursor/ripple markup and installs the canonical high-contrast
-screen-space actors. The runtime owns hotspot, bounded curve amplitude,
-comfortable target inset, visibility lifecycle, press, drag endpoint, and
-ripple geometry. Interaction times are first-class QA samples, misses/occlusion/camera
-coupling are hard contract failures, and revision checkpoints retain the runtime
-hash plus compact spatial evidence. Interactions are optional typed enhancements:
-irrelevant strict-schema filler and duplicate approach intents are removed at
-ingestion; a purely interaction-scoped static failure is quarantined immediately.
-After bounded author repair, browser-proven invalid interactions are quarantined
-individually from both storyboard and HTML binding, followed by fresh static and
-browser validation. Healthy interactions and the complete visual film remain
-unchanged; browser/runtime faults are never quarantined.
+#### Relational layout vocabulary:
+| Attribute | Meaning |
+| --- | --- |
+| `data-layout-important` | Load-bearing content must clear the safe inset |
+| `data-layout-anchor="frame:center"` | Geometric or optically adjusted frame anchor |
+| `data-layout-anchor="frame:left-third"` | Left/right/top/bottom third anchor variants |
+| `data-layout-align="left:#hero"` | Align an edge or center axis to another stable target |
+| `data-layout-attach="#word"` | Annotation/marker remains attached to its measured target |
+| `data-layout-gap="x"` | Visible child gaps on this axis should be consistent |
+| `data-layout-optical-x="12"` | Explicit optical offset from a geometric anchor |
+| `data-layout-tolerance="16"` | Narrow per-relationship tolerance override |
 
-For the hackathon artifact, HyperFrames runtime packages remain exactly pinned
-at `0.6.86`; startup rejects version drift. Browser QA uses committed local
-audit scripts and never downloads or invokes a newer CLI during judge runs.
+Underlines, highlights, and markers attach to measured text wrappers using `data-layout-attach`. In cursor-enabled shots, pointer interaction targets are addressed by stable `data-part` attributes. The local `sequences-interactions.v1.js` helper resolves the cursor hotspot, target, approach curve, synchronized press, and ripple from browser geometry at seek time. Product content receiving camera transforms belongs in `data-camera-world`, while the cursor overlay sits in `data-camera-overlay`.
+
+> **Inspector limits.** The browser audit sees boxes and pixels, not artistic
+> intention. It cannot judge whether a hero sits at optical center, whether two
+> edges were meant to align, whether a gap is one intentional group, or whether
+> off-canvas content is decoration. Sampling is evidence, not proof of every
+> continuous frame. Debug guides (safe rectangle, columns, thirds, baselines,
+> named anchors) are injected for agent inspection snapshots — never baked into
+> delivery renders.
+
+### Browser QA & publication pipeline
+Visual validation runs the HyperFrames layout audit through Chromium/Puppeteer locally and inside Docker (using system Chromium, software-rendered, and sandboxed under memory limits):
+
+```text
+draft
+  → static HyperFrames lint + Sequences runtime invariants
+  → browser runtime validation
+  → HyperFrames layout audit at hero/cut/tween evidence
+  → Sequences relational audit
+  → bounded repair (maximum two attempts)
+  → publication checkpoint
+  → thumbnails/render
+```
+
+- **QA sampling:** audit samples the composition hero frame (at 58% duration), cuts, tween start/ends, and interval midpoints (capped at 48 frames).
+- **Inspection limits:** the audit detects console/page errors, console warnings, text-box overflow, clipped text, container overflow, container collisions, and text occlusion. Contrast warnings or console warnings are recorded but do not exhaust model retries.
+- **Failures & Quarantine:** hard runtime, clipping, occlusion, container overflow, and missing asset errors block the publication checkpoint. Under failed interactions, browser-proven invalid cursors are quarantined from the storyboard and HTML bindings before rendering a warning-only draft.
+- **Auditing guides:** safe inset boundaries, 12 columns, baselines, and continuity anchors are drawn on guide snapshots (`qa/spatial-guide.png`) for internal agent inspection, but are stripped from the public MP4 render.
+
 
 Mechanical failures can be repaired automatically: malformed wrappers, missing
 attributes, unsafe paths, duration mismatches, or out-of-range parameters.

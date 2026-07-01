@@ -20,7 +20,7 @@ private dev monorepo. When the bot needs host glue (render, project IO, plan
 runner), we **copy it into `apps/slack/src/engine/`** and adapt it. The bot must
 never depend on code outside this repo.
 
-Hackathon plan: [apps/slack/SLACK_PLAN.md](apps/slack/SLACK_PLAN.md).
+Hackathon roadmap: [apps/slack/ROADMAP.md](apps/slack/ROADMAP.md).
 Hackathon rules: [apps/slack/HACKATHON_RULES.md](apps/slack/HACKATHON_RULES.md).
 
 ## Commands

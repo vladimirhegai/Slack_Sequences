@@ -4,19 +4,24 @@ The active hackathon app (Slack Agent Builder Challenge, deadline **Jul 13 2026*
 It turns a release thread into an on-brand launch video, in the channel. Bolt +
 Socket Mode; `tsx` runs the TS directly. Pitch: *from shipped to shown*.
 
-## GitHub destination
+## GitHub destination & deploy
 
 Publish this app to **https://github.com/vladimirhegai/Slack_Sequences**.
 `vladimirhegai/Sequences` is the local/private development monorepo and is not
 the Slack app's GitHub delivery target. From the monorepo root, use
 `bash scripts/publish-public.sh "<message>"`; do not finish Slack work by pushing
-the monorepo branch and calling it published.
+the monorepo branch and calling it published. The script archives **HEAD**, so
+commit first — uncommitted work is not published.
+
+**Deploying the live bot is a separate step:** `railway up` from the monorepo root
+builds the root `Dockerfile` on Railway. GitHub autodeploy is deliberately **OFF**,
+so publishing source does **not** deploy. Verify with `/healthz` → `ready`. Docs-only
+changes need a publish but not a redeploy. Full runbook: [OPERATIONS.md](OPERATIONS.md).
 
 **Deep docs (read only when this file is insufficient):**
 [ARCHITECTURE.md](ARCHITECTURE.md) (target design) ·
-[SLACK_PLAN.md](SLACK_PLAN.md) (current state / what's built) ·
+[ROADMAP.md](ROADMAP.md) (current state / task list / TODOs) ·
 [OPERATIONS.md](OPERATIONS.md) (local setup + Railway deploy + recovery) ·
-[TESTING.md](TESTING.md) (verification ladder) ·
 [HACKATHON_RULES.md](HACKATHON_RULES.md) (challenge constraints).
 
 ## The two bots
@@ -128,18 +133,81 @@ with sandbox tokens. Socket Mode carries Slack events; the HTTP server exists on
 for `/healthz`, `/slack/install`, `/slack/oauth_redirect` — do not add Events API
 / interactivity request URLs. Railway is not a public `/mcp` endpoint.
 
-## Verification
+## Verification & Testing Ladder
 
-Routine source gate (no credentials, no paid model):
+This is the shared verification contract for human development and agent verification.
 
+### 1. Slack source gate (Routine check, no credentials needed)
 ```powershell
 npm run typecheck --workspace @sequences/slack
 npm run test --workspace @sequences/slack
 npm run mcp:demo --workspace @sequences/slack
+npm run direct:demo --workspace @sequences/slack
+```
+- TypeScript compiler exits successfully.
+- All Slack tests pass.
+- Legacy MCP applies the curated fallback plan.
+- Direct MCP validates/checkpoints authored HTML, reports clean lint, and creates runtime-seeked scene previews.
+
+### 2. Render and Docker gate (Required after engine/renderer/Docker changes)
+To verify direct HyperFrames MP4 rendering locally:
+```powershell
+$env:VERIFY_RENDER = "1"
+try {
+  npm run direct:demo --workspace @sequences/slack
+} finally {
+  Remove-Item Env:VERIFY_RENDER -ErrorAction SilentlyContinue
+}
+```
+To test production Node/Docker MCP boundary:
+```powershell
+docker build -t sequences-slack .
+docker run --rm sequences-slack npm run mcp:demo -w @sequences/slack
 ```
 
-Run `npm run demo --workspace @sequences/slack` (`+ $env:VERIFY_RENDER=1` for MP4)
-after engine/render/delivery changes. Root `npm run typecheck` **excludes**
-apps/slack. Full ladder + sandbox checklist: [TESTING.md](TESTING.md). Never
-report live Slack/OAuth/provider/Railway behavior as verified from unit tests
-alone — state which layer actually ran.
+### 3. Monorepo CI gate (Optional pre-push checks)
+Before pushing, you can validate the broader monorepo:
+```powershell
+npm run typecheck
+npm test
+npm run test:perf
+```
+
+### 4. Sandbox smoke
+After `/healthz` returns `200 ready`, run in the Slack sandbox:
+1. Run command: `/sequences mcp-test` (should verify Slack API, Sequences MCP, Render host browser/FFmpeg, planning provider, hosted MCP user OAuth, token encryption, data directory).
+2. Run command: `/sequences demo` and confirm storyboard thumbnails arrive before the MP4.
+3. Confirm the MP4 plays inline.
+4. Reply in the reel thread with `make it shorter`.
+5. Click **Undo** and confirm the previous revision returns.
+6. Click **Render HD** (if render-related code changed).
+7. Click **Approve & share** into a disposable sandbox channel.
+
+### 5. Real hosted-MCP flow
+Tester authorizes at: `https://sequences-slack-production.up.railway.app/slack/install`
+1. Run `/sequences` with a short synthetic product brief.
+2. Confirm the result includes a Slack-context hosted-MCP receipt.
+3. Confirm the build trace includes Sequences MCP tools.
+4. Try **🎬 Make a launch video** shortcut from a synthetic release thread.
+5. Confirm revisions, Undo, HD, and sharing still operate on that job.
+
+### 6. Change-specific minimums
+- **Documentation only**: links/commands review; `git diff --check`.
+- **Slack blocks or handlers**: Slack source gate + sandbox affected flow.
+- **Manifest/scopes/events**: paste manifest, reinstall, redeploy, self-check, affected flow.
+- **OAuth or hosted Slack MCP**: source gate, `/slack/install`, self-check, real `/sequences`.
+- **MCP client/server/mutation**: source gate, container MCP demo, create, revise, Undo.
+- **Rendering/Docker/HyperFrames**: render/Docker gate, sandbox demo, draft + HD.
+
+### 7. Understanding Failures & Troubleshooting
+- `not_in_channel`: Run `/invite @Sequences` in the channel.
+- `missing_scope`: Update manifest.json, reinstall, refresh bot token, and redeploy.
+- Connect prompt: Complete `/slack/install` for that user.
+- `/healthz` says `starting`: Inspect the matching `xapp`/`xoxb` token pair.
+- Planning fails: Confirm `SLACK_SEQUENCES_PROVIDER` and its API key are correct.
+- Hosted MCP fails: Confirm OpenAI key, app MCP enablement, redirect URL, and per-user OAuth.
+- Thumbnails work but MP4 fails: Inspect Chromium, FFmpeg, and Railway memory.
+- Duplicate replies: Another process is using the same Slack app tokens.
+
+### 8. Reporting Verification
+Always state which layers actually ran (e.g., unit/type checks, MCP demo, Docker check, Railway health/logs, Slack sandbox demo, real hosted-MCP flow). Never describe unit tests alone as proof of OAuth, Socket Mode, Railway, or live Slack behavior.
