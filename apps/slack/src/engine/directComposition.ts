@@ -74,7 +74,7 @@ export interface DirectCompositionManifest {
     previousRevision: number | null;
   };
   qa?: {
-    browserValidated: true;
+    browserValidated: boolean;
     layoutSamples: number;
     warningCount: number;
     interactionCount?: number;
@@ -482,7 +482,7 @@ export async function commitDirectComposition(
     throw new Error(`composition failed validation:\n${validation.errors.map((error) => `- ${error}`).join("\n")}`);
   }
   const browserQa = await inspectDirectComposition(dir, draft);
-  if (!browserQa.ok) {
+  if (!browserQa.ok && !browserQa.infraError) {
     throw new Error(
       `composition failed browser runtime validation:\n${
         browserQa.errors.map((error) => `- ${error}`).join("\n")
@@ -516,9 +516,9 @@ export async function commitDirectComposition(
       previousRevision: previous?.revision ?? null,
     },
     qa: {
-      browserValidated: true,
+      browserValidated: !browserQa.infraError,
       layoutSamples: browserQa.samples.length,
-      warningCount: browserQa.warnings.length,
+      warningCount: browserQa.warnings.length + (browserQa.infraError ? 1 : 0),
       ...(interactionCount
         ? {
             interactionCount,
@@ -565,6 +565,7 @@ export async function commitDirectComposition(
       samples: browserQa.samples,
       issues: browserQa.issues,
       interactions: interactionEvidence,
+      ...(browserQa.infraError ? { infraError: browserQa.infraError } : {}),
       runtime: {
         version: INTERACTION_RUNTIME_VERSION,
         sha256: interactionRuntimeHash(),

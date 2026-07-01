@@ -46,6 +46,8 @@ export interface DirectBrowserQaResult {
   ok: boolean;
   /** True when runtime validation passed and no visual quality findings request polish. */
   strictOk: boolean;
+  /** Present only when browser QA could not execute; this is not evidence that the draft is bad. */
+  infraError?: string;
   samples: number[];
   issues: DirectLayoutIssue[];
   interactions?: DirectInteractionEvidence[];
@@ -357,7 +359,7 @@ async function auditSequencesRelationships(
           "warning",
           element,
           `Load-bearing content crosses the ${safe}px safe canvas inset by ${Math.round(overflow)}px.`,
-          "Reflow or widen its region first, then wrap; use fitTextFontSize only after those options.",
+          "Keep it in the .scene flow container; give it a .zone and widen the named layout track before wrapping or reducing type.",
           root,
         ));
       }
@@ -772,7 +774,14 @@ async function auditInteractions(
       const inEntryFade =
         entry.phase === "path" &&
         payload.time <= intent.startSec + entryFadeSec + 0.01;
-      if ((!visible(cursor) && !inEntryFade) || !visible(target)) {
+      const targetBox = rect(target);
+      // A target may intentionally reveal while the cursor approaches it. The
+      // runtime only needs stable geometry during the path; visibility becomes
+      // mandatory at arrival and remains mandatory through press/release/hold.
+      const targetReady = entry.phase === "path"
+        ? targetBox.width >= 1 && targetBox.height >= 1
+        : visible(target);
+      if ((!visible(cursor) && !inEntryFade) || !targetReady) {
         add(
           "interaction_not_visible",
           !visible(cursor) ? cursor : target,
@@ -783,7 +792,7 @@ async function auditInteractions(
         continue;
       }
       const cursorRect = rect(cursor);
-      const targetRect = rect(target);
+      const targetRect = targetBox;
       const hotspotX = Math.max(
         0,
         Math.min(1, Number.parseFloat(cursor.dataset.cursorHotspotX ?? "0") || 0),
@@ -1052,6 +1061,18 @@ async function auditFocalParts(
 
 function normalizeHyperframesIssue(value: Record<string, unknown>): DirectLayoutIssue {
   const code = String(value.code ?? "layout_issue");
+  const scaffoldHints: Record<string, string> = {
+    content_overlap:
+      "Give each load-bearing group its own .zone inside a named flow layout; reserve overlap for an annotated decorative layer.",
+    important_safe_area:
+      "Keep the group in the .scene flow container so its safe padding applies; use a .zone and widen the grid track before wrapping.",
+    container_overflow:
+      "Move the content into a min-width:0 .zone and let the named grid/flex layout size the container.",
+    clipped_text:
+      "Reflow the text in a .stack/.zone, remove fixed box height, then reduce type only if the flow layout still cannot fit.",
+    text_box_overflow:
+      "Reflow the text in a .stack/.zone, remove fixed box height, then reduce type only if the flow layout still cannot fit.",
+  };
   return {
     code,
     // Preserve HyperFrames' own severity boundary. In particular, animated
@@ -1063,7 +1084,9 @@ function normalizeHyperframesIssue(value: Record<string, unknown>): DirectLayout
     ...(value.containerSelector ? { containerSelector: String(value.containerSelector) } : {}),
     ...(value.text ? { text: String(value.text) } : {}),
     message: String(value.message ?? code),
-    ...(value.fixHint ? { fixHint: String(value.fixHint) } : {}),
+    ...(scaffoldHints[code]
+      ? { fixHint: scaffoldHints[code] }
+      : value.fixHint ? { fixHint: String(value.fixHint) } : {}),
     source: "hyperframes",
   };
 }
@@ -1120,6 +1143,7 @@ export async function inspectDirectComposition(
     return {
       ok: false,
       strictOk: false,
+      infraError: message,
       samples: [],
       issues: [],
       interactions: [],
@@ -1129,11 +1153,13 @@ export async function inspectDirectComposition(
   }
 
   const scratch = prepareScratch(projectDir, draft);
-  const server = await serveDir(scratch);
-  const puppeteer = (await import("puppeteer-core")).default;
   const runtime: RuntimeMessage[] = [];
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
+  let server: Awaited<ReturnType<typeof serveDir>> | undefined;
+  let browser: import("puppeteer-core").Browser | undefined;
+  let documentLoaded = false;
   try {
+    server = await serveDir(scratch);
+    const puppeteer = (await import("puppeteer-core")).default;
     browser = await puppeteer.launch({
       executablePath: browserPath,
       headless: true,
@@ -1181,6 +1207,7 @@ export async function inspectDirectComposition(
       });
     });
     await page.goto(server.url, { waitUntil: "networkidle0", timeout: 30_000 });
+    documentLoaded = true;
     // tsx/esbuild annotates nested functions in page.evaluate with __name.
     // Browser contexts do not have that build helper, so provide its inert form.
     await page.addScriptTag({ content: "globalThis.__name ||= (target) => target;" });
@@ -1352,6 +1379,13 @@ export async function inspectDirectComposition(
       ...(guidePngBase64 ? { guidePngBase64 } : {}),
     };
   } catch (error) {
+    const message = `browser validate/layout inspect failed: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+    const infrastructureFault =
+      !documentLoaded ||
+      /target closed|session closed|protocol error|browser.*disconnect|out of memory|ENOMEM/i
+        .test(message);
     const runtimeDetail = runtime
       .slice(0, 5)
       .map((entry) => `${entry.level}: ${entry.text}`)
@@ -1359,19 +1393,18 @@ export async function inspectDirectComposition(
     return {
       ok: false,
       strictOk: false,
+      ...(infrastructureFault ? { infraError: message } : {}),
       samples: [],
       issues: [],
       interactions: [],
       errors: [
-        `browser validate/layout inspect failed: ${
-          error instanceof Error ? error.message : String(error)
-        }${runtimeDetail ? ` | ${runtimeDetail}` : ""}`,
+        `${message}${runtimeDetail ? ` | ${runtimeDetail}` : ""}`,
       ],
       warnings: [],
     };
   } finally {
     await browser?.close().catch(() => {});
-    await server.close().catch(() => {});
+    await server?.close().catch(() => {});
     fs.rmSync(scratch, { recursive: true, force: true });
   }
 }

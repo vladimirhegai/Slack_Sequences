@@ -187,8 +187,11 @@ The OpenRouter author uses a deliberate three-role policy:
 | Production brain | `deepseek/deepseek-v4-pro` | Full HTML/CSS/GSAP source and structural repair. Source emission keeps reasoning off so its output budget remains available to the document. |
 | Bounded helper | `deepseek/deepseek-v4-flash` | Tiny interaction-revision routing/JSON only; deterministic validation can reject the complete answer atomically. |
 
-GLM never emits the production document, and Flash never makes taste or
-structural decisions. Operators can override the shared creative model, each
+GLM does not emit the production document by default, and Flash never makes taste
+or structural decisions. A July 1 placement A/B kept DeepSeek as the production
+default: the GLM full-source override returned a truncated document with invalid
+inline JavaScript and could not recover within two bounded repairs. Operators can
+still override the shared creative model, each
 creative pass, the helper, or select `primary` explicitly. Create retrieval is capped near
 28K characters and authored source targets 32K characters per document. Small
 machine-readable artifacts use provider-native strict JSON schemas. Repairs are
@@ -456,7 +459,15 @@ Quality gates run before Slack receives a “ready” result:
 - deterministic draft render smoke test.
 
 ### Spatial coordinate system & relational intent
-The layout uses a measurement and intent system where `frame.md` supplies a loose safe-area, 12-column rhythm, and center/third guidelines, while authored HTML scenes declare only their relational layout intent. 
+The layout uses a measurement and intent system where `frame.md` supplies safe
+padding, a loose 12-column rhythm, and six flow-first composition classes:
+`layout-center-stack`, `layout-split`, `layout-editorial-left`,
+`layout-meta-top`, `layout-corner-chrome`, and `layout-hero-band`. Semantic
+groups use `.zone`, `.stack`, `.row`, or `.cluster`, so browser Grid/Flex layout
+settles load-bearing content before motion transforms run. These are starting
+structures rather than hard templates: authors may tune tracks and alignment,
+and scoped absolute positioning remains valid for decoration, overlays, and
+deliberate art-directed overlap.
 
 #### Relational layout vocabulary:
 | Attribute | Meaning |
@@ -471,6 +482,13 @@ The layout uses a measurement and intent system where `frame.md` supplies a loos
 | `data-layout-tolerance="16"` | Narrow per-relationship tolerance override |
 
 Underlines, highlights, and markers attach to measured text wrappers using `data-layout-attach`. In cursor-enabled shots, pointer interaction targets are addressed by stable `data-part` attributes. The local `sequences-interactions.v1.js` helper resolves the cursor hotspot, target, approach curve, synchronized press, and ripple from browser geometry at seek time. Product content receiving camera transforms belongs in `data-camera-world`, while the cursor overlay sits in `data-camera-overlay`.
+
+Interaction source is normalized before validation: the canonical JSON island is
+placed before timeline execution, `compile(timeline, root)` reads that island,
+and a missing target name is reconciled only when an exact element id or one
+unique semantic candidate proves the intended binding. A measurable target may
+reveal while the cursor approaches; it must be visible from arrival through the
+result hold. Ambiguous bindings still quarantine rather than guess.
 
 > **Inspector limits.** The browser audit sees boxes and pixels, not artistic
 > intention. It cannot judge whether a hero sits at optical center, whether two
@@ -506,7 +524,12 @@ Deterministic repair must not make aesthetic decisions. A visual critic may
 request one bounded rebuild of a specific shot; it may not repeatedly restyle
 the whole video. Browser/runtime health is the hard publish boundary; visual
 layout and contrast findings are repair guidance first, and a later malformed
-repair must not discard the last browser-valid draft.
+repair must not discard the best browser-valid draft. Patch repairs are rejected
+if they change the locked scene ids/count/timing. If browser QA cannot execute,
+static validation becomes the publication boundary and the manifest records
+`browserValidated: false`. If planning or source authoring fails entirely, the
+orchestrator submits a minimal flow-first direct composition from the brief and
+`frame.md` colors; this last-resort path has no model dependency.
 
 ## 9. Capability index, registry sync, and in-Slack audition
 

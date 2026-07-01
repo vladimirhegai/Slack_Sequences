@@ -31,6 +31,7 @@ import {
   requestDirectComposition,
   requestStoryboardPlan,
 } from "./engine/compositionRunner.ts";
+import { buildFallbackComposition } from "./engine/fallbackComposition.ts";
 import {
   buildJobFrame,
   frameFilePath,
@@ -635,23 +636,40 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       evidence: options.context,
       brandName: options.brandName ?? options.product,
     });
-    const storyboard = await requestStoryboardPlan(provider, {
-      brief,
-      projectDir: dir,
-      skills,
-      frameMd: frame.frameMd,
-    });
-    const authored = await requestDirectComposition(provider, {
-      brief,
-      projectDir: dir,
-      skills,
-      frameMd: frame.frameMd,
-      lockedStoryboard: storyboard,
-    });
+    let authoredDraft: DirectCompositionDraft;
+    try {
+      const storyboard = await requestStoryboardPlan(provider, {
+        brief,
+        projectDir: dir,
+        skills,
+        frameMd: frame.frameMd,
+      });
+      const authored = await requestDirectComposition(provider, {
+        brief,
+        projectDir: dir,
+        skills,
+        frameMd: frame.frameMd,
+        lockedStoryboard: storyboard,
+      });
+      authoredDraft = authored.draft;
+    } catch (error) {
+      process.stderr.write(
+        `[orchestrator] model authoring unavailable; using deterministic direct fallback: ${
+          error instanceof Error ? error.message : String(error)
+        }\n`,
+      );
+      authoredDraft = buildFallbackComposition({
+        product: options.product,
+        whatShipped: options.whatShipped,
+        audience: options.audience,
+        lengthSec: options.lengthSec,
+        frameMd: frame.frameMd,
+      });
+    }
     const mutation = await applyDirectMutation(
       dir,
       options.product,
-      authored.draft,
+      authoredDraft,
       options.preferMcp,
       options.onProgress,
     );

@@ -121,6 +121,12 @@ shown in the result and attached to the thread
 typed spatial/focal intent and semantic cursor interactions. A versioned local
 runtime resolves hotspot/target/ripple geometry under camera transforms;
 interaction-time browser QA is enforced and persisted with each revision.
+`frame.md` also exposes six flow-first scene compositions and semantic zone
+helpers so primary content defaults to safe-area Grid/Flex placement. Ambiguous
+cursor targets still quarantine, while exact-id/unique-semantic mismatches are
+reconciled deterministically. Browser-QA infrastructure outages fall back to
+static validation, and a failed planning/authoring pass falls back to a small
+model-free direct composition rather than surfacing a create error.
 Not built yet: Slack screenshot
 ingestion, capability/registry sync + in-Slack audition, component sub-agents.
 

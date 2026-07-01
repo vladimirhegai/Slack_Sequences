@@ -11,6 +11,7 @@ import {
   parseCompositionResponse,
   parseStoryboardResponse,
   quarantineFailedInteractions,
+  reconcileInteractionTargets,
   requestDirectComposition,
   requestStoryboardPlan,
 } from "../src/engine/compositionRunner.ts";
@@ -25,6 +26,7 @@ import {
 import { inspectDirectComposition } from "../src/engine/layoutInspector.ts";
 import { initializeProject } from "../src/engine/projectTemplates.ts";
 import { buildJobFrame } from "../src/engine/frameDesign.ts";
+import { buildFallbackComposition } from "../src/engine/fallbackComposition.ts";
 
 vi.mock("../src/engine/layoutInspector.ts", () => ({
   inspectDirectComposition: vi.fn(async () => ({
@@ -44,12 +46,86 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+describe("deterministic interaction target reconciliation", () => {
+  const interaction = {
+    version: 1 as const,
+    id: "click-signal",
+    sceneId: "one",
+    cursorId: "pointer",
+    targetPart: "active-signal-node",
+    action: "click" as const,
+    startSec: 1,
+    arriveSec: 2,
+    from: "frame:bottom-right" as const,
+    path: "human" as const,
+    aimX: 0.5,
+    aimY: 0.5,
+    feedback: "none" as const,
+  };
+
+  it("binds a missing semantic target to the one exact element id", () => {
+    const source =
+      '<section data-scene="one"><div data-part="signal-node"></div>' +
+      '<div id="active-signal-node" data-part="signal-node"></div>' +
+      '<div data-part="signal-node"></div></section>';
+    const result = reconcileInteractionTargets(source, [interaction]);
+    expect(result.repairs).toBe(1);
+    expect(result.html).toContain(
+      'id="active-signal-node" data-part="active-signal-node"',
+    );
+  });
+
+  it("keeps genuinely ambiguous semantic candidates untouched", () => {
+    const source =
+      '<section data-scene="one"><div data-part="signal-node-left"></div>' +
+      '<div data-part="signal-node-right"></div></section>';
+    const result = reconcileInteractionTargets(source, [interaction]);
+    expect(result).toEqual({ html: source, repairs: 0 });
+  });
+
+  it("never borrows a plausible target from a different scene", () => {
+    const source =
+      '<section data-scene="one"><div data-part="other"></div></section>' +
+      '<section data-scene="two"><div id="active-signal-node" data-part="signal-node"></div></section>';
+    const result = reconcileInteractionTargets(source, [interaction]);
+    expect(result).toEqual({ html: source, repairs: 0 });
+  });
+
+  it("makes an exact id the unique target when the authored part was duplicated", () => {
+    const source =
+      '<section data-scene="one"><div data-part="active-signal-node"></div>' +
+      '<div id="active-signal-node" data-part="active-signal-node"></div></section>';
+    const result = reconcileInteractionTargets(source, [interaction]);
+    expect(result.repairs).toBe(1);
+    expect(result.html).toContain('data-part="active-signal-node-aux-1"');
+    expect(result.html.match(/data-part="active-signal-node"/g)).toHaveLength(1);
+  });
+});
+
 function projectDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-direct-test-"));
   roots.push(dir);
   initializeProject(dir, { name: "Relay", brandName: "Relay", seedScreenshot: true });
   return dir;
 }
+
+describe("deterministic direct fallback", () => {
+  it("builds a statically valid flow-first composition from untrusted brief text", async () => {
+    const dir = projectDir();
+    const fallback = buildFallbackComposition({
+      product: 'RADAR <script>alert("x")</script>',
+      whatShipped: "One operational view & faster decisions",
+      audience: "product teams",
+      lengthSec: 20,
+    });
+    const validation = await validateDirectComposition(dir, fallback);
+    expect(validation.errors).toEqual([]);
+    expect(fallback.html).toContain("layout-editorial-left");
+    expect(fallback.html).toContain("layout-split");
+    expect(fallback.html).toContain("layout-center-stack");
+    expect(fallback.html).not.toContain("<script>alert");
+  });
+});
 
 function draft(accent = "#8b5cf6"): DirectCompositionDraft {
   return {
@@ -1170,6 +1246,18 @@ describe("direct HyperFrames composition", () => {
         '<p>Ship with nerve.</p></div></div><div data-camera-overlay>' +
           '<span><i data-cursor-id="pointer" style="position:absolute;left:0;top:0;' +
           'width:24px;height:24px;pointer-events:none"></i></span></div>\n    </section>',
+      )
+      .replace(
+        'window.__timelines["relay-launch"] = tl;',
+        'const root = document.getElementById("root"); const interactionsData = [];\n' +
+          'SequencesInteractions.compile(tl, root, interactionsData);\n' +
+          'window.__timelines["relay-launch"] = tl;',
+      )
+      .replace(
+        "</body>",
+        `<script type="application/json" id="sequences-interactions">${
+          JSON.stringify({ version: 1, interactions: [] })
+        }</script></body>`,
       );
     const complete = vi.fn().mockResolvedValueOnce(response(value));
     const provider: AgentProvider = {
@@ -1194,7 +1282,13 @@ describe("direct HyperFrames composition", () => {
     expect(result.draft.html).toContain('data-sequences-retired-cursor="pointer"');
     expect(result.draft.html).toContain("[data-sequences-retired-cursor]");
     expect(result.draft.html).toContain('<script src="sequences-interactions.v1.js"></script>');
-    expect(result.draft.html).toContain("SequencesInteractions.compile");
+    expect(result.draft.html).toContain("SequencesInteractions.compile(tl, root);");
+    expect(result.draft.html).not.toContain(
+      "SequencesInteractions.compile(tl, root, interactionsData)",
+    );
+    expect(result.draft.html.indexOf('id="sequences-interactions"')).toBeLessThan(
+      result.draft.html.indexOf("const tl = gsap.timeline"),
+    );
   });
 
   it("lets a statically invalid optional interaction degrade without vetoing the film", async () => {
@@ -1385,6 +1479,30 @@ describe("direct HyperFrames composition", () => {
       "sequences-interactions.v1.js",
     ))).toBe(false);
     expect(fs.existsSync(path.join(dir, "composition", "qa"))).toBe(false);
+  });
+
+  it("commits a statically valid draft when browser QA infrastructure is unavailable", async () => {
+    const dir = projectDir();
+    vi.mocked(inspectDirectComposition).mockResolvedValueOnce({
+      ok: false,
+      strictOk: false,
+      infraError: "Chromium unavailable",
+      samples: [],
+      issues: [],
+      errors: ["Chromium unavailable"],
+      warnings: [],
+    });
+    await expect(commitDirectComposition(dir, "Relay", draft())).resolves.toBeDefined();
+    const current = loadDirectComposition(dir);
+    expect(current.manifest.qa).toMatchObject({
+      browserValidated: false,
+      layoutSamples: 0,
+      warningCount: 1,
+    });
+    const qa = JSON.parse(
+      fs.readFileSync(path.join(dir, "composition", "qa", "spatial.json"), "utf8"),
+    ) as { infraError?: string };
+    expect(qa.infraError).toBe("Chromium unavailable");
   });
 
   it("counts declared interactions even when browser evidence is unavailable", async () => {

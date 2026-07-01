@@ -504,7 +504,10 @@ measure, and role boundaries are creative decisions; unknown font families are i
 These are rhythms and ranges, not mandatory coordinates. Break the rhythm
 deliberately for a hero, cut, or focal transition—not accidentally.
 
-Use this loose coordinate system as measurement scaffolding:
+Start every scene from one named flow composition below. These classes are a
+small placement vocabulary, not a template library: change tracks, proportions,
+and alignment with the custom properties while keeping load-bearing content in
+flow.
 
 \`\`\`css
 :root {
@@ -520,12 +523,64 @@ Use this loose coordinate system as measurement scaffolding:
   --measure-copy: 34ch;
   --measure-wide: 52ch;
 }
+.scene {
+  position: absolute;
+  inset: 0;
+  padding: var(--space-safe);
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+.layout-center-stack {
+  align-content: center;
+  justify-items: center;
+  gap: var(--space-region);
+  text-align: center;
+}
+.layout-split {
+  grid-template-columns: var(--split, minmax(0, 5fr) minmax(0, 7fr));
+  align-items: center;
+  gap: var(--space-region);
+}
+.layout-editorial-left {
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  align-items: end;
+  gap: var(--space-region);
+}
+.layout-meta-top {
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--space-region);
+}
+.layout-corner-chrome {
+  grid-template: auto minmax(0, 1fr) auto / auto minmax(0, 1fr) auto;
+  gap: var(--space-element);
+}
+.layout-hero-band {
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-region);
+}
+.zone { min-width: 0; min-height: 0; }
+.stack { display: flex; min-width: 0; flex-direction: column; gap: var(--space-element); }
+.row { display: flex; min-width: 0; align-items: center; gap: var(--space-element); }
+.cluster { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--space-micro) var(--space-element); }
 .safe-area { position: absolute; inset: var(--space-safe); }
-.stack { display: flex; flex-direction: column; gap: var(--space-element); }
-.row { display: flex; align-items: center; gap: var(--space-element); }
 .anchor { position: absolute; }
 .overlay { position: absolute; inset: 0; pointer-events: none; }
 \`\`\`
+
+Pick one scene class: \`.layout-center-stack\` for a single resolve,
+\`.layout-split\` for asymmetric proof + narrative, \`.layout-editorial-left\`
+for a dominant copy rail with a supporting field, \`.layout-meta-top\` for
+metadata over a hero surface, \`.layout-corner-chrome\` for edge chrome around a
+central subject, or \`.layout-hero-band\` for a full-width hero with a grounded
+caption/action band. Put each semantic group in a \`.zone\`; use \`.stack\`,
+\`.row\`, and \`.cluster\` to make one gap own the rhythm.
+
+Absolute positioning remains a legitimate escape hatch for decoration,
+screen-space overlays, and intentional art-directed overlap. Scope it to a
+positioned product surface or \`.overlay\`; never use raw-canvas coordinates to
+place headlines, stats, cards, code, product UI, or CTAs.
 
 The 12-column guide, centerlines, thirds, and baseline are debug guides—not
 placement slots. Grid/Flexbox owns settled layout; GSAP transforms own motion.

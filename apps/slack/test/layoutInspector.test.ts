@@ -99,6 +99,7 @@ function interactionDraft(
   endpointNudge = 0,
   ease = "power3.out",
   nestedCursor = false,
+  revealTargetOnArrival = false,
 ): DirectCompositionDraft {
   const interaction = {
     version: 1 as const,
@@ -179,6 +180,9 @@ const tl=gsap.timeline({paused:true});
 tl.set("#one",{opacity:1},0).set("#one",{opacity:0},2.99);
 tl.set("#two",{opacity:1},3).set("#two",{opacity:0},6);
 tl.to("#world",{x:-100,duration:1,ease:"power2.inOut"},0.5);
+${revealTargetOnArrival
+  ? 'tl.fromTo("#target",{opacity:0},{opacity:1,duration:.1,ease:"none"},1.35);'
+  : ""}
 SequencesInteractions.compile(tl,document.getElementById("root"));
 ${endpointNudge ? `tl.set("#cursor",{x:"+=${endpointNudge}"},1.6);` : ""}
 window.__timelines["interaction-test"]=tl;
@@ -218,6 +222,23 @@ describe("direct layout inspector", () => {
       expect(result.issues.some((issue) => issue.code === "important_safe_area")).toBe(true);
     },
     60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "keeps a loaded document with no registered timeline as a blocking runtime failure",
+    async () => {
+      const draft = unsafeDraft();
+      draft.html = draft.html.replace(
+        'window.__timelines["layout-test"]=tl;',
+        "",
+      );
+      const result = await inspectDirectComposition(projectDir(), draft);
+      expect(result.ok).toBe(false);
+      expect(result.infraError).toBeUndefined();
+      expect(result.errors.some((error) => error.includes("browser validate/layout inspect failed")))
+        .toBe(true);
+    },
+    30_000,
   );
 
   it.skipIf(!findBrowserExecutable())(
@@ -281,6 +302,23 @@ describe("direct layout inspector", () => {
       expect(press?.hit).toBe(true);
       expect(press?.deltaPx).toBeLessThanOrEqual(2);
       expect(result.guidePngBase64?.length).toBeGreaterThan(100);
+    },
+    60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "allows a measurable target to reveal while the cursor is approaching",
+    async () => {
+      const result = await inspectDirectComposition(
+        projectDir(),
+        interactionDraft(0, "power3.out", false, true),
+      );
+      expect(
+        result.ok,
+        JSON.stringify({ errors: result.errors, issues: result.issues }),
+      ).toBe(true);
+      expect(result.issues.some((issue) => issue.code === "interaction_not_visible")).toBe(false);
+      expect(result.interactions?.some((entry) => entry.phase === "arrival")).toBe(true);
     },
     60_000,
   );

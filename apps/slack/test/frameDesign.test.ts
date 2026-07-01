@@ -123,6 +123,11 @@ describe("deterministic remap", () => {
     expect(md).toContain("## Deterministic tool report");
     expect(md).toContain("--space-safe:");
     expect(md).toContain("--grid-columns: 12");
+    expect(md).toContain(".scene {");
+    expect(md).toContain(".layout-split {");
+    expect(md).toContain(".layout-corner-chrome {");
+    expect(md).toContain(".layout-hero-band {");
+    expect(md).toContain(".cluster {");
     expect(md).toContain('data-layout-anchor="frame:center');
     expect(md).toContain('data-layout-attach="#word"');
   });

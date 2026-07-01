@@ -76,6 +76,41 @@ split the frame (data left, content right; top bar with metadata, full-width
 below) rather than centering everything with equal weight. Two focal points
 minimum — the eye needs somewhere to travel.
 
+## Placement discipline — flow first, never guessed coordinates
+
+This is the single biggest quality lever. Messy frames come from guessing where
+things go. Do not.
+
+- **Place load-bearing content with normal flow.** Every scene uses the
+  flow-first `.scene` scaffold from frame.md (full frame + safe-area padding).
+  Pick one named class as its structural starting point:
+  `.layout-center-stack`, `.layout-split`, `.layout-editorial-left`,
+  `.layout-meta-top`, `.layout-corner-chrome`, or `.layout-hero-band`.
+  Headlines, stats, cards, code blocks, screenshots, UI, and CTAs are laid out
+  *by that container's rows/columns/gaps* — the browser settles their exact
+  pixels, not you.
+- **Never place primary content with guessed canvas coordinates.** Absolute
+  `top/left/right/bottom` pixel or percent values are for background texture,
+  decorative accents, screen-space overlays (cursors), and deliberate overlaps
+  **only**. A coordinate that looks right in your head (`top:419px`) will overlap,
+  clip, or cross the safe area once real text wraps at render. If content is
+  load-bearing, it belongs in the flow container.
+- **One clear composition pattern per scene, varied across the film.** Use
+  `.zone` for each semantic region and `.stack`, `.row`, or `.cluster` inside
+  it. Tune tracks with `--split` or local grid definitions when the shot needs
+  it. Differ the *pattern*, not the flow-layout technique.
+- **Gaps come from one `gap`/token per group**, not from hand-tuned offsets on
+  each child. Derive shared edges from the same inset variable so aligned things
+  actually align.
+- **Fix, don't annotate.** When the layout audit reports overlap, overflow, or a
+  safe-area crossing, the repair is to move the element into flow or give it its
+  own zone — not to reach for `data-layout-allow-*` or `data-layout-ignore`.
+  Those annotations are only for genuinely intentional art-directed exceptions,
+  and every one you add is a claim the reviewer will check.
+
+Absolute positioning inside a `position:relative` product mock (e.g. dots on a
+dashboard) is fine — it is scoped to that surface, not to raw canvas pixels.
+
 ## Typography
 
 Use only the embedded font families listed in the skill context. The renderer
@@ -192,6 +227,15 @@ the guide deliberately. Do not turn every shot into the same grid.
   with scene-scoped `data-part="<stable-name>"`. These names are the bridge to
   future component parts and cut anchors; do not replace them with positional
   selectors.
+- **Interaction target names must match exactly and resolve to one element.**
+  Every `targetPart`/`ripplePart`/`dragTargetPart` in the locked storyboard must
+  appear verbatim as a `data-part` on exactly **one** element inside that scene.
+  Do not reuse the same `data-part` on several elements (e.g. four
+  `data-part="signal-node"`) and do not target a name you never authored — an
+  ambiguous or missing target makes the cursor unbindable, and the whole planned
+  interaction is dropped from the film. If several similar elements exist, give
+  the real target a unique name (`signal-node-active`) and leave the rest
+  unnamed or numbered.
 - Put product surfaces and camera-driven content inside `data-camera-world`.
   Put cursors, ripples, and labels that must remain in screen space inside a
   sibling `data-camera-overlay`.

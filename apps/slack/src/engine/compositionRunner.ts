@@ -434,6 +434,148 @@ function regexpEscape(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function semanticPartTokens(value: string): string[] {
+  const modifiers = new Set(["active", "current", "primary", "selected", "target"]);
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token && !modifiers.has(token));
+}
+
+function semanticPartScore(expected: string, candidate: string): number {
+  const expectedTokens = new Set(semanticPartTokens(expected));
+  const candidateTokens = new Set(semanticPartTokens(candidate));
+  if (!expectedTokens.size || !candidateTokens.size) return 0;
+  const shared = [...expectedTokens].filter((token) => candidateTokens.has(token)).length;
+  return shared / Math.max(expectedTokens.size, candidateTokens.size);
+}
+
+function lockedSceneGraphError(html: string, storyboard: DirectScene[]): string | undefined {
+  const authored = [...html.matchAll(
+    /<[a-z][\w:-]*\b[^>]*\bdata-scene(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?[^>]*>/gis,
+  )].map((match) => ({
+    id: htmlAttr(match[0], "data-scene") ?? htmlAttr(match[0], "id") ?? "",
+    startSec: Number(htmlAttr(match[0], "data-start")),
+    durationSec: Number(htmlAttr(match[0], "data-duration")),
+  }));
+  if (authored.length !== storyboard.length) {
+    return `scene count changed from ${storyboard.length} to ${authored.length}`;
+  }
+  for (const expected of storyboard) {
+    const match = authored.find((scene) => scene.id === expected.id);
+    if (!match) return `scene "${expected.id}" was removed or renamed`;
+    if (
+      Math.abs(match.startSec - expected.startSec) > 0.01 ||
+      Math.abs(match.durationSec - expected.durationSec) > 0.01
+    ) {
+      return `scene "${expected.id}" timing changed`;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Reconcile only interaction targets whose intended element is mechanically
+ * unambiguous. Exact element ids win; a semantic-name fallback is allowed only
+ * when one globally unique part is the sole high-confidence candidate.
+ * Ambiguity deliberately remains for quarantine/repair instead of guessing.
+ */
+export function reconcileInteractionTargets(
+  source: string,
+  interactions: NonNullable<DirectScene["interactions"]>,
+): { html: string; repairs: number } {
+  let html = source;
+  let repairs = 0;
+  const desiredParts = [...new Map(interactions.flatMap((interaction) => [
+    {
+      sceneId: interaction.sceneId,
+      part: interaction.targetPart,
+    },
+    ...(interaction.dragTargetPart
+      ? [{ sceneId: interaction.sceneId, part: interaction.dragTargetPart }]
+      : []),
+  ]).map((entry) => [`${entry.sceneId}\u0000${entry.part}`, entry])).values()];
+
+  for (const { sceneId, part: desired } of desiredParts) {
+    const sceneTags = [...html.matchAll(
+      /<[a-z][\w:-]*\b[^>]*\bdata-scene\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)[^>]*>/gi,
+    )];
+    const sceneIndex = sceneTags.findIndex((match) =>
+      htmlAttr(match[0], "data-scene") === sceneId
+    );
+    if (sceneIndex < 0) continue;
+    const scopeStart = sceneTags[sceneIndex]!.index;
+    const scopeEnd = sceneTags[sceneIndex + 1]?.index ?? html.length;
+    const scope = html.slice(scopeStart, scopeEnd);
+    const tags = [...scope.matchAll(/<[a-z][\w:-]*\b[^>]*>/gi)].map((match) => ({
+      tag: match[0],
+      id: htmlAttr(match[0], "id"),
+      part: htmlAttr(match[0], "data-part"),
+      index: scopeStart + match.index,
+    }));
+    const exact = tags.filter((entry) => entry.part === desired);
+    const exactId = tags.filter((entry) => entry.id === desired);
+
+    if (exact.length === 1) continue;
+    if (exact.length > 1 && exactId.length === 1 && exactId[0]!.part === desired) {
+      let duplicate = 0;
+      const repairedScope = scope.replace(/<[a-z][\w:-]*\b[^>]*>/gi, (tag) => {
+        if (htmlAttr(tag, "data-part") !== desired || htmlAttr(tag, "id") === desired) {
+          return tag;
+        }
+        duplicate += 1;
+        repairs += 1;
+        return tag.replace(
+          new RegExp(`(\\bdata-part\\s*=\\s*)(["'])${regexpEscape(desired)}\\2`, "i"),
+          `$1"${desired}-aux-${duplicate}"`,
+        );
+      });
+      html = html.slice(0, scopeStart) + repairedScope + html.slice(scopeEnd);
+      continue;
+    }
+    if (exact.length > 1) continue;
+
+    let candidate = exactId.length === 1 ? exactId[0] : undefined;
+    if (!candidate) {
+      const partCounts = new Map<string, number>();
+      for (const entry of tags) {
+        if (entry.part) partCounts.set(entry.part, (partCounts.get(entry.part) ?? 0) + 1);
+      }
+      const scored = tags
+        .filter((entry) =>
+          Boolean(entry.part) &&
+          partCounts.get(entry.part!) === 1 &&
+          !entry.tag.includes("data-sequences-runtime-")
+        )
+        .map((entry) => ({
+          entry,
+          score: Math.max(
+            semanticPartScore(desired, entry.part!),
+            entry.id ? semanticPartScore(desired, entry.id) : 0,
+          ),
+        }))
+        .filter((entry) => entry.score >= 0.8)
+        .sort((a, b) => b.score - a.score);
+      if (scored.length === 1 || (scored[0] && scored[0].score > (scored[1]?.score ?? 0))) {
+        candidate = scored[0]?.entry;
+      }
+    }
+    if (!candidate) continue;
+
+    const replacement = candidate.part
+      ? candidate.tag.replace(
+          /(\bdata-part\s*=\s*)(["'])(.*?)\2/i,
+          `$1"${desired}"`,
+        )
+      : candidate.tag.replace(/>$/, ` data-part="${desired}">`);
+    if (replacement === candidate.tag) continue;
+    html = html.slice(0, candidate.index) + replacement +
+      html.slice(candidate.index + candidate.tag.length);
+    repairs += 1;
+  }
+  return { html, repairs };
+}
+
 /**
  * The model chooses interaction intent; the runtime owns the mechanical actors.
  * Retiring model-authored pointers/ripples prevents guessed hotspots, zero-size
@@ -694,6 +836,9 @@ function applyDeterministicSourceRepairs(
   const interactions = lockedStoryboard?.flatMap((scene) => scene.interactions ?? []) ?? [];
   if (interactions.length) {
     let repairedBindings = 0;
+    const targets = reconcileInteractionTargets(html, interactions);
+    html = targets.html;
+    repairedBindings += targets.repairs;
     const actors = normalizeInteractionActors(html, interactions);
     html = actors.html;
     repairedBindings += actors.repairs;
@@ -725,10 +870,40 @@ function applyDeterministicSourceRepairs(
         repairedBindings += 1;
       }
     }
+    const timelineName = html.match(
+      /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*gsap\.timeline\s*\(/,
+    )?.[1];
+    if (timelineName) {
+      const compileWithInlinePlan = new RegExp(
+        `(SequencesInteractions\\.compile\\(\\s*${regexpEscape(timelineName)}\\s*,\\s*` +
+          `[A-Za-z_$][\\w$]*\\s*),\\s*[A-Za-z_$][\\w$]*\\s*\\)`,
+        "g",
+      );
+      const normalizedCompile = html.replace(compileWithInlinePlan, "$1)");
+      if (normalizedCompile !== html) {
+        html = normalizedCompile;
+        repairedBindings += 1;
+      }
+    }
+    const island = islandPattern.exec(html);
+    const timelineScript =
+      /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
+    if (
+      island?.index !== undefined &&
+      timelineScript?.index !== undefined &&
+      island.index > timelineScript.index
+    ) {
+      const islandSource = island[0];
+      html = html.slice(0, island.index) +
+        html.slice(island.index + islandSource.length);
+      const insertion = /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i
+        .exec(html)?.index;
+      if (insertion !== undefined) {
+        html = html.slice(0, insertion) + islandSource + "\n" + html.slice(insertion);
+        repairedBindings += 1;
+      }
+    }
     if (!/\bSequencesInteractions\.compile\s*\(/.test(html)) {
-      const timelineName = html.match(
-        /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*gsap\.timeline\s*\(/,
-      )?.[1];
       if (timelineName) {
         const registration = new RegExp(
           `(window\\.__timelines\\s*\\[[^\\]]+\\]\\s*=\\s*${timelineName.replace(
@@ -1054,6 +1229,10 @@ export async function requestStoryboardPlan(
     "Each shot needs a different foreground composition and a purposeful camera",
     "or framing intention. Carry the eye across every cut through one explicit",
     "anchor: component, position, direction, color field, shape, or semantic idea.",
+    "Name one frame.md flow scaffold in spatialIntent.composition for every shot:",
+    "layout-center-stack, layout-split, layout-editorial-left, layout-meta-top,",
+    "layout-corner-chrome, or layout-hero-band. Describe foreground groups as",
+    "semantic zones within that scaffold, not as guessed canvas coordinates.",
     "Registry capabilities are a reuse-first vocabulary, not a mandatory quota.",
     "Use only capability ids that appear in the supplied synced index.",
     "",
@@ -1091,6 +1270,9 @@ export async function requestStoryboardPlan(
     "ripplePart or dragTargetPart. ripplePart is mandatory for ripple or",
     "press-ripple feedback; dragTargetPart is mandatory for drag. Times are",
     "absolute composition seconds.",
+    "Plan at most one cursor interaction per shot. Its targetPart (and ripplePart",
+    "when present) must be a unique semantic name that the author can bind",
+    "verbatim to exactly one element; never target a repeated collection item.",
     "The aim is normalized inside the real target. Choose the target, approach,",
     "path, timing, ease, and restrained optical offset creatively; never choose canvas x/y.",
     "Keep pointer aim within the target's comfortable interior (normally 0.2-0.8",
@@ -1358,7 +1540,10 @@ async function recoverByQuarantiningInteractions(
     raw: string;
     browserQa: DirectBrowserQaResult;
   },
-): Promise<CompositionRunResult | undefined> {
+): Promise<
+  | { result: CompositionRunResult; browserQa: DirectBrowserQaResult }
+  | undefined
+> {
   const quarantined = quarantineFailedInteractions(
     candidate.draft,
     candidate.browserQa.issues,
@@ -1373,12 +1558,30 @@ async function recoverByQuarantiningInteractions(
   const browserQa = await inspectDirectComposition(projectDir, quarantined.draft, {
     captureGuide: false,
   });
-  if (!browserQa.ok) return undefined;
+  if (!browserQa.ok && !browserQa.infraError) return undefined;
   return {
-    draft: quarantined.draft,
-    raw: candidate.raw,
-    attempts: 3,
+    result: {
+      draft: quarantined.draft,
+      raw: candidate.raw,
+      attempts: 3,
+    },
+    browserQa,
   };
+}
+
+function browserQualityPenalty(
+  browserQa: DirectBrowserQaResult,
+  frameWarnings: string[] = [],
+): number {
+  const runtimeWarnings = browserQa.warnings.filter((warning) =>
+    warning.startsWith("browser_warning:")
+  ).length;
+  return frameWarnings.length * 2 + runtimeWarnings * 2 +
+    browserQa.issues.reduce(
+      (total, issue) =>
+        total + (issue.severity === "error" ? 4 : issue.severity === "warning" ? 1 : 0),
+      0,
+    );
 }
 
 function availableAssets(projectDir: string): string {
@@ -1411,6 +1614,10 @@ function creationPrompt(args: {
       "For deliberate entrance/exit overflow or decorative overlap, add the narrowest matching",
       "data-layout-allow-* annotation to the moving wrapper. Hard clipped_text/text_box_overflow",
       "must be reflowed or resized; never annotate away load-bearing clipped text.",
+      "For overlap, clipping, container overflow, or safe-area findings, move the affected",
+      "semantic groups into .zone children of the existing .layout-split,",
+      ".layout-editorial-left, .layout-meta-top, .layout-hero-band, or",
+      ".layout-center-stack flow container. Prefer that structural repair over offsets.",
       "Never edit data-composition-id, data-scene values, scene element ids, or storyboard timing.",
       "Do not edit JavaScript unless a finding explicitly identifies script/source validation.",
       "",
@@ -1535,7 +1742,9 @@ export async function requestDirectComposition(
   let scratch: DirectCompositionDraft | undefined;
   let compact = false;
   let lastError: unknown;
-  let lastBrowserValid: CompositionRunResult | undefined;
+  let lastBrowserValid:
+    | (CompositionRunResult & { qualityPenalty: number })
+    | undefined;
   const interactionFallbacks: Array<{
     draft: DirectCompositionDraft;
     raw: string;
@@ -1592,6 +1801,14 @@ export async function requestDirectComposition(
         args.projectDir,
         args.lockedStoryboard,
       );
+      if (patchMode && args.lockedStoryboard) {
+        const graphError = lockedSceneGraphError(draft.html, args.lockedStoryboard);
+        if (graphError) {
+          throw new Error(
+            `repair changed the locked storyboard (${graphError}); the patch was rejected atomically`,
+          );
+        }
+      }
       let validation = await validateDirectComposition(args.projectDir, draft);
       if (!validation.ok) {
         const recovered = quarantineStaticInteractionErrors(draft, validation.errors);
@@ -1628,6 +1845,13 @@ export async function requestDirectComposition(
       const browserQa = await inspectDirectComposition(args.projectDir, draft, {
         captureGuide: false,
       });
+      if (browserQa.infraError) {
+        process.stderr.write(
+          `[author] browser QA infrastructure unavailable; publishing statically valid draft: ` +
+            `${browserQa.infraError}\n`,
+        );
+        return { draft, raw, attempts: attempt };
+      }
       if (
         !browserQa.ok &&
         browserQa.issues.some((issue) =>
@@ -1639,17 +1863,23 @@ export async function requestDirectComposition(
         interactionFallbacks.push({ draft, raw, browserQa });
       }
       if (browserQa.ok) {
-        lastBrowserValid = { draft, raw, attempts: attempt };
+        const qualityPenalty = browserQualityPenalty(browserQa, validation.frameWarnings);
+        if (!lastBrowserValid || qualityPenalty < lastBrowserValid.qualityPenalty) {
+          lastBrowserValid = { draft, raw, attempts: attempt, qualityPenalty };
+        }
       }
       // Visual findings receive a repair opportunity, but they are heuristic:
       // failed polish must never discard a document that loaded and initialized
       // correctly in the browser. `browserQa.ok` represents that objective
       // runtime boundary; static validation remains the other hard gate.
       if (
-        (browserQa.strictOk && validation.frameWarnings.length === 0) ||
-        (attempt === 3 && browserQa.ok)
+        browserQa.strictOk && validation.frameWarnings.length === 0
       ) {
         return { draft, raw, attempts: attempt };
+      }
+      if (attempt === 3 && browserQa.ok && lastBrowserValid) {
+        const { qualityPenalty: _qualityPenalty, ...best } = lastBrowserValid;
+        return { ...best, attempts: attempt };
       }
       validationFeedback = [
         ...validation.frameWarnings,
@@ -1688,15 +1918,24 @@ export async function requestDirectComposition(
       `[author] final repair regressed; publishing browser-valid attempt ` +
         `${lastBrowserValid.attempts}/3 instead\n`,
     );
-    return { ...lastBrowserValid, attempts: 3 };
+    const { qualityPenalty: _qualityPenalty, ...best } = lastBrowserValid;
+    return { ...best, attempts: 3 };
   }
-  // Work backwards from the newest statically valid candidate. This also
-  // recovers when a later model patch was malformed: optional interaction
-  // drift cannot erase the last healthy core composition.
-  for (const candidate of interactionFallbacks.reverse()) {
+  // Quarantine each statically valid interaction candidate, then keep the best
+  // browser result. Optional interaction drift cannot erase a cleaner core
+  // composition from an earlier attempt.
+  let bestQuarantined:
+    | { result: CompositionRunResult; qualityPenalty: number }
+    | undefined;
+  for (const candidate of interactionFallbacks) {
     const recovered = await recoverByQuarantiningInteractions(args.projectDir, candidate);
-    if (recovered) return recovered;
+    if (!recovered) continue;
+    const qualityPenalty = browserQualityPenalty(recovered.browserQa);
+    if (!bestQuarantined || qualityPenalty < bestQuarantined.qualityPenalty) {
+      bestQuarantined = { result: recovered.result, qualityPenalty };
+    }
   }
+  if (bestQuarantined) return bestQuarantined.result;
   throw new Error(
     `direct HyperFrames authoring failed after two bounded repairs: ${
       lastError instanceof Error ? lastError.message : String(lastError)
