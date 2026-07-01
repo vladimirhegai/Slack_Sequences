@@ -225,6 +225,7 @@ function stageBlocks(
     toolCalls: result.toolCalls,
     skillsUsed: result.skillsUsed,
     slackMcpTools: result.slackMcpTools,
+    slackMcpNote: result.slackMcpNote,
     usedPreset: result.usedPreset,
     provider: result.provider,
     renderQuality,
@@ -419,6 +420,7 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
   // invoking user's permissions. The deterministic demo deliberately skips it.
   let enrichedContext = args.context;
   let slackMcpTools: string[] | undefined;
+  let slackMcpNote: string | undefined;
   if (userToken) {
     try {
       const workspace = await retrieveSlackMcpContext({
@@ -434,15 +436,13 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
       ].filter(Boolean).join("\n\n");
       slackMcpTools = workspace.toolsCalled;
     } catch (error) {
-      stopHeartbeat();
-      updateJob(jobId, { status: "error" });
-      await safeUpdate(client, {
-        channel: args.channel,
-        ts: messageTs,
-        blocks: errorBlocks(args.product, error instanceof Error ? error.message : String(error)),
-        text: `Couldn’t retrieve Slack workspace context for “${args.product}”`,
-      });
-      return;
+      // Workspace context is an enrichment, not a prerequisite. A transient
+      // hosted-MCP/OpenAI fault (already retried inside the retriever) must never
+      // sink the whole build — degrade to the brief the user provided and surface
+      // a visible, non-blocking note instead of failing the video.
+      logBackgroundError("Slack workspace context retrieval failed; building without it", error);
+      slackMcpNote =
+        "Couldn’t reach Slack’s hosted MCP for workspace context — built from the details you provided. Run `/sequences` again to include verified context.";
     }
   }
 
@@ -464,6 +464,7 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
       onProgress,
     });
     result.slackMcpTools = slackMcpTools;
+    result.slackMcpNote = slackMcpNote;
   } catch (error) {
     stopHeartbeat();
     updateJob(jobId, { status: "error" });

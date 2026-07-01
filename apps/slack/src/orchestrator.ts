@@ -128,6 +128,8 @@ export interface VideoResult {
   skillsUsed: string[];
   /** Read-only Slack-hosted MCP calls used to assemble workspace context. */
   slackMcpTools?: string[];
+  /** Set when hosted-MCP context was skipped so the build could still proceed. */
+  slackMcpNote?: string;
   /** True when the plan came from a curated preset rather than a planning brain. */
   usedPreset: boolean;
   provider: ProviderId;

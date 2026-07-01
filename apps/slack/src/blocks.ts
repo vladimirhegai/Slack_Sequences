@@ -294,6 +294,8 @@ export interface ResultView {
   toolCalls?: ToolCallReceipt[];
   skillsUsed?: string[];
   slackMcpTools?: string[];
+  /** Non-blocking note shown when hosted-MCP context was skipped. */
+  slackMcpNote?: string;
   /** True when the plan came from the curated demo preset (no planning brain). */
   usedPreset?: boolean;
   provider: string;
@@ -364,6 +366,12 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
       ? [{
           type: "context" as const,
           elements: [{ type: "mrkdwn" as const, text: `*Slack context (hosted MCP)*  ·  ${slackReceipt}` }],
+        }]
+      : []),
+    ...(view.slackMcpNote
+      ? [{
+          type: "context" as const,
+          elements: [{ type: "mrkdwn" as const, text: `:information_source: ${view.slackMcpNote}` }],
         }]
       : []),
     {
