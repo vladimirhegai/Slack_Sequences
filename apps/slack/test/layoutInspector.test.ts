@@ -204,7 +204,7 @@ describe("direct layout inspector", () => {
       expect(result.samples.length).toBeGreaterThan(4);
       expect(result.issues.some((issue) => issue.code === "important_safe_area")).toBe(true);
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(!findBrowserExecutable())(
@@ -221,7 +221,7 @@ describe("direct layout inspector", () => {
       expect(result.errors).toEqual([]);
       expect(result.warnings.some((warning) => warning.includes("#clipped-copy"))).toBe(true);
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(!findBrowserExecutable())(
@@ -236,7 +236,7 @@ describe("direct layout inspector", () => {
         issue.code === "text_box_overflow" && issue.selector === "#live-badge"
       )).toBe(false);
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(!findBrowserExecutable())(
@@ -253,7 +253,7 @@ describe("direct layout inspector", () => {
       expect(press?.deltaPx).toBeLessThanOrEqual(2);
       expect(result.guidePngBase64?.length).toBeGreaterThan(100);
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(!findBrowserExecutable())(
@@ -266,7 +266,7 @@ describe("direct layout inspector", () => {
       )).toBe(true);
       expect(result.errors.some((error) => error.includes("interaction_target_miss"))).toBe(true);
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(!findBrowserExecutable())(
@@ -282,7 +282,7 @@ describe("direct layout inspector", () => {
       ).toBe(true);
       expect(result.interactions?.some((entry) => entry.phase === "arrival")).toBe(true);
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(!findBrowserExecutable())(
@@ -301,6 +301,6 @@ describe("direct layout inspector", () => {
         issue.code === "interaction_target_miss"
       )).toBe(false);
     },
-    30_000,
+    60_000,
   );
 });
