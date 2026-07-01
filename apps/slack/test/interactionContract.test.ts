@@ -76,6 +76,27 @@ function html(intent = interaction): string {
 }
 
 describe("interaction contract", () => {
+  it("derives a stable ripple part when structured output omits ripplePart", () => {
+    const { ripplePart: _omitted, ...withoutRipplePart } = interaction;
+    const result = parseInteractionPlan(html(withoutRipplePart));
+    expect(result.errors).toEqual([]);
+    expect(result.plan?.interactions[0]?.ripplePart).toBe("primary-action-ripple");
+  });
+
+  it("rejects empty part anchors and drag targets", () => {
+    const invalid = {
+      ...interaction,
+      action: "drag" as const,
+      from: "part:" as const,
+      dragTargetPart: " ",
+    };
+    const result = parseInteractionPlan(html(invalid));
+    expect(result.errors).toContain(
+      "interaction[0].from must be a frame anchor or part:<name>",
+    );
+    expect(result.errors).toContain("interaction[0].drag requires dragTargetPart");
+  });
+
   it("parses semantic cursor intent without canvas endpoint coordinates", () => {
     const result = parseInteractionPlan(html());
     expect(result.errors).toEqual([]);

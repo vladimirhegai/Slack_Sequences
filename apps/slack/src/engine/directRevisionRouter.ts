@@ -221,4 +221,3 @@ export async function tryDirectInteractionRevision(
   const html = replaceInteractionIsland(current.html, interactions);
   return html ? { html, storyboard: scenes } : null;
 }
-

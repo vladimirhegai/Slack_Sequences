@@ -745,6 +745,7 @@ export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {
     loadCapabilityIndex().capabilities.map((capability) => capability.id),
   );
   const ids = new Set<string>();
+  const interactionIds = new Set<string>();
   let expectedStart = 0;
   for (const [index, scene] of storyboard.entries()) {
     if (!/^[a-z][a-z0-9-]*$/.test(scene.id)) {
@@ -777,6 +778,10 @@ export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {
       errors.push(`shot "${scene.id}" needs a stable focalPart`);
     }
     for (const interaction of scene.interactions ?? []) {
+      if (interactionIds.has(interaction.id)) {
+        errors.push(`interaction id "${interaction.id}" is duplicated`);
+      }
+      interactionIds.add(interaction.id);
       if (interaction.sceneId !== scene.id) {
         errors.push(`interaction "${interaction.id}" must use sceneId "${scene.id}"`);
       }
@@ -919,7 +924,9 @@ export async function requestStoryboardPlan(
     "For a cursor shot, interactions contains semantic movement/click intents with",
     "version,id,sceneId,cursorId,targetPart,action,startSec,arriveSec,from,path,",
     "aimX,aimY,feedback and action-specific pressSec/releaseSec/holdUntilSec,",
-    "ripplePart or dragTargetPart. Times are absolute composition seconds.",
+    "ripplePart or dragTargetPart. ripplePart is mandatory for ripple or",
+    "press-ripple feedback; dragTargetPart is mandatory for drag. Times are",
+    "absolute composition seconds.",
     "The aim is normalized inside the real target. Choose the target, approach,",
     "path, timing, ease, and optical offset creatively; never choose canvas x/y.",
   ].filter(Boolean).join("\n");

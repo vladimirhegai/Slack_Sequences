@@ -82,7 +82,7 @@ function clippedTextDraft(): DirectCompositionDraft {
   return draft;
 }
 
-function interactionDraft(endpointNudge = 0): DirectCompositionDraft {
+function interactionDraft(endpointNudge = 0, ease = "power3.out"): DirectCompositionDraft {
   const interaction = {
     version: 1 as const,
     id: "feature-click",
@@ -98,7 +98,7 @@ function interactionDraft(endpointNudge = 0): DirectCompositionDraft {
     from: "frame:bottom-right" as const,
     path: "human" as const,
     bend: -0.14,
-    ease: "power3.out",
+    ease,
     aimX: 0.56,
     aimY: 0.48,
     offsetX: 2,
@@ -257,6 +257,22 @@ describe("direct layout inspector", () => {
       expect(result.ok).toBe(false);
       expect(result.issues.some((issue) => issue.code === "interaction_target_miss")).toBe(true);
       expect(result.errors.some((error) => error.includes("interaction_target_miss"))).toBe(true);
+    },
+    30_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "falls back safely when an authored interaction ease is unknown",
+    async () => {
+      const result = await inspectDirectComposition(
+        projectDir(),
+        interactionDraft(0, "model-invented.ease"),
+      );
+      expect(
+        result.ok,
+        JSON.stringify({ errors: result.errors, issues: result.issues }),
+      ).toBe(true);
+      expect(result.interactions?.some((entry) => entry.phase === "arrival")).toBe(true);
     },
     30_000,
   );

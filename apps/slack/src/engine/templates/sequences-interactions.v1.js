@@ -237,6 +237,7 @@
       var hotspot = cursorHotspot(cursorElement);
       var proxy = { p: 0 };
       var ease = global.gsap.parseEase(intent.ease || "power2.inOut");
+      if (typeof ease !== "function") ease = global.gsap.parseEase("power2.inOut");
       timeline.set(cursorElement, { opacity: 1 }, intent.startSec);
       timeline.to(proxy, {
         p: 1,

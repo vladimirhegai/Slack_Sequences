@@ -254,6 +254,61 @@ describe("direct HyperFrames composition", () => {
     )).toThrow(/3-5 distinct shots/);
   });
 
+  it("recovers a planner ripple omission before source authoring", () => {
+    const plan = storyboard();
+    plan[1]!.interactions = [{
+      version: 1,
+      id: "product-click",
+      sceneId: plan[1]!.id,
+      cursorId: "pointer",
+      targetPart: "primary-action",
+      action: "click",
+      startSec: 3.2,
+      arriveSec: 3.5,
+      pressSec: 3.6,
+      releaseSec: 3.75,
+      from: "frame:bottom-right",
+      path: "human",
+      aimX: 0.5,
+      aimY: 0.5,
+      feedback: "press-ripple",
+    }];
+    const parsed = parseStoryboardResponse(JSON.stringify(plan));
+    expect(parsed[1]?.interactions?.[0]?.ripplePart).toBe("primary-action-ripple");
+  });
+
+  it("rejects duplicate interaction ids before source authoring", () => {
+    const plan = storyboard();
+    const shared = {
+      version: 1 as const,
+      id: "shared-click",
+      cursorId: "pointer",
+      targetPart: "primary-action",
+      action: "click" as const,
+      startSec: 3.2,
+      arriveSec: 3.5,
+      pressSec: 3.6,
+      releaseSec: 3.75,
+      from: "frame:bottom-right" as const,
+      path: "human" as const,
+      aimX: 0.5,
+      aimY: 0.5,
+      feedback: "press" as const,
+    };
+    plan[1]!.interactions = [{ ...shared, sceneId: plan[1]!.id }];
+    plan[2]!.interactions = [{
+      ...shared,
+      sceneId: plan[2]!.id,
+      startSec: 6.2,
+      arriveSec: 6.5,
+      pressSec: 6.6,
+      releaseSec: 6.75,
+    }];
+    expect(() => parseStoryboardResponse(JSON.stringify(plan))).toThrow(
+      /interaction id "shared-click" is duplicated/,
+    );
+  });
+
   it("recovers a bare or fenced storyboard array when the model omits the wrapper", () => {
     const plan = storyboard();
     // Flash-tier planners routinely ignore the <storyboard_json> wrapper.
@@ -949,9 +1004,76 @@ describe("direct HyperFrames composition", () => {
     expect(fs.readFileSync(path.join(dir, "composition", "STORYBOARD.md"), "utf8"))
       .toContain("The trace arrives");
 
+    // Simulate a checkpoint produced before interaction runtime/QA sidecars
+    // existed. Undo must not leave revision 2 evidence beside revision 1.
+    fs.rmSync(path.join(
+      dir,
+      "revisions",
+      "0001",
+      "sequences-interactions.v1.js",
+    ));
+    fs.rmSync(path.join(dir, "revisions", "0001", "qa"), {
+      recursive: true,
+      force: true,
+    });
     expect(undoDirectComposition(dir)).toBe(true);
     expect(loadDirectComposition(dir).manifest.revision).toBe(1);
     expect(loadDirectComposition(dir).html).toContain("#8b5cf6");
+    expect(fs.existsSync(path.join(
+      dir,
+      "composition",
+      "sequences-interactions.v1.js",
+    ))).toBe(false);
+    expect(fs.existsSync(path.join(dir, "composition", "qa"))).toBe(false);
+  });
+
+  it("counts declared interactions even when browser evidence is unavailable", async () => {
+    const value = draft();
+    const intent = {
+      version: 1 as const,
+      id: "payoff-click",
+      sceneId: "payoff",
+      cursorId: "pointer",
+      targetPart: "primary-action",
+      action: "click" as const,
+      startSec: 4.4,
+      arriveSec: 5,
+      pressSec: 5.1,
+      releaseSec: 5.25,
+      from: "frame:bottom-right" as const,
+      path: "human" as const,
+      aimX: 0.5,
+      aimY: 0.5,
+      feedback: "press" as const,
+    };
+    value.storyboard[1]!.interactions = [intent];
+    value.html = value.html
+      .replace(
+        '<script src="gsap.min.js"></script>',
+        '<script src="gsap.min.js"></script>\n<script src="sequences-interactions.v1.js"></script>',
+      )
+      .replace(
+        '<div class="panel" data-layout-important data-layout-anchor="frame:center"><h1 id="payoff-title">',
+        '<div data-camera-world><div class="panel" data-part="primary-action" data-layout-important data-layout-anchor="frame:center"><h1 id="payoff-title">',
+      )
+      .replace(
+        '<p>Ship with nerve.</p></div>\n    </section>',
+        '<p>Ship with nerve.</p></div></div><div data-camera-overlay><i data-cursor-id="pointer"></i></div>\n    </section>',
+      )
+      .replace(
+        "  <script>\n    window.__timelines",
+        `  <script type="application/json" id="sequences-interactions">${
+          JSON.stringify({ version: 1, interactions: [intent] })
+        }</script>\n  <script>\n    window.__timelines`,
+      )
+      .replace(
+        '    window.__timelines["relay-launch"] = tl;',
+        '    SequencesInteractions.compile(tl, document.getElementById("root"));\n' +
+          '    window.__timelines["relay-launch"] = tl;',
+      );
+    const dir = projectDir();
+    await commitDirectComposition(dir, "Relay", value);
+    expect(loadDirectComposition(dir).manifest.qa?.interactionCount).toBe(1);
   });
 
   it("rejects network and nondeterministic scratch source without publishing it", async () => {

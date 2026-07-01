@@ -227,7 +227,11 @@ function parseInteraction(
     errors.push(`${label}.feedback is unsupported`);
   }
   const from = typeof object.from === "string" ? object.from : "";
-  if (from && !FRAME_ANCHORS.has(from as FrameAnchor) && !from.startsWith("part:")) {
+  if (
+    from &&
+    !FRAME_ANCHORS.has(from as FrameAnchor) &&
+    (!from.startsWith("part:") || !from.slice(5).trim())
+  ) {
     errors.push(`${label}.from must be a frame anchor or part:<name>`);
   }
   const aimX = finite(object.aimX) ? object.aimX : 0.5;
@@ -294,22 +298,31 @@ function parseInteraction(
   if (holdUntilSec !== undefined && holdUntilSec < (releaseSec ?? arriveSec)) {
     errors.push(`${label}.holdUntilSec must follow the interaction`);
   }
-  if (object.action === "drag" && typeof object.dragTargetPart !== "string") {
+  const dragTargetPart = typeof object.dragTargetPart === "string"
+    ? object.dragTargetPart.trim()
+    : "";
+  if (object.action === "drag" && !dragTargetPart) {
     errors.push(`${label}.drag requires dragTargetPart`);
   }
-  if (
-    (object.feedback === "ripple" || object.feedback === "press-ripple") &&
-    typeof object.ripplePart !== "string"
-  ) {
-    errors.push(`${label}.${String(object.feedback)} requires ripplePart`);
-  }
+  const targetPart = typeof object.targetPart === "string" ? object.targetPart.trim() : "";
+  const suppliedRipplePart = typeof object.ripplePart === "string"
+    ? object.ripplePart.trim()
+    : "";
+  // A ripple name is mechanical rather than creative. Some structured-output
+  // providers omit the conditionally-required field even after selecting
+  // ripple feedback; deriving the stable scene-scoped part keeps the storyboard
+  // usable and gives the author an exact binding to create.
+  const ripplePart =
+    object.feedback === "ripple" || object.feedback === "press-ripple"
+      ? suppliedRipplePart || (targetPart ? `${targetPart}-ripple` : "")
+      : suppliedRipplePart;
   if (errors.some((error) => error.startsWith(label))) return undefined;
   return {
     version: 1,
     id: String(object.id).trim(),
     sceneId: String(object.sceneId).trim(),
     cursorId: String(object.cursorId).trim(),
-    targetPart: String(object.targetPart).trim(),
+    targetPart,
     action: object.action as InteractionAction,
     startSec,
     arriveSec,
@@ -326,10 +339,8 @@ function parseInteraction(
     ...(offsetY !== undefined ? { offsetY } : {}),
     ...(hitInsetPx !== undefined ? { hitInsetPx } : {}),
     feedback: object.feedback as InteractionFeedback,
-    ...(typeof object.ripplePart === "string" ? { ripplePart: object.ripplePart.trim() } : {}),
-    ...(typeof object.dragTargetPart === "string"
-      ? { dragTargetPart: object.dragTargetPart.trim() }
-      : {}),
+    ...(ripplePart ? { ripplePart } : {}),
+    ...(dragTargetPart ? { dragTargetPart } : {}),
     ...(cursorScale !== undefined ? { cursorScale } : {}),
     ...(targetScale !== undefined ? { targetScale } : {}),
     ...(waypoints ? { waypoints } : {}),

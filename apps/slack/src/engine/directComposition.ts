@@ -492,7 +492,10 @@ export async function commitDirectComposition(
 
   const normalized = normalizeStoryboard(draft.storyboard, draft.html);
   const interactionEvidence = browserQa.interactions ?? [];
-  const interactionCount = new Set(interactionEvidence.map((entry) => entry.id)).size;
+  const interactionCount = normalized.scenes.reduce(
+    (count, scene) => count + (scene.interactions?.length ?? 0),
+    0,
+  );
   const previous = hasDirectComposition(dir) ? loadDirectComposition(dir).manifest : undefined;
   const revision = (previous?.revision ?? 0) + 1;
   const manifest: DirectCompositionManifest = {
@@ -621,12 +624,19 @@ export function undoDirectComposition(projectDir: string): boolean {
     INTERACTION_RUNTIME_FILE,
   ]) {
     const source = path.join(checkpoint, sidecar);
-    if (fs.existsSync(source)) fs.copyFileSync(source, path.join(target, sidecar));
+    const destination = path.join(target, sidecar);
+    if (fs.existsSync(source)) {
+      fs.copyFileSync(source, destination);
+    } else {
+      fs.rmSync(destination, { force: true });
+    }
   }
   const qaSource = path.join(checkpoint, "qa");
   if (fs.existsSync(qaSource)) {
     fs.rmSync(path.join(target, "qa"), { recursive: true, force: true });
     fs.cpSync(qaSource, path.join(target, "qa"), { recursive: true });
+  } else {
+    fs.rmSync(path.join(target, "qa"), { recursive: true, force: true });
   }
   return true;
 }
