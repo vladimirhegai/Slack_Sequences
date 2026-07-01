@@ -28,6 +28,8 @@ export interface DirectLayoutIssue {
   code: string;
   severity: LayoutSeverity;
   time: number;
+  /** Stable storyboard interaction id when this finding belongs to an optional interaction. */
+  interactionId?: string;
   firstSeen?: number;
   lastSeen?: number;
   occurrences?: number;
@@ -626,6 +628,7 @@ async function auditInteractions(
         code,
         severity: "error",
         time: payload.time,
+        interactionId: id,
         selector: element?.id ? `#${CSS.escape(element.id)}` : `[interaction="${id}"]`,
         message,
         fixHint,
@@ -998,6 +1001,7 @@ function collapseIssues(values: DirectLayoutIssue[]): DirectLayoutIssue[] {
       value.source,
       value.code,
       value.severity,
+      value.interactionId ?? "",
       value.selector,
       value.containerSelector ?? "",
       value.text ?? "",

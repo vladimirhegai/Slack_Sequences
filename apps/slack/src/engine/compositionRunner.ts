@@ -18,7 +18,11 @@ import {
   type DirectCompositionDraft,
   type DirectScene,
 } from "./directComposition.ts";
-import { inspectDirectComposition } from "./layoutInspector.ts";
+import {
+  inspectDirectComposition,
+  type DirectBrowserQaResult,
+  type DirectLayoutIssue,
+} from "./layoutInspector.ts";
 import {
   INTERACTION_RUNTIME_FILE,
   normalizeStoryboardInteractionIntents,
@@ -42,6 +46,7 @@ const COMPACT_SKILL_BUDGET_CHARS = 16_000;
 const REPAIR_MAX_TOKENS = 4_096;
 const MAX_REPAIR_PATCHES = 16;
 const STORYBOARD_MAX_TOKENS = 4_096;
+const REASONING_STORYBOARD_MAX_TOKENS = 8_192;
 const MAX_AUTHOR_SEGMENTS = 3;
 
 function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat"]> {
@@ -258,14 +263,29 @@ function repairThinkingMode(model: string | undefined): CompleteOptions["thinkin
 }
 
 /**
- * The storyboard is a required production artifact, not an optional cheap
- * classification. Keep it on the configured primary model unless an operator
- * explicitly chooses a separate model. The old implicit Flash override was the
- * common root of wrapper drift, oversized hidden reasoning, and exact
+ * The storyboard is a required, high-leverage production artifact rather than
+ * an optional cheap classification. OpenRouter gets one reasoning-enabled GLM
+ * director call; operators can pin any other model or select "primary". The
+ * old implicit Flash override was the common root of wrapper drift and exact
  * 3,072-token truncation failures in production.
  */
-function storyboardModel(): string | undefined {
-  return process.env.SLACK_SEQUENCES_STORYBOARD_MODEL?.trim() || undefined;
+function storyboardModel(provider: AgentProvider): string | undefined {
+  const configured = process.env.SLACK_SEQUENCES_STORYBOARD_MODEL?.trim();
+  if (configured?.toLowerCase() === "primary") return undefined;
+  if (configured) return configured;
+  // The storyboard is the one small, high-leverage creative decision in a
+  // build. On OpenRouter, spend the stronger cheap model here while leaving
+  // the much larger HTML authoring turn on the configured DeepSeek primary.
+  return provider.id === "openrouter-api" ? "z-ai/glm-5.2" : undefined;
+}
+
+function storyboardThinkingMode(
+  provider: AgentProvider,
+  model: string | undefined,
+): CompleteOptions["thinkingMode"] {
+  return provider.id === "openrouter-api" && model === "z-ai/glm-5.2"
+    ? "enabled"
+    : "none";
 }
 
 function tagged(raw: string, name: string): string {
@@ -895,7 +915,10 @@ export async function requestStoryboardPlan(
   },
 ): Promise<DirectScene[]> {
   const structuredOutput = supportsStructuredOutputs(provider);
-  const model = storyboardModel();
+  const model = storyboardModel(provider);
+  const thinkingMode = storyboardThinkingMode(provider, model);
+  const maxTokens =
+    thinkingMode === "enabled" ? REASONING_STORYBOARD_MAX_TOKENS : STORYBOARD_MAX_TOKENS;
   const cacheKey = createHash("sha256").update(JSON.stringify({
     provider: provider.id,
     model: model ?? null,
@@ -971,8 +994,8 @@ export async function requestStoryboardPlan(
   let raw: string;
   try {
     process.stderr.write(
-      `[storyboard] primary contract · ${model ? `explicit model ${model}` : "provider primary model"} · ` +
-        `reasoning off · max ${STORYBOARD_MAX_TOKENS} tokens\n`,
+      `[storyboard] primary contract · ${model ? `model ${model}` : "provider primary model"} · ` +
+        `reasoning ${thinkingMode} · max ${maxTokens} tokens\n`,
     );
     raw = await completeWithRetry(provider, prompt, {
       ...args.options,
@@ -980,11 +1003,10 @@ export async function requestStoryboardPlan(
       // wall-clock headroom than a plain chat call, and let completeWithRetry absorb
       // a transient stall instead of failing the whole build on the first abort.
       timeoutMs: 180_000,
-      maxTokens: STORYBOARD_MAX_TOKENS,
-      // max_tokens includes hidden reasoning on OpenRouter/DeepSeek. This stage
-      // must emit a complete machine-readable artifact, so reserve the entire
-      // completion budget for that artifact just as the HTML authoring pass does.
-      thinkingMode: "none",
+      maxTokens,
+      // GLM's budget includes reasoning plus the compact JSON artifact; give it
+      // twice the non-reasoning budget while keeping the one-shot task bounded.
+      thinkingMode,
       ...(structuredOutput ? { responseFormat: storyboardResponseFormat() } : {}),
       ...(model ? { model } : {}),
     }, "storyboard");
@@ -1117,6 +1139,101 @@ export function applyCompositionRepair(
     );
   }
   return { storyboard: scratch.storyboard, html };
+}
+
+/**
+ * Optional interaction choreography must not be able to veto a healthy film.
+ *
+ * The model still gets bounded attempts to repair authored target/cursor
+ * geometry. If browser evidence proves that a particular interaction remains
+ * invalid, remove only that typed enhancement from both canonical stores. The
+ * visual composition, timeline, spatial intent, and every healthy interaction
+ * remain byte-for-byte unchanged and are validated again before publication.
+ */
+export function quarantineFailedInteractions(
+  draft: DirectCompositionDraft,
+  issues: DirectLayoutIssue[],
+): { draft: DirectCompositionDraft; removedIds: string[] } {
+  const removedIds = [...new Set(
+    issues
+      .filter((issue) =>
+        issue.severity === "error" &&
+        issue.code.startsWith("interaction_") &&
+        Boolean(issue.interactionId)
+      )
+      .map((issue) => issue.interactionId!),
+  )].sort();
+  if (!removedIds.length) return { draft, removedIds: [] };
+
+  const removed = new Set(removedIds);
+  const storyboard = draft.storyboard.map((scene) => {
+    if (!scene.interactions?.some((interaction) => removed.has(interaction.id))) {
+      return scene;
+    }
+    const interactions = scene.interactions.filter(
+      (interaction) => !removed.has(interaction.id),
+    );
+    const { interactions: _discarded, ...withoutInteractions } = scene;
+    return interactions.length ? { ...scene, interactions } : withoutInteractions;
+  });
+  const interactions = storyboard.flatMap((scene) => scene.interactions ?? []);
+  const payload = JSON.stringify({ version: 1, interactions });
+  const islandPattern =
+    /(<script\b[^>]*\bid\s*=\s*(["'])sequences-interactions\2[^>]*>)([\s\S]*?)(<\/script>)/i;
+  if (!islandPattern.test(draft.html)) {
+    // Static validation will reject the unchanged mismatch; do not pretend the
+    // enhancement was isolated when its canonical island was absent.
+    return { draft, removedIds: [] };
+  }
+  let html = draft.html.replace(islandPattern, `$1${payload}$4`);
+  const liveCursorIds = new Set(interactions.map((interaction) => interaction.cursorId));
+  const orphanCursorIds = draft.storyboard
+    .flatMap((scene) => scene.interactions ?? [])
+    .filter((interaction) => removed.has(interaction.id))
+    .map((interaction) => interaction.cursorId)
+    .filter((cursorId) => !liveCursorIds.has(cursorId));
+  if (orphanCursorIds.length) {
+    const selectors = [...new Set(orphanCursorIds)]
+      .map((cursorId) =>
+        `[data-cursor-id="${cursorId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`
+      )
+      .join(",");
+    html = html.replace(
+      /<\/head>/i,
+      `<style data-sequences-quarantine>${selectors}{display:none!important}</style></head>`,
+    );
+  }
+  return { draft: { storyboard, html }, removedIds };
+}
+
+async function recoverByQuarantiningInteractions(
+  projectDir: string,
+  candidate: {
+    draft: DirectCompositionDraft;
+    raw: string;
+    browserQa: DirectBrowserQaResult;
+  },
+): Promise<CompositionRunResult | undefined> {
+  const quarantined = quarantineFailedInteractions(
+    candidate.draft,
+    candidate.browserQa.issues,
+  );
+  if (!quarantined.removedIds.length) return undefined;
+  process.stderr.write(
+    `[author] quarantining ${quarantined.removedIds.length} persistently invalid optional ` +
+      `interaction(s): ${quarantined.removedIds.join(", ")}\n`,
+  );
+  const validation = await validateDirectComposition(projectDir, quarantined.draft);
+  if (!validation.ok) return undefined;
+  const browserQa = await inspectDirectComposition(projectDir, quarantined.draft, {
+    captureGuide: false,
+  });
+  if (!browserQa.ok) return undefined;
+  return {
+    draft: quarantined.draft,
+    raw: candidate.raw,
+    attempts: 3,
+  };
 }
 
 function availableAssets(projectDir: string): string {
@@ -1274,6 +1391,11 @@ export async function requestDirectComposition(
   let compact = false;
   let lastError: unknown;
   let lastBrowserValid: CompositionRunResult | undefined;
+  const interactionFallbacks: Array<{
+    draft: DirectCompositionDraft;
+    raw: string;
+    browserQa: DirectBrowserQaResult;
+  }> = [];
   const structuredPatches = supportsStructuredOutputs(provider);
   // One initial authoring pass plus at most two bounded repairs.
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -1348,6 +1470,16 @@ export async function requestDirectComposition(
       const browserQa = await inspectDirectComposition(args.projectDir, draft, {
         captureGuide: false,
       });
+      if (
+        !browserQa.ok &&
+        browserQa.issues.some((issue) =>
+          issue.severity === "error" &&
+          issue.code.startsWith("interaction_") &&
+          Boolean(issue.interactionId)
+        )
+      ) {
+        interactionFallbacks.push({ draft, raw, browserQa });
+      }
       if (browserQa.ok) {
         lastBrowserValid = { draft, raw, attempts: attempt };
       }
@@ -1399,6 +1531,13 @@ export async function requestDirectComposition(
         `${lastBrowserValid.attempts}/3 instead\n`,
     );
     return { ...lastBrowserValid, attempts: 3 };
+  }
+  // Work backwards from the newest statically valid candidate. This also
+  // recovers when a later model patch was malformed: optional interaction
+  // drift cannot erase the last healthy core composition.
+  for (const candidate of interactionFallbacks.reverse()) {
+    const recovered = await recoverByQuarantiningInteractions(args.projectDir, candidate);
+    if (recovered) return recovered;
   }
   throw new Error(
     `direct HyperFrames authoring failed after two bounded repairs: ${

@@ -261,7 +261,9 @@ describe("direct layout inspector", () => {
     async () => {
       const result = await inspectDirectComposition(projectDir(), interactionDraft(4));
       expect(result.ok).toBe(false);
-      expect(result.issues.some((issue) => issue.code === "interaction_target_miss")).toBe(true);
+      expect(result.issues.some((issue) =>
+        issue.code === "interaction_target_miss" && issue.interactionId === "feature-click"
+      )).toBe(true);
       expect(result.errors.some((error) => error.includes("interaction_target_miss"))).toBe(true);
     },
     30_000,

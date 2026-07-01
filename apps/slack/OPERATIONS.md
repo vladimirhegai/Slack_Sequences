@@ -180,6 +180,8 @@ SLACK_SEQUENCES_PROVIDER=openrouter-api
 OPENROUTER_API_KEY=sk-or-v1-...
 # SEQUENCES_OPENROUTER_MODEL=deepseek/deepseek-v4-pro
 # SLACK_SEQUENCES_LIGHT_MODEL=deepseek/deepseek-v4-flash
+# SLACK_SEQUENCES_STORYBOARD_MODEL=z-ai/glm-5.2 # default; reasoning-enabled
+#   cut/storyboard pass only. Set "primary" to opt out.
 # SLACK_SEQUENCES_REPAIR_MODEL=... # optional; unset keeps structural repair on Pro
 # SLACK_SEQUENCES_INTERACTION_QA=enforce
 

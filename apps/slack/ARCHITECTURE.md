@@ -181,9 +181,11 @@ Two different LLMs run, on two different providers; keep them distinct:
 
 The live reliability boundary is deliberate: Flash may make the small bounded
 `frame.md` art-direction choice because it has a deterministic preset fallback.
-Required storyboard, full-document authoring, and exact repairs stay on the
-primary model by default with reasoning off; operators can explicitly assign a
-separate model to storyboard or patch-only work. Create retrieval is capped near
+On OpenRouter, the required cut/storyboard decision uses one reasoning-enabled
+`z-ai/glm-5.2` call by default; this is the small, high-leverage creative task.
+Full-document authoring and exact repairs stay on the primary DeepSeek model
+with reasoning off. Operators can set the storyboard model to `primary` or
+explicitly assign another model. Create retrieval is capped near
 28K characters and authored source targets 32K characters per document. Small
 machine-readable artifacts use provider-native strict JSON schemas. Repairs are
 exact, validated search/replace patches capped at 4K output tokens instead of
@@ -462,7 +464,11 @@ Cursor-enabled shots additionally use the local, versioned
 target aim, press, drag endpoint, and ripple resolve from live deterministic
 geometry. Interaction times are first-class QA samples, misses/occlusion/camera
 coupling are hard contract failures, and revision checkpoints retain the runtime
-hash plus compact spatial evidence.
+hash plus compact spatial evidence. Interactions are optional typed enhancements:
+after bounded author repair, browser-proven invalid interactions are quarantined
+individually from both storyboard and HTML binding, followed by fresh static and
+browser validation. Healthy interactions and the complete visual film remain
+unchanged; browser/runtime faults are never quarantined.
 
 For the hackathon artifact, HyperFrames runtime packages remain exactly pinned
 at `0.6.86`; startup rejects version drift. Browser QA uses committed local

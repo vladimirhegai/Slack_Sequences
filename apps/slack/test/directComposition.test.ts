@@ -10,6 +10,7 @@ import {
   applyCompositionRepair,
   parseCompositionResponse,
   parseStoryboardResponse,
+  quarantineFailedInteractions,
   requestDirectComposition,
   requestStoryboardPlan,
 } from "../src/engine/compositionRunner.ts";
@@ -419,7 +420,7 @@ describe("direct HyperFrames composition", () => {
     );
   });
 
-  it("keeps the required storyboard artifact on the primary model with reasoning off", async () => {
+  it("routes the high-leverage storyboard pass to reasoning-enabled GLM 5.2", async () => {
     const dir = projectDir();
     const complete = vi.fn().mockResolvedValue(
       `<storyboard_json>${JSON.stringify(storyboard())}</storyboard_json>`,
@@ -443,10 +444,10 @@ describe("direct HyperFrames composition", () => {
       responseFormat?: { type?: string; json_schema?: { name?: string } };
     };
     expect(options).toMatchObject({
-      maxTokens: 4_096,
-      thinkingMode: "none",
+      maxTokens: 8_192,
+      thinkingMode: "enabled",
+      model: "z-ai/glm-5.2",
     });
-    expect(options.model).toBeUndefined();
     expect(options.responseFormat).toMatchObject({
       type: "json_schema",
       json_schema: { name: "sequences_storyboard" },
@@ -476,6 +477,31 @@ describe("direct HyperFrames composition", () => {
       maxTokens: 4_096,
       thinkingMode: "none",
     });
+  });
+
+  it("lets operators keep the primary authoring model for storyboard work", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_STORYBOARD_MODEL", "primary");
+    const dir = projectDir();
+    const complete = vi.fn().mockResolvedValue(
+      `<storyboard_json>${JSON.stringify(storyboard())}</storyboard_json>`,
+    );
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    await requestStoryboardPlan(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+    });
+    expect(complete.mock.calls[0]?.[1]).toMatchObject({
+      maxTokens: 4_096,
+      thinkingMode: "none",
+    });
+    expect((complete.mock.calls[0]?.[1] as { model?: string }).model).toBeUndefined();
   });
 
   it("retries the storyboard pass through a transient provider timeout", async () => {
@@ -656,6 +682,68 @@ describe("direct HyperFrames composition", () => {
     );
     expect(repaired.html).toContain("#22d3ee");
     expect(repaired.html).toContain('class="scene clip"');
+  });
+
+  it("quarantines only the browser-proven broken optional interaction", () => {
+    const value = draft();
+    const interactions = [
+      {
+        version: 1 as const,
+        id: "broken-click",
+        sceneId: "payoff",
+        cursorId: "pointer",
+        targetPart: "primary-action",
+        action: "click" as const,
+        startSec: 4.4,
+        arriveSec: 5,
+        pressSec: 5.1,
+        releaseSec: 5.25,
+        from: "frame:bottom-right" as const,
+        path: "human" as const,
+        aimX: 0.5,
+        aimY: 0.5,
+        feedback: "press" as const,
+      },
+      {
+        version: 1 as const,
+        id: "healthy-hover",
+        sceneId: "payoff",
+        cursorId: "pointer",
+        targetPart: "secondary-action",
+        action: "hover" as const,
+        startSec: 5.4,
+        arriveSec: 6,
+        from: "part:primary-action" as const,
+        path: "arc" as const,
+        aimX: 0.5,
+        aimY: 0.5,
+        feedback: "none" as const,
+      },
+    ];
+    value.storyboard[1]!.interactions = interactions;
+    value.html = value.html.replace(
+      "<script>\n    window.__timelines",
+      `<script type="application/json" id="sequences-interactions">${
+        JSON.stringify({ version: 1, interactions })
+      }</script>\n  <script>\n    window.__timelines`,
+    );
+    const result = quarantineFailedInteractions(value, [{
+      code: "interaction_not_visible",
+      severity: "error",
+      time: 5.1,
+      interactionId: "broken-click",
+      selector: "#primary-action",
+      message: "Cursor or target is not visible during press.",
+      source: "sequences",
+    }]);
+    expect(result.removedIds).toEqual(["broken-click"]);
+    expect(result.draft.storyboard[1]!.interactions?.map((entry) => entry.id))
+      .toEqual(["healthy-hover"]);
+    expect(result.draft.html).not.toContain('"id":"broken-click"');
+    expect(result.draft.html).toContain('"id":"healthy-hover"');
+    expect(result.draft.html).not.toContain("data-sequences-quarantine");
+    expect(result.draft.html.replace(/sequences-interactions[\s\S]*/, ""))
+      .toBe(value.html.replace(/sequences-interactions[\s\S]*/, ""));
   });
 
   it("reserves the completion budget for source instead of DeepSeek reasoning", async () => {
@@ -1101,6 +1189,101 @@ describe("direct HyperFrames composition", () => {
     expect(result.draft.html).toContain('data-part="primary-action-ripple"');
     expect(result.draft.html).toContain('<script src="sequences-interactions.v1.js"></script>');
     expect(result.draft.html).toContain("SequencesInteractions.compile");
+  });
+
+  it("publishes the healthy film after bounded repairs cannot fix an optional interaction", async () => {
+    const dir = projectDir();
+    const value = draft();
+    value.storyboard[1]!.interactions = [{
+      version: 1,
+      id: "payoff-click",
+      sceneId: "payoff",
+      cursorId: "pointer",
+      targetPart: "primary-action",
+      action: "click",
+      startSec: 4.4,
+      arriveSec: 5,
+      pressSec: 5.1,
+      releaseSec: 5.25,
+      from: "frame:bottom-right",
+      path: "human",
+      aimX: 0.5,
+      aimY: 0.5,
+      feedback: "press",
+    }];
+    value.html = value.html
+      .replace(
+        '<div class="panel" data-layout-important data-layout-anchor="frame:center"><h1 id="payoff-title">',
+        '<div data-camera-world><div class="panel" data-part="primary-action" data-layout-important data-layout-anchor="frame:center"><h1 id="payoff-title">',
+      )
+      .replace(
+        '<p>Ship with nerve.</p></div>\n    </section>',
+        '<p>Ship with nerve.</p></div></div><div data-camera-overlay>' +
+          '<i data-cursor-id="pointer" style="position:absolute;left:0;top:0;' +
+          'width:24px;height:24px;pointer-events:none"></i></div>\n    </section>',
+      );
+    const inspector = vi.mocked(inspectDirectComposition);
+    const priorImplementation = inspector.getMockImplementation();
+    inspector.mockImplementation(async (_projectDir, candidate) => {
+      const hasInteraction = candidate.storyboard.some((scene) => scene.interactions?.length);
+      return hasInteraction
+        ? {
+            ok: false,
+            strictOk: false,
+            samples: [5.1],
+            issues: [{
+              code: "interaction_not_visible",
+              severity: "error",
+              time: 5.1,
+              interactionId: "payoff-click",
+              selector: "#primary-action",
+              message: "Cursor or target is not visible during press.",
+              source: "sequences",
+            }],
+            errors: ["interaction_not_visible #primary-action"],
+            warnings: [],
+          }
+        : {
+            ok: true,
+            strictOk: true,
+            samples: [0, 2, 4, 6, 8],
+            issues: [],
+            errors: [],
+            warnings: [],
+          };
+    });
+    try {
+      const noOpPatch = JSON.stringify({
+        patches: [{ search: "Ship with nerve.", replace: "Ship with nerve." }],
+      });
+      const complete = vi.fn()
+        .mockResolvedValueOnce(response(value))
+        .mockResolvedValueOnce(noOpPatch)
+        .mockResolvedValueOnce(noOpPatch);
+      const provider: AgentProvider = {
+        id: "openrouter-api",
+        label: "test author",
+        kind: "api",
+        detect: async () => ({ available: true, detail: "test" }),
+        complete,
+      };
+      const result = await requestDirectComposition(provider, {
+        brief: "Launch Relay",
+        projectDir: dir,
+        skills: skills(),
+        lockedStoryboard: value.storyboard,
+      });
+      expect(result.attempts).toBe(3);
+      expect(complete).toHaveBeenCalledTimes(3);
+      expect(result.draft.storyboard[1]!.interactions).toBeUndefined();
+      expect(result.draft.html).toContain('"interactions":[]');
+      expect(result.draft.html).toContain(
+        '[data-cursor-id="pointer"]{display:none!important}',
+      );
+      expect(result.draft.html).toContain("Ship with nerve.");
+    } finally {
+      inspector.mockImplementation(priorImplementation!);
+    }
   });
 
   it("passes deterministic validation and checkpoints exact revisions", async () => {
