@@ -68,4 +68,20 @@ tl.fromTo("#close-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: .4
     expect(report.warnings).toEqual([]);
     expect(report.sceneReports.map((scene) => scene.backHalfBeatCount)).toEqual([1, 1, 1]);
   });
+
+  it("assigns exact boundary tweens to the scene beginning at that boundary", () => {
+    const report = analyzeMotionDensity(html(`
+tl.fromTo("#signal-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .7 }, 0);
+tl.fromTo("#signal-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: .45 }, 1.2);
+tl.fromTo("#signal-copy", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: .45 }, 2.8);
+tl.fromTo("#proof-title", { x: 80, opacity: 0 }, { x: 0, opacity: 1, duration: .7 }, 5);
+tl.fromTo("#proof-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: .45 }, 6.2);
+tl.fromTo("#proof-copy", { scale: .92, opacity: 0 }, { scale: 1, opacity: 1, duration: .5 }, 7.8);
+tl.fromTo("#close-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .7 }, 10);
+tl.fromTo("#close-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: .45 }, 11.2);
+tl.fromTo("#close-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: .45 }, 12.8);
+`), scenes, 15);
+    expect(report.sceneReports.map((scene) => scene.authoredBeatCount)).toEqual([3, 3, 3]);
+    expect(report.warnings).toEqual([]);
+  });
 });

@@ -28,13 +28,15 @@ const closeInteraction = {
   path: "human" as const,
   bend: -0.14,
   ease: "power3.out",
-  aimX: 0.56,
-  aimY: 0.48,
-  offsetX: 3,
+  aimX: 0.9,
+  aimY: 0.86,
+  offsetX: 0,
   offsetY: -2,
   hitInsetPx: 6,
   feedback: "press-ripple" as const,
   ripplePart: "primary-action-ripple",
+  cursorScale: 1,
+  targetScale: 1,
 };
 
 const storyboard = [

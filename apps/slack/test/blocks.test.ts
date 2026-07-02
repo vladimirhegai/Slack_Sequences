@@ -55,7 +55,7 @@ describe("Slack blocks", () => {
 
     expect(headline("rendering")).toContain("Rendering the video");
     expect(headline("ready")).toContain("is ready");
-    expect(headline("unavailable")).toContain("Couldn’t render");
+    expect(headline("unavailable")).toContain("Couldn't render");
   });
 
   it("shows an argument-free final build trace and retrieved skill context", () => {
@@ -76,8 +76,8 @@ describe("Slack blocks", () => {
     const text = JSON.stringify(blocks);
 
     expect(text).toContain("Build trace");
-    expect(text).toContain("`submit_plan` ✓ 42ms");
-    expect(text).toContain("`render` ↪ local fallback 81ms");
+    expect(text).toContain("`submit_plan` ok 42ms");
+    expect(text).toContain("`render` local fallback 81ms");
     expect(text).toContain("Agent context");
     expect(text).toContain("`/product-launch-video`");
     expect(text).toContain("Reply in this thread to revise");

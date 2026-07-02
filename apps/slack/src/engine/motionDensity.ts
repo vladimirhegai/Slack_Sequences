@@ -54,8 +54,12 @@ function sceneEnd(scene: DirectScene): number {
 }
 
 function sceneAt(scenes: DirectScene[], time: number): DirectScene | undefined {
+  const boundaryScene = scenes.find((scene) =>
+    Math.abs(time - scene.startSec) <= 0.01
+  );
+  if (boundaryScene) return boundaryScene;
   return scenes.find((scene) =>
-    time >= scene.startSec - 0.01 && time <= sceneEnd(scene) + 0.01
+    time >= scene.startSec - 0.01 && time < sceneEnd(scene) + 0.01
   );
 }
 

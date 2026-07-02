@@ -1,5 +1,5 @@
 /**
- * Block Kit builders — the Slack-native UI. Kept declarative + typed against
+ * Block Kit builders - the Slack-native UI. Kept declarative + typed against
  * @slack/bolt so the modal and result message stay valid Block Kit.
  */
 import type { KnownBlock, View } from "@slack/types";
@@ -23,9 +23,9 @@ export interface ModalContext {
 }
 
 const TONE_OPTIONS: Array<{ value: Tone; label: string }> = [
-  { value: "crisp-saas", label: "Crisp & precise — dev tools / B2B" },
-  { value: "warm-startup", label: "Warm & friendly — startup" },
-  { value: "bold-launch", label: "Bold & high-energy — launch" },
+  { value: "crisp-saas", label: "Crisp & precise - dev tools / B2B" },
+  { value: "warm-startup", label: "Warm & friendly - startup" },
+  { value: "bold-launch", label: "Bold & high-energy - launch" },
 ];
 
 const LENGTH_OPTIONS = [15, 30, 45, 60];
@@ -42,18 +42,22 @@ function codeBlock(text: string): string {
   return "```\n" + text.replaceAll("```", "'''").slice(0, 2_500) + "\n```";
 }
 
-const STATUS_ICON: Record<CheckStatus, string> = { ok: "✅", warn: "⚠️", fail: "❌" };
+const STATUS_ICON: Record<CheckStatus, string> = {
+  ok: ":white_check_mark:",
+  warn: ":warning:",
+  fail: ":x:",
+};
 
 /** Render a `/sequences mcp-test` self-check report as a compact Block Kit board. */
 export function diagnosticsBlocks(report: DiagnosticsReport): KnownBlock[] {
   const headline = report.healthy
-    ? "✅ *All core services healthy* — good to continue."
-    : "❌ *Some core services need attention.*";
+    ? ":white_check_mark: *All core services healthy* - good to continue."
+    : ":x: *Some core services need attention.*";
   const lines = report.checks
-    .map((check) => `${STATUS_ICON[check.status]} *${escapeMrkdwn(check.label)}* — ${escapeMrkdwn(check.detail)}`)
+    .map((check) => `${STATUS_ICON[check.status]} *${escapeMrkdwn(check.label)}* - ${escapeMrkdwn(check.detail)}`)
     .join("\n");
   return [
-    { type: "header", text: plain("🩺 Sequences self-check") },
+    { type: "header", text: plain("Sequences self-check") },
     { type: "section", text: { type: "mrkdwn", text: headline } },
     { type: "divider" },
     { type: "section", text: { type: "mrkdwn", text: lines } },
@@ -85,7 +89,7 @@ export function buildCreateModal(ctx: ModalContext): View {
           type: "mrkdwn",
           text:
             ":clapper: *Turn your launch into a short, on-brand video.*\n" +
-            "Give me the essentials — I'll draft a storyboard, render a draft MP4, and you can revise it right in the thread.",
+            "Give me the essentials - I'll draft a storyboard, render a draft MP4, and you can revise it right in the thread.",
         },
       },
       { type: "divider" },
@@ -190,7 +194,7 @@ export function buildReviseModal(jobId: string): View {
         elements: [
           {
             type: "mrkdwn",
-            text: ":pencil2: Describe the change in plain language — I'll re-plan only what's needed and re-render.",
+            text: ":pencil2: Describe the change in plain language - I'll re-plan only what's needed and re-render.",
           },
         ],
       },
@@ -209,13 +213,13 @@ export function buildReviseModal(jobId: string): View {
   };
 }
 
-export function buildingBlocks(title: string, note = "Getting the launch details into focus…"): KnownBlock[] {
+export function buildingBlocks(title: string, note = "Getting the launch details into focus..."): KnownBlock[] {
   return [
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `:clapper: *Building “${escapeMrkdwn(title)}”*`,
+        text: `:clapper: *Building "${escapeMrkdwn(title)}"*`,
       },
     },
     {
@@ -254,23 +258,23 @@ export function thinkingStepsBlocks(title: string, steps: ThinkingStep[]): Known
             : ":x:";
     const suffix =
       step.state === "running"
-        ? "running…"
+        ? "running..."
         : step.state === "fallback"
-          ? `local fallback${step.durationMs !== undefined ? ` · ${step.durationMs}ms` : ""}`
+          ? `local fallback${step.durationMs !== undefined ? ` - ${step.durationMs}ms` : ""}`
           : step.state === "failed"
             ? "unavailable"
             : step.durationMs !== undefined
               ? `${step.durationMs}ms`
               : "done";
     const quality = step.tool === "render" && step.quality ? ` (${step.quality})` : "";
-    return `${icon} \`${step.tool}\` — ${TOOL_LABELS[step.tool]}${quality} · ${suffix}`;
+    return `${icon} \`${step.tool}\` - ${TOOL_LABELS[step.tool]}${quality} - ${suffix}`;
   });
   return [
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `:sparkles: *Thinking steps for “${escapeMrkdwn(title)}”*\n${lines.join("\n")}`,
+        text: `:sparkles: *Thinking steps for "${escapeMrkdwn(title)}"*\n${lines.join("\n")}`,
       },
     },
   ];
@@ -278,9 +282,9 @@ export function thinkingStepsBlocks(title: string, steps: ThinkingStep[]): Known
 
 /**
  * The two-tier delivery stages, in order:
- *  - `rendering`    — storyboard + thumbnails are up; the MP4 is still rendering.
- *  - `ready`        — the draft MP4 has been uploaded below.
- *  - `unavailable`  — render host couldn't produce the MP4; thumbnails stand.
+ *  - `rendering`    - storyboard + thumbnails are up; the MP4 is still rendering.
+ *  - `ready`        - the draft MP4 has been uploaded below.
+ *  - `unavailable`  - render host couldn't produce the MP4; thumbnails stand.
  */
 export type VideoStage = "rendering" | "ready" | "unavailable";
 
@@ -312,10 +316,10 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
   const title = escapeMrkdwn(view.title);
   const headline =
     view.videoStage === "ready"
-      ? `:movie_camera: *“${title}” is ready* — draft below.`
+      ? `:movie_camera: *"${title}" is ready* - draft below.`
       : view.videoStage === "unavailable"
-        ? `:movie_camera: *“${title}” — storyboard ready.* Couldn’t render the video on this host; thumbnails above.`
-        : `:hourglass_flowing_sand: *“${title}” — storyboard ready.* Rendering the video…`;
+        ? `:movie_camera: *"${title}" - storyboard ready.* Couldn't render the video on this host; thumbnails above.`
+        : `:hourglass_flowing_sand: *"${title}" - storyboard ready.* Rendering the video...`;
   const path = view.usedMcp ? "through an MCP-first lifecycle" : "through the in-process engine";
   const planned = view.usedPreset
     ? `curated demo plan ${path}`
@@ -323,16 +327,16 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
   const buildTrace = (view.toolCalls ?? [])
     .map((call) => {
       const mark =
-        call.status === "succeeded" ? "✓" : call.status === "fallback" ? "↪ local fallback" : "✕ unavailable";
+        call.status === "succeeded" ? "ok" : call.status === "fallback" ? "local fallback" : "unavailable";
       return `\`${call.tool}\` ${mark} ${call.durationMs}ms`;
     })
-    .join("  ·  ");
-  const skillReceipt = (view.skillsUsed ?? []).map((name) => `\`/${name}\``).join(" · ");
-  const slackReceipt = (view.slackMcpTools ?? []).map((name) => `\`${name}\``).join(" · ");
+    .join("  -  ");
+  const skillReceipt = (view.skillsUsed ?? []).map((name) => `\`/${name}\``).join(" - ");
+  const slackReceipt = (view.slackMcpTools ?? []).map((name) => `\`${name}\``).join(" - ");
   const frameReceipt = view.frame
-    ? `*Design system*  ·  \`${escapeMrkdwn(view.frame.label)}\` (${view.frame.basis}) · ${
+    ? `*Design system*  -  \`${escapeMrkdwn(view.frame.label)}\` (${view.frame.basis}) - ${
         view.frame.brandMatched ? "brand-matched palette + type" : "house preset"
-      } · frame.md attached`
+      } - frame.md attached`
     : "";
   return [
     { type: "section", text: { type: "mrkdwn", text: headline } },
@@ -341,13 +345,13 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
     {
       type: "context",
       elements: [
-        { type: "mrkdwn", text: `${view.lint}  ·  ${planned}` },
+        { type: "mrkdwn", text: `${view.lint}  -  ${planned}` },
       ],
     },
     ...(buildTrace
       ? [{
           type: "context" as const,
-          elements: [{ type: "mrkdwn" as const, text: `*Build trace*  ·  ${buildTrace}` }],
+          elements: [{ type: "mrkdwn" as const, text: `*Build trace*  -  ${buildTrace}` }],
         }]
       : []),
     ...(frameReceipt
@@ -359,13 +363,13 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
     ...(skillReceipt
       ? [{
           type: "context" as const,
-          elements: [{ type: "mrkdwn" as const, text: `*Agent context*  ·  ${skillReceipt}` }],
+          elements: [{ type: "mrkdwn" as const, text: `*Agent context*  -  ${skillReceipt}` }],
         }]
       : []),
     ...(slackReceipt
       ? [{
           type: "context" as const,
-          elements: [{ type: "mrkdwn" as const, text: `*Slack context (hosted MCP)*  ·  ${slackReceipt}` }],
+          elements: [{ type: "mrkdwn" as const, text: `*Slack context (hosted MCP)*  -  ${slackReceipt}` }],
         }]
       : []),
     ...(view.slackMcpNote
@@ -379,7 +383,7 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
       elements: [
         {
           type: "mrkdwn",
-          text: ":left_speech_bubble: Reply in this thread to revise — try “make it shorter”, “warmer”, or “punchier”.",
+          text: ':left_speech_bubble: Reply in this thread to revise - try "make it shorter", "warmer", or "punchier".',
         },
       ],
     },
@@ -399,7 +403,7 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
           text: plain("Undo"),
           value: view.jobId,
         },
-        // Sharing a not-yet-rendered reel would be a lie — offer it only when ready.
+        // Sharing a not-yet-rendered reel would be a lie; offer it only when ready.
         ...(view.videoStage === "ready"
           ? [
               ...(view.renderQuality === "high"
@@ -431,7 +435,7 @@ export function hdReadyBlocks(jobId: string, title: string): KnownBlock[] {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `:high_brightness: *“${escapeMrkdwn(title)}” is ready in HD.* Future shares use this version.`,
+        text: `:high_brightness: *"${escapeMrkdwn(title)}" is ready in HD.* Future shares use this version.`,
       },
     },
     {
@@ -495,7 +499,7 @@ export function errorBlocks(title: string, message: string): KnownBlock[] {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `:warning: *Couldn’t build “${escapeMrkdwn(title)}”*\n${codeBlock(message)}`,
+        text: `:warning: *Couldn't build "${escapeMrkdwn(title)}"*\n${codeBlock(message)}`,
       },
     },
     {
