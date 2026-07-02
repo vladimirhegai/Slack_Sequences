@@ -182,6 +182,41 @@ of ownership:
   hand-write or alter them; never spend your output budget re-implementing a
   boundary the cut plan already owns.
 
+## Cinematography — the host light kit
+
+The host injects the `sequences-cinema.v1` stylesheet (an inline
+`<style id="sequences-cinema">` block) into every composition. It is a
+lighting model, not decoration; use it instead of re-inventing these effects.
+Never author or edit that style block yourself — reference its classes:
+
+- **Automatic film floor.** Grain and a corner vignette are applied to the
+  composition root by the kit. Do not author your own grain, noise data-URIs,
+  or full-frame vignettes.
+- **Materials.** Give every card, window, panel, player, or product surface
+  `.material` (or `.material-hero` for the one dominant surface of a shot).
+  It layers a top-light sheen, hairline edge, rim highlight, and grounded
+  shadow over your `--surface` color. Use `.material-chrome` for
+  header/toolbar bands and `.inset-well` for composers, inputs, terminals.
+  A flat `background: var(--surface)` rectangle reads as a slide — always
+  give a real surface a light response.
+- **Key light.** One `<div class="keylight keylight-tl" data-layout-ignore>`
+  (tl/tr/c/bl/br) per scene puts a soft directional light field behind the
+  content. Choose the corner that supports the composition's weight.
+- **Bloom.** `.bloom` is a soft halo: position one absolutely behind the hero
+  metric, mark, or player (decoration; `data-layout-ignore`). One per scene at
+  most.
+- **Grades — the color script.** Add one grade class to a scene wrapper:
+  `.grade-cold`, `.grade-neutral`, `.grade-warm`, or `.grade-noir`. Grades
+  retint the scene's key light and bloom and lay a near-transparent wash, so
+  the film has a color arc instead of one flat palette held for the whole
+  duration. Assign them as an arc that serves the story — e.g. cold problem
+  scenes → neutral turn → warm payoff — never at random. Grade classes own the
+  scene wrapper's `::after`; don't author another `::after` on a graded scene
+  wrapper.
+- The kit reads `--cinema-*` variables; when frame.md supplies a
+  cinematography block, copy those variable values onto your root selector
+  with the rest of the palette tokens.
+
 ## Color
 
 - One accent hue, committed to fully. Tint neutrals toward it — dead gray

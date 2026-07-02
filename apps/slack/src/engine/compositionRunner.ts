@@ -35,6 +35,12 @@ import {
   resolveCutPlan,
 } from "./cutContract.ts";
 import {
+  CINEMA_KIT_FILE,
+  CINEMA_KIT_VERSION,
+  injectCinemaKit,
+} from "./cinemaKit.ts";
+import { readFrameMeta } from "./frameDesign.ts";
+import {
   creativeModel,
   creativeThinkingMode,
   productionModel,
@@ -57,7 +63,10 @@ const COMPACT_SKILL_BUDGET_CHARS = 16_000;
 const REPAIR_MAX_TOKENS = 4_096;
 const MAX_REPAIR_PATCHES = 16;
 const STORYBOARD_MAX_TOKENS = 4_096;
-const REASONING_STORYBOARD_MAX_TOKENS = 8_192;
+// GLM spends its budget on reasoning before the compact JSON artifact; its
+// provider ceiling is ~33K output tokens, so give the reasoning storyboard
+// enough room that a long think cannot truncate the artifact.
+const REASONING_STORYBOARD_MAX_TOKENS = 16_384;
 const MAX_AUTHOR_SEGMENTS = 3;
 
 function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat"]> {
@@ -1006,6 +1015,32 @@ function applyDeterministicSourceRepairs(
         `[author] injected ${repairedCuts} deterministic cut binding(s) for ` +
           `${cutPlan.cuts.length} typed boundary cut(s)\n`,
       );
+    }
+  }
+  // The cinematography kit (grain/vignette, key lights, materials, grades) is
+  // host-owned static CSS. Injecting it inline means every live film gets the
+  // baseline filmic floor and the author's kit classes always resolve.
+  {
+    const withKit = injectCinemaKit(html);
+    if (withKit !== html) {
+      html = withKit;
+      process.stderr.write(
+        `[author] injected host cinematography kit ${CINEMA_KIT_FILE} v${CINEMA_KIT_VERSION}\n`,
+      );
+    }
+  }
+  if (readFrameMeta(projectDir)?.basis === "light" && !/\bcinema-light\b/.test(html)) {
+    const rootTag = /<[a-z][\w:-]*\b[^>]*\bdata-composition-id\s*=[^>]*>/i.exec(html);
+    if (rootTag) {
+      const tag = rootTag[0];
+      const withClass = /\bclass\s*=\s*(["'])/i.test(tag)
+        ? tag.replace(/\bclass\s*=\s*(["'])/i, 'class=$1cinema-light ')
+        : tag.replace(/>$/, ' class="cinema-light">');
+      if (withClass !== tag) {
+        html = html.slice(0, rootTag.index) + withClass +
+          html.slice(rootTag.index + tag.length);
+        process.stderr.write("[author] applied light-basis cinematography overrides\n");
+      }
     }
   }
   return html === draft.html ? draft : { ...draft, html };

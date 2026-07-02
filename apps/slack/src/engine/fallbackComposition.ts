@@ -1,3 +1,4 @@
+import { cinemaKitStyleTag } from "./cinemaKit.ts";
 import type { DirectCompositionDraft, DirectScene } from "./directComposition.ts";
 
 interface FallbackCompositionArgs {
@@ -115,10 +116,10 @@ export function buildFallbackComposition(
   const cut = (value: number): string => Math.max(0, value - 0.01).toFixed(2);
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=1920, height=1080">
-<title>${product} launch</title><script src="gsap.min.js"></script><style>
+<title>${product} launch</title><script src="gsap.min.js"></script>${cinemaKitStyleTag()}<style>
 *{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:${bg}}
 body{color:${foreground};font-family:${body},Arial,sans-serif}
-#root{--space-safe:72px;--space-region:64px;--space-element:28px;position:relative;width:1920px;height:1080px;overflow:hidden;background:radial-gradient(circle at 80% 12%,${surface},${bg} 52%)}
+#root{--space-safe:72px;--space-region:64px;--space-element:28px;--surface:${surface};position:relative;width:1920px;height:1080px;overflow:hidden;background:radial-gradient(circle at 80% 12%,${surface},${bg} 52%)}
 .scene{position:absolute;inset:0;padding:96px;display:grid;min-width:0;min-height:0;opacity:0}
 .layout-editorial-left{grid-template-columns:minmax(0,7fr) minmax(0,5fr);align-items:end;gap:var(--space-region)}
 .layout-split{grid-template-columns:minmax(0,5fr) minmax(0,7fr);align-items:center;gap:var(--space-region)}
@@ -128,19 +129,21 @@ body{color:${foreground};font-family:${body},Arial,sans-serif}
 h1,h2,p{margin:0}h1,h2{font-family:${display},${body},sans-serif;letter-spacing:-.055em}
 h1{max-width:11ch;font-size:150px;line-height:.88}h2{max-width:15ch;font-size:92px;line-height:.96}
 .mark{justify-self:end;color:${accent};font-size:230px;font-weight:900;line-height:.8;opacity:.16}
-.proof{padding:54px;border:1px solid color-mix(in srgb,${accent} 35%,transparent);border-radius:32px;background:${surface};box-shadow:0 36px 100px #0008}
+.proof{padding:54px;border-radius:32px}
 .audience{max-width:24ch;color:${muted};font-size:38px;line-height:1.2}.lockup{font-size:52px;font-weight:900;letter-spacing:-.04em}
 .cta{padding:28px 48px;border-radius:999px;background:${accent};color:${accentText};font-size:48px;font-weight:850}
 </style></head><body>
 <main id="root" data-composition-id="${compositionId}" data-width="1920" data-height="1080" data-duration="${duration}">
 <section id="fallback-hook" class="scene clip layout-editorial-left" data-scene="fallback-hook" data-start="0" data-duration="${first}" data-track-index="1">
+<div class="keylight keylight-tl" data-layout-ignore></div>
 <div class="zone stack" data-layout-important><div class="eyebrow">Now shipping</div><h1 data-part="release-headline">${product}</h1></div><div class="mark zone" aria-hidden="true">${product.slice(0, 1)}</div>
 </section>
 <section id="fallback-proof" class="scene clip layout-split" data-scene="fallback-proof" data-start="${starts[1]}" data-duration="${second}" data-track-index="1">
 <div class="zone stack"><div class="eyebrow">What changed</div><p class="audience">Built for ${audience}</p></div>
-<div class="zone proof" data-layout-important data-part="release-proof"><h2>${shipped}</h2></div>
+<div class="zone proof material-hero" data-layout-important data-part="release-proof"><h2>${shipped}</h2></div>
 </section>
 <section id="fallback-close" class="scene clip layout-center-stack" data-scene="fallback-close" data-start="${starts[2]}" data-duration="${third}" data-track-index="1">
+<span class="bloom" style="width:900px;height:900px;left:50%;top:40%;transform:translate(-50%,-50%)" data-layout-ignore></span>
 <div class="zone stack" data-layout-important data-layout-anchor="frame:center"><div class="lockup">${product}</div><div class="cta" data-part="release-cta">See what shipped</div></div>
 </section></main><script>
 window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
@@ -149,7 +152,7 @@ tl.set("#fallback-proof",{opacity:1},${starts[1]}).set("#fallback-proof",{opacit
 tl.set("#fallback-close",{opacity:1},${starts[2]}).set("#fallback-close",{opacity:0},${duration});
 tl.fromTo("#fallback-hook .stack",{y:80,opacity:0},{y:0,opacity:1,duration:.8,ease:"power4.out"},.15);
 tl.fromTo("#fallback-proof .proof",{x:120,opacity:0},{x:0,opacity:1,duration:.9,ease:"power4.out"},${(starts[1]! + 0.2).toFixed(2)});
-tl.fromTo("#fallback-close .zone",{scale:.84,opacity:0},{scale:1,opacity:1,duration:.75,ease:"back.out(1.5)"},${(starts[2]! + 0.2).toFixed(2)});
+tl.fromTo("#fallback-close .zone",{scale:.9,opacity:0},{scale:1,opacity:1,duration:.75,ease:"power4.out"},${(starts[2]! + 0.2).toFixed(2)});
 window.__timelines["${compositionId}"]=tl;tl.seek(0);
 </script></body></html>`;
   return { storyboard, html };

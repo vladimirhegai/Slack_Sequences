@@ -83,19 +83,23 @@ npm run typecheck --workspace @sequences/slack
 npm run test --workspace @sequences/slack
 npm run mcp:demo --workspace @sequences/slack
 npm run direct:demo --workspace @sequences/slack
+npm run film:demo --workspace @sequences/slack
 ```
 
 For engine/render/Docker/Chromium/FFmpeg/HyperFrames/media changes:
 
 ```powershell
 $env:VERIFY_RENDER = "1"
-try { npm run direct:demo --workspace @sequences/slack }
+try { npm run film:demo --workspace @sequences/slack }
 finally { Remove-Item Env:VERIFY_RENDER -ErrorAction SilentlyContinue }
 
 docker build -t sequences-slack .
+docker run --rm -e VERIFY_RENDER=1 sequences-slack npm run film:demo -w @sequences/slack
 ```
 
-The deterministic demo and MCP smoke do not call a paid model.
+The deterministic demos and MCP smoke do not call a paid model. `film:demo`
+exercises typed cuts and writes compact temporal evidence under the ignored
+project data directory.
 
 ---
 
@@ -228,6 +232,7 @@ need this. For judges, share the same install link; invite
 ```powershell
 docker build -t sequences-slack .
 docker run --rm sequences-slack npm run mcp:demo -w @sequences/slack
+docker run --rm -e VERIFY_RENDER=1 sequences-slack npm run film:demo -w @sequences/slack
 ```
 
 Checks the production image without copying secrets locally. The image uses
@@ -264,6 +269,7 @@ git status --short
 npm run typecheck --workspace @sequences/slack
 npm run test --workspace @sequences/slack
 npm run mcp:demo --workspace @sequences/slack
+npm run film:demo --workspace @sequences/slack
 # before an important deploy:
 npm run typecheck; npm test; npm run test:perf
 ```

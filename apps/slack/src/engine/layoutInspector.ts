@@ -191,6 +191,7 @@ function prepareScratch(projectDir: string, draft: DirectCompositionDraft): stri
 function serveDir(dir: string): Promise<{ url: string; close: () => Promise<void> }> {
   const mime: Record<string, string> = {
     ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
     ".svg": "image/svg+xml",
     ".png": "image/png",

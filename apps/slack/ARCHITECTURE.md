@@ -287,6 +287,35 @@ derivation, validation, and fallback—not at the creative answer.
 > decision, and a compact `frame.md` fed to the director via `<frame_md>`. See
 > ROADMAP.md §3.
 
+### Cinematography layer — light as a host-owned system
+
+A design system gives a film its palette; it does not make frames read as
+*lit*. The cinematography kit (`src/engine/cinemaKit.ts` +
+`templates/sequences-cinema.v1.css`) is the third host-owned runtime, beside
+cuts and interactions, but purely static CSS:
+
+- **Automatic film floor.** Fixed-seed feTurbulence grain and a corner
+  vignette on the composition root — every film, zero author effort.
+- **Light and material.** `.keylight` directional fields, `.bloom` hero
+  halos, and `.material` / `.material-hero` / `.material-chrome` /
+  `.inset-well` recipes that give product surfaces a sheen, hairline edge,
+  rim highlight, and grounded shadow stack over the author's `--surface`.
+- **Grades as a color script.** Scene-level `.grade-cold|neutral|warm|noir`
+  retint key lights and blooms and lay a near-transparent wash, so a film can
+  carry a color arc (cold problem → warm payoff) inside one committed palette.
+- **Deterministic by construction.** Gradients and shadows only — no blend
+  modes, filters, CSS animation, randomness, or network; nothing competes
+  with the paused timeline.
+
+`compositionRunner.ts` injects the kit as an inline
+`<style id="sequences-cinema">` block (inline rather than `<link>`, so QA
+servers, thumbnails, and the render producer can never drop it to a MIME
+quirk), refreshes stale/hand-written kit blocks to the canonical versioned
+source, and adds `cinema-light` to the root for light-basis frames.
+`frame.md` renders palette-derived `--cinema-key`/`--cinema-bloom` values.
+Kit classes are enhancement-only: no new publication gate, and the golden
+Slack ad (`npm run film:demo`) is the proving fixture.
+
 ## 3. Film-ready components
 
 A component is an isolated product surface: search box, result list, dashboard,
@@ -354,6 +383,19 @@ recipe/blueprint, camera intent, and outgoing cut. Each cut declares what the ey
 tracks across the boundary: a component, anchor, direction, color field, or
 semantic idea.
 
+> **Implemented foundation.** A shot may now carry a typed `SceneCutIntentV1`
+> alongside its human-readable `outgoingCut`: `hard`, `cut-left/right/up/down`,
+> `zoom-through`, `inverse-zoom`, `flash-white`, or `object-match`.
+> `src/engine/cutContract.ts` resolves that intent into an exact boundary plan,
+> and the local `sequences-cuts.v1.js` runtime compiles velocity-matched wrapper
+> motion into the one paused timeline. `compositionRunner.ts` injects the
+> canonical JSON island/runtime/compile call from the locked storyboard, so the
+> source author cannot omit the seam or spend output budget recreating it.
+> Object-match carries a cloned bridge between live-measured `data-part`
+> geometries. The golden model-free Slack ad proves the full local path, and a paid
+> OpenRouter live-authoring smoke (2026-07-01) proved model cut selection and
+> wrapper discipline on a real create.
+
 Execution happens in separate passes:
 
 1. Lock the story, shots, and cut graph against the available assets.
@@ -366,6 +408,12 @@ Execution happens in separate passes:
 This separation prevents component animation, camera movement, and transitions
 from fighting over the same transform. A shot may deliberately hold still;
 motion is not added merely to prove that the system can animate.
+
+The implemented ownership rule is narrower and mechanical: the cut runtime owns
+the outgoing/incoming **scene wrapper** transform, filter, and opacity only
+inside its boundary window. Authors keep scene-window `set()` swaps and put
+component/camera motion on children such as `data-camera-world`. Static
+validation warns on probable wrapper double ownership.
 
 The planner retrieves only the selected blueprint, cited motion rules, component
 contracts, and relevant slice of `frame.md`. It never receives the entire
@@ -490,6 +538,26 @@ unique semantic candidate proves the intended binding. A measurable target may
 reveal while the cursor approaches; it must be visible from arrival through the
 result hold. Ambiguous bindings still quarantine rather than guess.
 
+### Executable cut contract
+
+Typed cut source follows the same host-owned pattern as cursor interactions:
+
+```text
+locked storyboard cut intent
+  → deterministic normalize/resolve
+  → canonical sequences-cuts JSON island
+  → local versioned runtime
+  → compile into the paused timeline
+  → static binding validation + browser runtime validation
+```
+
+The resolved plan and runtime hash are stored in `motion-plan.json`, and every
+revision checkpoints the runtime. Unknown/malformed styles and incomplete
+object-match declarations degrade to a hard cut before authoring; once a typed
+cut is resolved, a missing island, runtime, compile call, scene, or focal part
+blocks publication. This keeps optional style choice graceful without allowing a
+declared executable contract to drift silently.
+
 > **Inspector limits.** The browser audit sees boxes and pixels, not artistic
 > intention. It cannot judge whether a hero sits at optical center, whether two
 > edges were meant to align, whether a gap is one intentional group, or whether
@@ -516,6 +584,10 @@ draft
 - **Inspection limits:** the audit detects console/page errors, console warnings, text-box overflow, clipped text, container overflow, container collisions, and text occlusion. Contrast warnings or console warnings are recorded but do not exhaust model retries.
 - **Failures & Quarantine:** hard runtime, clipping, occlusion, container overflow, and missing asset errors block the publication checkpoint. Under failed interactions, browser-proven invalid cursors are quarantined from the storyboard and HTML bindings before rendering a warning-only draft.
 - **Auditing guides:** safe inset boundaries, 12 columns, baselines, and continuity anchors are drawn on guide snapshots (`qa/spatial-guide.png`) for internal agent inspection, but are stripped from the public MP4 render.
+- **Cut windows:** overlap/overflow/safe-area heuristics are suppressed only
+  during the resolved boundary window because both scene wrappers intentionally
+  move/stack there. Runtime errors and interaction evidence remain fully
+  authoritative during cuts.
 
 
 Mechanical failures can be repaired automatically: malformed wrappers, missing
@@ -574,6 +646,15 @@ Continuity tooling is deterministic and cut-aware: anchor visualizer, before/
 after onion-skin at cut boundaries, focal-trajectory view, and the morph-
 compatibility checker from §3 (shared `morphGroup`, stable part IDs, matching
 anchors) that rejects impossible pairings before composition.
+
+> **Partially implemented.** `src/engine/temporalInspector.ts` now seeks the
+> committed composition to render a per-shot development strip, a
+> before/pre/post/mid/settled sheet for every typed cut, a visual-change curve,
+> quiet-window candidates, and promised-vs-observed wrapper/bridge movement.
+> Output is compact under `build/qa/temporal/` and currently runs only from the
+> model-free `film:demo` developer fixture. It is evidence for a human/critic,
+> not an automatic aesthetic gate. Onion-skin compositing, focal trajectories,
+> and live create/revise integration remain open.
 
 ## 11. Music and sound direction
 
@@ -653,14 +734,19 @@ UI; broad skill excerpts; and hidden stdio self-calls as the only MCP story.
 Recommended build order before the deadline:
 
 1. Prove the current create → revise → HD → share loop in the sandbox. *(done)*
-2. Add real Slack file ingestion, `ContextBundle`, and asset provenance.
-3. Migrate one polished path to `frame.md` + direct HyperFrames authoring.
-4. Sync the registry into a `capability-index.json` and add in-Slack audition
+2. Migrate one polished path to `frame.md` + direct HyperFrames authoring.
+   *(done)*
+3. Add typed, host-owned boundary cuts plus a golden film and temporal evidence.
+   *(done; paid live-authoring cut smoke passed 2026-07-01 — Docker parity check
+   remains)*
+4. Optionally attach compact temporal evidence to live create/revise.
+5. Add real Slack file ingestion, `ContextBundle`, and asset provenance.
+6. Finish registry source approval/materialization and add in-Slack audition
    (§9) so the planner reuses known-good blocks before it authors anything.
-5. Ship the P0 recipe subset needed by the scripted demo.
-6. Add component contracts, cut-centered planning, the visual critic, and
-   deterministic QA.
-7. Consider exposing Sequences as a remote MCP server to the Slackbot MCP Client
+7. Ship the remaining P0 recipes and source-derived component/morph contracts
+   needed by the scripted demo.
+8. Add the bounded visual critic and music/sound direction.
+9. Consider exposing Sequences as a remote MCP server to the Slackbot MCP Client
    only after the core Bolt + Slack-hosted-MCP demo is reliable.
 
 ## Open review questions

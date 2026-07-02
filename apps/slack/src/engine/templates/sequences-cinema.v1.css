@@ -1,0 +1,200 @@
+/*
+ * sequences-cinema.v1 — host-owned cinematography kit.
+ *
+ * Light, material, grade, and film texture for direct HyperFrames compositions.
+ * Pure CSS: gradients and layered shadows only — no blend modes, no filters,
+ * no animation, no network. Deterministic under seek because nothing here
+ * moves; motion stays in the one paused GSAP timeline.
+ *
+ * The kit reads the composition's own tokens (--surface, --accent, …) through
+ * cinema variables with safe fallbacks. frame.md renders the per-job values;
+ * the author only places elements and picks classes.
+ */
+
+/* ── Film texture: grain + vignette on every composition ─────────────────
+ * One pseudo-element, two background layers. Sits above scene content but
+ * below the cut runtime's overlay layer (z 2147482990). Alpha lives in the
+ * gradient stops and the grain SVG itself (feFuncA slope), so the layers can
+ * carry different strengths. Fixed feTurbulence seed keeps renders identical.
+ */
+[data-composition-id] {
+  position: relative;
+}
+[data-composition-id]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147482960;
+  background-image:
+    radial-gradient(
+      140% 108% at 50% 42%,
+      rgba(0, 0, 0, 0) 54%,
+      var(--cinema-vignette, rgba(3, 2, 8, 0.36)) 100%
+    ),
+    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='160'%20height='160'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.82'%20numOctaves='2'%20stitchTiles='stitch'%20seed='7'/%3E%3CfeColorMatrix%20type='saturate'%20values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA%20type='linear'%20slope='0.055'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect%20width='160'%20height='160'%20filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: no-repeat, repeat;
+  background-size: 100% 100%, 160px 160px;
+}
+
+/* ── Key light: a directional soft light field inside a scene ─────────────
+ * Place as decoration: <div class="keylight keylight-tr" data-layout-ignore>.
+ * The negative inset lets the falloff leave the frame instead of dying at
+ * the safe area. Grade classes retint it through --cinema-key.
+ */
+.keylight {
+  position: absolute;
+  inset: -18%;
+  pointer-events: none;
+  background: radial-gradient(
+    54% 46% at var(--key-x, 30%) var(--key-y, 20%),
+    var(--cinema-key, rgba(255, 255, 255, 0.09)) 0%,
+    rgba(255, 255, 255, 0) 70%
+  );
+}
+.keylight-tl { --key-x: 24%; --key-y: 14%; }
+.keylight-tr { --key-x: 76%; --key-y: 14%; }
+.keylight-c  { --key-x: 50%; --key-y: 40%; }
+.keylight-bl { --key-x: 24%; --key-y: 82%; }
+.keylight-br { --key-x: 76%; --key-y: 82%; }
+
+/* ── Bloom: a soft halo behind one hero element ───────────────────────────
+ * Size and position it yourself (absolute, behind the subject, decoration
+ * only). Grades retint it through --cinema-bloom.
+ */
+.bloom {
+  position: absolute;
+  pointer-events: none;
+  background: radial-gradient(
+    closest-side,
+    var(--cinema-bloom, rgba(255, 255, 255, 0.16)) 0%,
+    rgba(255, 255, 255, 0) 72%
+  );
+}
+
+/* ── Material: surfaces that read as lit objects, not flat rectangles ─────
+ * Sheen gradient (light from above) + hairline edge + top rim highlight +
+ * grounded shadow stack. The surface color itself stays the author's
+ * --surface token; the kit only adds the light response.
+ */
+.material {
+  background:
+    linear-gradient(
+      180deg,
+      var(--cinema-sheen, rgba(255, 255, 255, 0.05)) 0%,
+      rgba(255, 255, 255, 0) 46%
+    ),
+    var(--surface, #1a1a21);
+  border: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
+  border-radius: var(--cinema-radius, 14px);
+  box-shadow:
+    inset 0 1px 0 var(--cinema-rim, rgba(255, 255, 255, 0.08)),
+    0 2px 6px rgba(0, 0, 0, 0.3),
+    0 30px 80px var(--cinema-shadow, rgba(0, 0, 0, 0.5));
+}
+/* The one hero surface of a shot: brighter edge, deeper grounding. */
+.material-hero {
+  background:
+    linear-gradient(
+      180deg,
+      var(--cinema-sheen-hero, rgba(255, 255, 255, 0.08)) 0%,
+      rgba(255, 255, 255, 0) 42%
+    ),
+    var(--surface, #1a1a21);
+  border: 1px solid var(--cinema-edge-hero, rgba(255, 255, 255, 0.14));
+  border-radius: var(--cinema-radius, 14px);
+  box-shadow:
+    inset 0 1px 0 var(--cinema-rim-hero, rgba(255, 255, 255, 0.14)),
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    0 48px 130px var(--cinema-shadow-hero, rgba(0, 0, 0, 0.62));
+}
+/* Toolbar / header band inside a material surface. */
+.material-chrome {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0) 100%),
+    var(--surface-2, var(--surface, #20202a));
+  border-bottom: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
+}
+/* Recessed input / composer / terminal well. */
+.inset-well {
+  background: var(--cinema-well, rgba(0, 0, 0, 0.3));
+  border: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.38);
+}
+
+/* ── Grades: the film's color script, one class per scene ─────────────────
+ * A grade retints the scene's light (key/bloom variables) and lays a
+ * near-transparent tint wash over the scene so the register shift reads as
+ * grading, not a palette swap. Assign grades as an arc across the film
+ * (e.g. cold problem → neutral turn → warm payoff), never at random.
+ * The wash is the scene element's ::after; keep authored ::after off scene
+ * wrappers that carry a grade.
+ */
+.grade-cold {
+  --cinema-key: var(--cinema-key-cold, rgba(128, 158, 222, 0.11));
+  --cinema-bloom: var(--cinema-bloom-cold, rgba(128, 158, 222, 0.17));
+}
+.grade-cold::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  background: linear-gradient(
+    155deg,
+    rgba(98, 130, 200, 0.085) 0%,
+    rgba(8, 10, 20, 0.12) 78%
+  );
+}
+.grade-neutral {
+  --cinema-key: var(--cinema-key-neutral, rgba(255, 255, 255, 0.08));
+  --cinema-bloom: var(--cinema-bloom-neutral, rgba(255, 255, 255, 0.14));
+}
+.grade-warm {
+  --cinema-key: var(--cinema-key-warm, rgba(255, 196, 120, 0.11));
+  --cinema-bloom: var(--cinema-bloom-warm, rgba(255, 196, 120, 0.2));
+}
+.grade-warm::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  background: linear-gradient(
+    205deg,
+    rgba(255, 186, 110, 0.07) 0%,
+    rgba(30, 16, 8, 0.1) 82%
+  );
+}
+.grade-noir {
+  --cinema-key: var(--cinema-key-noir, rgba(200, 205, 230, 0.06));
+  --cinema-bloom: var(--cinema-bloom-noir, rgba(200, 205, 230, 0.1));
+}
+.grade-noir::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  background: radial-gradient(
+    120% 100% at 50% 44%,
+    rgba(0, 0, 0, 0) 42%,
+    rgba(2, 2, 6, 0.3) 100%
+  );
+}
+
+/* ── Light basis ──────────────────────────────────────────────────────────
+ * Add .cinema-light to the composition root when frame.md basis is light.
+ */
+[data-composition-id].cinema-light {
+  --cinema-vignette: rgba(24, 20, 36, 0.14);
+  --cinema-edge: rgba(14, 12, 24, 0.12);
+  --cinema-edge-hero: rgba(14, 12, 24, 0.18);
+  --cinema-rim: rgba(255, 255, 255, 0.75);
+  --cinema-rim-hero: rgba(255, 255, 255, 0.9);
+  --cinema-sheen: rgba(255, 255, 255, 0.5);
+  --cinema-sheen-hero: rgba(255, 255, 255, 0.65);
+  --cinema-shadow: rgba(30, 24, 50, 0.18);
+  --cinema-shadow-hero: rgba(30, 24, 50, 0.26);
+  --cinema-well: rgba(18, 14, 30, 0.06);
+}

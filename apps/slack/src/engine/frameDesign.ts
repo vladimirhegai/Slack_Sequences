@@ -16,7 +16,14 @@ import {
   type FramePreset,
   type FrameType,
 } from "./framePresets.ts";
-import { extractBrandTokens, safeTextOn, type BrandTokens } from "./brandTokens.ts";
+import {
+  extractBrandTokens,
+  hexToRgb,
+  luminance,
+  safeTextOn,
+  shade,
+  type BrandTokens,
+} from "./brandTokens.ts";
 import { captureBrandFromUrl, type CapturedBrand } from "./brandCapture.ts";
 import {
   frameToolInstructions,
@@ -434,9 +441,29 @@ export function remapPreset(
   };
 }
 
+function rgba(hex: string, alpha: number): string {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/**
+ * A key light must read as *light* on a dark canvas (and as a visible tint on
+ * a light one). Palette atmosphere roles are often near-canvas, so lift or
+ * sink them into a useful luminance band before handing them to the kit.
+ */
+function cinemaLightHex(hex: string, basis: "light" | "dark"): string {
+  const y = luminance(hex);
+  if (basis === "dark" && y < 0.22) return shade(hex, 0.6, "white");
+  if (basis === "light" && y > 0.72) return shade(hex, 0.35, "black");
+  return hex;
+}
+
 export function renderFrameMd(design: FrameDesign, brandName?: string): string {
   const c = design.colors;
   const s = design.spatial;
+  const dark = design.basis === "dark";
+  const cinemaKey = rgba(cinemaLightHex(c.atmosphere, design.basis), dark ? 0.12 : 0.26);
+  const cinemaBloom = rgba(cinemaLightHex(c.accent, design.basis), dark ? 0.18 : 0.22);
   const meta = JSON.stringify({
     presetId: design.presetId,
     label: design.label,
@@ -522,6 +549,8 @@ flow.
   --measure-display: 14ch;
   --measure-copy: 34ch;
   --measure-wide: 52ch;
+  --cinema-key: ${cinemaKey};
+  --cinema-bloom: ${cinemaBloom};
 }
 .scene {
   position: absolute;
@@ -600,6 +629,25 @@ Use \`data-layout-allow-overflow\`, \`data-layout-allow-overlap\`, or
 the measured text wrapper or its pseudo-element. Prefer
 \`left:0;right:0;bottom:.06em\`; never use an unrelated absolutely positioned
 line or guessed canvas coordinates.
+
+## Cinematography (host kit)
+
+The host injects the \`sequences-cinema.v1\` stylesheet inline: film grain and
+a corner vignette are automatic, and these classes are available without
+authoring their CSS — \`.material\` / \`.material-hero\` (lit surfaces),
+\`.material-chrome\` (toolbar bands), \`.inset-well\` (recessed inputs),
+\`.keylight keylight-tl|tr|c|bl|br\` (one soft directional light field per
+scene, decoration), \`.bloom\` (one halo behind the hero, decoration), and
+scene grades \`.grade-cold\` / \`.grade-neutral\` / \`.grade-warm\` /
+\`.grade-noir\` that retint light per scene. Copy the \`--cinema-key\` and
+\`--cinema-bloom\` values above onto your root selector with the other tokens;
+they aim the kit's light at this job's palette.${design.basis === "dark" ? "" : `
+
+This is a light-basis frame: the host adds \`cinema-light\` to the composition
+root so edges, rims, and the vignette invert correctly.`}
+
+Give the film a color arc: grade problem/tension scenes cold or noir and
+resolution/payoff scenes neutral or warm, in service of the story.
 
 ## Mood-board restraints (≤5)
 ${design.rules.map((rule) => `- ${rule}`).join("\n")}

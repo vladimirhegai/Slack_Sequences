@@ -26,6 +26,7 @@ import {
 import { inspectDirectComposition } from "../src/engine/layoutInspector.ts";
 import { initializeProject } from "../src/engine/projectTemplates.ts";
 import { buildJobFrame } from "../src/engine/frameDesign.ts";
+import { injectCinemaKit } from "../src/engine/cinemaKit.ts";
 import { buildFallbackComposition } from "../src/engine/fallbackComposition.ts";
 
 vi.mock("../src/engine/layoutInspector.ts", () => ({
@@ -536,7 +537,7 @@ describe("direct HyperFrames composition", () => {
       responseFormat?: { type?: string; json_schema?: { name?: string } };
     };
     expect(options).toMatchObject({
-      maxTokens: 8_192,
+      maxTokens: 16_384,
       thinkingMode: "high",
       model: "z-ai/glm-5.2",
     });
@@ -915,7 +916,9 @@ describe("direct HyperFrames composition", () => {
       lockedStoryboard: draft().storyboard,
     });
     expect(result.attempts).toBe(1);
-    expect(result.draft).toEqual(draft());
+    const expected = draft();
+    expected.html = injectCinemaKit(expected.html);
+    expect(result.draft).toEqual(expected);
     expect((complete.mock.calls[1]?.[1] as { assistantPrefill?: string }).assistantPrefill)
       .toBe(prefix);
   });
@@ -1075,7 +1078,7 @@ describe("direct HyperFrames composition", () => {
       lockedStoryboard: initial.storyboard,
     });
     expect(result.attempts).toBe(3);
-    expect(result.draft.html).toBe(initial.html);
+    expect(result.draft.html).toBe(injectCinemaKit(initial.html));
   });
 
   it("publishes runnable output when visual-QA polish patches are malformed", async () => {
@@ -1118,7 +1121,7 @@ describe("direct HyperFrames composition", () => {
     });
 
     expect(result.attempts).toBe(3);
-    expect(result.draft.html).toBe(initial.html);
+    expect(result.draft.html).toBe(injectCinemaKit(initial.html));
     expect(complete).toHaveBeenCalledTimes(3);
   });
 

@@ -31,11 +31,15 @@ point an agent at the listed file.
 | Slack workspace context (hosted MCP retrieval) | `src/slackMcpContext.ts` | retrieval prompt, resilience/retry, degrade-gracefully note |
 | Direct HyperFrames authoring | `src/engine/compositionRunner.ts`, `src/engine/directComposition.ts`, `src/engine/fallbackComposition.ts` | director prompt, storyboard/HTML parse, validation gate, model-free failure net |
 | Per-job design system (`frame.md`) | `src/engine/frameDesign.ts`, `framePresets.ts`, `brandTokens.ts`, `frameTools.ts` | presets, palette/type derivation, contrast/font safety |
+| Cinematography kit (light/material/grade/grain) | `src/engine/cinemaKit.ts`, `src/engine/templates/sequences-cinema.v1.css` | grain/vignette floor, key lights, lit materials, bloom, scene grades / color arc |
 | Spatial / layout placement ("spacing" tool) | `frame.md` flow compositions + relational `data-layout-*` + `src/engine/layoutInspector.ts` | flow-first placement, safe-area / anchor / align / gap / optical audit |
 | Cursor interactions | `src/engine/interactionContract.ts`, `src/engine/templates/sequences-interactions.v1.js` | hotspot / target / ripple geometry, interaction QA |
+| Executable boundary cuts | `src/engine/cutContract.ts`, `src/engine/templates/sequences-cuts.v1.js` | typed cut styles, wrapper ownership, object-match bindings |
+| Temporal motion evidence | `src/engine/temporalInspector.ts` | development strips, cut triptychs, change curve, quiet-window review |
 | Zero-token revise ("shorter" / "warmer") | `src/engine/tweakRunner.ts` | deterministic tweak matcher |
 | Render + thumbnails | `src/engine/render.ts`, `src/engine/thumbs.ts` | Chrome / FFmpeg pipeline, draft vs HD |
 | Curated model-free demo | `src/demo.ts` | the bulletproof preset reel |
+| Golden Slack ad film | `scripts/slackAdFilm.ts` | cinematic quality bar and end-to-end cut proof (`npm run film:demo`) |
 | Self-check | `src/diagnostics.ts` | `/sequences mcp-test` coverage |
 | Per-user OAuth + hosted MCP | `src/slackOAuth.ts`, `src/slackTokenStore.ts` | install flow, encrypted token storage |
 
@@ -70,6 +74,67 @@ point an agent at the listed file.
 - Model A/B (July 1): DeepSeek remains the default production author. The GLM override emitted truncated/invalid inline JavaScript and failed all three static-validation attempts; GLM remains on bounded frame/storyboard decisions, where it is reliable and high leverage.
 - Post-change paid RADAR smoke: guessed `top/left/right/bottom` pixel edges fell from 47 to 0, absolute rules from 20 to 11, and all four shots selected named flow layouts with ten semantic zones. Replaying its planned CTA click through the final binding normalizer produced clean interaction QA; arrival, press, and release all landed inside the target.
 
+### Cinematography — the host light kit (2026-07-01)
+- Diagnosis: choreography (typed cuts, sequential reveals, holds) was solved,
+  but frames read as dim wireframe slides — no lighting model, near-zero
+  surface/canvas separation, no color arc, timid scale. The film had
+  choreography but no cinematography.
+- `sequences-cinema.v1.css` (`src/engine/cinemaKit.ts`) is a versioned,
+  host-owned static-CSS kit: automatic film grain (fixed-seed feTurbulence) +
+  corner vignette on the composition root; `.keylight` directional light
+  fields; `.bloom` hero halos; `.material` / `.material-hero` /
+  `.material-chrome` / `.inset-well` lit-surface recipes; and scene grades
+  (`.grade-cold|neutral|warm|noir`) that retint light per scene so a film has
+  a color script instead of one flat palette.
+- `compositionRunner.ts` injects it as an inline
+  `<style id="sequences-cinema">` block into every live-authored document
+  (inline, not a `<link>` — immune to static-server MIME quirks across QA,
+  thumbnails, and the render producer) and adds `cinema-light` to the root for
+  light-basis frames. Zero author output budget; a hand-written or stale kit
+  block is replaced with the canonical source.
+- `frame.md` renders per-job `--cinema-key` / `--cinema-bloom` values derived
+  from the palette (atmosphere/accent) plus a "Cinematography (host kit)"
+  section; `prompts/planning-director.md` teaches the vocabulary and the
+  grade-arc doctrine (cold problem → neutral turn → warm payoff).
+- Pure CSS: gradients + layered shadows only. No blend modes, filters,
+  animation, randomness, or network — deterministic under seek by
+  construction. Kit classes are enhancement-only; no new publication gate.
+- The golden film (`npm run film:demo`) is rebuilt on the kit as the quality
+  bar: cold→neutral→warm grade arc where the brand gold enters with the
+  product, masked-rise typography, believable UI microcopy, 400px lit app
+  windows, a bloomed player payoff, and a warm lockup hold — proven through
+  validation, checkpoint, 48-sample browser QA, thumbnails, temporal
+  evidence, and a local MP4 render.
+
+### Motion Direction & Temporal Evidence
+- Storyboard shots may declare a typed outgoing cut: `hard`,
+  `cut-left/right/up/down`, `zoom-through`, `inverse-zoom`, `flash-white`, or
+  `object-match`.
+- `compositionRunner.ts` deterministically injects the canonical cut JSON island,
+  local runtime, and compile call from the locked storyboard. The source author
+  does not spend output budget reimplementing seams and cannot silently omit one.
+- `cutContract.ts` normalizes timing/travel, validates source bindings, persists
+  the resolved cut plan/runtime hash, and warns when authored scene-wrapper
+  tweens compete with host-owned boundary motion.
+- `sequences-cuts.v1.js` compiles velocity-matched directional/zoom/flash motion
+  and a measured object-match bridge into the one paused GSAP timeline.
+- Browser layout heuristics are suppressed only inside declared cut windows;
+  runtime and interaction failures remain authoritative there.
+- `npm run film:demo` builds the model-free 24-second Slack ad quality bar through
+  submit, validation, checkpoint, 48-sample browser QA, thumbnails, and optional
+  MP4 rendering.
+- `temporalInspector.ts` produces a compact development strip, per-cut evidence
+  sheets, visual-change curve, quiet windows, and promised-vs-observed movement.
+  It is developer-facing in `film:demo`, not yet part of live create/revise.
+- **Paid live-authoring proof (2026-07-01, OpenRouter smoke):** GLM's storyboard
+  pass chose sensible typed cuts unprompted (`cut-left`, `cut-down`,
+  `inverse-zoom`, `hard` — each with a coherent editorial rationale), DeepSeek's
+  authored source passed the gate after two bounded repair passes, and the host
+  injected both the cut bindings and the cinematography kit; the author used
+  kit classes (`.material-hero`, `.inset-well`) on its own surfaces. GLM's
+  reasoning storyboard budget was raised 8K→16K after the first attempt proved
+  8K truncates (reasoning eats the budget; provider ceiling is ~33K).
+
 ---
 
 ## Current Architecture
@@ -87,7 +152,7 @@ flowchart TD
   F --> P
   P -->|storyboard + index.html| O
   O -->|JSON-RPC stdio| M[Sequences MCP tools]
-  M --> C[HyperFrames lint / invariant gate / revision checkpoint]
+  M --> C[HyperFrames lint + cut/interaction contracts + revision checkpoint]
   C --> H[HyperFrames source + Chrome / FFmpeg]
   M -->|render_preview| T[Scene thumbnails]
   M -->|render| V[MP4]
@@ -111,6 +176,9 @@ flowchart TD
 | [`src/engine/fallbackComposition.ts`](src/engine/fallbackComposition.ts) | model-free three-shot direct composition used only when live authoring fails |
 | [`src/engine/layoutInspector.ts`](src/engine/layoutInspector.ts) | spatial/layout placement audit (safe-area, anchor, align, gap, optical) |
 | [`src/engine/interactionContract.ts`](src/engine/interactionContract.ts) | cursor interaction contract + hotspot/target/ripple QA |
+| [`src/engine/cutContract.ts`](src/engine/cutContract.ts) | typed cut normalization, resolution, source validation, runtime staging |
+| [`src/engine/temporalInspector.ts`](src/engine/temporalInspector.ts) | developer-facing motion strips, cut evidence, change/quiet-window report |
+| [`src/engine/cinemaKit.ts`](src/engine/cinemaKit.ts) | host-owned cinematography kit: inline injection of `sequences-cinema.v1.css` |
 | [`src/engine/frameDesign.ts`](src/engine/frameDesign.ts) | per-job `frame.md`: bounded art direction + deterministic fallback/render |
 | [`src/engine/frameTools.ts`](src/engine/frameTools.ts) | palette derivation/contrast repair, embedded type validation, spatial tokens |
 | [`src/engine/framePresets.ts`](src/engine/framePresets.ts) | 5 curated SaaS presets (colour/comp DNA on embedded fonts) |
@@ -118,6 +186,7 @@ flowchart TD
 | [`src/engine/brandCapture.ts`](src/engine/brandCapture.ts) | optional best-effort URL palette/font capture (HyperFrames-style) |
 | [`src/agent/skillContext.ts`](src/agent/skillContext.ts) | bounded HyperFrames skill retrieval |
 | [`src/blocks.ts`](src/blocks.ts) | modal/result UI and receipts |
+| [`scripts/slackAdFilm.ts`](scripts/slackAdFilm.ts) | model-free golden Slack ad and executable-cut smoke |
 | [`skills/`](skills) | complete upstream HyperFrames agent-skill catalog |
 | [`vendor/hyperframes/UPSTREAM.md`](vendor/hyperframes/UPSTREAM.md) | snapshot scope and provenance |
 
@@ -149,6 +218,12 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 - [x] **`frame.md` content:** rendering visual systems and attaching them to Slack threads.
 - [x] **One bounded art-direction decision:** choosing presets and deriving styles deterministically.
 
+- [x] **Host cinematography kit (2026-07-01):** versioned `sequences-cinema.v1.css`
+      injected inline into every direct composition (grain/vignette floor,
+      keylights, blooms, lit materials, scene grades / color arc); per-job
+      `--cinema-*` values rendered into `frame.md`; fallback composition and
+      the golden film sit on the same kit.
+
 ### 4. Skills retrieval for HyperFrames
 - [x] **Structured skill retrieval:** keyword router selects up to 4 blueprints and 8 rules.
 - [x] **Skill context for revision:** tighter 22K budget passing current HTML and revision targets.
@@ -168,10 +243,11 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
       transform double-ownership; layout QA ignores heuristic geometry findings
       inside intentional cut windows. Invalid declarations degrade to `hard`.
       Proven end-to-end (validate → checkpoint → QA → thumbnails → MP4) by
-      `npm run film:demo` (`scripts/slackAdFilm.ts`). **Not yet verified with a
-      live model-authored `/sequences` run** — the schema/prompt ask for `cut`,
-      but no paid storyboard has exercised it.
-- [ ] **Execution passes:**
+      `npm run film:demo` (`scripts/slackAdFilm.ts`). **Verified on a paid OpenRouter
+      live-authoring smoke (2026-07-01)** — the planner chose `cut-left` /
+      `cut-down` / `inverse-zoom` / `hard` with coherent editorial rationale and
+      the authored source passed the gate with host-injected bindings.
+- [~] **Execution passes:**
     - [ ] Lock story, shots, and cut graph.
     - [ ] Reuse/build components.
     - [ ] Compose shot assets/copy.
@@ -229,7 +305,14 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 
 ## Build Order (Hackathon-Pragmatic)
 
-1. **§9 capability sync + in-Slack audition** — enables the bot to see registry assets and avoid inventing them.
-2. **§5 cut-centered planning** — enforces structural continuity across shot boundaries.
-3. **§10 visual critic + continuity** — automates quality audits using rendered images.
-4. **§6 music/sound cues & §11 utilities/foundry/learning** — final polish.
+1. **Prove typed cuts on one paid live-authoring smoke** — *(done 2026-07-01:
+   cut selection, kit injection, validation/repair, and previews verified on a
+   real OpenRouter run; a paid `SMOKE_RENDER=1` MP4 remains a nice-to-have.)*
+2. **Put temporal evidence behind an opt-in live create/revise flag** — preserve
+   compact Railway artifacts before considering automated visual repair.
+3. **§9 finish capability source approval/materialization + in-Slack audition**
+   — let the planner instantiate known-good components instead of citing
+   metadata and rebuilding them.
+4. **§8 component contracts + the bounded visual critic from §10** — extend the
+   proven `data-part`/object-match bridge into reusable state and morph contracts.
+5. **§6 music/sound cues & §11 utilities/foundry/learning** — final polish.
