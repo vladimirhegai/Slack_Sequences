@@ -83,6 +83,7 @@ npm run typecheck --workspace @sequences/slack
 npm run test --workspace @sequences/slack
 npm run mcp:demo --workspace @sequences/slack
 npm run direct:demo --workspace @sequences/slack
+npm run sequence:check --workspace @sequences/slack -- --demo --no-mcp --format both
 npm run film:demo --workspace @sequences/slack
 ```
 
@@ -101,6 +102,31 @@ The deterministic demos and MCP smoke do not call a paid model. `film:demo`
 exercises typed cuts and writes compact temporal evidence under the ignored
 project data directory. `npm run test --workspace @sequences/slack` includes
 the static motion-density liveness guard that feeds live authoring repairs.
+`sequence:check -- --demo` runs the same create/preview plumbing as a local
+Slack-free simulator and writes a consolidated report under
+`<project>/build/qa/sequence-check.{json,md}`.
+
+For a paid model-authored check that practically simulates `/sequences` after
+Slack has collected the modal fields, keep credentials in the shell environment
+and run:
+
+```powershell
+npm run sequence:check --workspace @sequences/slack -- `
+  --product RADAR `
+  --brand RADAR `
+  --what "RADAR turns scattered product signals into one live operational view." `
+  --audience "product and operations teams" `
+  --tone crisp-saas `
+  --length 15 `
+  --provider openrouter-api `
+  --no-mcp `
+  --format both
+```
+
+Add `--temporal` when Chrome is available and you want pixel evidence, or
+`--render` when FFmpeg/Chrome MP4 output is part of the check. This command does
+not call Slack hosted MCP and does not post to Slack; use the sandbox flow for
+OAuth, hosted-MCP, Socket Mode, and Slack upload verification.
 
 ---
 

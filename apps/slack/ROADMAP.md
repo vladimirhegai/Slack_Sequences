@@ -41,6 +41,7 @@ point an agent at the listed file.
 | Render + thumbnails | `src/engine/render.ts`, `src/engine/thumbs.ts` | Chrome / FFmpeg pipeline, draft vs HD |
 | Curated model-free demo | `src/demo.ts` | the bulletproof preset reel |
 | Golden Slack ad film | `scripts/slackAdFilm.ts` | cinematic quality bar and end-to-end cut proof (`npm run film:demo`) |
+| Local `/sequences` simulator | `scripts/sequenceCheck.ts` | Slack-free create checks, model/provider receipts, validation, motion/artifact report |
 | Self-check | `src/diagnostics.ts` | `/sequences mcp-test` coverage |
 | Per-user OAuth + hosted MCP | `src/slackOAuth.ts`, `src/slackTokenStore.ts` | install flow, encrypted token storage |
 
@@ -196,6 +197,7 @@ flowchart TD
 | [`src/agent/skillContext.ts`](src/agent/skillContext.ts) | bounded HyperFrames skill retrieval |
 | [`src/blocks.ts`](src/blocks.ts) | modal/result UI and receipts |
 | [`scripts/slackAdFilm.ts`](scripts/slackAdFilm.ts) | model-free golden Slack ad and executable-cut smoke |
+| [`scripts/sequenceCheck.ts`](scripts/sequenceCheck.ts) | local Slack-free `/sequences` create simulator and consolidated agent report |
 | [`skills/`](skills) | complete upstream HyperFrames agent-skill catalog |
 | [`vendor/hyperframes/UPSTREAM.md`](vendor/hyperframes/UPSTREAM.md) | snapshot scope and provenance |
 

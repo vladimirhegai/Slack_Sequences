@@ -160,6 +160,13 @@ front-loaded scenes, and dense bursts. The summary is persisted in
 `motion-plan.json`. This is not rendered temporal evidence; `temporalInspector`
 still owns pixel-based strips/change curves.
 
+Agent-facing local checks use `npm run sequence:check --workspace
+@sequences/slack -- ...`. It simulates a `/sequences` create after Slack has
+collected the brief fields, runs the same orchestrator path, and writes one
+JSON/Markdown report with provider choice, progress receipts, validation,
+motion-density warnings, thumbnails, optional render, and artifact paths. It
+does not call Slack hosted MCP or post to Slack.
+
 ## Environment
 
 One live Slack app: the developer-sandbox app on Railway. Local work is source,
@@ -179,12 +186,14 @@ npm run typecheck --workspace @sequences/slack
 npm run test --workspace @sequences/slack
 npm run mcp:demo --workspace @sequences/slack
 npm run direct:demo --workspace @sequences/slack
+npm run sequence:check --workspace @sequences/slack -- --demo --no-mcp --format both
 npm run film:demo --workspace @sequences/slack
 ```
 - TypeScript compiler exits successfully.
 - All Slack tests pass.
 - Legacy MCP applies the curated fallback plan.
 - Direct MCP validates/checkpoints authored HTML, reports clean lint, and creates runtime-seeked scene previews.
+- Sequence check writes a consolidated local report for agent inspection without Slack credentials or a model call.
 - Golden-film smoke validates typed cuts and writes temporal evidence without a model call.
 
 ### 2. Render and Docker gate (Required after engine/renderer/Docker changes)
