@@ -1,4 +1,5 @@
 import { cinemaKitStyleTag } from "./cinemaKit.ts";
+import { CAMERA_RUNTIME_FILE, resolveCameraPlan } from "./cameraContract.ts";
 import type { DirectCompositionDraft, DirectScene } from "./directComposition.ts";
 
 interface FallbackCompositionArgs {
@@ -64,6 +65,14 @@ export function buildFallbackComposition(
   const display = frameFont(args.frameMd, "Display / headlines");
   const body = frameFont(args.frameMd, "Body / UI");
 
+  // Typed camera path over the proof scene's spatial world: hold on the
+  // context station, then pan one station right to the proof panel. The
+  // resolver fills the gap between them with a connective drift.
+  const r2 = (value: number): number => Math.round(value * 100) / 100;
+  const holdDur = r2(Math.max(0.3, second * 0.25));
+  const panStart = r2(starts[1]! + second * 0.5);
+  const panDur = r2(Math.min(0.9, Math.max(0.4, second * 0.25)));
+
   const storyboard: DirectScene[] = [
     {
       id: "fallback-hook",
@@ -88,11 +97,30 @@ export function buildFallbackComposition(
       durationSec: durations[1]!,
       blueprint: "compose",
       rules: [],
+      camera: {
+        version: 1,
+        path: [
+          {
+            version: 1,
+            move: "hold",
+            toRegion: "proof-context",
+            startSec: starts[1]!,
+            durationSec: holdDur,
+          },
+          {
+            version: 1,
+            move: "pan",
+            toRegion: "proof-panel",
+            startSec: panStart,
+            durationSec: panDur,
+          },
+        ],
+      },
       spatialIntent: {
         version: 1,
         focalPart: "release-proof",
-        composition: "layout-split",
-        relationships: ["release proof sits beside the audience context"],
+        composition: "spatial world: context station panning to the proof station",
+        relationships: ["release proof sits one camera move right of the audience context"],
       },
     },
     {
@@ -114,9 +142,11 @@ export function buildFallbackComposition(
   ];
 
   const cut = (value: number): string => Math.max(0, value - 0.01).toFixed(2);
+  const cameraIsland = JSON.stringify(resolveCameraPlan(storyboard));
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=1920, height=1080">
-<title>${product} launch</title><script src="gsap.min.js"></script>${cinemaKitStyleTag()}<style>
+<title>${product} launch</title><script src="gsap.min.js"></script>
+<script src="${CAMERA_RUNTIME_FILE}"></script>${cinemaKitStyleTag()}<style>
 *{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:${bg}}
 body{color:${foreground};font-family:${body},Arial,sans-serif}
 #root{--space-safe:72px;--space-region:64px;--space-element:28px;--surface:${surface};position:relative;width:1920px;height:1080px;overflow:hidden;background:radial-gradient(circle at 80% 12%,${surface},${bg} 52%)}
@@ -125,6 +155,8 @@ body{color:${foreground};font-family:${body},Arial,sans-serif}
 .layout-split{grid-template-columns:minmax(0,5fr) minmax(0,7fr);align-items:center;gap:var(--space-region)}
 .layout-center-stack{align-content:center;justify-items:center;gap:var(--space-region);text-align:center}
 .zone{min-width:0;min-height:0}.stack{display:flex;min-width:0;flex-direction:column;gap:var(--space-element)}
+.world{position:absolute;left:0;top:0;width:3200px;height:1080px;transform-origin:0 0}
+.region{position:absolute;top:0;height:1080px;display:grid;align-content:center;padding:96px;min-width:0;min-height:0}
 .eyebrow{color:${accent};font-size:25px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
 h1,h2,p{margin:0}h1,h2{font-family:${display},${body},sans-serif;letter-spacing:-.055em}
 h1{max-width:11ch;font-size:150px;line-height:.88}h2{max-width:15ch;font-size:92px;line-height:.96}
@@ -138,21 +170,34 @@ h1{max-width:11ch;font-size:150px;line-height:.88}h2{max-width:15ch;font-size:92
 <div class="keylight keylight-tl" data-layout-ignore></div>
 <div class="zone stack" data-layout-important><div class="eyebrow">Now shipping</div><h1 data-part="release-headline">${product}</h1></div><div class="mark zone" aria-hidden="true">${product.slice(0, 1)}</div>
 </section>
-<section id="fallback-proof" class="scene clip layout-split" data-scene="fallback-proof" data-start="${starts[1]}" data-duration="${second}" data-track-index="1">
+<section id="fallback-proof" class="scene clip" style="padding:0" data-scene="fallback-proof" data-start="${starts[1]}" data-duration="${second}" data-track-index="1">
+<div class="keylight keylight-c" data-layout-ignore></div>
+<div class="world" data-camera-world>
+<div class="region" data-region="proof-context" style="left:0;width:1800px">
 <div class="zone stack"><div class="eyebrow">What changed</div><p class="audience">Built for ${audience}</p></div>
+</div>
+<div class="region" data-region="proof-panel" style="left:1800px;width:1400px">
 <div class="zone proof material-hero" data-layout-important data-part="release-proof"><h2>${shipped}</h2></div>
+</div>
+</div>
 </section>
 <section id="fallback-close" class="scene clip layout-center-stack" data-scene="fallback-close" data-start="${starts[2]}" data-duration="${third}" data-track-index="1">
 <span class="bloom" style="width:900px;height:900px;left:50%;top:40%;transform:translate(-50%,-50%)" data-layout-ignore></span>
 <div class="zone stack" data-layout-important data-layout-anchor="frame:center"><div class="lockup">${product}</div><div class="cta" data-part="release-cta">See what shipped</div></div>
-</section></main><script>
+</section></main>
+<script type="application/json" id="sequences-camera">${cameraIsland}</script>
+<script>
 window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
 tl.set("#fallback-hook",{opacity:1},0).set("#fallback-hook",{opacity:0},${cut(starts[1]!)});
 tl.set("#fallback-proof",{opacity:1},${starts[1]}).set("#fallback-proof",{opacity:0},${cut(starts[2]!)});
 tl.set("#fallback-close",{opacity:1},${starts[2]}).set("#fallback-close",{opacity:0},${duration});
 tl.fromTo("#fallback-hook .stack",{y:80,opacity:0},{y:0,opacity:1,duration:.8,ease:"power4.out"},.15);
-tl.fromTo("#fallback-proof .proof",{x:120,opacity:0},{x:0,opacity:1,duration:.9,ease:"power4.out"},${(starts[1]! + 0.2).toFixed(2)});
+tl.fromTo("#fallback-hook .mark",{x:70,opacity:0},{x:0,opacity:.16,duration:.8,ease:"seqSettle"},${(first * 0.5).toFixed(2)});
+tl.fromTo("#fallback-proof .stack",{y:60,opacity:0},{y:0,opacity:1,duration:.7,ease:"power3.out"},${(starts[1]! + 0.15).toFixed(2)});
+tl.fromTo("#fallback-proof .proof",{x:80,opacity:0},{x:0,opacity:1,duration:.8,ease:"seqSettle"},${(panStart + panDur * 0.55).toFixed(2)});
 tl.fromTo("#fallback-close .zone",{scale:.9,opacity:0},{scale:1,opacity:1,duration:.75,ease:"power4.out"},${(starts[2]! + 0.2).toFixed(2)});
+tl.fromTo("#fallback-close .cta",{y:44,opacity:0},{y:0,opacity:1,duration:.6,ease:"seqMicrobounce"},${(starts[2]! + third * 0.55).toFixed(2)});
+SequencesCamera.compile(tl,document.querySelector("[data-composition-id]"));
 window.__timelines["${compositionId}"]=tl;tl.seek(0);
 </script></body></html>`;
   return { storyboard, html };

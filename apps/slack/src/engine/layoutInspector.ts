@@ -26,6 +26,12 @@ import {
   cutRuntimeSource,
   parseCutPlan,
 } from "./cutContract.ts";
+import {
+  CAMERA_RUNTIME_FILE,
+  cameraMotionWindows,
+  cameraRuntimeSource,
+  parseCameraPlan,
+} from "./cameraContract.ts";
 import { findBrowserExecutable } from "./render.ts";
 
 export type LayoutSeverity = "error" | "warning" | "info";
@@ -181,6 +187,11 @@ function prepareScratch(projectDir: string, draft: DirectCompositionDraft): stri
   fs.writeFileSync(
     path.join(scratch, CUT_RUNTIME_FILE),
     cutRuntimeSource(),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(scratch, CAMERA_RUNTIME_FILE),
+    cameraRuntimeSource(),
     "utf8",
   );
   const assets = path.join(projectDir, "assets");
@@ -356,9 +367,28 @@ async function auditSequencesRelationships(
       ? cssSafe
       : Math.round(Math.min(rootRect.width, rootRect.height) * 0.06);
 
+    // Camera-rig worlds are deliberately larger than the frame: content that
+    // sits in a currently-unframed region is expected to be off screen, and
+    // frame-relative anchors stop being meaningful once the world plane
+    // carries a camera transform.
+    const movedWorld = (element: Element): boolean => {
+      const world = element.closest<HTMLElement>("[data-camera-world]");
+      if (!world) return false;
+      const transform = getComputedStyle(world).transform;
+      return Boolean(transform) && transform !== "none" &&
+        transform !== "matrix(1, 0, 0, 1, 0, 0)";
+    };
+    const mostlyOffFrame = (value: Rect): boolean => {
+      const width = Math.max(0, Math.min(value.right, rootRect.right) - Math.max(value.left, rootRect.left));
+      const height = Math.max(0, Math.min(value.bottom, rootRect.bottom) - Math.max(value.top, rootRect.top));
+      const area = value.width * value.height;
+      return area <= 0 || (width * height) / area < 0.6;
+    };
+
     for (const element of Array.from(root.querySelectorAll<HTMLElement>("[data-layout-important]"))) {
       if (!visible(element) || element.closest("[data-layout-allow-overflow]")) continue;
       const value = rect(element);
+      if (movedWorld(element) && mostlyOffFrame(value)) continue;
       const overflow = Math.max(
         rootRect.left + safe - value.left,
         rootRect.top + safe - value.top,
@@ -378,7 +408,7 @@ async function auditSequencesRelationships(
     }
 
     for (const element of Array.from(root.querySelectorAll<HTMLElement>("[data-layout-anchor]"))) {
-      if (!visible(element)) continue;
+      if (!visible(element) || movedWorld(element)) continue;
       const intent = element.dataset.layoutAnchor ?? "";
       const value = rect(element);
       const centerX = value.left + value.width / 2;
@@ -1253,8 +1283,39 @@ export async function inspectDirectComposition(
         { time, tolerance: 2 },
       );
       const interactionAudit = await auditInteractions(page, interactionIntents, time);
+      const hyperframesIssues = (hyperframes as Record<string, unknown>[])
+        .map(normalizeHyperframesIssue);
+      // Content parked in a currently-unframed camera-world region is meant to
+      // be off screen (clipped by the viewport); it is not a layout defect.
+      const offWorldFlags = await page.evaluate((selectors: string[]) => {
+        const root = document.querySelector<HTMLElement>(
+          "[data-composition-id][data-width][data-height]",
+        );
+        if (!root) return selectors.map(() => false);
+        const rootRect = root.getBoundingClientRect();
+        return selectors.map((sel) => {
+          let element: Element | null = null;
+          try {
+            element = sel && sel !== "composition" ? root.querySelector(sel) : null;
+          } catch {
+            element = null;
+          }
+          if (!element) return false;
+          const world = element.closest<HTMLElement>("[data-camera-world]");
+          if (!world) return false;
+          const transform = getComputedStyle(world).transform;
+          if (!transform || transform === "none" || transform === "matrix(1, 0, 0, 1, 0, 0)") {
+            return false;
+          }
+          const r = element.getBoundingClientRect();
+          const w = Math.max(0, Math.min(r.right, rootRect.right) - Math.max(r.left, rootRect.left));
+          const h = Math.max(0, Math.min(r.bottom, rootRect.bottom) - Math.max(r.top, rootRect.top));
+          const area = r.width * r.height;
+          return area <= 0 || (w * h) / area < 0.6;
+        });
+      }, hyperframesIssues.map((issue) => issue.selector));
       rawIssues.push(
-        ...(hyperframes as Record<string, unknown>[]).map(normalizeHyperframesIssue),
+        ...hyperframesIssues.filter((_, index) => !offWorldFlags[index]),
         ...await auditSequencesRelationships(page, time),
         ...await auditFocalParts(page, draft.storyboard, time),
         ...interactionAudit.issues,
@@ -1340,7 +1401,15 @@ export async function inspectDirectComposition(
     // report that intentional motion as overlap/overflow findings and spend
     // model repairs fighting the cut compositor; interaction evidence and
     // runtime errors keep their full authority everywhere.
-    const boundaryWindows = cutMotionWindows(parseCutPlan(draft.html).plan);
+    // The camera rig intentionally re-frames the world during full moves
+    // (whips, pans, push-ins…): mid-transit geometry is designed motion, not a
+    // layout defect. Suppress static-layout heuristics inside those windows
+    // exactly like cut boundaries; interaction evidence and runtime errors
+    // keep their full authority everywhere.
+    const boundaryWindows = [
+      ...cutMotionWindows(parseCutPlan(draft.html).plan),
+      ...cameraMotionWindows(parseCameraPlan(draft.html).plan),
+    ];
     const insideCutWindow = (time: number): boolean =>
       boundaryWindows.some((window) => time >= window.start && time <= window.end);
     const issues = collapseIssues(rawIssues.filter((issue) =>

@@ -27,6 +27,7 @@ import { inspectDirectComposition } from "../src/engine/layoutInspector.ts";
 import { initializeProject } from "../src/engine/projectTemplates.ts";
 import { buildJobFrame } from "../src/engine/frameDesign.ts";
 import { injectCinemaKit } from "../src/engine/cinemaKit.ts";
+import { injectCameraRuntimeTag } from "../src/engine/cameraContract.ts";
 import { buildFallbackComposition } from "../src/engine/fallbackComposition.ts";
 
 vi.mock("../src/engine/layoutInspector.ts", () => ({
@@ -329,7 +330,7 @@ describe("direct HyperFrames composition", () => {
     expect(parsed).toEqual(plan);
     expect(() => parseStoryboardResponse(
       `<storyboard_json>${JSON.stringify(plan.slice(0, 2))}</storyboard_json>`,
-    )).toThrow(/3-5 distinct shots/);
+    )).toThrow(/3-10 distinct shots/);
   });
 
   it("keeps typed boundary cuts and degrades unusable ones before source authoring", () => {
@@ -567,7 +568,7 @@ describe("direct HyperFrames composition", () => {
     });
     expect(complete.mock.calls[0]?.[1]).toMatchObject({
       model: "operator/structured-planner",
-      maxTokens: 4_096,
+      maxTokens: 6_144,
       thinkingMode: "none",
     });
   });
@@ -591,7 +592,7 @@ describe("direct HyperFrames composition", () => {
       skills: skills(),
     });
     expect(complete.mock.calls[0]?.[1]).toMatchObject({
-      maxTokens: 4_096,
+      maxTokens: 6_144,
       thinkingMode: "none",
     });
     expect((complete.mock.calls[0]?.[1] as { model?: string }).model).toBeUndefined();
@@ -859,7 +860,7 @@ describe("direct HyperFrames composition", () => {
       maxTokens?: number;
       thinkingMode?: string;
     } | undefined;
-    expect(options?.maxTokens).toBe(10_240);
+    expect(options?.maxTokens).toBe(12_288);
     expect(options?.thinkingMode).toBe("none");
   });
 
@@ -917,7 +918,7 @@ describe("direct HyperFrames composition", () => {
     });
     expect(result.attempts).toBe(1);
     const expected = draft();
-    expected.html = injectCinemaKit(expected.html);
+    expected.html = injectCinemaKit(injectCameraRuntimeTag(expected.html));
     expect(result.draft).toEqual(expected);
     expect((complete.mock.calls[1]?.[1] as { assistantPrefill?: string }).assistantPrefill)
       .toBe(prefix);
@@ -1078,7 +1079,7 @@ describe("direct HyperFrames composition", () => {
       lockedStoryboard: initial.storyboard,
     });
     expect(result.attempts).toBe(3);
-    expect(result.draft.html).toBe(injectCinemaKit(initial.html));
+    expect(result.draft.html).toBe(injectCinemaKit(injectCameraRuntimeTag(initial.html)));
   });
 
   it("publishes runnable output when visual-QA polish patches are malformed", async () => {
@@ -1121,7 +1122,7 @@ describe("direct HyperFrames composition", () => {
     });
 
     expect(result.attempts).toBe(3);
-    expect(result.draft.html).toBe(injectCinemaKit(initial.html));
+    expect(result.draft.html).toBe(injectCinemaKit(injectCameraRuntimeTag(initial.html)));
     expect(complete).toHaveBeenCalledTimes(3);
   });
 

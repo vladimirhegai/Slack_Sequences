@@ -1,4 +1,5 @@
 import { resolveCutPlan } from "./cutContract.ts";
+import { CAMERA_FULL_MOVES, resolveCameraPlan } from "./cameraContract.ts";
 import type { DirectScene } from "./directComposition.ts";
 
 export type MotionActivityKind = "major" | "medium" | "small";
@@ -236,6 +237,34 @@ function authoredTweenActivities(
   return { activities, unpositioned };
 }
 
+/**
+ * Typed camera-rig activities. Full moves (pan/whip/push-in/pull-back/
+ * track-to-anchor/parallax-pass/orbit-lite) are medium reframing beats; drift
+ * segments are small connective motion. Typed holds contribute nothing — a
+ * hold is a deliberate statement of stillness the scene must earn elsewhere.
+ */
+function cameraActivities(scenes: DirectScene[], durationSec: number): MotionActivity[] {
+  const activities: MotionActivity[] = [];
+  for (const scenePlan of resolveCameraPlan(scenes).scenes) {
+    for (const segment of scenePlan.segments) {
+      if (segment.move === "hold") continue;
+      activities.push({
+        kind: CAMERA_FULL_MOVES.has(segment.move) ? "medium" : "small",
+        source: `camera:${segment.move}`,
+        sceneId: scenePlan.sceneId,
+        startSec: round(Math.max(0, segment.startSec)),
+        endSec: round(Math.min(durationSec, segment.endSec)),
+        ...(segment.toPart
+          ? { target: segment.toPart }
+          : segment.toRegion
+            ? { target: segment.toRegion }
+            : {}),
+      });
+    }
+  }
+  return activities;
+}
+
 function contractActivities(scenes: DirectScene[], durationSec: number): MotionActivity[] {
   const activities: MotionActivity[] = [];
   for (const scene of scenes) {
@@ -348,8 +377,10 @@ export function analyzeMotionDensity(
 ): MotionDensityReport {
   const applies = scenes.length >= 3 && durationSec >= MIN_LIVE_DURATION_SEC;
   const authored = authoredTweenActivities(html, scenes);
+  const camera = cameraActivities(scenes, durationSec);
   const activities = [
     ...contractActivities(scenes, durationSec),
+    ...camera,
     ...authored.activities,
   ].sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
   const quietGaps = applies ? mergedGaps(activities, durationSec) : [];
@@ -359,17 +390,40 @@ export function analyzeMotionDensity(
       warnings.push(
         `motion/liveness: ${gap.durationSec.toFixed(1)}s with no major cut, ` +
           `interaction, or authored component/camera beat (${gap.startSec.toFixed(1)}-` +
-          `${gap.endSec.toFixed(1)}s); add a mid-shot reveal, state change, or ` +
-          `camera-world move with explicit timeline timing`,
+          `${gap.endSec.toFixed(1)}s); add a mid-shot reveal, state change, ` +
+          `typed camera move, or camera-world move with explicit timeline timing`,
       );
+    }
+    // Typed holds are deliberate stillness, but a long hold with nothing
+    // happening inside it reads as a stall. Give every 1.6s+ hold at least one
+    // overlapping authored/component beat, or shorten it into a drift.
+    for (const scenePlan of resolveCameraPlan(scenes).scenes) {
+      for (const segment of scenePlan.segments) {
+        if (segment.move !== "hold" || segment.endSec - segment.startSec < 1.6) continue;
+        const covered = [...authored.activities, ...contractActivities(scenes, durationSec)]
+          .some((activity) =>
+            activity.kind !== "major" &&
+            activity.endSec > segment.startSec + 0.1 &&
+            activity.startSec < segment.endSec - 0.1
+          );
+        if (!covered) {
+          warnings.push(
+            `motion/pulse: scene "${scenePlan.sceneId}" holds the camera for ${
+              (segment.endSec - segment.startSec).toFixed(1)
+            }s (${segment.startSec.toFixed(1)}-${segment.endSec.toFixed(1)}s) with no ` +
+              `overlapping beat; reveal something during the hold or replace it with drift`,
+          );
+        }
+      }
     }
     for (const scene of scenes) {
       const sceneEndSec = sceneEnd(scene);
-      const beats = authored.activities.filter((activity) =>
-        activity.sceneId === scene.id &&
-        activity.startSec >= scene.startSec + 0.08 &&
-        activity.startSec <= sceneEndSec - 0.08
-      );
+      const beats = [...authored.activities, ...camera.filter((a) => a.kind === "medium")]
+        .filter((activity) =>
+          activity.sceneId === scene.id &&
+          activity.startSec >= scene.startSec + 0.08 &&
+          activity.startSec <= sceneEndSec - 0.08
+        );
       const backHalf = beats.filter((activity) =>
         activity.startSec >= scene.startSec + scene.durationSec * 0.45
       );

@@ -129,6 +129,21 @@ from the locked storyboard so the source author cannot silently omit it.
 Object-match uses measured `data-part` geometry, while static validation catches
 missing bindings and warns when authored scene-wrapper tweens compete with the
 cut runtime.
+Scenes may also declare a typed **camera path** over a continuous spatial world:
+`data-camera-world` is a plane larger than the viewport with named
+`data-region` stations, and `cameraContract.ts` +
+`templates/sequences-camera.v1.js` compile `hold`/`drift`/`pan`/`whip`/
+`push-in`/`pull-back`/`track-to-anchor`/`parallax-pass`/`orbit-lite` moves into
+seek-safe world transforms (gaps auto-fill with drift so the camera never
+silently freezes; `data-parallax` layers get depth counter-motion). The same
+runtime registers the Sequences ease library (`seqSwoosh`, `seqWhip`,
+`seqImpulse`, `seqSettle`, `seqGlide`, `seqDrift`, `seqAnticipate`,
+`seqMicrobounce`) in every composition for authored beats. Storyboards scale
+3-10 shots with a framing-density floor (a new framing — cut or camera move —
+roughly every 3.5s); camera bindings are injected deterministically from the
+locked storyboard and gated by `validateCameraContract`; layout QA suppresses
+heuristics during camera transits and for off-frame world stations; the
+model-free fallback ships a camera world as the deterministic proof path.
 A host-owned **cinematography kit** (`engine/cinemaKit.ts` +
 `templates/sequences-cinema.v1.css`) is injected inline into every direct
 composition: automatic film grain + vignette, key-light fields, hero blooms,

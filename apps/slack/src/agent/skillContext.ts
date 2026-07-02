@@ -171,7 +171,30 @@ the host owns the standard screen-space cursor/feedback layer. Declared
 interactions load local sequences-interactions.v1.js and call
 SequencesInteractions.compile(tl, root) after authored target/camera tweens.
 Never draw or tween the standard cursor, target press, or ripple; never guess
-cursor TARGET_X/TARGET_Y.`;
+cursor TARGET_X/TARGET_Y.
+
+**Camera rig (continuous spatial world):** a scene with a typed storyboard
+camera path gets one data-camera-world plane LARGER than the viewport with
+named data-region="kebab-name" stations absolutely positioned on it (flow
+layout inside each region). The host injects sequences-camera.v1.js, the
+sequences-camera JSON island, and SequencesCamera.compile(tl, root), and owns
+the world plane's transform — never tween data-camera-world yourself. Region/
+part names in the plan must exist verbatim in the scene. Depth layers inside
+the world may declare data-parallax="0.15"-"0.45" (0 = screen-locked) for
+host-driven parallax during pans.`;
+
+/* ------------------------------------------------- ease library (compact) */
+
+const EASE_LIBRARY_COMPACT = `## Sequences ease library (host-registered, always available)
+
+Use for authored beats AND trust in camera paths. By intent:
+seqSwoosh (sharp long-distance reframe) · seqWhip (violent leave, feathered
+landing; 0.25-0.6s) · seqImpulse (spike then long decay: counters, fills) ·
+seqSettle (committed overshoot-free arrival: hero entrances, push-ins) ·
+seqGlide (never fully stops: chained motion) · seqDrift (near-linear
+connective travel) · seqAnticipate (small dip then commit; one per film) ·
+seqMicrobounce (~3% overshoot: small UI acknowledgments only).
+power3.out / power4.out / expo.out remain the defaults for ordinary entrances.`;
 
 /* -------------------------------------------- blueprint/rule indexes */
 
@@ -310,6 +333,7 @@ export function retrieveHyperframesSkillContext(
     COMPOSITION_SKELETON,
     DETERMINISM_COMPACT,
     DATA_ATTRIBUTES_COMPACT,
+    EASE_LIBRARY_COMPACT,
   ].join("\n\n");
 
   // 2. Capabilities overview (compact indexes so the model knows what exists)

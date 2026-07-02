@@ -38,6 +38,9 @@ Read [apps/slack/CLAUDE.md](apps/slack/CLAUDE.md),
   then the rendered MP4 replaces them inline when it's ready.
 - **Revise**, **Undo**, and **Approve & share** (repost the finished reel to
   another channel) run in-channel.
+- Direct films can use **typed cuts plus a continuous spatial-world camera rig**
+  (host-owned camera paths over larger `data-camera-world` scenes) with the same
+  deterministic validation/injection model.
 - Composition checkpoint / preview / render / undo are driven over the included **MCP server**
   (with an in-process fallback); each result shows a tool receipt.
 

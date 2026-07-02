@@ -35,6 +35,15 @@ import {
   resolveCutPlan,
 } from "./cutContract.ts";
 import {
+  CAMERA_FULL_MOVES,
+  CAMERA_MOVES,
+  CAMERA_RUNTIME_FILE,
+  SEQUENCES_EASES,
+  injectCameraRuntimeTag,
+  normalizeStoryboardCameraIntent,
+  resolveCameraPlan,
+} from "./cameraContract.ts";
+import {
   CINEMA_KIT_FILE,
   CINEMA_KIT_VERSION,
   injectCinemaKit,
@@ -58,11 +67,13 @@ export interface CompositionRunResult {
   attempts: number;
 }
 
-const COMPOSITION_SOURCE_BUDGET_CHARS = 32_000;
+const COMPOSITION_SOURCE_BUDGET_CHARS = 38_000;
 const COMPACT_SKILL_BUDGET_CHARS = 16_000;
 const REPAIR_MAX_TOKENS = 4_096;
 const MAX_REPAIR_PATCHES = 16;
-const STORYBOARD_MAX_TOKENS = 4_096;
+// Camera-era storyboards carry typed camera paths and more shots, so the
+// compact JSON artifact needs more room than the pre-rig 4K ceiling.
+const STORYBOARD_MAX_TOKENS = 6_144;
 // GLM spends its budget on reasoning before the compact JSON artifact; its
 // provider ceiling is ~33K output tokens, so give the reasoning storyboard
 // enough room that a long think cannot truncate the artifact.
@@ -82,7 +93,7 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
           storyboard: {
             type: "array",
             minItems: 3,
-            maxItems: 5,
+            maxItems: 10,
             items: {
               type: "object",
               properties: {
@@ -115,6 +126,44 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
                     focalPartIn: { type: "string" },
                   },
                   required: ["version", "style"],
+                  additionalProperties: false,
+                },
+                camera: {
+                  type: "object",
+                  properties: {
+                    version: { type: "number", enum: [1] },
+                    path: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          version: { type: "number", enum: [1] },
+                          move: { type: "string", enum: [...CAMERA_MOVES] },
+                          toRegion: { type: "string" },
+                          toPart: { type: "string" },
+                          fromRegion: { type: "string" },
+                          fromPart: { type: "string" },
+                          zoom: { type: "number" },
+                          startSec: { type: "number" },
+                          durationSec: { type: "number" },
+                          ease: {
+                            type: "string",
+                            enum: [
+                              ...SEQUENCES_EASES,
+                              "power2.inOut",
+                              "power3.out",
+                              "expo.out",
+                              "sine.inOut",
+                              "none",
+                            ],
+                          },
+                        },
+                        required: ["version", "move", "startSec", "durationSec"],
+                        additionalProperties: false,
+                      },
+                    },
+                  },
+                  required: ["version", "path"],
                   additionalProperties: false,
                 },
                 spatialIntent: {
@@ -215,7 +264,7 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
               required: [
                 "id", "title", "purpose", "incomingIdea", "foreground", "background",
                 "cameraIntent", "startSec", "durationSec", "blueprint", "rules",
-                "capabilityIds", "continuityAnchor", "outgoingCut", "cut",
+                "capabilityIds", "continuityAnchor", "outgoingCut", "cut", "camera",
                 "spatialIntent", "interactions",
               ],
               additionalProperties: false,
@@ -271,7 +320,7 @@ function supportsStructuredOutputs(provider: AgentProvider): boolean {
  */
 function authorMaxTokens(): number {
   const parsed = Number(process.env.SEQUENCES_MAX_OUTPUT_TOKENS);
-  return Number.isFinite(parsed) && parsed >= 4096 ? Math.floor(parsed) : 10_240;
+  return Number.isFinite(parsed) && parsed >= 4096 ? Math.floor(parsed) : 12_288;
 }
 
 /**
@@ -1017,6 +1066,69 @@ function applyDeterministicSourceRepairs(
       );
     }
   }
+  // The camera rig runtime registers the curated motion-graphics ease library
+  // (seqSwoosh, seqWhip, seqImpulse, …) at script load, so it is injected into
+  // every composition — authored beats may cite those eases even when no scene
+  // declares a typed camera path.
+  {
+    const withRuntime = injectCameraRuntimeTag(html);
+    if (withRuntime !== html) {
+      html = withRuntime;
+      process.stderr.write(
+        `[author] injected camera/ease runtime ${CAMERA_RUNTIME_FILE}\n`,
+      );
+    }
+  }
+  // Typed camera paths are compiled by the host-owned camera rig, so their
+  // bindings are injected deterministically from the storyboard: the author
+  // never spends output budget on camera mechanics and can never silently
+  // drop a planned camera move.
+  const cameraPlan = resolveCameraPlan(lockedStoryboard ?? draft.storyboard);
+  if (cameraPlan.scenes.length) {
+    let repairedCamera = 0;
+    const payload = JSON.stringify(cameraPlan);
+    const cameraIslandPattern =
+      /(<script\b[^>]*\bid\s*=\s*(["'])sequences-camera\2[^>]*>)([\s\S]*?)(<\/script>)/i;
+    if (cameraIslandPattern.test(html)) {
+      const updated = html.replace(cameraIslandPattern, `$1${payload}$4`);
+      if (updated !== html) {
+        html = updated;
+        repairedCamera += 1;
+      }
+    } else {
+      const timelineScript =
+        /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
+      if (timelineScript?.index !== undefined) {
+        html = html.slice(0, timelineScript.index) +
+          `<script type="application/json" id="sequences-camera">${payload}</script>\n` +
+          html.slice(timelineScript.index);
+        repairedCamera += 1;
+      }
+    }
+    if (!/\bSequencesCamera\.compile\s*\(/.test(html)) {
+      const timelineName = html.match(
+        /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*gsap\.timeline\s*\(/,
+      )?.[1];
+      if (timelineName) {
+        const registration = new RegExp(
+          `(window\\.__timelines\\s*\\[[^\\]]+\\]\\s*=\\s*${regexpEscape(timelineName)}\\s*;)`,
+        );
+        if (registration.test(html)) {
+          html = html.replace(
+            registration,
+            `SequencesCamera.compile(${timelineName}, document.querySelector("[data-composition-id]"));\n$1`,
+          );
+          repairedCamera += 1;
+        }
+      }
+    }
+    if (repairedCamera) {
+      process.stderr.write(
+        `[author] injected ${repairedCamera} deterministic camera binding(s) for ` +
+          `${cameraPlan.scenes.length} scene camera path(s)\n`,
+      );
+    }
+  }
   // The cinematography kit (grain/vignette, key lights, materials, grades) is
   // host-owned static CSS. Injecting it inline means every live film gets the
   // baseline filmic floor and the author's kit classes always resolve.
@@ -1127,6 +1239,7 @@ function parseStoryboard(raw: string): DirectScene[] {
     }
     const spatialIntent = normalizeStoryboardSpatialIntent(scene.spatialIntent);
     const cut = normalizeStoryboardCutIntent(scene.cut);
+    const camera = normalizeStoryboardCameraIntent(scene.camera, { startSec, durationSec });
     const interactions = normalizeStoryboardInteractionIntents(scene.interactions, {
       sceneId: id,
       startSec,
@@ -1167,6 +1280,7 @@ function parseStoryboard(raw: string): DirectScene[] {
         : {}),
       ...(typeof scene.outgoingCut === "string" ? { outgoingCut: scene.outgoingCut } : {}),
       ...(cut ? { cut } : {}),
+      ...(camera ? { camera } : {}),
       ...(spatialIntent ? { spatialIntent } : {}),
       ...(interactions.length ? { interactions } : {}),
     };
@@ -1193,8 +1307,8 @@ function parseStoryboard(raw: string): DirectScene[] {
 
 export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {
   const errors: string[] = [];
-  if (storyboard.length < 3 || storyboard.length > 5) {
-    errors.push("storyboard must contain 3-5 distinct shots");
+  if (storyboard.length < 3 || storyboard.length > 10) {
+    errors.push("storyboard must contain 3-10 distinct shots");
   }
   const knownCapabilities = new Set(
     loadCapabilityIndex().capabilities.map((capability) => capability.id),
@@ -1257,6 +1371,25 @@ export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {
   }
   if (expectedStart < 6 || expectedStart > 60) {
     errors.push("storyboard total duration must be 6-60 seconds");
+  }
+  // Camera-era density floor: a framing is a shot or a full camera move
+  // (pan/whip/push-in/pull-back/track-to-anchor/parallax-pass/orbit-lite).
+  // The viewer must get a new framing roughly every 3.5 seconds — either by
+  // cutting or by moving the camera across the scene's spatial world.
+  const cameraMoves = storyboard.reduce(
+    (count, scene) =>
+      count +
+      (scene.camera?.path.filter((move) => CAMERA_FULL_MOVES.has(move.move)).length ?? 0),
+    0,
+  );
+  const framings = storyboard.length + cameraMoves;
+  const requiredFramings = Math.min(12, Math.max(3, Math.round(expectedStart / 3.5)));
+  if (expectedStart >= 10 && framings < requiredFramings) {
+    errors.push(
+      `a ${expectedStart.toFixed(0)}s film needs at least ${requiredFramings} distinct framings ` +
+        `(shots plus typed camera moves); it has ${framings} — add shots or give scenes ` +
+        `camera paths over a larger data-camera-world`,
+    );
   }
   const foregrounds = new Set(storyboard.map((scene) => scene.foreground?.toLowerCase()));
   const cameras = new Set(storyboard.map((scene) => scene.cameraIntent?.toLowerCase()));
@@ -1343,11 +1476,32 @@ export async function requestStoryboardPlan(
   }
   const prompt = [
     "SYSTEM: You are the cut-first editor for a short SaaS launch film.",
-    "Design the storyboard before any HTML is written. Make 3-5 distinct shots",
+    "Design the storyboard before any HTML is written. Make 3-10 distinct shots",
     "that form one visual argument, not a centered headline/stat/CTA parade.",
     "Each shot needs a different foreground composition and a purposeful camera",
     "or framing intention. Carry the eye across every cut through one explicit",
     "anchor: component, position, direction, color field, shape, or semantic idea.",
+    "The frame must earn a NEW FRAMING roughly every 3.5 seconds. A framing is a",
+    "shot boundary OR a typed camera move. Plan density accordingly: a 15s film",
+    "needs 4+ framings, a 24s film 7+, a 40s+ film 12. Short punchy shots",
+    "(1.5-3s) are welcome; so are longer shots whose camera keeps traveling.",
+    "CAMERA RIG — the continuous spatial world. Each scene may declare a typed",
+    '"camera" path over a data-camera-world plane larger than the 1920x1080',
+    "viewport. The author scatters that scene's content across named",
+    "data-region stations on the plane (the viewer never sees the whole world);",
+    "the host rig moves the camera between regions with cinematic SaaS motion.",
+    "Moves: hold (locked framing, use sparingly and briefly), drift (slow",
+    "connective travel — the host auto-fills every gap with drift so the camera",
+    "never freezes), pan (reframe to a region), whip (fast swoosh reframe),",
+    "push-in (commit deeper into a region), pull-back (widen to reveal",
+    "context), track-to-anchor (land tight on one data-part), parallax-pass",
+    "(lateral travel that separates data-parallax depth layers), orbit-lite",
+    "(subtle 2.5D arc). Times are absolute seconds inside the shot window.",
+    "Rhythm pattern that works: whip to a region, drift while its content",
+    "reveals, then whip onward — alternate loud and quiet camera energy.",
+    "Give a camera path to any shot longer than ~4 seconds; name 2-4 regions",
+    "per world using stable kebab-case (hero-claim, metric-wall, ui-demo,",
+    "cta-station). track-to-anchor requires a toPart the author will create.",
     "For a 10s+ film, plan visible development inside shots: a 4.5s+ shot must",
     "have at least two non-wrapper component/camera beats, with one in the back",
     "half. Three long scenes without internal events reads as a slide deck.",
@@ -1393,6 +1547,13 @@ export async function requestStoryboardPlan(
     '"outgoingCut":"cut mechanism and destination",',
     '"cut":{"version":1,"style":"cut-left|cut-right|cut-up|cut-down|zoom-through|inverse-zoom|flash-white|object-match|hard",',
     '"focalPartOut":"only for object-match","focalPartIn":"only for object-match"},',
+    '"camera":{"version":1,"path":[{"version":1,"move":"hold|drift|pan|whip|push-in|pull-back|track-to-anchor|parallax-pass|orbit-lite",',
+    '"toRegion":"region name (or toPart for track-to-anchor)","zoom":1,"startSec":0,"durationSec":1.2,',
+    '"ease":"optional: seqSwoosh|seqWhip|seqImpulse|seqSettle|seqGlide|seqDrift|seqAnticipate"}]},',
+    'Use "camera":{"version":1,"path":[]} for a shot without a camera path.',
+    "The first path entry establishes the entry framing: start with a short",
+    "hold or drift on the region the cut lands on, or give the first full move",
+    "a fromRegion. The host fills every timing gap with drift automatically.",
     '"spatialIntent":{"version":1,"focalPart":"stable semantic part",',
     '"composition":"free-text compositional character","relationships":["important relationship"]},',
     '"interactions":[]}.',
@@ -1847,10 +2008,12 @@ function creationPrompt(args: {
     "",
     "## Output-size contract",
     `The entire response must stay under ${COMPOSITION_SOURCE_BUDGET_CHARS.toLocaleString("en-US")} characters.`,
-    "Default to 3 scenes; use 4 only when the story truly needs it. Reuse CSS",
-    "classes and shared primitives. No comments, duplicated per-scene styles,",
-    "embedded data URLs, verbose SVG paths, or explanatory text. Completeness",
-    "outranks ornamental source volume.",
+    "Match the locked storyboard's scene count exactly when one is supplied;",
+    "otherwise default to 4-6 scenes and lean on camera worlds for density.",
+    "Scenes sharing one data-camera-world with several data-region stations are",
+    "cheaper than extra full scenes — reuse CSS classes and shared primitives.",
+    "No comments, duplicated per-scene styles, embedded data URLs, verbose SVG",
+    "paths, or explanatory text. Completeness outranks ornamental source volume.",
     args.compact
       ? "This is a compact recovery pass: finish the complete document well before the limit."
       : "",

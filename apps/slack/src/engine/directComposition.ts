@@ -34,6 +34,15 @@ import {
   validateCutContract,
   type SceneCutIntentV1,
 } from "./cutContract.ts";
+import {
+  CAMERA_RUNTIME_FILE,
+  CAMERA_RUNTIME_VERSION,
+  cameraRuntimeHash,
+  cameraRuntimeSource,
+  resolveCameraPlan,
+  validateCameraContract,
+  type SceneCameraIntentV1,
+} from "./cameraContract.ts";
 import { validateCompositionAgainstFrame } from "./frameValidation.ts";
 import {
   validateMotionDensity,
@@ -62,6 +71,8 @@ export interface DirectScene {
   outgoingCut?: string;
   /** Typed, mechanically executable form of outgoingCut (this scene's boundary). */
   cut?: SceneCutIntentV1;
+  /** Typed camera path over this scene's data-camera-world plane. */
+  camera?: SceneCameraIntentV1;
   spatialIntent?: SpatialIntentV1;
   interactions?: InteractionIntentV1[];
 }
@@ -259,6 +270,7 @@ function normalizeStoryboard(
       ...(proposed?.capabilityIds?.length ? { capabilityIds: proposed.capabilityIds } : {}),
       ...(proposed?.outgoingCut ? { outgoingCut: proposed.outgoingCut } : {}),
       ...(proposed?.cut ? { cut: proposed.cut } : {}),
+      ...(proposed?.camera ? { camera: proposed.camera } : {}),
       ...(proposed?.spatialIntent ? { spatialIntent: proposed.spatialIntent } : {}),
       ...(proposed?.interactions?.length ? { interactions: proposed.interactions } : {}),
     };
@@ -372,6 +384,8 @@ export async function validateDirectComposition(
   }
   const cutValidation = validateCutContract(html, normalized.scenes);
   errors.push(...cutValidation.errors);
+  const cameraValidation = validateCameraContract(html, normalized.scenes);
+  errors.push(...cameraValidation.errors);
   const motionValidation = validateMotionDensity(
     html,
     normalized.scenes,
@@ -394,6 +408,7 @@ export async function validateDirectComposition(
       ref !== "gsap.min.js" &&
       ref !== INTERACTION_RUNTIME_FILE &&
       ref !== CUT_RUNTIME_FILE &&
+      ref !== CAMERA_RUNTIME_FILE &&
       !fs.existsSync(resolved)
     ) {
       const staged = path.resolve(projectDir, ref);
@@ -426,6 +441,7 @@ export async function validateDirectComposition(
       .map((finding) => `${finding.code}: ${finding.message}`),
       ...frameValidation.warnings,
       ...cutValidation.warnings,
+      ...cameraValidation.warnings,
       ...motionValidation.warnings,
     ])],
     frameErrors: frameValidation.errors,
@@ -454,6 +470,11 @@ function copyRuntimeAndAssets(projectDir: string, targetDir: string): void {
   fs.writeFileSync(
     path.join(targetDir, CUT_RUNTIME_FILE),
     cutRuntimeSource(),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(targetDir, CAMERA_RUNTIME_FILE),
+    cameraRuntimeSource(),
     "utf8",
   );
   const sourceAssets = path.join(projectDir, "assets");
@@ -496,6 +517,11 @@ function storyboardMarkdown(title: string, scenes: DirectScene[]): string {
             ? ` (${scene.cut.focalPartOut} → ${scene.cut.focalPartIn})`
             : ""
         }`
+        : "",
+      scene.camera?.path.length
+        ? `- Camera path: ${scene.camera.path
+          .map((move) => `${move.move}${move.toPart ? `→${move.toPart}` : move.toRegion ? `→${move.toRegion}` : ""}`)
+          .join(", ")}`
         : "",
       scene.spatialIntent
         ? `- Focal part: ${scene.spatialIntent.focalPart} Â· ${scene.spatialIntent.composition}`
@@ -604,6 +630,11 @@ export async function commitDirectComposition(
         version: CUT_RUNTIME_VERSION,
         sha256: cutRuntimeHash(),
       },
+      camera: resolveCameraPlan(normalized.scenes).scenes,
+      cameraRuntime: {
+        version: CAMERA_RUNTIME_VERSION,
+        sha256: cameraRuntimeHash(),
+      },
       ...(validation.motionReport
         ? {
             motionDensity: {
@@ -666,6 +697,10 @@ export async function commitDirectComposition(
     path.join(target, CUT_RUNTIME_FILE),
     path.join(checkpoint, CUT_RUNTIME_FILE),
   );
+  fs.copyFileSync(
+    path.join(target, CAMERA_RUNTIME_FILE),
+    path.join(checkpoint, CAMERA_RUNTIME_FILE),
+  );
   fs.cpSync(path.join(target, "qa"), path.join(checkpoint, "qa"), { recursive: true });
   return { manifest, validation };
 }
@@ -686,6 +721,7 @@ export function undoDirectComposition(projectDir: string): boolean {
     "motion-plan.json",
     INTERACTION_RUNTIME_FILE,
     CUT_RUNTIME_FILE,
+    CAMERA_RUNTIME_FILE,
   ]) {
     const source = path.join(checkpoint, sidecar);
     const destination = path.join(target, sidecar);

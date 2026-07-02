@@ -596,6 +596,9 @@ flow.
 .safe-area { position: absolute; inset: var(--space-safe); }
 .anchor { position: absolute; }
 .overlay { position: absolute; inset: 0; pointer-events: none; }
+/* Camera-rig spatial world: a plane larger than the frame, host-driven. */
+[data-camera-world] { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+[data-region] { position: absolute; display: grid; padding: var(--space-region); min-width: 0; min-height: 0; }
 \`\`\`
 
 Pick one scene class: \`.layout-center-stack\` for a single resolve,
@@ -610,6 +613,15 @@ Absolute positioning remains a legitimate escape hatch for decoration,
 screen-space overlays, and intentional art-directed overlap. Scope it to a
 positioned product surface or \`.overlay\`; never use raw-canvas coordinates to
 place headlines, stats, cards, code, product UI, or CTAs.
+
+**Camera-rig scenes:** when a scene carries a typed camera path, give it one
+\`data-camera-world\` plane larger than the frame and place each station as an
+absolutely positioned \`data-region="name"\` wrapper on that plane — region
+placement on the world is the second legitimate use of absolute coordinates.
+Inside every region, return to flow: pick a layout class and use \`.zone\` /
+\`.stack\` as usual. Size regions near viewport proportions so a framed region
+fills the frame. Depth texture inside the world may declare
+\`data-parallax="0.15"\`–\`0.45\` for host-driven parallax.
 
 The 12-column guide, centerlines, thirds, and baseline are debug guides—not
 placement slots. Grid/Flexbox owns settled layout; GSAP transforms own motion.
