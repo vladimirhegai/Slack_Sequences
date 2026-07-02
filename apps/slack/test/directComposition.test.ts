@@ -331,6 +331,22 @@ describe("direct HyperFrames composition", () => {
     )).toThrow(/3-5 distinct shots/);
   });
 
+  it("keeps typed boundary cuts and degrades unusable ones before source authoring", () => {
+    const plan = storyboard();
+    plan[0]!.cut = { version: 1, style: "cut-left", travelPx: 9999 };
+    plan[1]!.cut = {
+      version: 1,
+      style: "object-match",
+      focalPartOut: "the-action-button",
+      // focalPartIn missing → unusable, must degrade to no cut, not fail
+    };
+    plan[2]!.cut = { version: 1, style: "hard" };
+    const parsed = parseStoryboardResponse(JSON.stringify(plan));
+    expect(parsed[0]?.cut).toEqual({ version: 1, style: "cut-left", travelPx: 420 });
+    expect(parsed[1]?.cut).toBeUndefined();
+    expect(parsed[2]?.cut).toEqual({ version: 1, style: "hard" });
+  });
+
   it("recovers a planner ripple omission before source authoring", () => {
     const plan = storyboard();
     plan[1]!.interactions = [{

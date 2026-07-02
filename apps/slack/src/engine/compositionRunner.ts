@@ -29,6 +29,12 @@ import {
   normalizeStoryboardSpatialIntent,
 } from "./interactionContract.ts";
 import {
+  CUT_RUNTIME_FILE,
+  CUT_STYLES,
+  normalizeStoryboardCutIntent,
+  resolveCutPlan,
+} from "./cutContract.ts";
+import {
   creativeModel,
   creativeThinkingMode,
   productionModel,
@@ -88,6 +94,20 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
                 },
                 continuityAnchor: { type: "string" },
                 outgoingCut: { type: "string" },
+                cut: {
+                  type: "object",
+                  properties: {
+                    version: { type: "number", enum: [1] },
+                    style: { type: "string", enum: [...CUT_STYLES] },
+                    travelPx: { type: "number" },
+                    exitSec: { type: "number" },
+                    entrySec: { type: "number" },
+                    focalPartOut: { type: "string" },
+                    focalPartIn: { type: "string" },
+                  },
+                  required: ["version", "style"],
+                  additionalProperties: false,
+                },
                 spatialIntent: {
                   type: "object",
                   properties: {
@@ -186,7 +206,7 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
               required: [
                 "id", "title", "purpose", "incomingIdea", "foreground", "background",
                 "cameraIntent", "startSec", "durationSec", "blueprint", "rules",
-                "capabilityIds", "continuityAnchor", "outgoingCut",
+                "capabilityIds", "continuityAnchor", "outgoingCut", "cut",
                 "spatialIntent", "interactions",
               ],
               additionalProperties: false,
@@ -926,6 +946,68 @@ function applyDeterministicSourceRepairs(
       );
     }
   }
+  // Typed cuts are compiled by a host-owned runtime, so their bindings are
+  // injected deterministically from the storyboard: the author never spends
+  // output budget on boundary mechanics and can never silently drop a cut.
+  const cutPlan = resolveCutPlan(lockedStoryboard ?? draft.storyboard);
+  if (cutPlan.cuts.length) {
+    let repairedCuts = 0;
+    if (
+      !html.includes(`src="${CUT_RUNTIME_FILE}"`) &&
+      !html.includes(`src='${CUT_RUNTIME_FILE}'`)
+    ) {
+      const withRuntime = html.replace(
+        /(<script\b[^>]*\bsrc\s*=\s*(["'])gsap\.min\.js\2[^>]*>\s*<\/script>)/i,
+        `$1\n<script src="${CUT_RUNTIME_FILE}"></script>`,
+      );
+      if (withRuntime !== html) {
+        html = withRuntime;
+        repairedCuts += 1;
+      }
+    }
+    const payload = JSON.stringify(cutPlan);
+    const cutIslandPattern =
+      /(<script\b[^>]*\bid\s*=\s*(["'])sequences-cuts\2[^>]*>)([\s\S]*?)(<\/script>)/i;
+    if (cutIslandPattern.test(html)) {
+      const updated = html.replace(cutIslandPattern, `$1${payload}$4`);
+      if (updated !== html) {
+        html = updated;
+        repairedCuts += 1;
+      }
+    } else {
+      const timelineScript =
+        /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
+      if (timelineScript?.index !== undefined) {
+        html = html.slice(0, timelineScript.index) +
+          `<script type="application/json" id="sequences-cuts">${payload}</script>\n` +
+          html.slice(timelineScript.index);
+        repairedCuts += 1;
+      }
+    }
+    if (!/\bSequencesCuts\.compile\s*\(/.test(html)) {
+      const timelineName = html.match(
+        /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*gsap\.timeline\s*\(/,
+      )?.[1];
+      if (timelineName) {
+        const registration = new RegExp(
+          `(window\\.__timelines\\s*\\[[^\\]]+\\]\\s*=\\s*${regexpEscape(timelineName)}\\s*;)`,
+        );
+        if (registration.test(html)) {
+          html = html.replace(
+            registration,
+            `SequencesCuts.compile(${timelineName}, document.querySelector("[data-composition-id]"));\n$1`,
+          );
+          repairedCuts += 1;
+        }
+      }
+    }
+    if (repairedCuts) {
+      process.stderr.write(
+        `[author] injected ${repairedCuts} deterministic cut binding(s) for ` +
+          `${cutPlan.cuts.length} typed boundary cut(s)\n`,
+      );
+    }
+  }
   return html === draft.html ? draft : { ...draft, html };
 }
 
@@ -1009,6 +1091,7 @@ function parseStoryboard(raw: string): DirectScene[] {
       throw new Error(`storyboard_json[${index}] is missing id/title/purpose/finite timing`);
     }
     const spatialIntent = normalizeStoryboardSpatialIntent(scene.spatialIntent);
+    const cut = normalizeStoryboardCutIntent(scene.cut);
     const interactions = normalizeStoryboardInteractionIntents(scene.interactions, {
       sceneId: id,
       startSec,
@@ -1048,6 +1131,7 @@ function parseStoryboard(raw: string): DirectScene[] {
           }
         : {}),
       ...(typeof scene.outgoingCut === "string" ? { outgoingCut: scene.outgoingCut } : {}),
+      ...(cut ? { cut } : {}),
       ...(spatialIntent ? { spatialIntent } : {}),
       ...(interactions.length ? { interactions } : {}),
     };
@@ -1229,6 +1313,14 @@ export async function requestStoryboardPlan(
     "Each shot needs a different foreground composition and a purposeful camera",
     "or framing intention. Carry the eye across every cut through one explicit",
     "anchor: component, position, direction, color field, shape, or semantic idea.",
+    "Every shot's boundary is a typed, machine-executed cut. Choose cut.style from:",
+    "hard (intentional register break), cut-left/right/up/down (velocity-matched",
+    "directional carry — the default for scene-to-scene motion), zoom-through",
+    "(progressing deeper), inverse-zoom (arriving at a payoff), flash-white (one",
+    "energetic reset at most), object-match (a focal element visibly travels to a",
+    "matching element in the next shot; requires focalPartOut/focalPartIn data-part",
+    "names the author will create). The host compiles the cut deterministically;",
+    "the prose outgoingCut must describe the same editorial idea as cut.style.",
     "Name one frame.md flow scaffold in spatialIntent.composition for every shot:",
     "layout-center-stack, layout-split, layout-editorial-left, layout-meta-top,",
     "layout-corner-chrome, or layout-hero-band. Describe foreground groups as",
@@ -1261,6 +1353,8 @@ export async function requestStoryboardPlan(
     '"rules":["known rule"],"capabilityIds":["zero or more exact index ids"],',
     '"continuityAnchor":"what the eye tracks across this boundary",',
     '"outgoingCut":"cut mechanism and destination",',
+    '"cut":{"version":1,"style":"cut-left|cut-right|cut-up|cut-down|zoom-through|inverse-zoom|flash-white|object-match|hard",',
+    '"focalPartOut":"only for object-match","focalPartIn":"only for object-match"},',
     '"spatialIntent":{"version":1,"focalPart":"stable semantic part",',
     '"composition":"free-text compositional character","relationships":["important relationship"]},',
     '"interactions":[]}.',

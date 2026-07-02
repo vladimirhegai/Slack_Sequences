@@ -1,0 +1,317 @@
+/**
+ * Typed, executable cut contract between scenes.
+ *
+ * The storyboard's `outgoingCut` prose used to be the only record of how one
+ * shot hands off to the next, and authored HTML routinely ignored it — every
+ * boundary degenerated into a hard opacity swap. This contract mirrors the
+ * interaction architecture: the planner declares a bounded typed intent, a
+ * deterministic local runtime (`sequences-cuts.v1.js`) compiles it into
+ * velocity-matched, seek-safe tweens on the scene wrappers, and validation
+ * proves the binding before publication. A cut that cannot be normalized
+ * simply degrades to `hard` — cuts are enhancements, never a veto.
+ */
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { DirectScene } from "./directComposition.ts";
+
+export const CUT_RUNTIME_VERSION = 1;
+export const CUT_RUNTIME_FILE = "sequences-cuts.v1.js";
+
+const RUNTIME_SOURCE_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "templates",
+  CUT_RUNTIME_FILE,
+);
+
+export type CutStyle =
+  | "hard"
+  | "cut-left"
+  | "cut-right"
+  | "cut-up"
+  | "cut-down"
+  | "zoom-through"
+  | "inverse-zoom"
+  | "flash-white"
+  | "object-match";
+
+export const CUT_STYLES: ReadonlySet<CutStyle> = new Set<CutStyle>([
+  "hard",
+  "cut-left",
+  "cut-right",
+  "cut-up",
+  "cut-down",
+  "zoom-through",
+  "inverse-zoom",
+  "flash-white",
+  "object-match",
+]);
+
+/** A scene's declaration of its own outgoing boundary. */
+export interface SceneCutIntentV1 {
+  version: 1;
+  style: CutStyle;
+  /** Wrapper travel for directional cuts, px. */
+  travelPx?: number;
+  /** Exit acceleration window before the boundary, seconds. */
+  exitSec?: number;
+  /** Entry deceleration window after the boundary, seconds. */
+  entrySec?: number;
+  /** object-match: data-part carried out of this scene. */
+  focalPartOut?: string;
+  /** object-match: data-part it lands on in the next scene. */
+  focalPartIn?: string;
+}
+
+/** A fully resolved boundary the runtime can bind mechanically. */
+export interface CutIntentV1 extends Required<Pick<SceneCutIntentV1, "version" | "style">> {
+  fromScene: string;
+  toScene: string;
+  atSec: number;
+  travelPx: number;
+  exitSec: number;
+  entrySec: number;
+  focalPartOut?: string;
+  focalPartIn?: string;
+}
+
+export interface CutPlanV1 {
+  version: 1;
+  cuts: CutIntentV1[];
+}
+
+const STYLE_DEFAULTS: Record<Exclude<CutStyle, "hard">, { exitSec: number; entrySec: number }> = {
+  "cut-left": { exitSec: 0.3, entrySec: 0.42 },
+  "cut-right": { exitSec: 0.3, entrySec: 0.42 },
+  "cut-up": { exitSec: 0.3, entrySec: 0.42 },
+  "cut-down": { exitSec: 0.3, entrySec: 0.42 },
+  "zoom-through": { exitSec: 0.24, entrySec: 0.5 },
+  "inverse-zoom": { exitSec: 0.24, entrySec: 0.5 },
+  "flash-white": { exitSec: 0.18, entrySec: 0.4 },
+  "object-match": { exitSec: 0.22, entrySec: 0.5 },
+};
+
+function finite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function stablePart(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  return /^[a-z][a-z0-9-]{0,63}$/.test(raw) ? raw : "";
+}
+
+/**
+ * Normalize a storyboard scene's typed cut declaration. Unknown styles,
+ * malformed params, or an object-match without both parts degrade to no cut
+ * rather than failing the storyboard — the film stays buildable.
+ */
+export function normalizeStoryboardCutIntent(value: unknown): SceneCutIntentV1 | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const object = value as Record<string, unknown>;
+  const style = typeof object.style === "string" ? object.style.trim() as CutStyle : "";
+  if (!style || !CUT_STYLES.has(style)) return undefined;
+  if (style === "hard") return { version: 1, style };
+  const focalPartOut = stablePart(object.focalPartOut);
+  const focalPartIn = stablePart(object.focalPartIn);
+  if (style === "object-match" && (!focalPartOut || !focalPartIn)) return undefined;
+  return {
+    version: 1,
+    style,
+    ...(finite(object.travelPx) ? { travelPx: clamp(object.travelPx, 80, 420) } : {}),
+    ...(finite(object.exitSec) ? { exitSec: clamp(object.exitSec, 0.12, 0.6) } : {}),
+    ...(finite(object.entrySec) ? { entrySec: clamp(object.entrySec, 0.2, 0.9) } : {}),
+    ...(style === "object-match" ? { focalPartOut, focalPartIn } : {}),
+  };
+}
+
+/**
+ * Resolve per-scene declarations into the concrete boundary plan. The last
+ * scene's declaration is ignored (there is no incoming side), `hard` produces
+ * no runtime work, and windows are clamped so exit/entry never escape the
+ * scenes they animate.
+ */
+export function resolveCutPlan(scenes: DirectScene[]): CutPlanV1 {
+  const cuts: CutIntentV1[] = [];
+  for (let index = 0; index < scenes.length - 1; index += 1) {
+    const scene = scenes[index]!;
+    const next = scenes[index + 1]!;
+    const intent = scene.cut;
+    if (!intent || intent.style === "hard") continue;
+    const defaults = STYLE_DEFAULTS[intent.style];
+    const atSec = scene.startSec + scene.durationSec;
+    const exitSec = clamp(
+      intent.exitSec ?? defaults.exitSec,
+      0.12,
+      Math.max(0.12, scene.durationSec * 0.4),
+    );
+    const entrySec = clamp(
+      intent.entrySec ?? defaults.entrySec,
+      0.2,
+      Math.max(0.2, next.durationSec * 0.5),
+    );
+    cuts.push({
+      version: 1,
+      style: intent.style,
+      fromScene: scene.id,
+      toScene: next.id,
+      atSec,
+      travelPx: clamp(intent.travelPx ?? 230, 80, 420),
+      exitSec,
+      entrySec,
+      ...(intent.focalPartOut ? { focalPartOut: intent.focalPartOut } : {}),
+      ...(intent.focalPartIn ? { focalPartIn: intent.focalPartIn } : {}),
+    });
+  }
+  return { version: 1, cuts };
+}
+
+export function cutRuntimeSource(): string {
+  return fs.readFileSync(RUNTIME_SOURCE_PATH, "utf8");
+}
+
+export function cutRuntimeHash(): string {
+  return createHash("sha256").update(cutRuntimeSource()).digest("hex");
+}
+
+export interface CutContractResult {
+  plan?: CutPlanV1;
+  errors: string[];
+  warnings: string[];
+}
+
+export function parseCutPlan(html: string): { plan?: CutPlanV1; errors: string[] } {
+  const match = html.match(
+    /<script\b[^>]*\bid\s*=\s*(["'])sequences-cuts\1[^>]*>([\s\S]*?)<\/script>/i,
+  );
+  if (!match) return { errors: [] };
+  let value: unknown;
+  try {
+    value = JSON.parse(match[2]!.trim());
+  } catch (error) {
+    return {
+      errors: [
+        `sequences-cuts JSON is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      ],
+    };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { errors: ["sequences-cuts must be an object"] };
+  }
+  const object = value as Record<string, unknown>;
+  const errors: string[] = [];
+  if (object.version !== 1) errors.push("sequences-cuts.version must be 1");
+  if (!Array.isArray(object.cuts)) {
+    errors.push("sequences-cuts.cuts must be an array");
+    return { errors };
+  }
+  const cuts = object.cuts.flatMap((entry, index): CutIntentV1[] => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      errors.push(`cut[${index}] must be an object`);
+      return [];
+    }
+    const cut = entry as Record<string, unknown>;
+    const style = typeof cut.style === "string" ? cut.style as CutStyle : "hard";
+    const fromScene = typeof cut.fromScene === "string" ? cut.fromScene.trim() : "";
+    const toScene = typeof cut.toScene === "string" ? cut.toScene.trim() : "";
+    if (!CUT_STYLES.has(style)) errors.push(`cut[${index}].style "${String(cut.style)}" is unsupported`);
+    if (!fromScene || !toScene) errors.push(`cut[${index}] needs fromScene and toScene`);
+    if (!finite(cut.atSec) || !finite(cut.travelPx) || !finite(cut.exitSec) || !finite(cut.entrySec)) {
+      errors.push(`cut[${index}] needs finite atSec/travelPx/exitSec/entrySec`);
+    }
+    const focalPartOut = stablePart(cut.focalPartOut);
+    const focalPartIn = stablePart(cut.focalPartIn);
+    if (style === "object-match" && (!focalPartOut || !focalPartIn)) {
+      errors.push(`cut[${index}] object-match needs focalPartOut and focalPartIn`);
+    }
+    if (errors.some((error) => error.startsWith(`cut[${index}]`))) return [];
+    return [{
+      version: 1,
+      style,
+      fromScene,
+      toScene,
+      atSec: cut.atSec as number,
+      travelPx: cut.travelPx as number,
+      exitSec: cut.exitSec as number,
+      entrySec: cut.entrySec as number,
+      ...(focalPartOut ? { focalPartOut } : {}),
+      ...(focalPartIn ? { focalPartIn } : {}),
+    }];
+  });
+  return errors.length ? { errors } : { plan: { version: 1, cuts }, errors: [] };
+}
+
+function partPattern(part: string): RegExp {
+  const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\bdata-part\\s*=\\s*(["'])${escaped}\\1`, "i");
+}
+
+/**
+ * Static publication gate for the cut plan. Errors block publication (the
+ * island exists but cannot bind); warnings flag probable double ownership of a
+ * wrapper property so the repair pass can resolve it deliberately.
+ */
+export function validateCutContract(
+  html: string,
+  scenes: DirectScene[],
+): CutContractResult {
+  const parsed = parseCutPlan(html);
+  const errors = [...parsed.errors];
+  const warnings: string[] = [];
+  const expected = resolveCutPlan(scenes);
+  if (!parsed.plan && expected.cuts.length === 0) return { errors, warnings };
+  if (!parsed.plan) {
+    errors.push("storyboard declares typed cuts but index_html has no sequences-cuts JSON island");
+    return { errors, warnings };
+  }
+  if (!html.includes(`src="${CUT_RUNTIME_FILE}"`) && !html.includes(`src='${CUT_RUNTIME_FILE}'`)) {
+    errors.push(`cut composition must load local ${CUT_RUNTIME_FILE}`);
+  }
+  if (!/\bSequencesCuts\.compile\s*\(/.test(html)) {
+    errors.push("cut composition must call SequencesCuts.compile(timeline, root)");
+  }
+  if (JSON.stringify(parsed.plan) !== JSON.stringify(expected)) {
+    errors.push("sequences-cuts island differs from the storyboard's resolved cut plan");
+  }
+  const sceneIds = new Set(scenes.map((scene) => scene.id));
+  for (const cut of parsed.plan.cuts) {
+    if (!sceneIds.has(cut.fromScene) || !sceneIds.has(cut.toScene)) {
+      errors.push(`cut ${cut.fromScene}->${cut.toScene} references an unknown scene`);
+      continue;
+    }
+    if (cut.focalPartOut && !partPattern(cut.focalPartOut).test(html)) {
+      errors.push(`cut ${cut.fromScene}->${cut.toScene} outgoing part "${cut.focalPartOut}" is absent`);
+    }
+    if (cut.focalPartIn && !partPattern(cut.focalPartIn).test(html)) {
+      errors.push(`cut ${cut.fromScene}->${cut.toScene} incoming part "${cut.focalPartIn}" is absent`);
+    }
+    // The runtime owns the scene wrapper's transform/filter/opacity around this
+    // boundary. An authored tween on the same wrapper is the classic
+    // two-owners bug; surface it rather than letting the timelines fight.
+    for (const sceneId of [cut.fromScene, cut.toScene]) {
+      const wrapperTween = new RegExp(
+        `\\.(?:to|from|fromTo)\\(\\s*(["'])#${sceneId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\1`,
+      );
+      if (wrapperTween.test(html)) {
+        warnings.push(
+          `scene wrapper "#${sceneId}" has an authored tween while a typed cut owns its boundary; ` +
+            `move that motion to an inner wrapper (e.g. data-camera-world) so one system owns each transform`,
+        );
+      }
+    }
+  }
+  return { plan: parsed.plan, errors: [...new Set(errors)], warnings: [...new Set(warnings)] };
+}
+
+/** Windows (start, end) during which boundary motion is intentional. */
+export function cutMotionWindows(plan: CutPlanV1 | undefined): Array<{ start: number; end: number }> {
+  if (!plan) return [];
+  return plan.cuts.map((cut) => ({
+    start: cut.atSec - cut.exitSec - 0.05,
+    end: cut.atSec + cut.entrySec + 0.05,
+  }));
+}

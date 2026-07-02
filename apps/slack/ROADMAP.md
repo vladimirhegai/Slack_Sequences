@@ -157,12 +157,26 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 ### 5. Cut-centered motion direction
 - [x] **Storyboard-first planning:** shot targets, cameras, and cut anchors pre-defined.
 - [x] **Cut graph:** defining tracking continuity (color fields, anchor components).
+- [x] **Executable typed cuts (2026-07-01):** the storyboard's boundary is now a
+      typed `cut` intent (`hard`, `cut-left/right/up/down`, `zoom-through`,
+      `inverse-zoom`, `flash-white`, `object-match`) compiled by a deterministic
+      local runtime (`engine/cutContract.ts` + `templates/sequences-cuts.v1.js`)
+      into velocity-matched, seek-safe wrapper motion — including a live-measured
+      FLIP bridge for object handoffs. The island/script/compile call are
+      injected deterministically from the locked storyboard (zero author output
+      cost); `validateCutContract` gates publication and warns on wrapper
+      transform double-ownership; layout QA ignores heuristic geometry findings
+      inside intentional cut windows. Invalid declarations degrade to `hard`.
+      Proven end-to-end (validate → checkpoint → QA → thumbnails → MP4) by
+      `npm run film:demo` (`scripts/slackAdFilm.ts`). **Not yet verified with a
+      live model-authored `/sequences` run** — the schema/prompt ask for `cut`,
+      but no paid storyboard has exercised it.
 - [ ] **Execution passes:**
     - [ ] Lock story, shots, and cut graph.
     - [ ] Reuse/build components.
     - [ ] Compose shot assets/copy.
     - [ ] Add shot camera transform.
-    - [ ] Resolve cut and continuity anchors.
+    - [x] Resolve cut and continuity anchors (deterministic cut runtime above).
     - [ ] Add micro-motion and validate.
 - [ ] **Per-shot dispatch:** separate builders handle individual shots to bypass transform limits.
 - [ ] **Slack test:** post `STORYBOARD.md` to thread first for early approval.
@@ -174,7 +188,11 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 - [ ] **Slack test:** beat-synced whooshes on cuts (toggleable).
 
 ### 7. SaaS motion examples (retrieval seed)
-- [ ] **Curated examples:** 3-5 hand-authored HyperFrames compositions representing the B2B quality bar (registered in capability index).
+- [~] **Curated examples:** the golden Slack ad (`scripts/slackAdFilm.ts`) is the
+      first hand-authored quality-bar composition — the hackathon hero narrative
+      (fragmentation → overload → thread → film → lockup) exercising all four
+      motion cut styles, component state choreography, and an intentional hold.
+      Not yet registered in the capability index; 2-4 more examples open.
 - [ ] **Example diversity:** dev tools, startup vision, rebrand campaign.
 
 ### 8. Component contracts (Forge Stage-inspired)
@@ -189,7 +207,14 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 
 ### 10. Visual critic + continuity QA
 - [ ] **Visual critic over rendered evidence:** sample snapshots to detect tiny text, overlap, or drift.
-- [ ] **Continuity tooling:** onion-skin transitions, focal trajectories.
+- [~] **Continuity tooling:** `engine/temporalInspector.ts` (2026-07-01) renders a
+      per-shot development frame strip, before/at/after evidence sheets for every
+      typed cut, a visual-change curve with "visually frozen" quiet windows, and
+      a promised-vs-observed check that measures whether each boundary's
+      wrappers/bridge actually move. Compact output under `build/qa/temporal/`
+      (a handful of composited PNGs + `temporal.json`); developer-facing via
+      `film:demo`, not yet in the live create path. Onion-skin overlays and
+      focal trajectories still open.
 - [x] **Deterministic cursor contract and QA:** measured Ripple, target checks, and Guide Overlay generation (`qa/spatial-guide.png`).
 - [ ] **Full Figma-like layout guides:** render thirds/columns on contact sheets.
 - [ ] **Motion-plan sidecars:** `*.motion.json` assertions checking liveness.

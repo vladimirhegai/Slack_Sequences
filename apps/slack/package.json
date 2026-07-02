@@ -11,6 +11,7 @@
     "smoke": "tsx scripts/smoke.ts",
     "mcp:demo": "tsx scripts/mcpDemo.ts",
     "direct:demo": "tsx scripts/directAuthoringSmoke.ts",
+    "film:demo": "tsx scripts/slackAdFilm.ts",
     "model:smoke": "tsx scripts/modelAuthoringSmoke.ts",
     "capabilities:sync": "tsx scripts/syncCapabilityIndex.ts",
     "mcp:server": "tsx src/engine/mcpServer.ts",

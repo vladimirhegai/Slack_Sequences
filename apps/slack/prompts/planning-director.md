@@ -54,22 +54,22 @@ frame.md does **not** constrain motion, composition, rhythm, or camera. Be as
 ambitious with the edit as ever. The Color and Typography sections below are
 fallbacks only when no frame.md is supplied.
 
-## Scene composition — density and layers
+## Scene composition — layers and information beats
 
-Video frames are not web pages. An empty frame looks broken. A frame with
-three elements looks like a PowerPoint. A frame with 8–10 feels alive and
-produced.
+Video frames are not web pages. An empty frame looks broken; a frame that
+dumps everything at once and freezes is a slide. Compose in three layers, then
+let the shot *reveal itself through time*:
 
-Every scene needs three layers:
 - **Background texture** — radial glow, oversized ghost text at 3–8% opacity,
   color panel, grain pattern, subtle grid. Never a flat solid color fill.
-  Every decorative must have slow ambient GSAP animation (breathe, drift,
-  pulse). Static decoratives feel dead.
+  Texture may be still; a quiet set is better than a breathing one.
 - **Midground content** — the actual message: headlines, stats, cards, code
-  blocks, screenshots. This is what the scene is about.
+  blocks, screenshots. This is what the scene is about. Fewer elements, each
+  arriving on its own information beat, beat a full canvas that animated once
+  and froze.
 - **Foreground accents** — dividers, hairline rules, labels, data bars,
   registration marks, monospace metadata. The details that make it feel
-  produced rather than generated. Two per scene minimum.
+  produced rather than generated.
 
 Fill the frame: hero text at 60–80% of frame width. Pin content to edges or
 split the frame (data left, content right; top bar with metadata, full-width
@@ -124,25 +124,63 @@ has no network access — unknown fonts silently fall back to system generics.
 - Decorative opacity 12–25% for video. Under 10% is invisible after
   compression. Borders 2–4px (1px is invisible at 1080p). Padding 60–140px.
 
-## Motion variety
+## Motion doctrine
 
-Repeating the same entrance, ease, speed, or ambient pattern across scenes
-is the single biggest quality killer.
+These rules are the difference between a serious launch film and an
+agent-made PowerPoint. Follow them as written.
 
-- **Vary eases**: at least 3 distinct ease families across the piece. Never
-  the same ease twice in one scene. `power4.out` for slams, `expo.out` for
-  snaps, `back.out(2)` for pops, `circ.out` for heavy rises, `sine.inOut`
-  for ambient.
-- **Vary entrances**: if scene 1 enters from y/opacity, scene 2 must enter
-  from a different axis — x, scale, rotation, letter-spacing, blur.
-- **Vary speed**: the slowest scene should feel 3× slower than the fastest.
-  Fast 0.15–0.3s (energy), medium 0.3–0.5s (content), slow 0.5–0.8s
-  (gravity, luxury).
-- **Scene structure**: build (0–30%, staggered entrances), breathe (30–70%,
-  content visible with one ambient motion), resolve (70–100%, exit or
-  decisive hold). Don't dump everything at t=0.
-- **Offset starts**: first animation at t=0.1–0.3s, never t=0 (which reads
-  as a jump cut).
+- **Smooth beats bouncy — `power3` is the default.** Long-tail decel curves
+  that let elements settle: `power3.out` for most content, `power4.out` for a
+  hard arrival, `expo.out` for a snap. No `back.out` / `bounce.out` /
+  `elastic.out` as a default — overshoot is a rare, explicitly playful
+  exception, never the house style. Repeating a good smooth settle is fine;
+  a zoo of eases is not a quality metric.
+- **Sequential reveal in the back ~50%.** Don't dump the scene's content in
+  its first quarter. The entrance carries only the shot's opening idea; every
+  further line, card, stat, or metric arrives on its own information beat
+  across the rest of the window. This is the anti-slideshow mechanism.
+- **No lazy breathing, no reflexive back-half pan/push.** Scaling things up
+  and down to look "alive" is the cheap tell, and a slow drift in a shot's
+  back half disrupts the sightline. Prefer NO motion over BAD motion: a held
+  still frame is a statement. If a hold truly needs life, one small
+  low-amplitude finite jitter on the hero — never a loop.
+- **State every entrance's from-values explicitly** with `fromTo` so a
+  not-yet-started element is pre-rendered hidden at build time (`fromTo`'s
+  default immediateRender does this). Add `immediateRender: false` only to a
+  later tween on a property that an earlier tween already owns.
+- **Vary entrances and speed with restraint**: change the axis or mechanism
+  between scenes (y, x, scale, clip reveal, draw-on), and let the slowest shot
+  feel ~3× slower than the fastest. Fast 0.15–0.3s (energy), medium 0.3–0.5s
+  (content), slow 0.5–0.8s (gravity).
+- **Offset starts**: first animation at t=0.1–0.3s into the shot, never
+  exactly at its start (which reads as a jump).
+
+## Typed boundary cuts — the host owns the seam
+
+Each storyboard shot declares a typed `cut` for its outgoing boundary
+(cut-left/right/up/down, zoom-through, inverse-zoom, flash-white,
+object-match, or hard). A deterministic host runtime compiles those into
+velocity-matched motion on the scene wrappers around every boundary. Division
+of ownership:
+
+- **You own** everything *inside* a scene: children, camera worlds, component
+  state, copy, and the plain scene-window visibility `tl.set(...)` pairs at
+  each scene's start and end. Keep those hard sets — they are the cut's swap
+  frame.
+- **The host owns** the scene wrapper's transform/filter/opacity *around* the
+  boundary, the flash overlay, and the object-match bridge. Never `tl.to` /
+  `tl.fromTo` a scene wrapper element itself — put camera moves on an inner
+  `data-camera-world` wrapper so the two systems never fight over one
+  transform.
+- **object-match** carries a real element across the boundary: author the
+  outgoing `focalPartOut` and incoming `focalPartIn` as `data-part` elements
+  (one each, styled to survive scaling — prefer %-based inner layout), and do
+  not author an entrance on the incoming focal part during the first
+  ~0.5s of its scene; the bridge owns its arrival.
+- The `sequences-cuts` JSON island, runtime script tag, and
+  `SequencesCuts.compile(tl, root)` call are injected by the host. Do not
+  hand-write or alter them; never spend your output budget re-implementing a
+  boundary the cut plan already owns.
 
 ## Color
 
@@ -169,7 +207,9 @@ content or is a reflex:
 - Everything centered with equal weight
 - Every element entering from `y: 30, opacity: 0`
 - Full-screen linear gradients on dark backgrounds
-- Crossfade on every cut (use hard cuts for register shifts and energy)
+- Hand-rolled wrapper crossfades at scene boundaries (the typed cut plan owns
+  every seam; `hard` is the deliberate register break)
+- Ambient breathing/drift added from anxiety instead of a confident hold
 - `Inter` / `Roboto` / `Open Sans` as the only typeface (banned monoculture)
 
 ## Architecture laws

@@ -20,6 +20,12 @@ import {
   parseInteractionPlan,
   type InteractionIntentV1,
 } from "./interactionContract.ts";
+import {
+  CUT_RUNTIME_FILE,
+  cutMotionWindows,
+  cutRuntimeSource,
+  parseCutPlan,
+} from "./cutContract.ts";
 import { findBrowserExecutable } from "./render.ts";
 
 export type LayoutSeverity = "error" | "warning" | "info";
@@ -170,6 +176,11 @@ function prepareScratch(projectDir: string, draft: DirectCompositionDraft): stri
   fs.writeFileSync(
     path.join(scratch, INTERACTION_RUNTIME_FILE),
     interactionRuntimeSource(),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(scratch, CUT_RUNTIME_FILE),
+    cutRuntimeSource(),
     "utf8",
   );
   const assets = path.join(projectDir, "assets");
@@ -1322,7 +1333,18 @@ export async function inspectDirectComposition(
       }
     }
 
-    const issues = collapseIssues(rawIssues).slice(0, 80);
+    // Typed cuts intentionally move scene wrappers across the safe area and
+    // stack both scenes' geometry for a few hundred milliseconds around each
+    // boundary. Static-layout heuristics sampled inside those windows would
+    // report that intentional motion as overlap/overflow findings and spend
+    // model repairs fighting the cut compositor; interaction evidence and
+    // runtime errors keep their full authority everywhere.
+    const boundaryWindows = cutMotionWindows(parseCutPlan(draft.html).plan);
+    const insideCutWindow = (time: number): boolean =>
+      boundaryWindows.some((window) => time >= window.start && time <= window.end);
+    const issues = collapseIssues(rawIssues.filter((issue) =>
+      issue.code.startsWith("interaction_") || !insideCutWindow(issue.time)
+    )).slice(0, 80);
     const interactionIssues = issues.filter((issue) =>
       issue.code.startsWith("interaction_")
     );

@@ -25,6 +25,15 @@ import {
   type InteractionIntentV1,
   type SpatialIntentV1,
 } from "./interactionContract.ts";
+import {
+  CUT_RUNTIME_FILE,
+  CUT_RUNTIME_VERSION,
+  cutRuntimeHash,
+  cutRuntimeSource,
+  resolveCutPlan,
+  validateCutContract,
+  type SceneCutIntentV1,
+} from "./cutContract.ts";
 import { validateCompositionAgainstFrame } from "./frameValidation.ts";
 
 const DIRECT_DIR = "composition";
@@ -47,6 +56,8 @@ export interface DirectScene {
   rules?: string[];
   capabilityIds?: string[];
   outgoingCut?: string;
+  /** Typed, mechanically executable form of outgoingCut (this scene's boundary). */
+  cut?: SceneCutIntentV1;
   spatialIntent?: SpatialIntentV1;
   interactions?: InteractionIntentV1[];
 }
@@ -241,6 +252,7 @@ function normalizeStoryboard(
       ...(proposed?.rules?.length ? { rules: proposed.rules } : {}),
       ...(proposed?.capabilityIds?.length ? { capabilityIds: proposed.capabilityIds } : {}),
       ...(proposed?.outgoingCut ? { outgoingCut: proposed.outgoingCut } : {}),
+      ...(proposed?.cut ? { cut: proposed.cut } : {}),
       ...(proposed?.spatialIntent ? { spatialIntent: proposed.spatialIntent } : {}),
       ...(proposed?.interactions?.length ? { interactions: proposed.interactions } : {}),
     };
@@ -352,6 +364,8 @@ export async function validateDirectComposition(
     );
     errors.push(...interactionValidation.errors);
   }
+  const cutValidation = validateCutContract(html, normalized.scenes);
+  errors.push(...cutValidation.errors);
 
   const rootDir = compositionDir(projectDir);
   for (const ref of referencedLocalPaths(html)) {
@@ -368,6 +382,7 @@ export async function validateDirectComposition(
     if (
       ref !== "gsap.min.js" &&
       ref !== INTERACTION_RUNTIME_FILE &&
+      ref !== CUT_RUNTIME_FILE &&
       !fs.existsSync(resolved)
     ) {
       const staged = path.resolve(projectDir, ref);
@@ -399,6 +414,7 @@ export async function validateDirectComposition(
       .filter((finding) => finding.severity === "warning")
       .map((finding) => `${finding.code}: ${finding.message}`),
       ...frameValidation.warnings,
+      ...cutValidation.warnings,
     ])],
     frameErrors: frameValidation.errors,
     frameWarnings: frameValidation.warnings,
@@ -419,6 +435,11 @@ function copyRuntimeAndAssets(projectDir: string, targetDir: string): void {
   fs.writeFileSync(
     path.join(targetDir, INTERACTION_RUNTIME_FILE),
     interactionRuntimeSource(),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(targetDir, CUT_RUNTIME_FILE),
+    cutRuntimeSource(),
     "utf8",
   );
   const sourceAssets = path.join(projectDir, "assets");
@@ -455,6 +476,13 @@ function storyboardMarkdown(title: string, scenes: DirectScene[]): string {
         : "",
       scene.continuityAnchor ? `- Eye trace: ${scene.continuityAnchor}` : "",
       scene.outgoingCut ? `- Outgoing cut: ${scene.outgoingCut}` : "",
+      scene.cut
+        ? `- Executable cut: ${scene.cut.style}${
+          scene.cut.style === "object-match"
+            ? ` (${scene.cut.focalPartOut} → ${scene.cut.focalPartIn})`
+            : ""
+        }`
+        : "",
       scene.spatialIntent
         ? `- Focal part: ${scene.spatialIntent.focalPart} Â· ${scene.spatialIntent.composition}`
         : "",
@@ -557,6 +585,11 @@ export async function commitDirectComposition(
         version: INTERACTION_RUNTIME_VERSION,
         sha256: interactionRuntimeHash(),
       },
+      cuts: resolveCutPlan(normalized.scenes).cuts,
+      cutRuntime: {
+        version: CUT_RUNTIME_VERSION,
+        sha256: cutRuntimeHash(),
+      },
     });
     const qaDir = path.join(staged, "qa");
     fs.mkdirSync(qaDir, { recursive: true });
@@ -604,6 +637,10 @@ export async function commitDirectComposition(
     path.join(target, INTERACTION_RUNTIME_FILE),
     path.join(checkpoint, INTERACTION_RUNTIME_FILE),
   );
+  fs.copyFileSync(
+    path.join(target, CUT_RUNTIME_FILE),
+    path.join(checkpoint, CUT_RUNTIME_FILE),
+  );
   fs.cpSync(path.join(target, "qa"), path.join(checkpoint, "qa"), { recursive: true });
   return { manifest, validation };
 }
@@ -623,6 +660,7 @@ export function undoDirectComposition(projectDir: string): boolean {
     "STORYBOARD.md",
     "motion-plan.json",
     INTERACTION_RUNTIME_FILE,
+    CUT_RUNTIME_FILE,
   ]) {
     const source = path.join(checkpoint, sidecar);
     const destination = path.join(target, sidecar);
