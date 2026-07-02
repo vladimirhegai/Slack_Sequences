@@ -415,6 +415,14 @@ inside its boundary window. Authors keep scene-window `set()` swaps and put
 component/camera motion on children such as `data-camera-world`. Static
 validation warns on probable wrapper double ownership.
 
+Static liveness validation now sits beside that ownership rule. `motionDensity.ts`
+does not look at pixels; it classifies scene starts/cuts as major activity,
+authored GSAP/component/camera beats as medium activity, and cursor interactions
+as medium activity. On 10s+, 3+ shot films it asks the bounded repair loop to fix
+long quiet gaps, front-loaded shots, under-beaten longer scenes, and over-dense
+bursts. These warnings can improve a live draft, but they are heuristic and do
+not override the browser-valid publication fallback.
+
 The planner retrieves only the selected blueprint, cited motion rules, component
 contracts, and relevant slice of `frame.md`. It never receives the entire
 HyperFrames skill catalog.
@@ -503,6 +511,7 @@ Quality gates run before Slack receives a “ready” result:
   outside the framework;
 - contrast, safe-area, overflow, collision, and caption-band checks;
 - cut-anchor and morph-compatibility checks;
+- static motion-density checks for long quiet windows and front-loaded scenes;
 - midpoint/boundary snapshots plus a contact sheet;
 - deterministic draft render smoke test.
 
@@ -571,6 +580,7 @@ Visual validation runs the HyperFrames layout audit through Chromium/Puppeteer l
 
 ```text
 draft
+  -> static motion-density repair hints
   → static HyperFrames lint + Sequences runtime invariants
   → browser runtime validation
   → HyperFrames layout audit at hero/cut/tween evidence
@@ -588,6 +598,9 @@ draft
   during the resolved boundary window because both scene wrappers intentionally
   move/stack there. Runtime errors and interaction evidence remain fully
   authoritative during cuts.
+- **Liveness:** static `motionDensity` findings are repair guidance for the
+  authoring loop and are persisted in `motion-plan.json`; rendered temporal
+  proof still comes from `temporalInspector.ts`.
 
 
 Mechanical failures can be repaired automatically: malformed wrappers, missing
@@ -655,6 +668,11 @@ anchors) that rejects impossible pairings before composition.
 > model-free `film:demo` developer fixture. It is evidence for a human/critic,
 > not an automatic aesthetic gate. Onion-skin compositing, focal trajectories,
 > and live create/revise integration remain open.
+>
+> **Live liveness status.** `motionDensity.ts` is already in the static
+> create/revise gate and writes a compact summary into `motion-plan.json`, but it
+> is not a rendered-frame critic. It catches obvious slide-like timing patterns;
+> the visual critic still needs temporal evidence from actual frames.
 
 ## 11. Music and sound direction
 

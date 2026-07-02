@@ -153,6 +153,13 @@ unprompted. Not built yet: Slack screenshot ingestion,
 registry source approval/materialization + in-Slack audition, component
 sub-agents.
 
+Live create/revise now also runs a static `motionDensity.ts` liveness pass for
+10s+, 3+ shot films. It classifies scene starts/cuts, authored GSAP beats, and
+interactions, then feeds bounded repair warnings for long quiet gaps,
+front-loaded scenes, and dense bursts. The summary is persisted in
+`motion-plan.json`. This is not rendered temporal evidence; `temporalInspector`
+still owns pixel-based strips/change curves.
+
 ## Environment
 
 One live Slack app: the developer-sandbox app on Railway. Local work is source,
@@ -230,7 +237,8 @@ Tester authorizes at: `https://sequences-slack-production.up.railway.app/slack/i
 - **OAuth or hosted Slack MCP**: source gate, `/slack/install`, self-check, real `/sequences`.
 - **MCP client/server/mutation**: source gate, container MCP demo, create, revise, Undo.
 - **Typed cuts/temporal QA**: focused cut tests, `film:demo`, local MP4, Docker
-  `film:demo`, then one paid live create before calling model selection proven.
+  `film:demo`, motion-density tests, then one paid live create before calling
+  model selection proven.
 - **Rendering/Docker/HyperFrames**: render/Docker gate, sandbox demo, draft + HD.
 
 ### 7. Understanding Failures & Troubleshooting

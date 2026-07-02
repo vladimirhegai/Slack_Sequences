@@ -139,6 +139,12 @@ agent-made PowerPoint. Follow them as written.
   its first quarter. The entrance carries only the shot's opening idea; every
   further line, card, stat, or metric arrives on its own information beat
   across the rest of the window. This is the anti-slideshow mechanism.
+- **Liveness budget.** A 10s+ film must not go ~3 seconds with no visible event.
+  Major events are scene changes/typed cuts; medium events are component state
+  changes, product reveals, data updates, cursor interactions, or camera-world
+  moves; small events are short accents, counters, masks, and focus shifts. A
+  4.5s+ shot needs at least two authored non-wrapper beats, with one in the
+  back half. Do not satisfy this by moving the whole scene wrapper.
 - **No lazy breathing, no reflexive back-half pan/push.** Scaling things up
   and down to look "alive" is the cheap tell, and a slow drift in a shot's
   back half disrupts the sightline. Prefer NO motion over BAD motion: a held

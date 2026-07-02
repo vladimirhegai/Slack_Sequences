@@ -35,6 +35,7 @@ point an agent at the listed file.
 | Spatial / layout placement ("spacing" tool) | `frame.md` flow compositions + relational `data-layout-*` + `src/engine/layoutInspector.ts` | flow-first placement, safe-area / anchor / align / gap / optical audit |
 | Cursor interactions | `src/engine/interactionContract.ts`, `src/engine/templates/sequences-interactions.v1.js` | hotspot / target / ripple geometry, interaction QA |
 | Executable boundary cuts | `src/engine/cutContract.ts`, `src/engine/templates/sequences-cuts.v1.js` | typed cut styles, wrapper ownership, object-match bindings |
+| Static motion-density guard | `src/engine/motionDensity.ts` | liveness repair warnings for long quiet gaps, front-loaded scenes, dense bursts |
 | Temporal motion evidence | `src/engine/temporalInspector.ts` | development strips, cut triptychs, change curve, quiet-window review |
 | Zero-token revise ("shorter" / "warmer") | `src/engine/tweakRunner.ts` | deterministic tweak matcher |
 | Render + thumbnails | `src/engine/render.ts`, `src/engine/thumbs.ts` | Chrome / FFmpeg pipeline, draft vs HD |
@@ -126,6 +127,13 @@ point an agent at the listed file.
 - `temporalInspector.ts` produces a compact development strip, per-cut evidence
   sheets, visual-change curve, quiet windows, and promised-vs-observed movement.
   It is developer-facing in `film:demo`, not yet part of live create/revise.
+- `motionDensity.ts` now runs in the live static validation path. For 10s+,
+  3+ shot compositions it classifies scene starts/cuts as major activity,
+  authored GSAP/component/camera beats as medium activity, and cursor
+  interactions as medium activity. It asks bounded repair for long quiet gaps,
+  front-loaded scenes, under-beaten 4.5s+ shots, and over-dense bursts, then
+  persists a compact `motionDensity` summary in `motion-plan.json`. This is a
+  liveness repair hint, not rendered temporal proof.
 - **Paid live-authoring proof (2026-07-01, OpenRouter smoke):** GLM's storyboard
   pass chose sensible typed cuts unprompted (`cut-left`, `cut-down`,
   `inverse-zoom`, `hard` — each with a coherent editorial rationale), DeepSeek's
@@ -177,6 +185,7 @@ flowchart TD
 | [`src/engine/layoutInspector.ts`](src/engine/layoutInspector.ts) | spatial/layout placement audit (safe-area, anchor, align, gap, optical) |
 | [`src/engine/interactionContract.ts`](src/engine/interactionContract.ts) | cursor interaction contract + hotspot/target/ripple QA |
 | [`src/engine/cutContract.ts`](src/engine/cutContract.ts) | typed cut normalization, resolution, source validation, runtime staging |
+| [`src/engine/motionDensity.ts`](src/engine/motionDensity.ts) | static liveness budget: quiet gaps, staged beats, dense bursts |
 | [`src/engine/temporalInspector.ts`](src/engine/temporalInspector.ts) | developer-facing motion strips, cut evidence, change/quiet-window report |
 | [`src/engine/cinemaKit.ts`](src/engine/cinemaKit.ts) | host-owned cinematography kit: inline injection of `sequences-cinema.v1.css` |
 | [`src/engine/frameDesign.ts`](src/engine/frameDesign.ts) | per-job `frame.md`: bounded art direction + deterministic fallback/render |
@@ -247,13 +256,19 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
       live-authoring smoke (2026-07-01)** — the planner chose `cut-left` /
       `cut-down` / `inverse-zoom` / `hard` with coherent editorial rationale and
       the authored source passed the gate with host-injected bindings.
+- [x] **Static liveness repair guard (2026-07-02):** `motionDensity.ts`
+      detects PowerPoint-like long quiet windows and scenes with only a
+      front-loaded entrance, feeds those warnings into the bounded author repair
+      loop, and records the summary in `motion-plan.json`. Rendered temporal
+      evidence remains separate and developer-facing.
 - [~] **Execution passes:**
     - [ ] Lock story, shots, and cut graph.
     - [ ] Reuse/build components.
     - [ ] Compose shot assets/copy.
     - [ ] Add shot camera transform.
     - [x] Resolve cut and continuity anchors (deterministic cut runtime above).
-    - [ ] Add micro-motion and validate.
+    - [~] Add micro-motion and validate (static liveness guard exists; rendered
+          live evidence/critic still open).
 - [ ] **Per-shot dispatch:** separate builders handle individual shots to bypass transform limits.
 - [ ] **Slack test:** post `STORYBOARD.md` to thread first for early approval.
 
@@ -293,7 +308,9 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
       focal trajectories still open.
 - [x] **Deterministic cursor contract and QA:** measured Ripple, target checks, and Guide Overlay generation (`qa/spatial-guide.png`).
 - [ ] **Full Figma-like layout guides:** render thirds/columns on contact sheets.
-- [ ] **Motion-plan sidecars:** `*.motion.json` assertions checking liveness.
+- [~] **Motion-plan sidecars:** committed `motion-plan.json` now includes a
+      static `motionDensity` summary. Not done: rendered live create/revise
+      evidence and shot-specific automated repair from pixels.
 
 ### 11. Deterministic utilities, component foundry, and library learning
 - [ ] **Deterministic composition utilities:** responsive variants, safe centering, distribution grids.
@@ -304,6 +321,20 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 ---
 
 ## Build Order (Hackathon-Pragmatic)
+
+**Current Fable queue (2026-07-02):**
+
+1. **Continuous spatial world / camera rig** - one bounded 2.5D SaaS film where
+   shots live on a shared plane and typed cuts become camera moves, while
+   preserving cut-runtime ownership rules.
+2. **Capability materialization + in-Slack audition** - instantiate known-good
+   blocks/components instead of citing metadata and rebuilding them, then let
+   the user audition candidates in Slack.
+3. **Live temporal evidence + bounded visual critic** - put compact strips/cut
+   sheets/change curves behind an opt-in live flag, then let a critic request
+   one shot-specific repair for rendered dead zones or weak focal hierarchy.
+
+Historical backlog order:
 
 1. **Prove typed cuts on one paid live-authoring smoke** — *(done 2026-07-01:
    cut selection, kit injection, validation/repair, and previews verified on a

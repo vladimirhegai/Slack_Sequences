@@ -35,6 +35,10 @@ import {
   type SceneCutIntentV1,
 } from "./cutContract.ts";
 import { validateCompositionAgainstFrame } from "./frameValidation.ts";
+import {
+  validateMotionDensity,
+  type MotionDensityReport,
+} from "./motionDensity.ts";
 
 const DIRECT_DIR = "composition";
 const MANIFEST_FILE = "manifest.json";
@@ -103,6 +107,8 @@ export interface DirectValidationResult {
   warnings: string[];
   frameErrors: string[];
   frameWarnings: string[];
+  motionWarnings: string[];
+  motionReport?: MotionDensityReport;
   findings: HyperframeLintFinding[];
   compositionId?: string;
   width?: number;
@@ -366,6 +372,11 @@ export async function validateDirectComposition(
   }
   const cutValidation = validateCutContract(html, normalized.scenes);
   errors.push(...cutValidation.errors);
+  const motionValidation = validateMotionDensity(
+    html,
+    normalized.scenes,
+    durationSec,
+  );
 
   const rootDir = compositionDir(projectDir);
   for (const ref of referencedLocalPaths(html)) {
@@ -415,9 +426,12 @@ export async function validateDirectComposition(
       .map((finding) => `${finding.code}: ${finding.message}`),
       ...frameValidation.warnings,
       ...cutValidation.warnings,
+      ...motionValidation.warnings,
     ])],
     frameErrors: frameValidation.errors,
     frameWarnings: frameValidation.warnings,
+    motionWarnings: motionValidation.warnings,
+    ...(motionValidation.report ? { motionReport: motionValidation.report } : {}),
     findings,
     compositionId,
     width,
@@ -590,6 +604,17 @@ export async function commitDirectComposition(
         version: CUT_RUNTIME_VERSION,
         sha256: cutRuntimeHash(),
       },
+      ...(validation.motionReport
+        ? {
+            motionDensity: {
+              applies: validation.motionReport.applies,
+              maxQuietGapSec: validation.motionReport.maxQuietGapSec,
+              quietGaps: validation.motionReport.quietGaps,
+              sceneReports: validation.motionReport.sceneReports,
+              warnings: validation.motionReport.warnings,
+            },
+          }
+        : {}),
     });
     const qaDir = path.join(staged, "qa");
     fs.mkdirSync(qaDir, { recursive: true });

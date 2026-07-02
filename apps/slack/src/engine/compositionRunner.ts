@@ -1348,6 +1348,9 @@ export async function requestStoryboardPlan(
     "Each shot needs a different foreground composition and a purposeful camera",
     "or framing intention. Carry the eye across every cut through one explicit",
     "anchor: component, position, direction, color field, shape, or semantic idea.",
+    "For a 10s+ film, plan visible development inside shots: a 4.5s+ shot must",
+    "have at least two non-wrapper component/camera beats, with one in the back",
+    "half. Three long scenes without internal events reads as a slide deck.",
     "Every shot's boundary is a typed, machine-executed cut. Choose cut.style from:",
     "hard (intentional register break), cut-left/right/up/down (velocity-matched",
     "directional carry — the default for scene-to-scene motion), zoom-through",
@@ -1700,12 +1703,12 @@ async function recoverByQuarantiningInteractions(
 
 function browserQualityPenalty(
   browserQa: DirectBrowserQaResult,
-  frameWarnings: string[] = [],
+  staticRepairWarnings: string[] = [],
 ): number {
   const runtimeWarnings = browserQa.warnings.filter((warning) =>
     warning.startsWith("browser_warning:")
   ).length;
-  return frameWarnings.length * 2 + runtimeWarnings * 2 +
+  return staticRepairWarnings.length * 2 + runtimeWarnings * 2 +
     browserQa.issues.reduce(
       (total, issue) =>
         total + (issue.severity === "error" ? 4 : issue.severity === "warning" ? 1 : 0),
@@ -1747,6 +1750,9 @@ function creationPrompt(args: {
       "semantic groups into .zone children of the existing .layout-split,",
       ".layout-editorial-left, .layout-meta-top, .layout-hero-band, or",
       ".layout-center-stack flow container. Prefer that structural repair over offsets.",
+      "For motion/liveness findings, add seek-safe GSAP beats on child elements,",
+      "semantic component parts, or data-camera-world wrappers at explicit",
+      "composition times. Do not animate scene wrappers to fake activity.",
       "Never edit data-composition-id, data-scene values, scene element ids, or storyboard timing.",
       "Do not edit JavaScript unless a finding explicitly identifies script/source validation.",
       "",
@@ -1790,6 +1796,9 @@ function creationPrompt(args: {
         "matching data-layout-allow-* annotation to its moving wrapper. Hard",
         "clipped_text/text_box_overflow findings must be reflowed or resized;",
         "do not merely annotate load-bearing text.",
+        "For motion/liveness findings, add a real mid-shot or back-half",
+        "information beat with explicit timeline timing on a child/component or",
+        "data-camera-world wrapper. Do not animate the scene wrapper itself.",
         ...args.validationFeedback.map((issue) => `- ${issue}`),
       ].join("\n")
     : "";
@@ -1992,7 +2001,11 @@ export async function requestDirectComposition(
         interactionFallbacks.push({ draft, raw, browserQa });
       }
       if (browserQa.ok) {
-        const qualityPenalty = browserQualityPenalty(browserQa, validation.frameWarnings);
+        const staticRepairWarnings = [
+          ...validation.frameWarnings,
+          ...validation.motionWarnings,
+        ];
+        const qualityPenalty = browserQualityPenalty(browserQa, staticRepairWarnings);
         if (!lastBrowserValid || qualityPenalty < lastBrowserValid.qualityPenalty) {
           lastBrowserValid = { draft, raw, attempts: attempt, qualityPenalty };
         }
@@ -2002,7 +2015,9 @@ export async function requestDirectComposition(
       // correctly in the browser. `browserQa.ok` represents that objective
       // runtime boundary; static validation remains the other hard gate.
       if (
-        browserQa.strictOk && validation.frameWarnings.length === 0
+        browserQa.strictOk &&
+        validation.frameWarnings.length === 0 &&
+        validation.motionWarnings.length === 0
       ) {
         return { draft, raw, attempts: attempt };
       }
@@ -2012,6 +2027,7 @@ export async function requestDirectComposition(
       }
       validationFeedback = [
         ...validation.frameWarnings,
+        ...validation.motionWarnings,
         ...browserQa.errors,
         ...browserQa.warnings,
       ].slice(0, 20);

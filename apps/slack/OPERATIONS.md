@@ -99,7 +99,8 @@ docker run --rm -e VERIFY_RENDER=1 sequences-slack npm run film:demo -w @sequenc
 
 The deterministic demos and MCP smoke do not call a paid model. `film:demo`
 exercises typed cuts and writes compact temporal evidence under the ignored
-project data directory.
+project data directory. `npm run test --workspace @sequences/slack` includes
+the static motion-density liveness guard that feeds live authoring repairs.
 
 ---
 
