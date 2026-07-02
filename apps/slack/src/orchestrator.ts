@@ -136,6 +136,26 @@ export interface VideoResult {
   provider: ProviderId;
   /** The per-job frame.md design system chosen for this video, if any. */
   frame?: FrameInfo;
+  /** Argument-free receipts for the named authoring stages that actually ran. */
+  stages?: StageReceipt[];
+  /**
+   * Present only when the published film is the deterministic safe fallback.
+   * `stage` names the model stage that failed; `reason` is a bounded local
+   * diagnostic for reports/logs — never shown verbatim in Slack.
+   */
+  fallback?: { stage: AuthoringStage; reason: string };
+}
+
+/** The named model stages between the brief and a committed composition. */
+export type AuthoringStage =
+  | "frame-design"
+  | "storyboard-plan"
+  | "source-author";
+
+export interface StageReceipt {
+  stage: AuthoringStage;
+  status: "succeeded" | "failed";
+  durationMs: number;
 }
 
 export interface FrameInfo {
@@ -626,8 +646,46 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     const brief = assembleBrief(options);
     const skills = retrieveHyperframesSkillContext("create", brief);
     skillsUsed = skills.skillNames;
+    // Named authoring stages. Each model stage is caught separately so a
+    // failure is attributed to the stage that actually broke (plan §5 of the
+    // storyboard-density work): a GLM timeout, an invalid storyboard, a
+    // truncated source, and a QA rejection are different failures, and the
+    // deterministic fallback is an explicitly labeled outcome — never
+    // disguised as creative output.
+    const stages: StageReceipt[] = [];
+    const runStage = async <T>(
+      stage: AuthoringStage,
+      run: () => Promise<T>,
+    ): Promise<{ value?: T; error?: unknown }> => {
+      const started = performance.now();
+      try {
+        const value = await run();
+        stages.push({
+          stage,
+          status: "succeeded",
+          durationMs: Math.round(performance.now() - started),
+        });
+        return { value };
+      } catch (error) {
+        stages.push({
+          stage,
+          status: "failed",
+          durationMs: Math.round(performance.now() - started),
+        });
+        process.stderr.write(
+          `[orchestrator] stage "${stage}" failed: ${
+            error instanceof Error ? error.message : String(error)
+          }\n`,
+        );
+        return { error };
+      }
+    };
+    const stageReason = (error: unknown): string =>
+      (error instanceof Error ? error.message : String(error)).slice(0, 300);
+
     // Per-job frame.md: bounded art direction + deterministic design tools.
-    // Hard brand/contrast/font constraints, tunable recommendations, safe fallback.
+    // Hard brand/contrast/font constraints, tunable recommendations, safe
+    // fallback — buildJobFrame degrades internally, so a throw here is real.
     const frame = await buildJobFrame({
       provider,
       projectDir: dir,
@@ -636,28 +694,38 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       evidence: options.context,
       brandName: options.brandName ?? options.product,
     });
-    let authoredDraft: DirectCompositionDraft;
-    try {
-      const storyboard = await requestStoryboardPlan(provider, {
+    let authoredDraft: DirectCompositionDraft | undefined;
+    let fallbackInfo: VideoResult["fallback"];
+    const planned = await runStage("storyboard-plan", () =>
+      requestStoryboardPlan(provider, {
         brief,
         projectDir: dir,
         skills,
         frameMd: frame.frameMd,
-      });
-      const authored = await requestDirectComposition(provider, {
-        brief,
-        projectDir: dir,
-        skills,
-        frameMd: frame.frameMd,
-        lockedStoryboard: storyboard,
-      });
-      authoredDraft = authored.draft;
-    } catch (error) {
+      }));
+    let authoredError: unknown;
+    if (planned.value) {
+      const authored = await runStage("source-author", () =>
+        requestDirectComposition(provider, {
+          brief,
+          projectDir: dir,
+          skills,
+          frameMd: frame.frameMd,
+          lockedStoryboard: planned.value,
+        }));
+      if (authored.value) {
+        authoredDraft = authored.value.draft;
+      }
+      authoredError = authored.error;
+    }
+    if (!authoredDraft) {
+      const failedStage: AuthoringStage = planned.value ? "source-author" : "storyboard-plan";
+      const reason = stageReason(planned.error ?? authoredError);
       process.stderr.write(
-        `[orchestrator] model authoring unavailable; using deterministic direct fallback: ${
-          error instanceof Error ? error.message : String(error)
-        }\n`,
+        `[orchestrator] model authoring unavailable at stage "${failedStage}"; ` +
+          `publishing the deterministic safe fallback\n`,
       );
+      fallbackInfo = { stage: failedStage, reason };
       authoredDraft = buildFallbackComposition({
         product: options.product,
         whatShipped: options.whatShipped,
@@ -690,6 +758,8 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       skillsUsed,
       usedPreset: false,
       provider: providerId,
+      stages,
+      ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
       frame: {
         presetId: frame.presetId,
         label: frame.label,

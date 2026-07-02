@@ -51,8 +51,9 @@ tl.fromTo("#proof-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .
 tl.fromTo("#close-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .7 }, 10.2);
 `), scenes, 15);
     expect(report.applies).toBe(true);
-    expect(report.warnings.join("\n")).toContain("no major cut");
-    expect(report.warnings.join("\n")).toContain('scene "signal" has 1 authored');
+    // Liveness findings are blocking errors — a slide-like film cannot publish.
+    expect(report.errors.join("\n")).toContain("no major cut");
+    expect(report.errors.join("\n")).toContain('scene "signal" has 1 authored');
     expect(report.maxQuietGapSec).toBeGreaterThan(3);
   });
 
@@ -65,6 +66,7 @@ tl.fromTo("#proof-copy", { scale: .92, opacity: 0 }, { scale: 1, opacity: 1, dur
 tl.fromTo("#close-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .7 }, 10.2);
 tl.fromTo("#close-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: .45 }, 12.8);
 `), scenes, 15);
+    expect(report.errors).toEqual([]);
     expect(report.warnings).toEqual([]);
     expect(report.sceneReports.map((scene) => scene.backHalfBeatCount)).toEqual([1, 1, 1]);
   });
@@ -82,6 +84,7 @@ tl.fromTo("#close-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: .4
 tl.fromTo("#close-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: .45 }, 12.8);
 `), scenes, 15);
     expect(report.sceneReports.map((scene) => scene.authoredBeatCount)).toEqual([3, 3, 3]);
+    expect(report.errors).toEqual([]);
     expect(report.warnings).toEqual([]);
   });
 });

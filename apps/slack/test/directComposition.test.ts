@@ -123,7 +123,7 @@ describe("deterministic direct fallback", () => {
     const validation = await validateDirectComposition(dir, fallback);
     expect(validation.errors).toEqual([]);
     expect(fallback.html).toContain("layout-editorial-left");
-    expect(fallback.html).toContain("layout-split");
+    expect(fallback.html).toContain("data-camera-world");
     expect(fallback.html).toContain("layout-center-stack");
     expect(fallback.html).not.toContain("<script>alert");
   });
@@ -514,7 +514,45 @@ describe("direct HyperFrames composition", () => {
     );
   });
 
+  it("runs the bounded concept pass before the storyboard and feeds its artifact in", async () => {
+    const dir = projectDir();
+    const concept = {
+      thesis: "One trace becomes one route",
+      narrativePressure: "Noise until the product resolves it",
+      energyCurve: "staccato open → build → warm resolve",
+      motif: "the violet trace rail",
+      colorArc: "cold → neutral → warm",
+      creativeRisk: "held stillness before the close",
+    };
+    const complete = vi.fn()
+      .mockResolvedValueOnce(JSON.stringify(concept))
+      .mockResolvedValueOnce(`<storyboard_json>${JSON.stringify(storyboard())}</storyboard_json>`);
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    await requestStoryboardPlan(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+    });
+    expect(complete).toHaveBeenCalledTimes(2);
+    const conceptOptions = complete.mock.calls[0]?.[1] as {
+      responseFormat?: { json_schema?: { name?: string } };
+    };
+    expect(conceptOptions.responseFormat?.json_schema?.name).toBe("sequences_concept");
+    const storyboardPrompt = complete.mock.calls[1]?.[0] as string;
+    expect(storyboardPrompt).toContain("<concept_json>");
+    expect(storyboardPrompt).toContain("the violet trace rail");
+    // The concept artifact is cached independently for retryable stages.
+    expect(fs.existsSync(path.join(dir, "planning", "concept.json"))).toBe(true);
+  });
+
   it("routes the high-leverage storyboard pass to reasoning-enabled GLM 5.2", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
     const dir = projectDir();
     const complete = vi.fn().mockResolvedValue(
       `<storyboard_json>${JSON.stringify(storyboard())}</storyboard_json>`,
@@ -549,6 +587,7 @@ describe("direct HyperFrames composition", () => {
   });
 
   it("uses a separate storyboard model only when the operator explicitly configures one", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
     vi.stubEnv("SLACK_SEQUENCES_STORYBOARD_MODEL", "operator/structured-planner");
     const dir = projectDir();
     const complete = vi.fn().mockResolvedValue(
@@ -574,6 +613,7 @@ describe("direct HyperFrames composition", () => {
   });
 
   it("lets operators keep the primary authoring model for storyboard work", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
     vi.stubEnv("SLACK_SEQUENCES_STORYBOARD_MODEL", "primary");
     const dir = projectDir();
     const complete = vi.fn().mockResolvedValue(
@@ -599,6 +639,7 @@ describe("direct HyperFrames composition", () => {
   });
 
   it("retries the storyboard pass through a transient provider timeout", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
     const dir = projectDir();
     const timeout = Object.assign(new Error("The operation was aborted due to timeout"), {
       name: "TimeoutError",
@@ -645,6 +686,7 @@ describe("direct HyperFrames composition", () => {
   });
 
   it("surfaces an actionable message when storyboard timeouts exhaust retries", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
     const dir = projectDir();
     const timeout = Object.assign(new Error("The operation was aborted due to timeout"), {
       name: "TimeoutError",
@@ -663,7 +705,8 @@ describe("direct HyperFrames composition", () => {
     expect(complete).toHaveBeenCalledTimes(3);
   }, 15_000);
 
-  it("does not retry a genuine content error from the storyboard pass", async () => {
+  it("retries a rejected storyboard once with findings, then surfaces the content error", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
     const dir = projectDir();
     const complete = vi.fn().mockResolvedValue("no array anywhere in this prose");
     const provider: AgentProvider = {
@@ -676,7 +719,10 @@ describe("direct HyperFrames composition", () => {
     await expect(
       requestStoryboardPlan(provider, { brief: "Launch Relay", projectDir: dir, skills: skills() }),
     ).rejects.toThrow(/missing <storyboard_json>/);
-    expect(complete).toHaveBeenCalledTimes(1);
+    // The bounded artifact is retried exactly once with the deterministic
+    // findings appended; transport-level retries never fire for content errors.
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(complete.mock.calls[1]?.[0]).toContain("Previous attempt rejected");
   });
 
   it("applies bounded exact repair patches without regenerating the composition", () => {

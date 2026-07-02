@@ -302,6 +302,12 @@ export interface ResultView {
   slackMcpNote?: string;
   /** True when the plan came from the curated demo preset (no planning brain). */
   usedPreset?: boolean;
+  /**
+   * Present when this result is the deterministic safe fallback because a
+   * named model stage failed. Only the stage name is shown — never model
+   * output or error content.
+   */
+  fallback?: { stage: string };
   provider: string;
   renderQuality?: "draft" | "high";
   /** The per-job frame.md design system chosen for this video, if any. */
@@ -323,7 +329,14 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
   const path = view.usedMcp ? "through an MCP-first lifecycle" : "through the in-process engine";
   const planned = view.usedPreset
     ? `curated demo plan ${path}`
-    : `authored by \`${view.provider}\` ${path}`;
+    : view.fallback
+      ? `deterministic safe fallback ${path} (model \`${escapeMrkdwn(view.fallback.stage)}\` stage failed)`
+      : `authored by \`${view.provider}\` ${path}`;
+  const fallbackNotice = view.fallback
+    ? `:twisted_rightwards_arrows: *Safe fallback* - the \`${escapeMrkdwn(view.fallback.stage)}\` ` +
+      "stage failed, so this is the deterministic proof film, not a model-authored cut. " +
+      "Run `/sequences` again or reply here to retry."
+    : "";
   const buildTrace = (view.toolCalls ?? [])
     .map((call) => {
       const mark =
@@ -340,6 +353,12 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
     : "";
   return [
     { type: "section", text: { type: "mrkdwn", text: headline } },
+    ...(fallbackNotice
+      ? [{
+          type: "section" as const,
+          text: { type: "mrkdwn" as const, text: fallbackNotice },
+        }]
+      : []),
     { type: "section", text: { type: "mrkdwn", text: `:clipboard: *Storyboard*\n${codeBlock(view.outline)}` } },
     { type: "divider" },
     {

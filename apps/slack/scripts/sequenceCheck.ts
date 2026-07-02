@@ -230,8 +230,9 @@ function fileStatus(file: string): FileEvidence {
   };
 }
 
-function directAuthoringMode(projectDir: string): string {
+function directAuthoringMode(projectDir: string, fallbackStage?: string): string {
   if (!hasDirectComposition(projectDir)) return "legacy-plan";
+  if (fallbackStage) return "deterministic-fallback";
   const current = loadDirectComposition(projectDir);
   const fallbackIds = current.manifest.scenes.every((scene) => scene.id.startsWith("fallback-"));
   return fallbackIds || current.manifest.compositionId.endsWith("-fallback")
@@ -403,7 +404,9 @@ async function main(): Promise<void> {
       usedMcp: result.usedMcp,
       mcpRequested: result.mcpRequested,
       usedPreset: result.usedPreset,
-      authoringMode: directAuthoringMode(result.projectDir),
+      authoringMode: directAuthoringMode(result.projectDir, result.fallback?.stage),
+      stages: result.stages ?? [],
+      fallback: result.fallback ?? null,
       outline: result.outline,
       lint: result.lint,
       skillsUsed: result.skillsUsed,
@@ -416,6 +419,19 @@ async function main(): Promise<void> {
       staticWarningCount: (direct?.validation as { warnings?: unknown[] } | undefined)?.warnings?.length ?? null,
       motionWarningCount:
         (direct?.validation as { motionWarnings?: unknown[] } | undefined)?.motionWarnings?.length ?? null,
+      momentCount: direct?.manifest
+        ? direct.manifest.scenes.reduce(
+            (count, scene) => count + (scene.moments?.length ?? 0),
+            0,
+          )
+        : null,
+      unboundMomentCount: direct?.manifest
+        ? direct.manifest.scenes.reduce(
+            (count, scene) =>
+              count + (scene.moments?.filter((moment) => !moment.evidence).length ?? 0),
+            0,
+          )
+        : null,
       browserValidated: (direct?.manifest as { qa?: { browserValidated?: boolean } } | undefined)?.qa?.browserValidated ?? null,
       layoutSamples: (direct?.manifest as { qa?: { layoutSamples?: number } } | undefined)?.qa?.layoutSamples ?? null,
       qaWarningCount: (direct?.manifest as { qa?: { warningCount?: number } } | undefined)?.qa?.warningCount ?? null,
@@ -446,8 +462,11 @@ async function main(): Promise<void> {
     reportMarkdown: paths.markdown ?? null,
     provider: result.provider,
     authoringMode: report.result.authoringMode,
+    fallbackStage: result.fallback?.stage ?? null,
     usedMcp: result.usedMcp,
     thumbnails: result.thumbnailPaths.length,
+    moments: report.checks.momentCount,
+    unboundMoments: report.checks.unboundMomentCount,
     motionWarnings: report.checks.motionWarningCount,
     qaWarnings: report.checks.qaWarningCount,
     mp4: result.mp4Path ?? null,

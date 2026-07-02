@@ -48,6 +48,13 @@ import {
   CINEMA_KIT_VERSION,
   injectCinemaKit,
 } from "./cinemaKit.ts";
+import {
+  normalizeStoryboardMoments,
+  plannedMomentFloor,
+  resolveMomentContract,
+  validatePlannedMoments,
+} from "./storyboardMoments.ts";
+import { analyzeMotionDensity } from "./motionDensity.ts";
 import { readFrameMeta } from "./frameDesign.ts";
 import {
   creativeModel,
@@ -201,6 +208,28 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
                   required: ["version", "focalPart", "composition", "relationships"],
                   additionalProperties: false,
                 },
+                moments: {
+                  type: "array",
+                  maxItems: 8,
+                  items: {
+                    type: "object",
+                    properties: {
+                      version: { type: "number", enum: [1] },
+                      id: { type: "string" },
+                      atSec: { type: "number" },
+                      title: { type: "string" },
+                      visualState: { type: "string" },
+                      change: { type: "string" },
+                      motionIntent: { type: "string" },
+                      importance: { type: "string", enum: ["primary", "supporting"] },
+                    },
+                    required: [
+                      "version", "id", "atSec", "title", "visualState", "change",
+                      "motionIntent", "importance",
+                    ],
+                    additionalProperties: false,
+                  },
+                },
                 interactions: {
                   type: "array",
                   items: {
@@ -265,7 +294,7 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
                 "id", "title", "purpose", "incomingIdea", "foreground", "background",
                 "cameraIntent", "startSec", "durationSec", "blueprint", "rules",
                 "capabilityIds", "continuityAnchor", "outgoingCut", "cut", "camera",
-                "spatialIntent", "interactions",
+                "spatialIntent", "moments", "interactions",
               ],
               additionalProperties: false,
             },
@@ -1245,6 +1274,11 @@ function parseStoryboard(raw: string): DirectScene[] {
       startSec,
       durationSec,
     });
+    const moments = normalizeStoryboardMoments(scene.moments, {
+      sceneId: id,
+      startSec,
+      durationSec,
+    });
     return {
       id,
       title,
@@ -1283,6 +1317,7 @@ function parseStoryboard(raw: string): DirectScene[] {
       ...(camera ? { camera } : {}),
       ...(spatialIntent ? { spatialIntent } : {}),
       ...(interactions.length ? { interactions } : {}),
+      ...(moments.length ? { moments } : {}),
     };
   });
   const usedInteractionIds = new Set<string>();
@@ -1399,6 +1434,11 @@ export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {
   if (cameras.size < 2) {
     errors.push("storyboard needs at least two distinct camera/framing intentions");
   }
+  // Moments are the real review contract: scenes are containers, moments are
+  // what the viewer gets. Reject plans that miss the floor, cluster at
+  // entrances, repeat visual states, or leave dead intervals — before any
+  // source budget is spent.
+  errors.push(...validatePlannedMoments(storyboard, expectedStart));
   return [...new Set(errors)];
 }
 
@@ -1422,6 +1462,165 @@ export function parseCompositionResponse(raw: string): DirectCompositionDraft {
     storyboard: parseStoryboard(tagged(raw, "storyboard_json")),
     html: extractIndexHtmlSource(raw),
   };
+}
+
+/**
+ * GLM job #1 — concept/arc. One bounded creative artifact chosen before any
+ * shots exist: the visual thesis, narrative pressure, energy curve, recurring
+ * motif, color arc, and one deliberate risk. It feeds the beat-expansion
+ * (storyboard) pass. The concept is taste, not mechanics — a failure here
+ * degrades to no concept rather than failing the build.
+ */
+export interface ConceptDirection {
+  thesis: string;
+  narrativePressure: string;
+  energyCurve: string;
+  motif: string;
+  colorArc: string;
+  creativeRisk: string;
+}
+
+const CONCEPT_FIELDS: Array<keyof ConceptDirection> = [
+  "thesis",
+  "narrativePressure",
+  "energyCurve",
+  "motif",
+  "colorArc",
+  "creativeRisk",
+];
+
+const CONCEPT_RESPONSE_FORMAT: NonNullable<CompleteOptions["responseFormat"]> = {
+  type: "json_schema",
+  json_schema: {
+    name: "sequences_concept",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: Object.fromEntries(
+        CONCEPT_FIELDS.map((field) => [field, { type: "string" }]),
+      ),
+      required: [...CONCEPT_FIELDS],
+      additionalProperties: false,
+    },
+  },
+};
+
+function parseConceptDirection(raw: string): ConceptDirection | undefined {
+  const source = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = source.indexOf("{");
+  if (start < 0) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(source.slice(start, source.lastIndexOf("}") + 1));
+  } catch {
+    return undefined;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const object = value as Record<string, unknown>;
+  const concept = {} as ConceptDirection;
+  for (const field of CONCEPT_FIELDS) {
+    const entry = object[field];
+    if (typeof entry !== "string" || !entry.trim()) return undefined;
+    concept[field] = entry.trim().slice(0, 240);
+  }
+  return concept;
+}
+
+export async function requestConceptDirection(
+  provider: AgentProvider,
+  args: {
+    brief: string;
+    projectDir: string;
+    frameMd?: string;
+    options?: CompleteOptions;
+  },
+): Promise<ConceptDirection | undefined> {
+  // Operator kill-switch: the concept pass is a taste enhancement, and some
+  // deployments (or deterministic tests) run the storyboard pass directly.
+  if (process.env.SLACK_SEQUENCES_CONCEPT_PASS === "0") return undefined;
+  const model = storyboardModel(provider);
+  const thinkingMode = storyboardThinkingMode(provider, model);
+  const cacheKey = createHash("sha256").update(JSON.stringify({
+    contract: 1,
+    provider: provider.id,
+    model: model ?? null,
+    brief: args.brief,
+    frameMd: args.frameMd ?? null,
+  })).digest("hex");
+  const planningDir = path.join(args.projectDir, "planning");
+  const cacheFile = path.join(planningDir, "concept.json");
+  if (fs.existsSync(cacheFile)) {
+    try {
+      const cached = JSON.parse(fs.readFileSync(cacheFile, "utf8")) as {
+        version?: number;
+        key?: string;
+        concept?: ConceptDirection;
+      };
+      if (cached.version === 1 && cached.key === cacheKey && cached.concept) {
+        return cached.concept;
+      }
+    } catch {
+      // A partial cache from an interrupted write is ignored and replaced.
+    }
+  }
+  const structuredOutput = supportsStructuredOutputs(provider);
+  const prompt = [
+    "SYSTEM: You are the creative director of a short SaaS launch film.",
+    "Before any shots exist, commit to one concept the whole film will serve.",
+    "Think like a motion-design director reviewing a client brief: find the one",
+    "visual argument the evidence supports, the tension that keeps it moving,",
+    "and the device that makes it feel authored rather than assembled.",
+    "Choose exactly these six commitments:",
+    '- "thesis": the film\'s visual argument in one sentence.',
+    '- "narrativePressure": the tension/problem that drives the edit forward.',
+    '- "energyCurve": the pacing arc across the film (e.g. "cold staccato open',
+    '  → building density → whip peak → warm still resolve").',
+    '- "motif": ONE recurring visual device carried across cuts (a shape, a',
+    "  direction, a color field, a typographic behavior, a UI element).",
+    '- "colorArc": how the scene grades progress (cold/neutral/warm/noir) and why.',
+    '- "creativeRisk": one deliberate, tasteful risk this film takes.',
+    "Ground every choice in the brief evidence; never invent product facts.",
+    "",
+    "## Brief and trusted evidence",
+    args.brief,
+    "",
+    args.frameMd
+      ? `## Job frame.md (art direction system)\n${args.frameMd.slice(0, 4_000)}`
+      : "",
+    "",
+    "## Response contract",
+    "Return only a JSON object with exactly those six string fields. No prose.",
+  ].filter(Boolean).join("\n");
+  try {
+    const raw = await completeWithRetry(provider, prompt, {
+      ...args.options,
+      timeoutMs: 120_000,
+      maxTokens: thinkingMode === "none" ? 1_024 : 8_192,
+      thinkingMode,
+      ...(structuredOutput ? { responseFormat: CONCEPT_RESPONSE_FORMAT } : {}),
+      ...(model ? { model } : {}),
+    }, "concept");
+    const concept = parseConceptDirection(raw);
+    if (!concept) {
+      process.stderr.write("[concept] response was not a valid concept artifact; continuing without one\n");
+      return undefined;
+    }
+    fs.mkdirSync(planningDir, { recursive: true });
+    const temporary = `${cacheFile}.${process.pid}.tmp`;
+    fs.writeFileSync(
+      temporary,
+      JSON.stringify({ version: 1, key: cacheKey, concept }, null, 2) + "\n",
+      "utf8",
+    );
+    fs.renameSync(temporary, cacheFile);
+    return concept;
+  } catch (error) {
+    process.stderr.write(
+      `[concept] pass unavailable (${error instanceof Error ? error.message : String(error)}); ` +
+        "continuing without a concept artifact\n",
+    );
+    return undefined;
+  }
 }
 
 function storyboardReference(text: string): string {
@@ -1449,11 +1648,22 @@ export async function requestStoryboardPlan(
   const thinkingMode = storyboardThinkingMode(provider, model);
   const maxTokens =
     thinkingMode === "none" ? STORYBOARD_MAX_TOKENS : REASONING_STORYBOARD_MAX_TOKENS;
+  // GLM job #1: the concept pass. Its artifact is cached independently, so a
+  // storyboard retry never re-spends the concept call.
+  const concept = await requestConceptDirection(provider, {
+    brief: args.brief,
+    projectDir: args.projectDir,
+    frameMd: args.frameMd,
+    options: args.options,
+  });
   const cacheKey = createHash("sha256").update(JSON.stringify({
+    // Bump when the storyboard contract changes shape (v2: StoryboardMomentV1).
+    contract: 2,
     provider: provider.id,
     model: model ?? null,
     brief: args.brief,
     frameMd: args.frameMd ?? null,
+    concept: concept ?? null,
     registryVersion: args.skills.registryVersion,
     blueprints: args.skills.blueprintIds,
   })).digest("hex");
@@ -1474,7 +1684,7 @@ export async function requestStoryboardPlan(
       // A partial cache from an interrupted write is ignored and replaced.
     }
   }
-  const prompt = [
+  const basePrompt = [
     "SYSTEM: You are the cut-first editor for a short SaaS launch film.",
     "Design the storyboard before any HTML is written. Make 3-10 distinct shots",
     "that form one visual argument, not a centered headline/stat/CTA parade.",
@@ -1520,6 +1730,32 @@ export async function requestStoryboardPlan(
     "Registry capabilities are a reuse-first vocabulary, not a mandatory quota.",
     "Use only capability ids that appear in the supplied synced index.",
     "",
+    "STORYBOARD MOMENTS — the real review contract. A moment is one reviewable",
+    "CHANGED STATE the viewer can point at: a typed word replacing another, a",
+    "cursor arriving, a chart completing, a camera landing on a station, a UI",
+    "state flipping, a metric hitting its number, a logo resolving. Think like",
+    "an animatic: thumbnail by thumbnail, what happens, where, and when. Scenes",
+    "are render containers; moments are the film. Plan roughly one moment every",
+    "2.25 seconds — a 15s film needs 7+, a 24s film 10+ — and never leave more",
+    "than ~2.5s without one (a short final resolve is the only exception).",
+    "Every moment must be executable: the author will bind it to a cut, a typed",
+    "camera move, an interaction, or an explicitly timed component beat at its",
+    "atSec, and publication fails if the timeline cannot prove it. Ambient",
+    "drift never counts as a moment. Spread moments across each shot (one in",
+    "the back half); do not cluster them at entrances, and make consecutive",
+    "moments show visibly different frames. Mark the film's key images",
+    '"primary" (5-8 per film) and connective development "supporting".',
+    "",
+    ...(concept
+      ? [
+          "## Locked creative direction (from the concept pass)",
+          "Expand this direction faithfully: the shots must express the thesis,",
+          "follow the energy curve, carry the motif across cuts, and realize the",
+          "color arc through scene grades.",
+          `<concept_json>${JSON.stringify(concept)}</concept_json>`,
+          "",
+        ]
+      : []),
     storyboardReference(args.skills.text),
     "",
     "## Brief and trusted evidence",
@@ -1556,6 +1792,11 @@ export async function requestStoryboardPlan(
     "a fromRegion. The host fills every timing gap with drift automatically.",
     '"spatialIntent":{"version":1,"focalPart":"stable semantic part",',
     '"composition":"free-text compositional character","relationships":["important relationship"]},',
+    '"moments":[{"version":1,"id":"kebab-case","atSec":1.2,"title":"short reviewable title",',
+    '"visualState":"what the review frame shows","change":"what became different",',
+    '"motionIntent":"type-on|ui-state|camera-arrival|cut|reveal|draw-on|morph|resolve",',
+    '"importance":"primary|supporting"}],',
+    "Moment atSec values are absolute composition seconds inside the shot window.",
     '"interactions":[]}.',
     "For a cursor shot, interactions contains semantic movement/click intents with",
     "version,id,sceneId,cursorId,targetPart,action,startSec,arriveSec,from,path,",
@@ -1573,44 +1814,78 @@ export async function requestStoryboardPlan(
     "prefer a subtle human path with power2.out over a theatrical arc. The runtime owns the",
     "cursor actor, hotspot, endpoint, press, visibility lifecycle, and ripple.",
   ].filter(Boolean).join("\n");
-  let raw: string;
-  try {
-    process.stderr.write(
-      `[storyboard] primary contract · ${model ? `model ${model}` : "provider primary model"} · ` +
-        `reasoning ${thinkingMode} · max ${maxTokens} tokens\n`,
-    );
-    raw = await completeWithRetry(provider, prompt, {
-      ...args.options,
-      // A reasoning storyboard pass on a loaded provider can run long; give it more
-      // wall-clock headroom than a plain chat call, and let completeWithRetry absorb
-      // a transient stall instead of failing the whole build on the first abort.
-      timeoutMs: 180_000,
-      maxTokens,
-      // GLM's budget includes reasoning plus the compact JSON artifact; give it
-      // twice the non-reasoning budget while keeping the one-shot task bounded.
-      thinkingMode,
-      ...(structuredOutput ? { responseFormat: storyboardResponseFormat() } : {}),
-      ...(model ? { model } : {}),
-    }, "storyboard");
-  } catch (error) {
-    if (isTransientProviderError(error)) {
-      throw new Error(
-        "the planning model kept timing out while drafting the storyboard — this is usually a " +
-          "transient provider slowdown, not your brief. Run /sequences again in a moment.",
+  // The storyboard is a bounded artifact: when the model returns a plan that
+  // deterministic validation rejects, retry only this stage once with the
+  // exact findings — never fall through to the safe fallback on a first
+  // creative miss, and never replay the concept pass.
+  let lastValidationError: Error | undefined;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const prompt = attempt === 1 || !lastValidationError
+      ? basePrompt
+      : [
+          basePrompt,
+          "",
+          "## Previous attempt rejected",
+          "Deterministic validation rejected the previous storyboard. Fix every",
+          "finding below and return a corrected, complete storyboard:",
+          ...lastValidationError.message
+            .replace(/^invalid storyboard plan:\s*/i, "")
+            .split("; ")
+            .slice(0, 16)
+            .map((finding) => `- ${finding}`),
+        ].join("\n");
+    let raw: string;
+    try {
+      process.stderr.write(
+        `[storyboard] attempt ${attempt}/2 · ${model ? `model ${model}` : "provider primary model"} · ` +
+          `reasoning ${thinkingMode} · max ${maxTokens} tokens\n`,
       );
+      raw = await completeWithRetry(provider, prompt, {
+        ...args.options,
+        // A reasoning storyboard pass on a loaded provider can run long; give it more
+        // wall-clock headroom than a plain chat call, and let completeWithRetry absorb
+        // a transient stall instead of failing the whole build on the first abort.
+        timeoutMs: 180_000,
+        maxTokens,
+        // GLM's budget includes reasoning plus the compact JSON artifact; give it
+        // twice the non-reasoning budget while keeping the one-shot task bounded.
+        thinkingMode,
+        ...(structuredOutput ? { responseFormat: storyboardResponseFormat() } : {}),
+        ...(model ? { model } : {}),
+      }, "storyboard");
+    } catch (error) {
+      if (isTransientProviderError(error)) {
+        throw new Error(
+          "the planning model kept timing out while drafting the storyboard — this is usually a " +
+            "transient provider slowdown, not your brief. Run /sequences again in a moment.",
+        );
+      }
+      throw error;
     }
-    throw error;
+    let storyboard: DirectScene[];
+    try {
+      storyboard = parseStoryboardResponse(raw);
+    } catch (error) {
+      if (attempt < 2 && error instanceof Error && !isOutputTruncation(error)) {
+        process.stderr.write(
+          `[storyboard] attempt ${attempt}/2 rejected: ${error.message.slice(0, 600)} — retrying with findings\n`,
+        );
+        lastValidationError = error;
+        continue;
+      }
+      throw error;
+    }
+    fs.mkdirSync(planningDir, { recursive: true });
+    const temporary = `${cacheFile}.${process.pid}.tmp`;
+    fs.writeFileSync(
+      temporary,
+      JSON.stringify({ version: 1, key: cacheKey, storyboard }, null, 2) + "\n",
+      "utf8",
+    );
+    fs.renameSync(temporary, cacheFile);
+    return storyboard;
   }
-  const storyboard = parseStoryboardResponse(raw);
-  fs.mkdirSync(planningDir, { recursive: true });
-  const temporary = `${cacheFile}.${process.pid}.tmp`;
-  fs.writeFileSync(
-    temporary,
-    JSON.stringify({ version: 1, key: cacheKey, storyboard }, null, 2) + "\n",
-    "utf8",
-  );
-  fs.renameSync(temporary, cacheFile);
-  return storyboard;
+  throw lastValidationError ?? new Error("storyboard planning failed");
 }
 
 interface CompositionPatch {
@@ -1914,6 +2189,10 @@ function creationPrompt(args: {
       "For motion/liveness findings, add seek-safe GSAP beats on child elements,",
       "semantic component parts, or data-camera-world wrappers at explicit",
       "composition times. Do not animate scene wrappers to fake activity.",
+      "For storyboard/moments findings, the named moment's changed state must",
+      "actually happen at its atSec: author a visible, explicitly positioned",
+      "beat on that scene's content there. Never delete or retime the moment;",
+      "make the timeline honor it.",
       "Never edit data-composition-id, data-scene values, scene element ids, or storyboard timing.",
       "Do not edit JavaScript unless a finding explicitly identifies script/source validation.",
       "",
@@ -1960,6 +2239,9 @@ function creationPrompt(args: {
         "For motion/liveness findings, add a real mid-shot or back-half",
         "information beat with explicit timeline timing on a child/component or",
         "data-camera-world wrapper. Do not animate the scene wrapper itself.",
+        "For storyboard/moments findings, author the promised changed state at",
+        "the named atSec (a cut, camera arrival, interaction, or positioned",
+        "component beat) instead of removing or retiming the moment.",
         ...args.validationFeedback.map((issue) => `- ${issue}`),
       ].join("\n")
     : "";
@@ -2025,18 +2307,20 @@ function creationPrompt(args: {
   ].filter(Boolean).join("\n\n");
 }
 
-export async function requestDirectComposition(
+interface DirectCompositionArgs {
+  brief: string;
+  projectDir: string;
+  skills: RetrievedSkillContext;
+  frameMd?: string;
+  current?: DirectCompositionDraft;
+  lockedStoryboard?: DirectScene[];
+  revisionInstruction?: string;
+  options?: CompleteOptions;
+}
+
+async function authorComposition(
   provider: AgentProvider,
-  args: {
-    brief: string;
-    projectDir: string;
-    skills: RetrievedSkillContext;
-    frameMd?: string;
-    current?: DirectCompositionDraft;
-    lockedStoryboard?: DirectScene[];
-    revisionInstruction?: string;
-    options?: CompleteOptions;
-  },
+  args: DirectCompositionArgs,
 ): Promise<CompositionRunResult> {
   if (!args.brief.trim()) throw new Error("brief is empty");
   let validationFeedback: string[] | undefined;
@@ -2249,4 +2533,218 @@ export async function requestDirectComposition(
       lastError instanceof Error ? lastError.message : String(lastError)
     }`,
   );
+}
+
+/* ------------------------------------------------- GLM job #3: the critic */
+
+const CRITIC_MAX_DIRECTIVES = 5;
+
+const CRITIC_RESPONSE_FORMAT: NonNullable<CompleteOptions["responseFormat"]> = {
+  type: "json_schema",
+  json_schema: {
+    name: "sequences_critique",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        verdict: { type: "string", enum: ["ship", "repair"] },
+        directives: {
+          type: "array",
+          maxItems: CRITIC_MAX_DIRECTIVES,
+          items: { type: "string" },
+        },
+      },
+      required: ["verdict", "directives"],
+      additionalProperties: false,
+    },
+  },
+};
+
+function parseCritique(raw: string): string[] {
+  const source = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = source.indexOf("{");
+  if (start < 0) return [];
+  let value: unknown;
+  try {
+    value = JSON.parse(source.slice(start, source.lastIndexOf("}") + 1));
+  } catch {
+    return [];
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const object = value as Record<string, unknown>;
+  if (object.verdict !== "repair" || !Array.isArray(object.directives)) return [];
+  return object.directives
+    .filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim()))
+    .map((entry) => entry.trim().slice(0, 300))
+    .slice(0, CRITIC_MAX_DIRECTIVES);
+}
+
+function cachedConcept(projectDir: string): ConceptDirection | undefined {
+  try {
+    const cached = JSON.parse(
+      fs.readFileSync(path.join(projectDir, "planning", "concept.json"), "utf8"),
+    ) as { concept?: ConceptDirection };
+    return cached.concept;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * GLM job #3 — continuity critic. After DeepSeek authors source, GLM reviews
+ * the *implemented* film through its deterministic evidence (moment bindings,
+ * motion-density contact sheet) and returns a small list of creative repair
+ * directives. DeepSeek applies them as bounded source patches; deterministic
+ * QA accepts or rejects the result. The critic can only improve a film — any
+ * failure in this stage keeps the pre-critique draft.
+ */
+async function requestContinuityCritique(
+  provider: AgentProvider,
+  args: DirectCompositionArgs & { lockedStoryboard: DirectScene[] },
+  draft: DirectCompositionDraft,
+  durationSec: number,
+): Promise<string[]> {
+  const model = storyboardModel(provider);
+  const thinkingMode = storyboardThinkingMode(provider, model);
+  const structuredOutput = supportsStructuredOutputs(provider);
+  const report = analyzeMotionDensity(draft.html, args.lockedStoryboard, durationSec);
+  const contract = resolveMomentContract(draft.html, args.lockedStoryboard, durationSec, report);
+  const concept = cachedConcept(args.projectDir);
+  const contactSheet = [
+    ...report.sceneReports.map((scene) =>
+      `- ${scene.sceneId}: ${scene.durationSec.toFixed(1)}s · ${scene.authoredBeatCount} authored beat(s) · ` +
+      `${scene.backHalfBeatCount} in the back half · longest quiet ${scene.longestQuietGapSec.toFixed(1)}s`
+    ),
+    ...(report.quietGaps.length
+      ? [`- quiet gaps: ${report.quietGaps.map((gap) =>
+          `${gap.startSec.toFixed(1)}-${gap.endSec.toFixed(1)}s`).join(", ")}`]
+      : []),
+  ].join("\n");
+  const momentSheet = contract.moments.map((moment) =>
+    `- ${moment.atSec.toFixed(2)}s [${moment.importance}] ${moment.title}` +
+    `${moment.evidence ? ` (${moment.evidence.detail})` : " (UNBOUND)"}`
+  ).join("\n");
+  const prompt = [
+    "SYSTEM: You are the continuity critic reviewing an implemented",
+    "motion-design storyboard before delivery. You see the locked plan, the",
+    "resolved moment evidence, and the motion-density contact sheet — what the",
+    "timeline actually does, not what was hoped. Judge like a creative",
+    "director: does the motif survive the cuts, does the energy curve read,",
+    "does every promised moment credibly land, is there hierarchy between loud",
+    "and quiet, does the ending resolve rather than stop?",
+    `Return at most ${CRITIC_MAX_DIRECTIVES} bounded repair directives. Each must be small, local,`,
+    "and executable as a source patch: retime one beat, strengthen one weak",
+    "reveal, remove one competing tween, shift a camera arrival, sharpen the",
+    "resolve. Never restructure scenes, ids, or timing windows; never demand",
+    'new scenes or assets. If the film ships as-is, return {"verdict":"ship","directives":[]}.',
+    "",
+    ...(concept
+      ? ["## Locked creative direction", `<concept_json>${JSON.stringify(concept)}</concept_json>`, ""]
+      : []),
+    "## Locked storyboard (shots)",
+    ...args.lockedStoryboard.map((scene) =>
+      `- ${scene.id} (${scene.startSec.toFixed(1)}-${(scene.startSec + scene.durationSec).toFixed(1)}s): ` +
+      `${scene.title} — ${scene.purpose}${scene.continuityAnchor ? ` · anchor: ${scene.continuityAnchor}` : ""}`
+    ),
+    "",
+    "## Resolved moment evidence",
+    momentSheet || "(no moments)",
+    "",
+    "## Motion-density contact sheet",
+    contactSheet,
+    "",
+    "## Response contract",
+    'Return only a JSON object: {"verdict":"ship"|"repair","directives":["..."]}.',
+  ].join("\n");
+  const raw = await completeWithRetry(provider, prompt, {
+    ...args.options,
+    timeoutMs: 120_000,
+    maxTokens: thinkingMode === "none" ? 1_024 : 8_192,
+    thinkingMode,
+    ...(structuredOutput ? { responseFormat: CRITIC_RESPONSE_FORMAT } : {}),
+    ...(model ? { model } : {}),
+  }, "critic");
+  return parseCritique(raw);
+}
+
+async function applyContinuityCritique(
+  provider: AgentProvider,
+  args: DirectCompositionArgs,
+  result: CompositionRunResult,
+): Promise<CompositionRunResult> {
+  if (process.env.SLACK_SEQUENCES_CREATIVE_CRITIC === "0") return result;
+  const lockedStoryboard = args.lockedStoryboard;
+  if (!lockedStoryboard?.length || args.revisionInstruction) return result;
+  const last = lockedStoryboard[lockedStoryboard.length - 1]!;
+  const durationSec = last.startSec + last.durationSec;
+  if (durationSec < 10) return result;
+  let directives: string[];
+  try {
+    directives = await requestContinuityCritique(
+      provider,
+      { ...args, lockedStoryboard },
+      result.draft,
+      durationSec,
+    );
+  } catch (error) {
+    process.stderr.write(
+      `[critic] unavailable (${error instanceof Error ? error.message : String(error)}); shipping pre-critique draft\n`,
+    );
+    return result;
+  }
+  if (!directives.length) {
+    process.stderr.write("[critic] verdict: ship\n");
+    return result;
+  }
+  process.stderr.write(
+    `[critic] ${directives.length} repair directive(s): ${directives.join(" | ").slice(0, 600)}\n`,
+  );
+  try {
+    const structuredPatches = supportsStructuredOutputs(provider);
+    const productionTier = productionModel(provider);
+    const prompt = creationPrompt({
+      ...args,
+      scratch: result.draft,
+      validationFeedback: directives.map((directive) => `creative critique: ${directive}`),
+      compact: true,
+      structuredPatches,
+    });
+    const raw = await completeWithRetry(provider, prompt, {
+      ...args.options,
+      timeoutMs: 240_000,
+      maxTokens: REPAIR_MAX_TOKENS,
+      thinkingMode: "none",
+      ...(structuredPatches ? { responseFormat: PATCH_RESPONSE_FORMAT } : {}),
+      ...(productionTier ? { model: productionTier } : {}),
+    }, "critique patch");
+    let draft = applyCompositionRepair(raw, result.draft);
+    draft = applyDeterministicSourceRepairs(draft, args.projectDir, lockedStoryboard);
+    const graphError = lockedSceneGraphError(draft.html, lockedStoryboard);
+    if (graphError) throw new Error(`critique patch changed the locked storyboard (${graphError})`);
+    const validation = await validateDirectComposition(args.projectDir, draft);
+    if (!validation.ok) {
+      throw new Error(`critique patch failed static validation: ${validation.errors[0] ?? ""}`);
+    }
+    const browserQa = await inspectDirectComposition(args.projectDir, draft, {
+      captureGuide: false,
+    });
+    if (!browserQa.ok && !browserQa.infraError) {
+      throw new Error(`critique patch failed browser QA: ${browserQa.errors[0] ?? ""}`);
+    }
+    process.stderr.write("[critic] repair directives applied and validated\n");
+    return { ...result, draft };
+  } catch (error) {
+    process.stderr.write(
+      `[critic] patch rejected (${error instanceof Error ? error.message : String(error)}); keeping pre-critique draft\n`,
+    );
+    return result;
+  }
+}
+
+export async function requestDirectComposition(
+  provider: AgentProvider,
+  args: DirectCompositionArgs,
+): Promise<CompositionRunResult> {
+  const result = await authorComposition(provider, args);
+  return applyContinuityCritique(provider, args, result);
 }

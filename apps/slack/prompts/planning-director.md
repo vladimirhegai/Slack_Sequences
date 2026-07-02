@@ -169,6 +169,28 @@ agent-made PowerPoint. Follow them as written.
 - **Offset starts**: first animation at t=0.1–0.3s into the shot, never
   exactly at its start (which reads as a jump).
 
+## Storyboard moments — the review contract
+
+When the locked storyboard carries `moments`, they are the film's promise:
+each is one reviewable changed state (a typed word, a UI state flip, a metric
+completing, a camera arrival, a cut landing, a logo resolve) at an absolute
+`atSec`. Publication *proves* every moment against the timeline: a moment
+must coincide (within ~half a second) with a typed cut, a typed camera move,
+an interaction, or an explicitly positioned non-wrapper tween — or the film
+is rejected. Treat the moment list as your beat sheet:
+
+- Author a real, visible beat at every moment's `atSec` — the thing the
+  moment's `change` describes must actually happen there, on a child or
+  component element, with an explicit timeline position.
+- Ambient drift, wrapper fades, and decorative loops never satisfy a moment.
+- Moments marked `primary` are the film's key images: give them the loudest
+  motion, the key light, the bloom — they are also the frames Slack shows as
+  the storyboard contact sheet.
+- Liveness is now a blocking contract, not advice: a quiet stretch longer
+  than ~2.5–3 seconds, a scene with fewer beats than its duration demands, or
+  front-loaded motion with a dead back half will fail validation. Plan the
+  reveal cadence before writing markup.
+
 ## Typed boundary cuts — the host owns the seam
 
 Each storyboard shot declares a typed `cut` for its outgoing boundary
@@ -466,6 +488,11 @@ this contract and requests only `<index_html>`.
     "blueprint": "named-blueprint-or-compose",
     "rules": ["named-rule"],
     "outgoingCut": "What the eye follows into the next shot",
+    "moments": [
+      { "version": 1, "id": "hook-headline", "atSec": 0.3, "title": "Headline lands",
+        "visualState": "what the frame shows", "change": "what became different",
+        "motionIntent": "type-on", "importance": "primary" }
+    ],
     "camera": {
       "version": 1,
       "path": [

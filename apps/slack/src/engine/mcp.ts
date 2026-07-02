@@ -141,7 +141,8 @@ export function startMcpServer(projectDir: string): void {
         properties: {
           title: { type: "string" },
           html: { type: "string", description: "Complete standalone HyperFrames index.html" },
-          storyboard: { type: "array", items: { type: "object" }, minItems: 2, maxItems: 8 },
+          // Matches the planner's 3-10 shot ceiling (plus the 2-scene revision floor).
+          storyboard: { type: "array", items: { type: "object" }, minItems: 2, maxItems: 10 },
         },
         required: ["title", "html", "storyboard"],
         additionalProperties: false,

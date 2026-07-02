@@ -35,7 +35,10 @@ point an agent at the listed file.
 | Spatial / layout placement ("spacing" tool) | `frame.md` flow compositions + relational `data-layout-*` + `src/engine/layoutInspector.ts` | flow-first placement, safe-area / anchor / align / gap / optical audit |
 | Cursor interactions | `src/engine/interactionContract.ts`, `src/engine/templates/sequences-interactions.v1.js` | hotspot / target / ripple geometry, interaction QA |
 | Executable boundary cuts | `src/engine/cutContract.ts`, `src/engine/templates/sequences-cuts.v1.js` | typed cut styles, wrapper ownership, object-match bindings |
-| Static motion-density guard | `src/engine/motionDensity.ts` | liveness repair warnings for long quiet gaps, front-loaded scenes, dense bursts |
+| Static motion-density guard | `src/engine/motionDensity.ts` | blocking liveness errors (quiet gaps, slide scenes, front-loading) + advisory warnings (dense bursts, empty holds) |
+| Storyboard moment contract | `src/engine/storyboardMoments.ts` | typed reviewable moments: planned floor (≥7 for 12s+), evidence binding, interval gate, synthesis for legacy films |
+| Staged GLM planning (concept → beats → critic) | `src/engine/compositionRunner.ts` | cached concept artifact, moment-bearing storyboard with bounded retry, post-authoring continuity critic + patch |
+| Explicit fallback stages | `src/orchestrator.ts` | named stage receipts, `fallback:{stage,reason}`, Slack-safe fallback labeling |
 | Temporal motion evidence | `src/engine/temporalInspector.ts` | development strips, cut triptychs, change curve, quiet-window review |
 | Zero-token revise ("shorter" / "warmer") | `src/engine/tweakRunner.ts` | deterministic tweak matcher |
 | Render + thumbnails | `src/engine/render.ts`, `src/engine/thumbs.ts` | Chrome / FFmpeg pipeline, draft vs HD |
@@ -128,13 +131,27 @@ point an agent at the listed file.
 - `temporalInspector.ts` produces a compact development strip, per-cut evidence
   sheets, visual-change curve, quiet windows, and promised-vs-observed movement.
   It is developer-facing in `film:demo`, not yet part of live create/revise.
-- `motionDensity.ts` now runs in the live static validation path. For 10s+,
-  3+ shot compositions it classifies scene starts/cuts as major activity,
-  authored GSAP/component/camera beats as medium activity, and cursor
-  interactions as medium activity. It asks bounded repair for long quiet gaps,
-  front-loaded scenes, under-beaten 4.5s+ shots, and over-dense bursts, then
-  persists a compact `motionDensity` summary in `motion-plan.json`. This is a
-  liveness repair hint, not rendered temporal proof.
+- `motionDensity.ts` runs in the live static validation path. For 10s+, 3+
+  shot compositions it classifies scene starts/cuts as major activity, authored
+  GSAP/component/camera beats as medium activity, and cursor interactions as
+  medium activity. Long quiet gaps, under-beaten scenes, and front-loaded
+  scenes are now **blocking publication errors** (they feed the bounded repair
+  loop); over-dense bursts, empty camera holds, and unplaceable tweens remain
+  advisory. The summary persists in `motion-plan.json`. This is static
+  liveness, not rendered temporal proof.
+- `storyboardMoments.ts` (2026-07-02) implements the motion-storyboard-density
+  plan: `StoryboardMomentV1` moments beside scenes, a planned floor (≥7 for
+  12s+ films, ~1 per 2.25s, ≤2.6s spacing for declared plans), publication-time
+  evidence binding (every moment must coincide with a cut / typed camera move /
+  interaction / positioned non-wrapper tween), synthesis for storyboards that
+  declare none, moment-led Slack outlines, and a per-moment thumbnail strip
+  (primaries first, cap 10). GLM planning is staged into three bounded jobs —
+  cached concept pass → moment-bearing storyboard (one findings-driven retry) →
+  post-authoring continuity critic whose ≤5 directives are applied as DeepSeek
+  patches under full deterministic QA. `createVideo` attributes failures to
+  named stages and labels the deterministic fallback explicitly in Slack and in
+  `sequence:check` (`fallbackStage`, `moments`, `unboundMoments`); the fallback
+  film itself carries 13 evidence-bound moments.
 - **Paid live-authoring proof (2026-07-01, OpenRouter smoke):** GLM's storyboard
   pass chose sensible typed cuts unprompted (`cut-left`, `cut-down`,
   `inverse-zoom`, `hard` — each with a coherent editorial rationale), DeepSeek's
@@ -187,7 +204,8 @@ flowchart TD
 | [`src/engine/interactionContract.ts`](src/engine/interactionContract.ts) | cursor interaction contract + hotspot/target/ripple QA |
 | [`src/engine/cutContract.ts`](src/engine/cutContract.ts) | typed cut normalization, resolution, source validation, runtime staging |
 | [`src/engine/cameraContract.ts`](src/engine/cameraContract.ts) | continuous-spatial-world camera rig: typed camera paths, drift auto-fill, source validation |
-| [`src/engine/motionDensity.ts`](src/engine/motionDensity.ts) | static liveness budget: quiet gaps, staged beats, dense bursts |
+| [`src/engine/motionDensity.ts`](src/engine/motionDensity.ts) | static liveness budget: blocking quiet-gap/slide errors, advisory bursts/holds |
+| [`src/engine/storyboardMoments.ts`](src/engine/storyboardMoments.ts) | moment contract: floors, plan validation, evidence binding, synthesis |
 | [`src/engine/temporalInspector.ts`](src/engine/temporalInspector.ts) | developer-facing motion strips, cut evidence, change/quiet-window report |
 | [`src/engine/cinemaKit.ts`](src/engine/cinemaKit.ts) | host-owned cinematography kit: inline injection of `sequences-cinema.v1.css` |
 | [`src/engine/frameDesign.ts`](src/engine/frameDesign.ts) | per-job `frame.md`: bounded art direction + deterministic fallback/render |

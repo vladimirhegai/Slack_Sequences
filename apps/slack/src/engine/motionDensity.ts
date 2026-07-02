@@ -29,6 +29,13 @@ export interface MotionDensityReport {
   quietGaps: Array<{ startSec: number; endSec: number; durationSec: number }>;
   maxQuietGapSec: number;
   sceneReports: MotionDensitySceneReport[];
+  /**
+   * Blocking liveness findings (quiet gaps, slide-like scenes, front-loaded
+   * motion). These gate publication: a film that goes dead is a defect, not a
+   * style choice.
+   */
+  errors: string[];
+  /** Advisory findings (over-animation, unplaceable tweens, empty holds). */
   warnings: string[];
 }
 
@@ -384,10 +391,11 @@ export function analyzeMotionDensity(
     ...authored.activities,
   ].sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
   const quietGaps = applies ? mergedGaps(activities, durationSec) : [];
+  const errors: string[] = [];
   const warnings: string[] = [];
   if (applies) {
     for (const gap of quietGaps) {
-      warnings.push(
+      errors.push(
         `motion/liveness: ${gap.durationSec.toFixed(1)}s with no major cut, ` +
           `interaction, or authored component/camera beat (${gap.startSec.toFixed(1)}-` +
           `${gap.endSec.toFixed(1)}s); add a mid-shot reveal, state change, ` +
@@ -429,7 +437,7 @@ export function analyzeMotionDensity(
       );
       const minimum = scene.durationSec >= 4.5 ? 2 : 1;
       if (beats.length < minimum) {
-        warnings.push(
+        errors.push(
           `motion/liveness: scene "${scene.id}" has ${beats.length} authored ` +
             `component/camera beat(s) across ${scene.durationSec.toFixed(1)}s; ` +
             `use at least ${minimum} non-wrapper beat(s) so it does not read as a slide`,
@@ -446,7 +454,7 @@ export function analyzeMotionDensity(
         backHalf.length === 0 &&
         longestQuietGap > frontLoadedQuietThreshold
       ) {
-        warnings.push(
+        errors.push(
           `motion/liveness: scene "${scene.id}" front-loads its authored motion; ` +
             `add one back-half information beat after ${(
               scene.startSec + scene.durationSec * 0.45
@@ -498,6 +506,7 @@ export function analyzeMotionDensity(
     quietGaps,
     maxQuietGapSec: round(maxQuietGapSec),
     sceneReports,
+    errors: [...new Set(errors)],
     warnings: [...new Set(warnings)],
   };
 }
@@ -506,10 +515,10 @@ export function validateMotionDensity(
   html: string,
   scenes: DirectScene[],
   durationSec: number | undefined,
-): { warnings: string[]; report?: MotionDensityReport } {
+): { errors: string[]; warnings: string[]; report?: MotionDensityReport } {
   if (!Number.isFinite(durationSec) || durationSec === undefined) {
-    return { warnings: [] };
+    return { errors: [], warnings: [] };
   }
   const report = analyzeMotionDensity(html, scenes, durationSec);
-  return { warnings: report.warnings, report };
+  return { errors: report.errors, warnings: report.warnings, report };
 }

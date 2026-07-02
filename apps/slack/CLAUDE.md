@@ -170,10 +170,46 @@ sub-agents.
 
 Live create/revise now also runs a static `motionDensity.ts` liveness pass for
 10s+, 3+ shot films. It classifies scene starts/cuts, authored GSAP beats, and
-interactions, then feeds bounded repair warnings for long quiet gaps,
-front-loaded scenes, and dense bursts. The summary is persisted in
-`motion-plan.json`. This is not rendered temporal evidence; `temporalInspector`
-still owns pixel-based strips/change curves.
+interactions. Long quiet gaps, slide-like scenes, and front-loaded scenes are
+**blocking publication errors** (fed to the bounded repair loop); dense bursts,
+empty holds, and unplaceable tweens stay advisory warnings. The summary is
+persisted in `motion-plan.json`. This is not rendered temporal evidence;
+`temporalInspector` still owns pixel-based strips/change curves.
+
+**Storyboard moments** (`engine/storyboardMoments.ts`) are the review contract
+on top of scenes: each `StoryboardMomentV1` is one reviewable changed state
+(typed word, UI state, metric completion, camera arrival, cut landing, logo
+resolve) at an absolute `atSec`. The planner must declare a duration-scaled
+floor of moments (≥7 for 12s+ films, ~1 per 2.25s, spacing ≤2.6s except a short
+final resolve); publication binds every declared moment to executable timeline
+evidence (cut / typed camera move / interaction / positioned non-wrapper tween)
+and rejects unbound moments, a missed floor, or (for declared plans) dead
+intervals. Legacy/fallback storyboards without declared moments get moments
+synthesized from the same activity evidence. Moments drive the Slack storyboard
+outline (timestamped rows grouped under scenes), the thumbnail strip (one frame
+per moment, primaries first, cap 10), `STORYBOARD.md`, and `motion-plan.json`.
+
+**Staged planning (GLM as three bounded jobs).** Live create now runs: a cached
+**concept pass** (thesis, narrative pressure, energy curve, motif, color arc,
+one risk — `requestConceptDirection`, kill-switch
+`SLACK_SEQUENCES_CONCEPT_PASS=0`), the **beat-expansion storyboard pass**
+(consumes the concept artifact; one bounded retry with deterministic findings
+on a rejected plan), DeepSeek source authoring against the locked storyboard,
+then a **continuity critic** pass (GLM reviews the implemented film's moment
+evidence + motion-density contact sheet and returns ≤5 bounded repair
+directives; DeepSeek applies them as patches; deterministic QA accepts or
+rejects — kill-switch `SLACK_SEQUENCES_CREATIVE_CRITIC=0`; any critic failure
+keeps the pre-critique draft). Each artifact is cached independently.
+
+**Explicit fallback stages.** `createVideo` attributes failures to named stages
+(`storyboard-plan`, `source-author`); `VideoResult.stages` carries argument-free
+receipts and `VideoResult.fallback = { stage, reason }` marks a published
+deterministic fallback. Slack results label the fallback explicitly (stage name
+only, never model output); `sequence:check` reports
+`authoringMode/fallbackStage/moments/unboundMoments`. The fallback composition
+itself obeys the full moment contract (13 declared, evidence-bound moments over
+a camera-world pan; duration clamped to 20s) and a fallback is never cached
+under a model-artifact key.
 
 Agent-facing local checks use `npm run sequence:check --workspace
 @sequences/slack -- ...`. It simulates a `/sequences` create after Slack has

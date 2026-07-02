@@ -227,6 +227,7 @@ function stageBlocks(
     slackMcpTools: result.slackMcpTools,
     slackMcpNote: result.slackMcpNote,
     usedPreset: result.usedPreset,
+    fallback: result.fallback ? { stage: result.fallback.stage } : undefined,
     provider: result.provider,
     renderQuality,
     frame: result.frame

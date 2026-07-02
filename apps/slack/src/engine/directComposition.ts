@@ -48,6 +48,10 @@ import {
   validateMotionDensity,
   type MotionDensityReport,
 } from "./motionDensity.ts";
+import {
+  resolveMomentContract,
+  type StoryboardMomentV1,
+} from "./storyboardMoments.ts";
 
 const DIRECT_DIR = "composition";
 const MANIFEST_FILE = "manifest.json";
@@ -75,6 +79,8 @@ export interface DirectScene {
   camera?: SceneCameraIntentV1;
   spatialIntent?: SpatialIntentV1;
   interactions?: InteractionIntentV1[];
+  /** Ordered reviewable changed states this scene promises (the moment contract). */
+  moments?: StoryboardMomentV1[];
 }
 
 export interface DirectCompositionDraft {
@@ -118,8 +124,13 @@ export interface DirectValidationResult {
   warnings: string[];
   frameErrors: string[];
   frameWarnings: string[];
+  /** Blocking liveness/moment findings (also included in errors). */
+  motionErrors: string[];
+  /** Advisory motion findings — repair hints, never a veto. */
   motionWarnings: string[];
   motionReport?: MotionDensityReport;
+  /** Evidence-bound storyboard moments (declared or synthesized). */
+  moments: StoryboardMomentV1[];
   findings: HyperframeLintFinding[];
   compositionId?: string;
   width?: number;
@@ -273,6 +284,7 @@ function normalizeStoryboard(
       ...(proposed?.camera ? { camera: proposed.camera } : {}),
       ...(proposed?.spatialIntent ? { spatialIntent: proposed.spatialIntent } : {}),
       ...(proposed?.interactions?.length ? { interactions: proposed.interactions } : {}),
+      ...(proposed?.moments?.length ? { moments: proposed.moments } : {}),
     };
   });
   if (tags.length < 2) errors.push("composition needs at least two elements marked data-scene");
@@ -391,6 +403,16 @@ export async function validateDirectComposition(
     normalized.scenes,
     durationSec,
   );
+  // Liveness is a publication contract: a film that goes dead or reads as a
+  // slide deck is rejected, not merely warned about.
+  errors.push(...motionValidation.errors);
+  const momentContract = resolveMomentContract(
+    html,
+    normalized.scenes,
+    durationSec,
+    motionValidation.report,
+  );
+  errors.push(...momentContract.errors);
 
   const rootDir = compositionDir(projectDir);
   for (const ref of referencedLocalPaths(html)) {
@@ -443,11 +465,14 @@ export async function validateDirectComposition(
       ...cutValidation.warnings,
       ...cameraValidation.warnings,
       ...motionValidation.warnings,
+      ...momentContract.warnings,
     ])],
     frameErrors: frameValidation.errors,
     frameWarnings: frameValidation.warnings,
-    motionWarnings: motionValidation.warnings,
+    motionErrors: [...new Set([...motionValidation.errors, ...momentContract.errors])],
+    motionWarnings: [...new Set([...motionValidation.warnings, ...momentContract.warnings])],
     ...(motionValidation.report ? { motionReport: motionValidation.report } : {}),
+    moments: momentContract.moments,
     findings,
     compositionId,
     width,
@@ -532,6 +557,17 @@ function storyboardMarkdown(title: string, scenes: DirectScene[]): string {
           (interaction.holdUntilSec ?? interaction.releaseSec ?? interaction.arriveSec).toFixed(2)
         }s, ${interaction.path})`
       ),
+      ...(scene.moments?.length
+        ? [
+            "",
+            "Moments:",
+            ...scene.moments.map((moment) =>
+              `- ${moment.atSec.toFixed(2)}s [${moment.importance}] ${moment.title}` +
+              `${moment.change && moment.visualState ? ` — ${moment.change}` : ""}` +
+              `${moment.evidence ? ` (${moment.evidence.detail})` : " (UNBOUND)"}`
+            ),
+          ]
+        : []),
       "",
     ].filter(Boolean)),
   ].join("\n").trimEnd() + "\n";
@@ -559,6 +595,18 @@ export async function commitDirectComposition(
   }
 
   const normalized = normalizeStoryboard(draft.storyboard, draft.html);
+  // Persist evidence-bound moments (declared or synthesized) on their scenes so
+  // the manifest, Slack outline, and thumbnails all review the same contract.
+  const momentsByScene = new Map<string, StoryboardMomentV1[]>();
+  for (const moment of validation.moments) {
+    const list = momentsByScene.get(moment.sceneId) ?? [];
+    list.push(moment);
+    momentsByScene.set(moment.sceneId, list);
+  }
+  for (const scene of normalized.scenes) {
+    const bound = momentsByScene.get(scene.id);
+    if (bound?.length) scene.moments = bound;
+  }
   const interactionEvidence = browserQa.interactions ?? [];
   const interactionCount = normalized.scenes.reduce(
     (count, scene) => count + (scene.interactions?.length ?? 0),
@@ -635,6 +683,7 @@ export async function commitDirectComposition(
         version: CAMERA_RUNTIME_VERSION,
         sha256: cameraRuntimeHash(),
       },
+      moments: validation.moments,
       ...(validation.motionReport
         ? {
             motionDensity: {
@@ -741,14 +790,30 @@ export function undoDirectComposition(projectDir: string): boolean {
   return true;
 }
 
+/**
+ * The Slack-facing storyboard. Leads with what visibly changes at each moment
+ * (timestamped rows grouped under their parent scene); scene wrappers and
+ * blueprint metadata are secondary. A 15s film reads as 7-10 reviewable rows,
+ * not three containers.
+ */
 export function directOutline(manifest: DirectCompositionManifest): string {
   return manifest.scenes
     .map((scene, index) => {
       const recipe = scene.blueprint ? ` · ${scene.blueprint}` : "";
       const cut = scene.outgoingCut ? ` · cut: ${scene.outgoingCut}` : "";
-      return `${index + 1}. ${scene.title} · ${scene.startSec.toFixed(1)}–${(
+      const header = `${index + 1}. ${scene.title} · ${scene.startSec.toFixed(1)}–${(
         scene.startSec + scene.durationSec
       ).toFixed(1)}s${recipe}${cut}`;
+      const moments = (scene.moments ?? []).map((moment) => {
+        const marker = moment.importance === "primary" ? "◆" : "◇";
+        // Declared moments carry an authored change description; synthesized
+        // ones repeat their mechanical evidence, so the title alone reads best.
+        const what = moment.visualState && moment.change
+          ? `${moment.title} — ${moment.change}`
+          : moment.title;
+        return `   ${moment.atSec.toFixed(1).padStart(5)}s ${marker} ${what.slice(0, 96)}`;
+      });
+      return [header, ...moments].join("\n");
     })
     .join("\n");
 }
@@ -809,6 +874,52 @@ function serveDir(dir: string): Promise<{ url: string; close: () => void }> {
   });
 }
 
+interface ThumbnailCapture {
+  key: string;
+  atSec: number;
+}
+
+const MAX_MOMENT_THUMBNAILS = 10;
+
+/**
+ * The thumbnail strip is the storyboard contact sheet. When the manifest
+ * carries evidence-bound moments, capture one frame per reviewable moment
+ * (primary moments win when the cap bites); legacy manifests keep the
+ * one-frame-per-scene behavior.
+ */
+function thumbnailCaptures(manifest: DirectCompositionManifest): ThumbnailCapture[] {
+  const moments = manifest.scenes.flatMap((scene) =>
+    (scene.moments ?? []).map((moment) => ({ moment, scene }))
+  );
+  if (!moments.length) {
+    return manifest.scenes.map((scene) => ({
+      key: scene.id,
+      atSec: scene.startSec + scene.durationSec * 0.58,
+    }));
+  }
+  const selected = moments.length <= MAX_MOMENT_THUMBNAILS
+    ? moments
+    : [
+        ...moments.filter((entry) => entry.moment.importance === "primary"),
+        ...moments.filter((entry) => entry.moment.importance !== "primary"),
+      ].slice(0, MAX_MOMENT_THUMBNAILS);
+  return selected
+    .map(({ moment, scene }, index) => ({
+      key: `m${String(index + 1).padStart(2, "0")}-${moment.id}`,
+      // Let the beat land: capture just after the changed state arrives, but
+      // never past the scene window it belongs to.
+      atSec: Math.min(
+        moment.atSec + 0.42,
+        scene.startSec + scene.durationSec - 0.05,
+      ),
+    }))
+    .sort((a, b) => a.atSec - b.atSec)
+    .map((capture, index) => ({
+      ...capture,
+      key: `m${String(index + 1).padStart(2, "0")}-${capture.key.replace(/^m\d+-/, "")}`,
+    }));
+}
+
 export async function generateDirectThumbnails(
   projectDir: string,
   options: { width?: number; browserPath?: string } = {},
@@ -851,8 +962,8 @@ export async function generateDirectThumbnails(
     if (consoleErrors.length) throw new Error(`composition runtime error: ${consoleErrors.join("; ")}`);
 
     const files: Record<string, string> = {};
-    for (const scene of current.manifest.scenes) {
-      const at = scene.startSec + scene.durationSec * 0.58;
+    for (const capture of thumbnailCaptures(current.manifest)) {
+      const at = capture.atSec;
       await page.evaluate(
         (time: number, id: string) => {
           const win = window as unknown as {
@@ -868,12 +979,12 @@ export async function generateDirectThumbnails(
         at,
         current.manifest.compositionId,
       );
-      const safeId = scene.id.replace(/[^a-z0-9_-]/gi, "-");
+      const safeId = capture.key.replace(/[^a-z0-9_-]/gi, "-");
       const staged = path.join(staging, `${safeId}.png`);
       await page.screenshot({ path: staged as `${string}.png` });
       const target = path.join(targetDir, `${safeId}.png`);
       fs.copyFileSync(staged, target);
-      files[scene.id] = `thumbs/${safeId}.png`;
+      files[capture.key] = `thumbs/${safeId}.png`;
     }
     return { files, elapsedMs: Date.now() - started };
   } finally {
