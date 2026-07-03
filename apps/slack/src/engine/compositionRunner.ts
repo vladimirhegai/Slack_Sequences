@@ -49,6 +49,22 @@ import {
   injectCinemaKit,
 } from "./cinemaKit.ts";
 import {
+  COMPONENT_BEAT_KINDS,
+  COMPONENT_KINDS,
+  COMPONENT_KIT_FILE,
+  COMPONENT_KIT_VERSION,
+  COMPONENT_RUNTIME_FILE,
+  componentAuthoringReference,
+  componentPlanningVocabulary,
+  componentSupportsBeat,
+  injectComponentKit,
+  injectComponentRuntimeTag,
+  normalizeStoryboardComponentBeats,
+  normalizeStoryboardComponents,
+  resolveComponentPlan,
+  type ComponentKind,
+} from "./componentContract.ts";
+import {
   normalizeStoryboardMoments,
   plannedMomentFloor,
   resolveMomentContract,
@@ -173,6 +189,54 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
                   required: ["version", "path"],
                   additionalProperties: false,
                 },
+                components: {
+                  type: "array",
+                  maxItems: 6,
+                  items: {
+                    type: "object",
+                    properties: {
+                      version: { type: "number", enum: [1] },
+                      id: { type: "string" },
+                      kind: { type: "string", enum: [...COMPONENT_KINDS] },
+                      region: { type: "string" },
+                      role: { type: "string", enum: ["hero", "support"] },
+                    },
+                    required: ["version", "id", "kind"],
+                    additionalProperties: false,
+                  },
+                },
+                beats: {
+                  type: "array",
+                  maxItems: 10,
+                  items: {
+                    type: "object",
+                    properties: {
+                      version: { type: "number", enum: [1] },
+                      id: { type: "string" },
+                      component: { type: "string" },
+                      kind: { type: "string", enum: [...COMPONENT_BEAT_KINDS] },
+                      atSec: { type: "number" },
+                      durationSec: { type: "number" },
+                      text: { type: "string" },
+                      value: { type: "number" },
+                      item: { type: "number" },
+                      toState: { type: "string" },
+                      morphTo: { type: "string" },
+                      ease: {
+                        type: "string",
+                        enum: [
+                          ...SEQUENCES_EASES,
+                          "power2.out",
+                          "power3.out",
+                          "expo.out",
+                          "none",
+                        ],
+                      },
+                    },
+                    required: ["version", "id", "component", "kind", "atSec"],
+                    additionalProperties: false,
+                  },
+                },
                 spatialIntent: {
                   type: "object",
                   properties: {
@@ -294,7 +358,7 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
                 "id", "title", "purpose", "incomingIdea", "foreground", "background",
                 "cameraIntent", "startSec", "durationSec", "blueprint", "rules",
                 "capabilityIds", "continuityAnchor", "outgoingCut", "cut", "camera",
-                "spatialIntent", "moments", "interactions",
+                "components", "beats", "spatialIntent", "moments", "interactions",
               ],
               additionalProperties: false,
             },
@@ -1158,6 +1222,74 @@ function applyDeterministicSourceRepairs(
       );
     }
   }
+  // Typed component beats are compiled by the host-owned component runtime,
+  // so their bindings are injected deterministically from the locked
+  // storyboard: the author never spends output budget on state mechanics and
+  // can never silently drop a planned beat.
+  const componentPlan = resolveComponentPlan(lockedStoryboard ?? draft.storyboard);
+  if (componentPlan.scenes.length) {
+    let repairedComponents = 0;
+    const withRuntime = injectComponentRuntimeTag(html);
+    if (withRuntime !== html) {
+      html = withRuntime;
+      repairedComponents += 1;
+    }
+    const payload = JSON.stringify(componentPlan);
+    const componentIslandPattern =
+      /(<script\b[^>]*\bid\s*=\s*(["'])sequences-components\2[^>]*>)([\s\S]*?)(<\/script>)/i;
+    if (componentIslandPattern.test(html)) {
+      const updated = html.replace(componentIslandPattern, `$1${payload}$4`);
+      if (updated !== html) {
+        html = updated;
+        repairedComponents += 1;
+      }
+    } else {
+      const timelineScript =
+        /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
+      if (timelineScript?.index !== undefined) {
+        html = html.slice(0, timelineScript.index) +
+          `<script type="application/json" id="sequences-components">${payload}</script>\n` +
+          html.slice(timelineScript.index);
+        repairedComponents += 1;
+      }
+    }
+    if (!/\bSequencesComponents\.compile\s*\(/.test(html)) {
+      const timelineName = html.match(
+        /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*gsap\.timeline\s*\(/,
+      )?.[1];
+      if (timelineName) {
+        const registration = new RegExp(
+          `(window\\.__timelines\\s*\\[[^\\]]+\\]\\s*=\\s*${regexpEscape(timelineName)}\\s*;)`,
+        );
+        if (registration.test(html)) {
+          html = html.replace(
+            registration,
+            `SequencesComponents.compile(${timelineName}, document.querySelector("[data-composition-id]"));\n$1`,
+          );
+          repairedComponents += 1;
+        }
+      }
+    }
+    if (repairedComponents) {
+      process.stderr.write(
+        `[author] injected ${repairedComponents} deterministic component binding(s) for ` +
+          `${componentPlan.scenes.reduce((count, scene) => count + scene.beats.length, 0)} typed beat(s)\n`,
+      );
+    }
+  }
+  // The component kit (SaaS surfaces: windows, search, tables, charts, chat,
+  // toasts …) is host-owned static CSS like the cinematography kit. Injecting
+  // it inline means kit markup always resolves — components cost the author
+  // structure, not styling budget.
+  {
+    const withKit = injectComponentKit(html);
+    if (withKit !== html) {
+      html = withKit;
+      process.stderr.write(
+        `[author] injected host component kit ${COMPONENT_KIT_FILE} v${COMPONENT_KIT_VERSION}\n`,
+      );
+    }
+  }
   // The cinematography kit (grain/vignette, key lights, materials, grades) is
   // host-owned static CSS. Injecting it inline means every live film gets the
   // baseline filmic floor and the author's kit classes always resolve.
@@ -1269,6 +1401,12 @@ function parseStoryboard(raw: string): DirectScene[] {
     const spatialIntent = normalizeStoryboardSpatialIntent(scene.spatialIntent);
     const cut = normalizeStoryboardCutIntent(scene.cut);
     const camera = normalizeStoryboardCameraIntent(scene.camera, { startSec, durationSec });
+    const components = normalizeStoryboardComponents(scene.components);
+    const beats = normalizeStoryboardComponentBeats(
+      scene.beats,
+      { sceneId: id, startSec, durationSec },
+      components,
+    );
     const interactions = normalizeStoryboardInteractionIntents(scene.interactions, {
       sceneId: id,
       startSec,
@@ -1315,6 +1453,8 @@ function parseStoryboard(raw: string): DirectScene[] {
       ...(typeof scene.outgoingCut === "string" ? { outgoingCut: scene.outgoingCut } : {}),
       ...(cut ? { cut } : {}),
       ...(camera ? { camera } : {}),
+      ...(components.length ? { components } : {}),
+      ...(beats.length ? { beats } : {}),
       ...(spatialIntent ? { spatialIntent } : {}),
       ...(interactions.length ? { interactions } : {}),
       ...(moments.length ? { moments } : {}),
@@ -1350,6 +1490,7 @@ export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {
   );
   const ids = new Set<string>();
   const interactionIds = new Set<string>();
+  const beatIds = new Set<string>();
   let expectedStart = 0;
   for (const [index, scene] of storyboard.entries()) {
     if (!/^[a-z][a-z0-9-]*$/.test(scene.id)) {
@@ -1380,6 +1521,28 @@ export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {
     }
     if (scene.spatialIntent && !scene.spatialIntent.focalPart.trim()) {
       errors.push(`shot "${scene.id}" needs a stable focalPart`);
+    }
+    const componentKinds = new Map(
+      (scene.components ?? []).map((component) => [component.id, component.kind]),
+    );
+    for (const beat of scene.beats ?? []) {
+      if (beatIds.has(beat.id)) {
+        errors.push(`component beat id "${beat.id}" is duplicated`);
+      }
+      beatIds.add(beat.id);
+      const kind = componentKinds.get(beat.component);
+      if (kind && !componentSupportsBeat(kind, beat.kind)) {
+        errors.push(
+          `beat "${beat.id}" uses "${beat.kind}" on a ${kind} component, which does not ` +
+            `support it — pick a supported beat or a different component kind`,
+        );
+      }
+      if (beat.morphTo && !componentKinds.has(beat.morphTo)) {
+        errors.push(
+          `beat "${beat.id}" morphs to undeclared component "${beat.morphTo}" — declare the ` +
+            `twin component in the same shot`,
+        );
+      }
     }
     for (const interaction of scene.interactions ?? []) {
       if (interactionIds.has(interaction.id)) {
@@ -1657,8 +1820,9 @@ export async function requestStoryboardPlan(
     options: args.options,
   });
   const cacheKey = createHash("sha256").update(JSON.stringify({
-    // Bump when the storyboard contract changes shape (v2: StoryboardMomentV1).
-    contract: 2,
+    // Bump when the storyboard contract changes shape (v2: StoryboardMomentV1,
+    // v3: typed components + beats).
+    contract: 3,
     provider: provider.id,
     model: model ?? null,
     brief: args.brief,
@@ -1715,6 +1879,18 @@ export async function requestStoryboardPlan(
     "For a 10s+ film, plan visible development inside shots: a 4.5s+ shot must",
     "have at least two non-wrapper component/camera beats, with one in the back",
     "half. Three long scenes without internal events reads as a slide deck.",
+    "",
+    componentPlanningVocabulary(),
+    "Plan the product story AS component state changes: a search shot is a",
+    "search component + a type beat + an open beat; a metrics shot is stat-card",
+    "components + count beats + a chart beat; an AI shot is a chat component +",
+    "a stream beat. Place components at camera regions (set their region) so",
+    "whips and pans land ON a component as its beat fires — camera arrival +",
+    "state change on the same frame is the signature move. Morph beats are the",
+    "film's showpiece transitions: search→command-palette, card→modal,",
+    "table→list. Use 1-2 morphs per film where the story earns them, never",
+    "decoratively. Beats are host-compiled, so declaring them costs the source",
+    "budget nothing — prefer typed beats over prose asks for UI motion.",
     "Every shot's boundary is a typed, machine-executed cut. Choose cut.style from:",
     "hard (intentional register break), cut-left/right/up/down (velocity-matched",
     "directional carry — the default for scene-to-scene motion), zoom-through",
@@ -1790,6 +1966,15 @@ export async function requestStoryboardPlan(
     "The first path entry establishes the entry framing: start with a short",
     "hold or drift on the region the cut lands on, or give the first full move",
     "a fromRegion. The host fills every timing gap with drift automatically.",
+    '"components":[{"version":1,"id":"kebab-case-part-name","kind":"one of the component kit kinds",',
+    '"region":"optional camera region it lives at","role":"hero|support"}],',
+    '"beats":[{"version":1,"id":"kebab-case","component":"declared component id","kind":"type|open|close|select|press|set-state|count|progress|chart|rows|stream|highlight|morph|swap",',
+    '"atSec":2.4,"durationSec":1.1,"text":"for type/stream/swap","value":40,"item":2,',
+    '"toState":"for set-state/press","morphTo":"for morph","ease":"optional"}],',
+    "Beat atSec values are absolute composition seconds inside the shot window.",
+    'Use "components":[] and "beats":[] when a shot has no product surface.',
+    "A component id doubles as its data-part: cameras can track-to-anchor it,",
+    "object-match cuts can carry it, and cursor interactions can click it.",
     '"spatialIntent":{"version":1,"focalPart":"stable semantic part",',
     '"composition":"free-text compositional character","relationships":["important relationship"]},',
     '"moments":[{"version":1,"id":"kebab-case","atSec":1.2,"title":"short reviewable title",',
@@ -2161,6 +2346,18 @@ function availableAssets(projectDir: string): string {
   return files.length ? files.join("\n") : "No project assets are available.";
 }
 
+/**
+ * The markup contract for exactly the component kinds these scenes declare.
+ * Empty when no scene declares components, so plain films pay no prompt cost.
+ */
+function componentReferenceFor(scenes: DirectScene[] | undefined): string {
+  const kinds = new Set<ComponentKind>();
+  for (const scene of scenes ?? []) {
+    for (const component of scene.components ?? []) kinds.add(component.kind);
+  }
+  return kinds.size ? componentAuthoringReference(kinds) : "";
+}
+
 function creationPrompt(args: {
   brief: string;
   projectDir: string;
@@ -2175,6 +2372,9 @@ function creationPrompt(args: {
   structuredPatches?: boolean;
 }): string {
   if (args.scratch) {
+    const scratchComponents = componentReferenceFor(
+      args.lockedStoryboard ?? args.scratch.storyboard,
+    );
     return [
       "SYSTEM: You are a precise HTML/CSS/GSAP repair engineer.",
       "Repair the supplied scratch composition with the fewest local edits. Preserve its art",
@@ -2199,6 +2399,7 @@ function creationPrompt(args: {
       "## Deterministic findings to repair",
       ...(args.validationFeedback ?? []).map((issue) => `- ${issue}`),
       "",
+      ...(scratchComponents ? [scratchComponents, ""] : []),
       "## Scratch HTML",
       "<scratch_index_html>",
       args.scratch.html,
@@ -2275,12 +2476,16 @@ function creationPrompt(args: {
         "</frame_md>",
       ].join("\n")
     : "";
+  const componentReference = componentReferenceFor(
+    args.lockedStoryboard ?? args.current?.storyboard,
+  );
   return [
     "SYSTEM:",
     DIRECTOR_PROMPT,
     "",
     args.compact ? compactSkillText(args.skills.text) : args.skills.text,
     "",
+    componentReference,
     "## Job brief and trusted evidence",
     args.brief,
     "",

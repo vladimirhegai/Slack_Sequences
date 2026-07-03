@@ -181,7 +181,15 @@ sequences-camera JSON island, and SequencesCamera.compile(tl, root), and owns
 the world plane's transform — never tween data-camera-world yourself. Region/
 part names in the plan must exist verbatim in the scene. Depth layers inside
 the world may declare data-parallax="0.15"-"0.45" (0 = screen-locked) for
-host-driven parallax during pans.`;
+host-driven parallax during pans.
+
+**Motion-native components:** storyboard-declared components are authored as
+one element each with data-part="<declared id>" + data-component="<kind>"
+using the host component-kit markup (the job prompt supplies the exact markup
+contract for the declared kinds). The host injects the kit CSS and, for typed
+beats, sequences-components.v1.js + the sequences-components island +
+SequencesComponents.compile(tl, root). Author entrances and FINAL states;
+never author typing/opening/counting/streaming/morph motion the beats own.`;
 
 /* ------------------------------------------------- ease library (compact) */
 
@@ -335,6 +343,7 @@ export function retrieveHyperframesSkillContext(
     DATA_ATTRIBUTES_COMPACT,
     EASE_LIBRARY_COMPACT,
   ].join("\n\n");
+
 
   // 2. Capabilities overview (compact indexes so the model knows what exists)
   const blueprintSummaries = extractBlueprintSummaries();

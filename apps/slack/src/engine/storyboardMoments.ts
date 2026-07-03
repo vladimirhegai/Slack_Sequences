@@ -19,7 +19,7 @@ import type { DirectScene } from "./directComposition.ts";
 
 export type MomentImportance = "primary" | "supporting";
 
-export type MomentEvidenceKind = "cut" | "camera" | "interaction" | "tween";
+export type MomentEvidenceKind = "cut" | "camera" | "interaction" | "component" | "tween";
 
 export interface StoryboardMomentV1 {
   version: 1;
@@ -234,6 +234,7 @@ function evidenceKind(activity: MotionActivity): MomentEvidenceKind {
   if (activity.source.startsWith("cut:") || activity.source === "scene-start") return "cut";
   if (activity.source.startsWith("camera:")) return "camera";
   if (activity.source.startsWith("interaction:")) return "interaction";
+  if (activity.source.startsWith("component:")) return "component";
   return "tween";
 }
 
@@ -285,6 +286,10 @@ function synthesizedTitle(activity: MotionActivity, scene: DirectScene): string 
   if (activity.source.startsWith("interaction:")) {
     const action = activity.source.slice(12);
     return activity.target ? `Cursor ${action} on ${activity.target}` : `Cursor ${action}`;
+  }
+  if (activity.source.startsWith("component:")) {
+    const beat = activity.source.slice(10);
+    return activity.target ? `Component ${beat}: ${activity.target}` : `Component ${beat}`;
   }
   const target = activity.target?.replace(/^[#.]/, "").replace(/[[\]"'=]/g, " ").trim();
   return target ? `Reveal: ${target}` : "Authored beat";

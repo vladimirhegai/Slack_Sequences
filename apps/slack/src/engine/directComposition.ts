@@ -43,6 +43,16 @@ import {
   validateCameraContract,
   type SceneCameraIntentV1,
 } from "./cameraContract.ts";
+import {
+  COMPONENT_RUNTIME_FILE,
+  COMPONENT_RUNTIME_VERSION,
+  componentRuntimeHash,
+  componentRuntimeSource,
+  resolveComponentPlan,
+  validateComponentContract,
+  type ComponentBeatIntentV1,
+  type SceneComponentSpecV1,
+} from "./componentContract.ts";
 import { validateCompositionAgainstFrame } from "./frameValidation.ts";
 import {
   validateMotionDensity,
@@ -77,6 +87,10 @@ export interface DirectScene {
   cut?: SceneCutIntentV1;
   /** Typed camera path over this scene's data-camera-world plane. */
   camera?: SceneCameraIntentV1;
+  /** Declared motion-native components (each authored as one data-part element). */
+  components?: SceneComponentSpecV1[];
+  /** Typed state-change beats on declared components (times are absolute). */
+  beats?: ComponentBeatIntentV1[];
   spatialIntent?: SpatialIntentV1;
   interactions?: InteractionIntentV1[];
   /** Ordered reviewable changed states this scene promises (the moment contract). */
@@ -282,6 +296,8 @@ function normalizeStoryboard(
       ...(proposed?.outgoingCut ? { outgoingCut: proposed.outgoingCut } : {}),
       ...(proposed?.cut ? { cut: proposed.cut } : {}),
       ...(proposed?.camera ? { camera: proposed.camera } : {}),
+      ...(proposed?.components?.length ? { components: proposed.components } : {}),
+      ...(proposed?.beats?.length ? { beats: proposed.beats } : {}),
       ...(proposed?.spatialIntent ? { spatialIntent: proposed.spatialIntent } : {}),
       ...(proposed?.interactions?.length ? { interactions: proposed.interactions } : {}),
       ...(proposed?.moments?.length ? { moments: proposed.moments } : {}),
@@ -398,6 +414,8 @@ export async function validateDirectComposition(
   errors.push(...cutValidation.errors);
   const cameraValidation = validateCameraContract(html, normalized.scenes);
   errors.push(...cameraValidation.errors);
+  const componentValidation = validateComponentContract(html, normalized.scenes);
+  errors.push(...componentValidation.errors);
   const motionValidation = validateMotionDensity(
     html,
     normalized.scenes,
@@ -431,6 +449,7 @@ export async function validateDirectComposition(
       ref !== INTERACTION_RUNTIME_FILE &&
       ref !== CUT_RUNTIME_FILE &&
       ref !== CAMERA_RUNTIME_FILE &&
+      ref !== COMPONENT_RUNTIME_FILE &&
       !fs.existsSync(resolved)
     ) {
       const staged = path.resolve(projectDir, ref);
@@ -464,6 +483,7 @@ export async function validateDirectComposition(
       ...frameValidation.warnings,
       ...cutValidation.warnings,
       ...cameraValidation.warnings,
+      ...componentValidation.warnings,
       ...motionValidation.warnings,
       ...momentContract.warnings,
     ])],
@@ -500,6 +520,11 @@ function copyRuntimeAndAssets(projectDir: string, targetDir: string): void {
   fs.writeFileSync(
     path.join(targetDir, CAMERA_RUNTIME_FILE),
     cameraRuntimeSource(),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(targetDir, COMPONENT_RUNTIME_FILE),
+    componentRuntimeSource(),
     "utf8",
   );
   const sourceAssets = path.join(projectDir, "assets");
@@ -548,6 +573,15 @@ function storyboardMarkdown(title: string, scenes: DirectScene[]): string {
           .map((move) => `${move.move}${move.toPart ? `→${move.toPart}` : move.toRegion ? `→${move.toRegion}` : ""}`)
           .join(", ")}`
         : "",
+      scene.components?.length
+        ? `- Components: ${scene.components
+          .map((component) => `${component.id} (${component.kind})`)
+          .join(", ")}`
+        : "",
+      ...(scene.beats ?? []).map((beat) =>
+        `- Beat: ${beat.kind} on ${beat.component} @ ${beat.atSec.toFixed(2)}s` +
+        `${beat.morphTo ? ` → ${beat.morphTo}` : ""}${beat.text ? ` ("${beat.text.slice(0, 48)}")` : ""}`
+      ),
       scene.spatialIntent
         ? `- Focal part: ${scene.spatialIntent.focalPart} Â· ${scene.spatialIntent.composition}`
         : "",
@@ -683,6 +717,12 @@ export async function commitDirectComposition(
         version: CAMERA_RUNTIME_VERSION,
         sha256: cameraRuntimeHash(),
       },
+      components: normalized.scenes.flatMap((scene) => scene.components ?? []),
+      componentBeats: resolveComponentPlan(normalized.scenes).scenes,
+      componentRuntime: {
+        version: COMPONENT_RUNTIME_VERSION,
+        sha256: componentRuntimeHash(),
+      },
       moments: validation.moments,
       ...(validation.motionReport
         ? {
@@ -750,6 +790,10 @@ export async function commitDirectComposition(
     path.join(target, CAMERA_RUNTIME_FILE),
     path.join(checkpoint, CAMERA_RUNTIME_FILE),
   );
+  fs.copyFileSync(
+    path.join(target, COMPONENT_RUNTIME_FILE),
+    path.join(checkpoint, COMPONENT_RUNTIME_FILE),
+  );
   fs.cpSync(path.join(target, "qa"), path.join(checkpoint, "qa"), { recursive: true });
   return { manifest, validation };
 }
@@ -771,6 +815,7 @@ export function undoDirectComposition(projectDir: string): boolean {
     INTERACTION_RUNTIME_FILE,
     CUT_RUNTIME_FILE,
     CAMERA_RUNTIME_FILE,
+    COMPONENT_RUNTIME_FILE,
   ]) {
     const source = path.join(checkpoint, sidecar);
     const destination = path.join(target, sidecar);

@@ -1,5 +1,10 @@
 import { cinemaKitStyleTag } from "./cinemaKit.ts";
 import { CAMERA_RUNTIME_FILE, resolveCameraPlan } from "./cameraContract.ts";
+import {
+  COMPONENT_RUNTIME_FILE,
+  componentKitStyleTag,
+  resolveComponentPlan,
+} from "./componentContract.ts";
 import type { StoryboardMomentV1 } from "./storyboardMoments.ts";
 import type { DirectCompositionDraft, DirectScene } from "./directComposition.ts";
 
@@ -188,6 +193,25 @@ export function buildFallbackComposition(
           },
         ],
       },
+      components: [
+        {
+          version: 1,
+          id: "release-progress",
+          kind: "progress",
+          region: "proof-panel",
+          role: "support",
+        },
+      ],
+      beats: [
+        {
+          version: 1,
+          id: "proof-progress-beat",
+          sceneId: "fallback-proof",
+          component: "release-progress",
+          kind: "progress",
+          atSec: proofProgress,
+        },
+      ],
       spatialIntent: {
         version: 1,
         focalPart: "release-proof",
@@ -300,13 +324,15 @@ export function buildFallbackComposition(
 
   const cut = (value: number): string => Math.max(0, value - 0.01).toFixed(2);
   const cameraIsland = JSON.stringify(resolveCameraPlan(storyboard));
+  const componentIsland = JSON.stringify(resolveComponentPlan(storyboard));
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=1920, height=1080">
 <title>${product} launch</title><script src="gsap.min.js"></script>
-<script src="${CAMERA_RUNTIME_FILE}"></script>${cinemaKitStyleTag()}<style>
+<script src="${CAMERA_RUNTIME_FILE}"></script>
+<script src="${COMPONENT_RUNTIME_FILE}"></script>${componentKitStyleTag()}${cinemaKitStyleTag()}<style>
 *{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:${bg}}
 body{color:${foreground};font-family:${body},Arial,sans-serif}
-#root{--space-safe:72px;--space-region:64px;--space-element:28px;--surface:${surface};position:relative;width:1920px;height:1080px;overflow:hidden;background:radial-gradient(circle at 80% 12%,${surface},${bg} 52%)}
+#root{--space-safe:72px;--space-region:64px;--space-element:28px;--surface:${surface};--accent:${accent};--accent-text:${accentText};--text:${foreground};--muted:${muted};position:relative;width:1920px;height:1080px;overflow:hidden;background:radial-gradient(circle at 80% 12%,${surface},${bg} 52%)}
 .scene{position:absolute;inset:0;padding:96px;display:grid;min-width:0;min-height:0;opacity:0}
 .layout-editorial-left{grid-template-columns:minmax(0,7fr) minmax(0,5fr);align-items:end;gap:var(--space-region)}
 .layout-center-stack{align-content:center;justify-items:center;gap:var(--space-element);text-align:center}
@@ -320,8 +346,6 @@ h1{max-width:11ch;font-size:150px;line-height:.88}h2{max-width:15ch;font-size:92
 .tools{color:${muted};font-size:30px;letter-spacing:.06em}
 .rule{width:280px;height:5px;border-radius:3px;background:${accent};transform:scaleX(0);transform-origin:left}
 .proof{padding:54px;border-radius:32px;display:flex;flex-direction:column;gap:34px}
-.progress{position:relative;height:7px;border-radius:4px;background:rgba(255,255,255,.14);overflow:hidden}
-.progress i{display:block;height:100%;background:${accent};transform:scaleX(0);transform-origin:left}
 .progress-cap{color:${muted};font-size:24px;letter-spacing:.08em;text-transform:uppercase}
 .audience{max-width:24ch;color:${muted};font-size:38px;line-height:1.2}.lockup{font-size:52px;font-weight:900;letter-spacing:-.04em}
 .divider{width:220px;height:3px;background:rgba(255,255,255,.22);transform:scaleX(0)}
@@ -340,7 +364,7 @@ h1{max-width:11ch;font-size:150px;line-height:.88}h2{max-width:15ch;font-size:92
 <div class="zone stack"><div class="eyebrow">What changed</div><p class="audience" id="proof-audience">Built for ${audience}</p></div>
 </div>
 <div class="region" data-region="proof-panel" style="left:1800px;width:1400px">
-<div class="zone proof material-hero" data-layout-important data-part="release-proof"><h2>${shipped}</h2><div class="progress"><i id="proof-bar"></i></div><div class="progress-cap" id="proof-cap">Shipped &middot; verified &middot; in the channel</div></div>
+<div class="zone proof material-hero" data-layout-important data-part="release-proof"><h2>${shipped}</h2><div class="cmp cmp-progress" data-component="progress" data-part="release-progress"><i data-cmp-fill></i></div><div class="progress-cap" id="proof-cap">Shipped &middot; verified &middot; in the channel</div></div>
 </div>
 </div>
 </section>
@@ -349,6 +373,7 @@ h1{max-width:11ch;font-size:150px;line-height:.88}h2{max-width:15ch;font-size:92
 <div class="zone stack" data-layout-important data-layout-anchor="frame:center" style="align-items:center"><div class="lockup">${product}</div><div class="divider" id="close-rule"></div><div class="cta" data-part="release-cta">See what shipped</div><div class="promise" id="close-promise">From shipped to shown</div></div>
 </section></main>
 <script type="application/json" id="sequences-camera">${cameraIsland}</script>
+<script type="application/json" id="sequences-components">${componentIsland}</script>
 <script>
 window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
 tl.set("#fallback-hook",{opacity:1},0).set("#fallback-hook",{opacity:0},${cut(starts[1]!)});
@@ -362,13 +387,13 @@ tl.fromTo("#hook-rule",{scaleX:0},{scaleX:1,duration:.6,ease:"power2.inOut"},${h
 tl.fromTo("#fallback-proof .region[data-region=proof-context] .stack",{y:60,opacity:0},{y:0,opacity:1,duration:.7,ease:"power3.out"},${proofContext});
 tl.fromTo("#proof-audience",{y:26,opacity:0},{y:0,opacity:1,duration:.55,ease:"power3.out",immediateRender:false},${proofAudience});
 tl.fromTo("#fallback-proof .proof",{x:80,opacity:0},{x:0,opacity:1,duration:.8,ease:"seqSettle"},${proofPanel});
-tl.fromTo("#proof-bar",{scaleX:0},{scaleX:1,duration:.9,ease:"seqImpulse"},${proofProgress});
 tl.fromTo("#proof-cap",{opacity:0},{opacity:1,duration:.4,ease:"none"},${r2(proofProgress + 0.35)});
 tl.fromTo("#fallback-close .zone",{scale:.9,opacity:0},{scale:1,opacity:1,duration:.75,ease:"power4.out"},${closeLockup});
 tl.fromTo("#close-rule",{scaleX:0},{scaleX:1,duration:.5,ease:"power2.inOut"},${closeRule});
 tl.fromTo("#fallback-close .cta",{y:44,opacity:0},{y:0,opacity:1,duration:.6,ease:"seqMicrobounce"},${closeCta});
 tl.fromTo("#close-promise",{y:18,opacity:0},{y:0,opacity:1,duration:.5,ease:"power3.out"},${closePromise});
 SequencesCamera.compile(tl,document.querySelector("[data-composition-id]"));
+SequencesComponents.compile(tl,document.querySelector("[data-composition-id]"));
 window.__timelines["${compositionId}"]=tl;tl.seek(0);
 </script></body></html>`;
   return { storyboard, html };

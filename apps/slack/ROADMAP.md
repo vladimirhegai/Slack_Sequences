@@ -37,6 +37,7 @@ point an agent at the listed file.
 | Executable boundary cuts | `src/engine/cutContract.ts`, `src/engine/templates/sequences-cuts.v1.js` | typed cut styles, wrapper ownership, object-match bindings |
 | Static motion-density guard | `src/engine/motionDensity.ts` | blocking liveness errors (quiet gaps, slide scenes, front-loading) + advisory warnings (dense bursts, empty holds) |
 | Storyboard moment contract | `src/engine/storyboardMoments.ts` | typed reviewable moments: planned floor (≥7 for 12s+), evidence binding, interval gate, synthesis for legacy films |
+| Motion-native component system | `src/engine/componentContract.ts`, `src/engine/templates/sequences-components.v1.css` / `.v1.js` | 22-kind SaaS component catalog, typed beats (type/open/count/chart/stream/morph/…), FLIP twin morphs, kit CSS, markup contract retrieval |
 | Staged GLM planning (concept → beats → critic) | `src/engine/compositionRunner.ts` | cached concept artifact, moment-bearing storyboard with bounded retry, post-authoring continuity critic + patch |
 | Explicit fallback stages | `src/orchestrator.ts` | named stage receipts, `fallback:{stage,reason}`, Slack-safe fallback labeling |
 | Temporal motion evidence | `src/engine/temporalInspector.ts` | development strips, cut triptychs, change curve, quiet-window review |
@@ -152,6 +153,47 @@ point an agent at the listed file.
   named stages and labels the deterministic fallback explicitly in Slack and in
   `sequence:check` (`fallbackStage`, `moments`, `unboundMoments`); the fallback
   film itself carries 13 evidence-bound moments.
+### Motion-native component system (2026-07-02)
+- Components are the **fourth host-owned contract** beside cuts, camera, and
+  interactions: the storyboard declares typed per-scene `components`
+  (stable id + kind from a 22-kind catalog: app-window, sidebar, search,
+  command-palette, dropdown, context-menu, button, toggle, toast, modal,
+  stat-card, table, list, kanban, chat, chart-bars, chart-line,
+  progress-ring, progress, terminal, tabs, avatar-stack) and typed `beats` —
+  state changes at absolute seconds (`type`, `open`, `close`, `select`,
+  `press`, `set-state`, `count`, `progress`, `chart`, `rows`, `stream`,
+  `highlight`, `swap`, `morph`).
+- `engine/componentContract.ts` normalizes/resolves the plan;
+  `compositionRunner.ts` injects the `sequences-components` JSON island,
+  `templates/sequences-components.v1.js`, and the
+  `SequencesComponents.compile(tl, root)` call deterministically from the
+  locked storyboard, plus the always-on component kit CSS
+  (`templates/sequences-components.v1.css`, inline
+  `<style id="sequences-components-kit">`) so kit markup costs the author
+  structure only. The runtime compiles seek-safe internal state motion from
+  live geometry: typewriter text with a synthesized caret, menu/modal/toast
+  opens with item stagger, count-up values parsed from the authored final
+  text, bar/line/ring chart growth, staggered rows, AI chat streaming with a
+  typing indicator, press/select micro-motion, and **FLIP twin morphs**
+  (search→command-palette, card→modal) that measure both endpoints and own
+  the crossfade.
+- Ownership split: the KIT owns structure and both end states (pure static
+  CSS, no transitions), the AUTHOR owns placement/copy/entrances and the
+  FINAL state, the RUNTIME owns motion between states. A component id doubles
+  as its `data-part`, so camera `track-to-anchor`, object-match cuts, and
+  cursor interactions address the same object.
+- `validateComponentContract` gates publication (one kind-marked element per
+  declared component, island equality, runtime + compile presence, morph
+  endpoint binding); kit-class adoption and missing planned regions are
+  advisory. `motionDensity.ts` counts beats as medium activities (they
+  satisfy liveness floors) and `storyboardMoments.ts` binds moments to
+  `component` evidence. Layout QA suppresses heuristics inside morph/open
+  windows. GLM's storyboard pass receives a compact catalog vocabulary; the
+  DeepSeek authoring prompt receives the exact markup contract for only the
+  declared kinds. The model-free fallback ships a typed `progress` beat as
+  the deterministic proof; `test/componentRuntime.browser.test.ts` proves
+  eight beat kinds (including a morph) through real browser QA.
+
 - **Paid live-authoring proof (2026-07-01, OpenRouter smoke):** GLM's storyboard
   pass chose sensible typed cuts unprompted (`cut-left`, `cut-down`,
   `inverse-zoom`, `hard` — each with a coherent editorial rationale), DeepSeek's
@@ -204,6 +246,7 @@ flowchart TD
 | [`src/engine/interactionContract.ts`](src/engine/interactionContract.ts) | cursor interaction contract + hotspot/target/ripple QA |
 | [`src/engine/cutContract.ts`](src/engine/cutContract.ts) | typed cut normalization, resolution, source validation, runtime staging |
 | [`src/engine/cameraContract.ts`](src/engine/cameraContract.ts) | continuous-spatial-world camera rig: typed camera paths, drift auto-fill, source validation |
+| [`src/engine/componentContract.ts`](src/engine/componentContract.ts) | motion-native component catalog + typed beats/morphs: normalize, resolve, inject, validate, prompt renders |
 | [`src/engine/motionDensity.ts`](src/engine/motionDensity.ts) | static liveness budget: blocking quiet-gap/slide errors, advisory bursts/holds |
 | [`src/engine/storyboardMoments.ts`](src/engine/storyboardMoments.ts) | moment contract: floors, plan validation, evidence binding, synthesis |
 | [`src/engine/temporalInspector.ts`](src/engine/temporalInspector.ts) | developer-facing motion strips, cut evidence, change/quiet-window report |
@@ -331,8 +374,17 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 - [ ] **Example diversity:** dev tools, startup vision, rebrand campaign.
 
 ### 8. Component contracts (Forge Stage-inspired)
-- [ ] **Source-derived contracts:** parse authored source to extract layers, parts, states, and anchors.
-- [ ] **Morph continuity:** enforce compatibility before swap tweens via shared `morphGroup`.
+- [x] **Typed component system (2026-07-02):** 22-kind catalog + typed beats as
+      the fourth host-owned contract (`componentContract.ts`, kit CSS + beat
+      runtime, deterministic injection, publication gate, density/moment
+      integration, GLM vocabulary + scoped markup retrieval, browser-proven).
+- [x] **Morph continuity (v1):** typed `morph` beats between declared twin
+      components in one scene; endpoints validated statically, geometry
+      measured live (FLIP), runtime owns the crossfade. Cross-scene handoffs
+      remain the object-match cut.
+- [~] **Source-derived contracts:** declared kinds/ids are validated against
+      authored source; parsing arbitrary non-kit components into contracts
+      (parts/states/anchors extraction) is still open.
 
 ### 9. Capability index + registry sync + in-Slack audition
 - [~] **Registry sync:** sync items from pinned registry commit (still missing: compatibility checks/source approvals).
@@ -368,15 +420,21 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 
 **Current Fable queue (2026-07-02, after `cf0094b`):**
 
-1. **Capability materialization + in-Slack audition** - instantiate known-good
+1. **Prove the component system on a paid live create** — one OpenRouter smoke
+   confirming GLM plans components/beats and DeepSeek authors kit markup that
+   passes the gate (the deterministic paths are proven; model selection is not).
+2. **Capability materialization + in-Slack audition** - instantiate known-good
    blocks/components instead of citing metadata and rebuilding them, then let
    the user audition candidates in Slack.
-2. **Live temporal evidence + bounded visual critic** - put compact strips/cut
+3. **Live temporal evidence + bounded visual critic** - put compact strips/cut
    sheets/change curves behind an opt-in live flag, then let a critic request
    one shot-specific repair for rendered dead zones or weak focal hierarchy.
-3. **Component contracts + morph continuity** - extend the proven
-   `data-part`/object-match/camera foundation into reusable state and morph
-   contracts before broader component materialization gets more ambitious.
+4. **Component contracts v2** - source-derived contracts for non-kit
+   components, cross-scene morph continuity groups, and new kit kinds
+   (file-upload, settings panel, tooltip) as briefs demand them.
+
+Done from the previous queue: **component contracts + morph continuity v1**
+(2026-07-02, the motion-native component system above).
 
 Historical backlog order:
 

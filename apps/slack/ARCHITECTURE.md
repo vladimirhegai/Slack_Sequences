@@ -341,6 +341,19 @@ scene-scoped focal part and `InteractionIntentV1` addresses cursor targets by
 that stable `data-part`, never by guessed canvas coordinates. Today's direct
 HTML therefore uses the same names that later foundry components expose.
 
+> **Implemented (2026-07-02) — the motion-native component system.** Typed
+> components are the fourth host-owned contract (`engine/componentContract.ts`
+> + `templates/sequences-components.v1.css`/`.v1.js`): a 22-kind SaaS catalog
+> declared per scene in the storyboard, authored once as kit markup carrying
+> `data-part` + `data-component`, with typed **beats** (type, open, select,
+> press, set-state, count, progress, chart, rows, stream, highlight, swap,
+> morph) compiled deterministically into the paused timeline from a
+> host-injected island. The kit owns structure and end states; the author owns
+> entrances and final states; the runtime owns state motion and FLIP twin
+> morphs. Beats are motion-density activities and moment evidence, and a
+> component id is a first-class `data-part` anchor for camera, cuts, and
+> cursor. See ROADMAP.md "Motion-native component system".
+
 The model proposes the source; a parser derives the contract. Model-written
 contract claims are never trusted. Components may animate internal state, but
 only through seek-safe timelines and declared actions.
@@ -352,6 +365,12 @@ special component type. Two states are morph-compatible when they share a
 `morphGroup`, stable part IDs, and matching anchors. A checker rejects impossible
 pairings before composition. HyperFrames then implements the handoff with its
 existing scale-swap, card-morph-anchor, or velocity-matched cut rules.
+
+> **v1 implemented:** a typed `morph` beat travels one declared component into
+> a twin declared in the same scene; static validation proves both endpoints
+> bind, and the runtime measures live geometry (FLIP) and owns the crossfade.
+> Cross-scene handoffs remain the object-match cut; shared `morphGroup`
+> contracts for arbitrary non-kit components are the v2 direction.
 
 ## 4. Backgrounds
 

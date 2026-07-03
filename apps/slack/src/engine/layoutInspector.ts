@@ -32,6 +32,12 @@ import {
   cameraRuntimeSource,
   parseCameraPlan,
 } from "./cameraContract.ts";
+import {
+  COMPONENT_RUNTIME_FILE,
+  componentMotionWindows,
+  componentRuntimeSource,
+  parseComponentPlan,
+} from "./componentContract.ts";
 import { findBrowserExecutable } from "./render.ts";
 
 export type LayoutSeverity = "error" | "warning" | "info";
@@ -192,6 +198,11 @@ function prepareScratch(projectDir: string, draft: DirectCompositionDraft): stri
   fs.writeFileSync(
     path.join(scratch, CAMERA_RUNTIME_FILE),
     cameraRuntimeSource(),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(scratch, COMPONENT_RUNTIME_FILE),
+    componentRuntimeSource(),
     "utf8",
   );
   const assets = path.join(projectDir, "assets");
@@ -1409,6 +1420,9 @@ export async function inspectDirectComposition(
     const boundaryWindows = [
       ...cutMotionWindows(parseCutPlan(draft.html).plan),
       ...cameraMotionWindows(parseCameraPlan(draft.html).plan),
+      // Morph/open/close beats intentionally move a component over other
+      // content; mid-travel geometry is designed motion, not a layout defect.
+      ...componentMotionWindows(parseComponentPlan(draft.html).plan),
     ];
     const insideCutWindow = (time: number): boolean =>
       boundaryWindows.some((window) => time >= window.start && time <= window.end);

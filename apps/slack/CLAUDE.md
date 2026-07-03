@@ -151,6 +151,29 @@ lit `.material` surfaces, and per-scene color grades that give each film a
 cold→warm color arc; `frame.md` renders palette-derived `--cinema-*` values
 and the planning prompt teaches the vocabulary. Pure static CSS — no timeline
 ownership, enhancement-only, deterministic under seek.
+Scenes may also declare **motion-native components** — the fourth host-owned
+contract (`engine/componentContract.ts`). The storyboard lists typed
+`components` (22-kind SaaS catalog: app-window, search, command-palette,
+dropdown, button, toast, modal, stat-card, table, kanban, chat, charts,
+progress, terminal, tabs, …) and typed `beats` (state changes at absolute
+seconds: `type`, `open`, `close`, `select`, `press`, `set-state`, `count`,
+`progress`, `chart`, `rows`, `stream`, `highlight`, `swap`, `morph`). The
+host injects the component kit CSS
+(`templates/sequences-components.v1.css`, always) and — when beats exist —
+the `sequences-components` island + `templates/sequences-components.v1.js` +
+compile call from the locked storyboard. The kit owns structure and end
+states (static CSS, no transitions); the author owns placement, copy,
+entrances, and final states; the runtime compiles seek-safe internal motion
+from live geometry, including FLIP twin morphs (search→command-palette,
+card→modal). A component id doubles as its `data-part`, so camera
+`track-to-anchor`, object-match cuts, and cursor interactions address the
+same object. `validateComponentContract` gates publication; beats count as
+motion-density activities and bind storyboard moments as `component`
+evidence; layout QA suppresses heuristics inside morph/open windows. GLM
+plans from a compact catalog vocabulary; the authoring prompt carries the
+markup contract for only the declared kinds. The fallback film ships a typed
+`progress` beat and `test/componentRuntime.browser.test.ts` proves eight beat
+kinds (including a morph) through real browser QA.
 `frame.md` also exposes six flow-first scene compositions and semantic zone
 helpers so primary content defaults to safe-area Grid/Flex placement. Ambiguous
 cursor targets still quarantine, while exact-id/unique-semantic mismatches are

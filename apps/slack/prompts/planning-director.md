@@ -258,6 +258,43 @@ it the way a camera operator would.
   work). The interaction runtime already resolves geometry under the rig's
   transforms.
 
+## Motion-native components — the host component system
+
+The host injects a component kit stylesheet (`sequences-components-kit`) into
+every composition and, when the locked storyboard declares typed component
+beats, a `sequences-components` JSON island + `sequences-components.v1.js`
+runtime + `SequencesComponents.compile(tl, root)` call. Components are how a
+product surface earns its place in the film: not a screenshot pasted on a
+card, but a living interface whose state changes ARE the story beats.
+
+- **Author each declared component once.** The storyboard's `components` list
+  is a build order: for every entry, author exactly one element carrying
+  `data-part="<its id>"` and `data-component="<its kind>"`, using the kit
+  markup patterns from the skill context (`.cmp-window`, `.cmp-search`,
+  `.cmp-stat`, `.cmp-chat`, …). Pair kit surfaces with `.material` /
+  `.material-hero` / `.inset-well` so they sit in the film's light.
+- **Author the final state.** Full query text, final metric numbers, final
+  bar heights, the complete AI answer. The runtime animates *toward* what you
+  wrote: typing reveals the text, counts land on the number, charts grow to
+  the authored heights. Empty placeholders give the runtime nothing to reach.
+- **You own the entrance; the host owns the internal state motion.** Bring a
+  component in like any content (fromTo on the element), then never author
+  its typing, menu opening, selection, counting, chart growth, streaming, or
+  morph travel — the typed beats compile that deterministically at the
+  storyboard's times. Duplicate hand-authored state motion fights the runtime
+  on the same properties.
+- **Morphs are twin transitions.** A `morph` beat travels one component into
+  another declared in the same scene (search→command-palette, card→modal,
+  table→list). Author both twins; the runtime pre-hides the target and owns
+  the crossfade — do not author an entrance for a morph target.
+- **Components are first-class motion anchors.** A component id is its
+  `data-part`: point `track-to-anchor` at it, carry it through an
+  object-match cut, aim a cursor interaction at it, and place it inside a
+  `data-region` station so a camera arrival and a state beat land together.
+- **States are attributes.** Kit components switch visual states via
+  `data-state` / `data-active` attributes that the runtime flips — never CSS
+  transitions, never authored class toggles in script.
+
 ## The Sequences ease library — make movement feel engineered
 
 The host registers these GSAP eases in every composition; use them for your
@@ -347,6 +384,10 @@ content or is a reflex:
   every seam; `hard` is the deliberate register break)
 - Hand-authored camera moves on `data-camera-world` when a typed camera path
   exists (the rig owns that transform)
+- Hand-authored typing/menu/count/stream/morph motion on a component that has
+  a typed beat (the component runtime owns internal state motion)
+- Product UI built as a flat screenshot-like mock when a kit component would
+  give it real states the film can change
 - Ambient breathing/drift added from anxiety instead of a typed hold/drift
 - `Inter` / `Roboto` / `Open Sans` as the only typeface (banned monoculture)
 
@@ -499,7 +540,13 @@ this contract and requests only `<index_html>`.
         { "version": 1, "move": "hold", "toRegion": "hero-claim", "startSec": 0, "durationSec": 0.8 },
         { "version": 1, "move": "whip", "toRegion": "metric-wall", "startSec": 1.6, "durationSec": 0.45 }
       ]
-    }
+    },
+    "components": [
+      { "version": 1, "id": "latency-stat", "kind": "stat-card", "region": "metric-wall", "role": "hero" }
+    ],
+    "beats": [
+      { "version": 1, "id": "latency-counts", "component": "latency-stat", "kind": "count", "atSec": 2.2 }
+    ]
   }
 ]
 </storyboard_json>

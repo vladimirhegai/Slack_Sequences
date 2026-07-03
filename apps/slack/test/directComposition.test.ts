@@ -28,7 +28,13 @@ import { initializeProject } from "../src/engine/projectTemplates.ts";
 import { buildJobFrame } from "../src/engine/frameDesign.ts";
 import { injectCinemaKit } from "../src/engine/cinemaKit.ts";
 import { injectCameraRuntimeTag } from "../src/engine/cameraContract.ts";
+import { injectComponentKit } from "../src/engine/componentContract.ts";
 import { buildFallbackComposition } from "../src/engine/fallbackComposition.ts";
+
+/** Every published draft carries the host-injected runtimes and kits. */
+function withHostInjections(html: string): string {
+  return injectCinemaKit(injectComponentKit(injectCameraRuntimeTag(html)));
+}
 
 vi.mock("../src/engine/layoutInspector.ts", () => ({
   inspectDirectComposition: vi.fn(async () => ({
@@ -964,7 +970,7 @@ describe("direct HyperFrames composition", () => {
     });
     expect(result.attempts).toBe(1);
     const expected = draft();
-    expected.html = injectCinemaKit(injectCameraRuntimeTag(expected.html));
+    expected.html = withHostInjections(expected.html);
     expect(result.draft).toEqual(expected);
     expect((complete.mock.calls[1]?.[1] as { assistantPrefill?: string }).assistantPrefill)
       .toBe(prefix);
@@ -1125,7 +1131,7 @@ describe("direct HyperFrames composition", () => {
       lockedStoryboard: initial.storyboard,
     });
     expect(result.attempts).toBe(3);
-    expect(result.draft.html).toBe(injectCinemaKit(injectCameraRuntimeTag(initial.html)));
+    expect(result.draft.html).toBe(withHostInjections(initial.html));
   });
 
   it("publishes runnable output when visual-QA polish patches are malformed", async () => {
@@ -1168,7 +1174,7 @@ describe("direct HyperFrames composition", () => {
     });
 
     expect(result.attempts).toBe(3);
-    expect(result.draft.html).toBe(injectCinemaKit(injectCameraRuntimeTag(initial.html)));
+    expect(result.draft.html).toBe(withHostInjections(initial.html));
     expect(complete).toHaveBeenCalledTimes(3);
   });
 

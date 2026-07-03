@@ -1,5 +1,6 @@
 import { resolveCutPlan } from "./cutContract.ts";
 import { CAMERA_FULL_MOVES, resolveCameraPlan } from "./cameraContract.ts";
+import { resolveComponentPlan } from "./componentContract.ts";
 import type { DirectScene } from "./directComposition.ts";
 
 export type MotionActivityKind = "major" | "medium" | "small";
@@ -272,6 +273,28 @@ function cameraActivities(scenes: DirectScene[], durationSec: number): MotionAct
   return activities;
 }
 
+/**
+ * Typed component beats are host-compiled state changes — typing, opening,
+ * counting, streaming, morphing. Each is a medium information beat exactly
+ * like an authored component tween, and each can prove a storyboard moment.
+ */
+function componentActivities(scenes: DirectScene[], durationSec: number): MotionActivity[] {
+  const activities: MotionActivity[] = [];
+  for (const scenePlan of resolveComponentPlan(scenes).scenes) {
+    for (const beat of scenePlan.beats) {
+      activities.push({
+        kind: "medium",
+        source: `component:${beat.kind}`,
+        sceneId: scenePlan.sceneId,
+        target: beat.component,
+        startSec: round(Math.max(0, beat.startSec)),
+        endSec: round(Math.min(durationSec, beat.endSec)),
+      });
+    }
+  }
+  return activities;
+}
+
 function contractActivities(scenes: DirectScene[], durationSec: number): MotionActivity[] {
   const activities: MotionActivity[] = [];
   for (const scene of scenes) {
@@ -385,9 +408,11 @@ export function analyzeMotionDensity(
   const applies = scenes.length >= 3 && durationSec >= MIN_LIVE_DURATION_SEC;
   const authored = authoredTweenActivities(html, scenes);
   const camera = cameraActivities(scenes, durationSec);
+  const component = componentActivities(scenes, durationSec);
   const activities = [
     ...contractActivities(scenes, durationSec),
     ...camera,
+    ...component,
     ...authored.activities,
   ].sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
   const quietGaps = applies ? mergedGaps(activities, durationSec) : [];
@@ -408,7 +433,7 @@ export function analyzeMotionDensity(
     for (const scenePlan of resolveCameraPlan(scenes).scenes) {
       for (const segment of scenePlan.segments) {
         if (segment.move !== "hold" || segment.endSec - segment.startSec < 1.6) continue;
-        const covered = [...authored.activities, ...contractActivities(scenes, durationSec)]
+        const covered = [...authored.activities, ...component, ...contractActivities(scenes, durationSec)]
           .some((activity) =>
             activity.kind !== "major" &&
             activity.endSec > segment.startSec + 0.1 &&
@@ -426,7 +451,11 @@ export function analyzeMotionDensity(
     }
     for (const scene of scenes) {
       const sceneEndSec = sceneEnd(scene);
-      const beats = [...authored.activities, ...camera.filter((a) => a.kind === "medium")]
+      const beats = [
+        ...authored.activities,
+        ...component,
+        ...camera.filter((a) => a.kind === "medium"),
+      ]
         .filter((activity) =>
           activity.sceneId === scene.id &&
           activity.startSec >= scene.startSec + 0.08 &&
@@ -483,7 +512,8 @@ export function analyzeMotionDensity(
     }
   }
   const sceneReports = scenes.map((scene) => {
-    const beats = authored.activities.filter((activity) => activity.sceneId === scene.id);
+    const beats = [...authored.activities, ...component]
+      .filter((activity) => activity.sceneId === scene.id);
     return {
       sceneId: scene.id,
       durationSec: round(scene.durationSec),
