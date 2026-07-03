@@ -54,14 +54,73 @@ window.__timelines["layout-test"]=tl;
 
 function offCanvasTextDraft(): DirectCompositionDraft {
   const draft = unsafeDraft();
+  // Each scene keeps an on-canvas headline so the film is not near-blank —
+  // this fixture tests canvas-edge classification, not the blank-film guard.
   draft.html = draft.html
     .replace(
       '<div class="panel" data-layout-important><h1>Too close</h1></div>',
-      '<span id="live-badge" style="position:absolute;left:850px;top:200px;font:700 24px Arial">LIVE</span>',
+      '<h1 style="position:absolute;left:200px;top:250px">Signal</h1>' +
+        '<span id="live-badge" style="position:absolute;left:850px;top:200px;font:700 24px Arial">LIVE</span>',
     )
     .replace(
       '<div class="panel" data-layout-important><h1>Still close</h1></div>',
-      '<span style="position:absolute;left:850px;top:200px;font:700 24px Arial">DONE</span>',
+      '<h1 style="position:absolute;left:200px;top:250px">Signal</h1>' +
+        '<span style="position:absolute;left:850px;top:200px;font:700 24px Arial">DONE</span>',
+    );
+  return draft;
+}
+
+/**
+ * "one": a 2s decorative-gradient scene inside a 10s film — stays a repair
+ * warning (under the 4s single-scene cap and the 30% film fraction).
+ * "both": 10s of gradient-only frames — must block publication.
+ */
+function nearBlankDraft(blankScenes: "one" | "both"): DirectCompositionDraft {
+  const sceneTwoContent = blankScenes === "both"
+    ? '<div style="position:absolute;inset:0;background:radial-gradient(#232936,#10131a)"></div>'
+    : '<div class="panel"><h1>Visible closing line</h1></div>';
+  return {
+    storyboard: [
+      { id: "one", title: "One", purpose: "Open", startSec: 0, durationSec: 2 },
+      { id: "two", title: "Two", purpose: "Close", startSec: 2, durationSec: 8 },
+    ],
+    html: `<!doctype html>
+<html><head><script src="gsap.min.js"></script><style>
+html,body{margin:0;width:800px;height:600px;overflow:hidden;background:#10131a}
+#root{--space-safe:60px;position:relative;width:800px;height:600px;overflow:hidden;color:#fff}
+.scene{position:absolute;inset:0;opacity:0}
+.panel{position:absolute;left:120px;top:180px;width:360px;padding:24px;background:#232936}
+h1{margin:0;font:700 48px/1.1 Arial}
+</style></head><body>
+<main id="root" data-composition-id="blank-test" data-width="800" data-height="600" data-duration="10">
+  <section id="one" class="scene clip" data-scene="one" data-start="0" data-duration="2" data-track-index="1">
+    <div style="position:absolute;inset:0;background:linear-gradient(#1a2030,#10131a)"></div>
+  </section>
+  <section id="two" class="scene clip" data-scene="two" data-start="2" data-duration="8" data-track-index="1">
+    ${sceneTwoContent}
+  </section>
+</main><script>
+window.__timelines=window.__timelines||{};
+const tl=gsap.timeline({paused:true});
+tl.set("#one",{opacity:1},0).set("#one",{opacity:0},1.99);
+tl.set("#two",{opacity:1},2).set("#two",{opacity:0},10);
+window.__timelines["blank-test"]=tl;
+</script></body></html>`,
+  };
+}
+
+function titleCardDraft(): DirectCompositionDraft {
+  const draft = unsafeDraft();
+  // A minimalist title card: one centered headline on a dark ground must
+  // never read as a blank frame.
+  draft.html = draft.html
+    .replace(
+      '<div class="panel" data-layout-important><h1>Too close</h1></div>',
+      '<h1 style="position:absolute;left:220px;top:260px;margin:0">From shipped to shown</h1>',
+    )
+    .replace(
+      '<div class="panel" data-layout-important><h1>Still close</h1></div>',
+      '<h1 style="position:absolute;left:300px;top:270px;margin:0">Sequences</h1>',
     );
   return draft;
 }
@@ -269,6 +328,43 @@ describe("direct layout inspector", () => {
       expect(result.issues.some((issue) =>
         issue.code === "text_box_overflow" && issue.selector === "#live-badge"
       )).toBe(false);
+    },
+    60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "flags a single short blank scene for repair without blocking the film",
+    async () => {
+      const result = await inspectDirectComposition(projectDir(), nearBlankDraft("one"));
+      expect(result.ok, JSON.stringify(result.errors)).toBe(true);
+      expect(result.strictOk).toBe(false);
+      expect(result.issues.some((issue) =>
+        issue.code === "near_blank_scene" && issue.selector === '[data-scene="one"]'
+      )).toBe(true);
+      expect(result.issues.some((issue) =>
+        issue.code === "near_blank_scene" && issue.selector === '[data-scene="two"]'
+      )).toBe(false);
+    },
+    60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "blocks a film that renders as blank frames so the fallback ships instead",
+    async () => {
+      const result = await inspectDirectComposition(projectDir(), nearBlankDraft("both"));
+      expect(result.ok).toBe(false);
+      expect(result.errors.some((error) => error.startsWith("near_blank_film:"))).toBe(true);
+    },
+    60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "never mistakes a minimalist title card for a blank frame",
+    async () => {
+      const result = await inspectDirectComposition(projectDir(), titleCardDraft());
+      expect(result.ok, JSON.stringify(result.errors)).toBe(true);
+      expect(result.issues.some((issue) => issue.code === "near_blank_scene")).toBe(false);
+      expect(result.errors.some((error) => error.startsWith("near_blank_film:"))).toBe(false);
     },
     60_000,
   );

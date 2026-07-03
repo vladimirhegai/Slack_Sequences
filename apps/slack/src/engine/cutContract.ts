@@ -253,6 +253,7 @@ export function parseCutPlan(html: string): { plan?: CutPlanV1; errors: string[]
     return { errors };
   }
   const cuts = object.cuts.flatMap((entry, index): CutIntentV1[] => {
+    const errorsBefore = errors.length;
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       errors.push(`cut[${index}] must be an object`);
       return [];
@@ -273,7 +274,9 @@ export function parseCutPlan(html: string): { plan?: CutPlanV1; errors: string[]
     }
     const shapeOut = shapeHint(cut.shapeOut);
     const shapeIn = shapeHint(cut.shapeIn);
-    if (errors.some((error) => error.startsWith(`cut[${index}]`))) return [];
+    // Compare counts, not prefixes: `cut[1]` is a prefix of `cut[10]`, so a
+    // startsWith check would drop cut 1 whenever a later entry erred.
+    if (errors.length > errorsBefore) return [];
     return [{
       version: 1,
       style,

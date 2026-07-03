@@ -1071,10 +1071,12 @@ async function auditFocalParts(
     );
     const issue = (code: string, message: string, fixHint: string): DirectLayoutIssue => ({
       code,
-      // Spatial intent helps explain and inspect the composition, but it is
-      // optional planner metadata. Missing focal bindings must not discard an
-      // otherwise valid, runnable video.
-      severity: "info",
+      // Spatial intent is optional planner metadata, so focal findings never
+      // block a runnable video — but they are warnings, not info, because a
+      // shot whose declared subject is absent/invisible/off-frame is exactly
+      // the failure that shipped a blank live film (2026-07-03 incident):
+      // warnings feed the bounded repair loop, info was silently ignored.
+      severity: "warning",
       time: payload.time,
       selector: focal?.id ? `#${CSS.escape(focal.id)}` : `[data-part="${payload.focalPart}"]`,
       message,
@@ -1104,6 +1106,40 @@ async function auditFocalParts(
         "Resolve the shot around its declared focal subject before adding supporting motion.",
       )];
     }
+    // Existence and opacity are not prominence: the blank-film incident's
+    // focal part passed both while sitting entirely outside the viewport.
+    // Skip the geometric checks when the part rides a transformed camera
+    // world — the rig may frame it later in the shot, and near-blank
+    // detection separately covers a camera that frames nothing.
+    const root = document.querySelector<HTMLElement>(
+      "[data-composition-id][data-width][data-height]",
+    );
+    const world = focal.closest<HTMLElement>("[data-camera-world]");
+    const worldTransform = world ? getComputedStyle(world).transform : "";
+    const worldMoved = Boolean(world) && Boolean(worldTransform) &&
+      worldTransform !== "none" && worldTransform !== "matrix(1, 0, 0, 1, 0, 0)";
+    if (root && !worldMoved) {
+      const rootRect = root.getBoundingClientRect();
+      const width = Math.max(0, Math.min(rect.right, rootRect.right) - Math.max(rect.left, rootRect.left));
+      const height = Math.max(0, Math.min(rect.bottom, rootRect.bottom) - Math.max(rect.top, rootRect.top));
+      const onFrame = (width * height) / (rect.width * rect.height);
+      if (onFrame < 0.5) {
+        return [issue(
+          "spatial_focal_offframe",
+          `Declared focal part "${payload.focalPart}" is mostly outside the frame at the hero frame ` +
+            `(${Math.round(onFrame * 100)}% visible).`,
+          "Position the shot's declared subject inside the viewport at its hero frame, or frame it with the camera rig.",
+        )];
+      }
+      const frameArea = rootRect.width * rootRect.height;
+      if (frameArea > 0 && (width * height) / frameArea < 0.005) {
+        return [issue(
+          "spatial_focal_minor",
+          `Declared focal part "${payload.focalPart}" covers under 0.5% of the frame at the hero frame.`,
+          "Scale the declared subject to visual dominance, or declare the actually-dominant element as the focal part.",
+        )];
+      }
+    }
     return [];
   }, {
     sceneId: active.id,
@@ -1111,6 +1147,88 @@ async function auditFocalParts(
     time,
   });
 }
+
+/**
+ * Fraction of the frame covered by visible, meaning-bearing content — text,
+ * media (img/svg/video/canvas), or declared `data-part` elements — at the
+ * current seek time. Backgrounds, gradients, and the cinematography kit's
+ * grain/vignette layers deliberately do not count: an audience seeing only
+ * backgrounds is looking at a blank frame. DOM-rect coverage on a coarse
+ * grid was chosen over screenshot pixel analysis because the cinema kit
+ * guarantees every frame has nonzero pixel variance (grain), which defeats
+ * naive blankness statistics, while rect coverage is deterministic and cheap.
+ */
+async function measureContentCoverage(
+  page: import("puppeteer-core").Page,
+): Promise<number> {
+  return page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>(
+      "[data-composition-id][data-width][data-height]",
+    );
+    if (!root) return 0;
+    const rootRect = root.getBoundingClientRect();
+    if (rootRect.width < 1 || rootRect.height < 1) return 0;
+    const MEDIA = new Set(["IMG", "SVG", "VIDEO", "CANVAS", "PICTURE"]);
+    const opacityCache = new Map<Element, number>();
+    const chainOpacity = (element: Element | null): number => {
+      if (!element || !root.contains(element) && element !== root) return 1;
+      const cached = opacityCache.get(element);
+      if (cached !== undefined) return cached;
+      const style = getComputedStyle(element);
+      const own = style.display === "none" || style.visibility === "hidden"
+        ? 0
+        : Number.parseFloat(style.opacity);
+      const value = (Number.isFinite(own) ? own : 1) * chainOpacity(element.parentElement);
+      opacityCache.set(element, value);
+      return value;
+    };
+    const rects: Array<{ left: number; top: number; right: number; bottom: number }> = [];
+    for (const element of Array.from(root.querySelectorAll<HTMLElement>("*"))) {
+      if (element.closest("[data-layout-ignore]")) continue;
+      const hasText = Array.from(element.childNodes).some((node) =>
+        node.nodeType === Node.TEXT_NODE && /\S/.test(node.textContent ?? ""),
+      );
+      const isContent = hasText ||
+        MEDIA.has(element.tagName.toUpperCase()) ||
+        element.hasAttribute("data-part");
+      if (!isContent) continue;
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 4 || rect.height < 4) continue;
+      const left = Math.max(rect.left, rootRect.left);
+      const top = Math.max(rect.top, rootRect.top);
+      const right = Math.min(rect.right, rootRect.right);
+      const bottom = Math.min(rect.bottom, rootRect.bottom);
+      if (right - left < 4 || bottom - top < 4) continue;
+      if (chainOpacity(element) < 0.05) continue;
+      rects.push({ left, top, right, bottom });
+    }
+    if (!rects.length) return 0;
+    const COLUMNS = 32;
+    const ROWS = 18;
+    let covered = 0;
+    for (let row = 0; row < ROWS; row += 1) {
+      for (let column = 0; column < COLUMNS; column += 1) {
+        const x = rootRect.left + ((column + 0.5) / COLUMNS) * rootRect.width;
+        const y = rootRect.top + ((row + 0.5) / ROWS) * rootRect.height;
+        if (rects.some((rect) =>
+          x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+        )) {
+          covered += 1;
+        }
+      }
+    }
+    return covered / (COLUMNS * ROWS);
+  });
+}
+
+/** Below this content-coverage fraction a sampled frame reads as blank. */
+const NEAR_BLANK_COVERAGE = 0.005;
+/** Scenes shorter than this are micro-beats (flashes, stings) — never judged. */
+const NEAR_BLANK_MIN_SCENE_SEC = 1.2;
+/** A single fully blank scene at least this long blocks publication alone. */
+const NEAR_BLANK_SCENE_HARD_SEC = 4;
+/** Blank scenes totalling this fraction of the film block publication. */
+const NEAR_BLANK_FILM_FRACTION = 0.3;
 
 function normalizeHyperframesIssue(value: Record<string, unknown>): DirectLayoutIssue {
   const code = String(value.code ?? "layout_issue");
@@ -1302,8 +1420,10 @@ export async function inspectDirectComposition(
 
     const rawIssues: DirectLayoutIssue[] = [];
     const interactionEvidence: DirectInteractionEvidence[] = [];
+    const coverageSamples: Array<{ time: number; coverage: number }> = [];
     for (const time of samples) {
       await seekTo(page, time);
+      coverageSamples.push({ time, coverage: await measureContentCoverage(page) });
       const hyperframes = await page.evaluate(
         (options: { time: number; tolerance: number }) => {
           const audit = (window as unknown as {
@@ -1446,6 +1566,57 @@ export async function inspectDirectComposition(
     ];
     const insideCutWindow = (time: number): boolean =>
       boundaryWindows.some((window) => time >= window.start && time <= window.end);
+
+    // Blank-frame guard (2026-07-03 incident: a live film published with the
+    // promised content never on frame). A scene is near-blank when EVERY
+    // eligible sample — inside the scene body, outside cut/camera/component
+    // motion windows — shows content coverage below the floor. Individual
+    // near-blank scenes are repair-loop warnings; a film that is
+    // systematically blank becomes a blocking error, which after bounded
+    // repairs routes the create to the labeled deterministic fallback
+    // instead of publishing an empty result.
+    const nearBlankScenes: Array<{ scene: DirectScene; atTime: number }> = [];
+    for (const scene of draft.storyboard) {
+      if (scene.durationSec < NEAR_BLANK_MIN_SCENE_SEC) continue;
+      const eligible = coverageSamples.filter((sample) =>
+        sample.time >= scene.startSec + 0.15 &&
+        sample.time <= scene.startSec + scene.durationSec - 0.15 &&
+        !insideCutWindow(sample.time)
+      );
+      if (!eligible.length) continue;
+      if (eligible.every((sample) => sample.coverage < NEAR_BLANK_COVERAGE)) {
+        nearBlankScenes.push({
+          scene,
+          atTime: eligible[Math.floor(eligible.length / 2)]!.time,
+        });
+      }
+    }
+    for (const { scene, atTime } of nearBlankScenes) {
+      rawIssues.push({
+        code: "near_blank_scene",
+        severity: "warning",
+        time: atTime,
+        selector: `[data-scene="${scene.id}"]`,
+        message:
+          `Scene "${scene.id}" shows no visible content (text, media, or data-part coverage ` +
+          `under 0.5%) at every sampled frame — the audience sees only background.`,
+        fixHint:
+          "Put the scene's declared subject on frame: check that the promised element exists, " +
+          "is inside the viewport (or its camera region is actually framed), and is not opacity-0.",
+        source: "sequences",
+      });
+    }
+    const blankSec = nearBlankScenes.reduce((sum, entry) => sum + entry.scene.durationSec, 0);
+    const nearBlankErrors =
+      blankSec >= duration * NEAR_BLANK_FILM_FRACTION ||
+      nearBlankScenes.some((entry) => entry.scene.durationSec >= NEAR_BLANK_SCENE_HARD_SEC)
+        ? [
+            `near_blank_film: ${nearBlankScenes.length} scene(s) totalling ${blankSec.toFixed(1)}s ` +
+              `render as blank frames (${nearBlankScenes.map((entry) => entry.scene.id).join(", ")}); ` +
+              `the film cannot ship empty — put the storyboard's promised content on frame`,
+          ]
+        : [];
+
     const issues = collapseIssues(rawIssues.filter((issue) =>
       issue.code.startsWith("interaction_") || !insideCutWindow(issue.time)
     )).slice(0, 80);
@@ -1459,6 +1630,9 @@ export async function inspectDirectComposition(
       .filter((entry) => entry.level === "error")
       .map((entry) => `browser_runtime: ${entry.text}`),
       ...(enforceInteractions ? interactionIssues.map(formatIssue) : []),
+      // A systematically blank film is not a polish heuristic: it is the one
+      // visual state that is worse than the deterministic fallback.
+      ...nearBlankErrors,
     ];
     const visualErrors = issues
       .filter((issue) => issue.severity === "error")
