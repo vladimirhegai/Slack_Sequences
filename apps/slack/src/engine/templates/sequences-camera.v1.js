@@ -77,7 +77,10 @@
   var PART_MARGIN_RATIO = 0.16;
   var CREEP_ZOOM = 1.028;
   var ORBIT_DEG = 7;
+  var ORBIT_ARC_DEFAULT = 28;
   var WHIP_BLUR_PX = 7;
+  var PERSPECTIVE_PX = 1200;
+  var FOCUS_LAYER_CAP = 4;
 
   function clamp(value, minimum, maximum) {
     return Math.min(maximum, Math.max(minimum, value));
@@ -165,6 +168,75 @@
     timeline.fromTo(target, fromVars, toVars, at);
   }
 
+  // ------------------------------------------------------------- rack focus
+  // A `focus` modifier on a segment pulls a tweened focal plane between the
+  // scene's depth layers: blur = intensity * blurMax * |layerDepth - focal|.
+  // Blur lands on layers only, never the world element (a filter there would
+  // flatten future 3D and collide with whip blur). Everything is a pure
+  // function of tweened proxies — deterministic under seek. Enhancement only:
+  // no depth layers or an unresolvable focus part compiles no filter tweens.
+  function focusDepthOf(scene, layers, focus) {
+    if (focus.part) {
+      var element = scene.querySelector('[data-part="' + CSS.escape(focus.part) + '"]');
+      if (!element) return null;
+      for (var i = 0; i < layers.length; i += 1) {
+        if (layers[i].element === element || layers[i].element.contains(element)) {
+          return layers[i].depth;
+        }
+      }
+      // Content without a depth attribute rides the plane itself (depth 1).
+      return 1;
+    }
+    if (typeof focus.depth === "number" && isFinite(focus.depth)) {
+      return clamp(focus.depth, 0, 1);
+    }
+    return null;
+  }
+
+  function compileFocus(timeline, scene, world, layers, segments) {
+    var blurLayers = layers.slice(0, FOCUS_LAYER_CAP);
+    if (!blurLayers.length) return;
+    var pulls = [];
+    for (var s = 0; s < segments.length; s += 1) {
+      if (!segments[s].focus) continue;
+      var target = focusDepthOf(scene, layers, segments[s].focus);
+      if (target === null) continue;
+      pulls.push({
+        segment: segments[s],
+        depth: target,
+        blurMax: clamp(Number(segments[s].focus.blurMaxPx) || 6, 0, 10),
+      });
+    }
+    if (!pulls.length) return;
+    var proxy = { d: pulls[0].depth, i: 0, m: pulls[0].blurMax };
+    var applyFocus = function () {
+      for (var i = 0; i < blurLayers.length; i += 1) {
+        var blur = proxy.i * proxy.m * Math.abs(blurLayers[i].depth - proxy.d);
+        blurLayers[i].element.style.filter =
+          blur > 0.05 ? "blur(" + blur.toFixed(2) + "px)" : "";
+      }
+    };
+    var previous = null;
+    for (var p = 0; p < pulls.length; p += 1) {
+      var pull = pulls[p];
+      var duration = pull.segment.endSec - pull.segment.startSec;
+      var pullSec = Math.max(0.3, Math.min(duration, duration * 0.6));
+      var fromVars = previous
+        ? { d: previous.depth, i: 1, m: previous.blurMax }
+        : { d: pull.depth, i: 0, m: pull.blurMax };
+      tween(timeline, proxy, fromVars, {
+        d: pull.depth,
+        i: 1,
+        m: pull.blurMax,
+        duration: pullSec,
+        ease: "sine.inOut",
+        onUpdate: applyFocus,
+      }, pull.segment.startSec);
+      previous = pull;
+    }
+    applyFocus();
+  }
+
   function compileScene(timeline, root, viewport, scenePlan) {
     var scene = root.querySelector('[data-scene="' + CSS.escape(scenePlan.sceneId) + '"]');
     if (!scene) fail(scenePlan.sceneId, "scene element is absent");
@@ -176,10 +248,15 @@
     world.style.transformOrigin = "0 0";
     world.style.willChange = "transform";
 
+    // One depth vocabulary: data-depth is the semantic attribute; the older
+    // data-parallax stays a full alias (same 0..1 scale, same 1-depth
+    // translation factor), so existing worlds keep working unchanged.
     var layers = [];
-    var layerNodes = world.querySelectorAll("[data-parallax]");
+    var layerNodes = world.querySelectorAll("[data-depth],[data-parallax]");
     for (var i = 0; i < layerNodes.length; i += 1) {
-      var depth = Number(layerNodes[i].getAttribute("data-parallax"));
+      var depthAttr = layerNodes[i].getAttribute("data-depth");
+      if (depthAttr === null) depthAttr = layerNodes[i].getAttribute("data-parallax");
+      var depth = Number(depthAttr);
       if (isFinite(depth)) {
         layers.push({ element: layerNodes[i], depth: clamp(depth, 0, 1) });
       }
@@ -196,7 +273,16 @@
     }
     var start = frameState(viewport, world, entry.element, entry.kind, 1);
     var reference = { x: start.x, y: start.y };
-    var proxy = { x: start.x, y: start.y, z: start.z, r: 0 };
+    var proxy = { x: start.x, y: start.y, z: start.z, r: 0, ry: 0 };
+
+    // True orbit (level 1) rotates the flat world plane in 3D; perspective
+    // lives on the scene wrapper so CSS filters on the world (whip blur)
+    // cannot flatten anything — the world's own transform is unaffected.
+    var hasOrbit = false;
+    for (var o = 0; o < segments.length; o += 1) {
+      if (segments[o].move === "orbit") hasOrbit = true;
+    }
+    if (hasOrbit) scene.style.perspective = PERSPECTIVE_PX + "px";
 
     function apply() {
       var z = proxy.z;
@@ -207,6 +293,15 @@
         transform =
           "translate(" + viewport.w / 2 + "px," + viewport.h / 2 + "px) " +
           "rotate(" + proxy.r + "deg) " +
+          "translate(" + -viewport.w / 2 + "px," + -viewport.h / 2 + "px) " +
+          transform;
+      }
+      if (proxy.ry) {
+        // The framed subject is centered by frameState, so rotating about the
+        // viewport center arcs the camera around the subject.
+        transform =
+          "translate(" + viewport.w / 2 + "px," + viewport.h / 2 + "px) " +
+          "rotateY(" + proxy.ry + "deg) " +
           "translate(" + -viewport.w / 2 + "px," + -viewport.h / 2 + "px) " +
           transform;
       }
@@ -293,8 +388,29 @@
           onUpdate: apply,
         }, segment.startSec + half);
       }
+      if (segment.move === "orbit") {
+        // Level-1 true orbit: sweep the flat world plane around the framed
+        // subject and return to rest, so the scene never ends mid-rotation
+        // and no preserve-3d is required on the world's children.
+        var arc = isFinite(segment.arcDeg) ? segment.arcDeg : ORBIT_ARC_DEFAULT;
+        var arcSign = end.x >= state.x ? 1 : -1;
+        var arcHalf = duration / 2;
+        tween(timeline, proxy, { ry: 0 }, {
+          ry: arcSign * arc,
+          duration: arcHalf,
+          ease: "sine.inOut",
+          onUpdate: apply,
+        }, segment.startSec);
+        tween(timeline, proxy, { ry: arcSign * arc }, {
+          ry: 0,
+          duration: arcHalf,
+          ease: "sine.inOut",
+          onUpdate: apply,
+        }, segment.startSec + arcHalf);
+      }
       state = end;
     }
+    compileFocus(timeline, scene, world, layers, segments);
     apply();
     return { sceneId: scenePlan.sceneId, world: world, layers: layers.length };
   }

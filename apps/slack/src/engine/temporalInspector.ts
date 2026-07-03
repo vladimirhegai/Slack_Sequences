@@ -245,7 +245,7 @@ export async function reportTemporalEvidence(
     for (const cut of cuts) {
       const fromSelector = `[data-scene="${cut.fromScene}"]`;
       const toSelector = `[data-scene="${cut.toScene}"]`;
-      const outgoingSelector = cut.style === "object-match"
+      const outgoingSelector = cut.style === "object-match" || cut.style === "shape-match"
         ? '[data-sequences-runtime-cut="bridge"]'
         : cut.style === "flash-white"
           ? '[data-sequences-runtime-cut="flash"]'

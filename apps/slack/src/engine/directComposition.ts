@@ -386,6 +386,28 @@ function invariantErrors(
   return errors;
 }
 
+/** Overlaps shorter than this are floating-point artifacts, not authoring bugs. */
+const CLIP_OVERLAP_EPSILON_SEC = 0.001;
+
+/**
+ * True when an `overlapping_clips_same_track` finding reports a sub-epsilon
+ * overlap — the linter's `data-start + data-duration` sum picking up IEEE-754
+ * noise on contiguous scene windows (e.g. 7.4 + 4.2 = 11.600000000000001).
+ * The finding message carries both timestamps at full precision, so the
+ * artifact is detectable without re-parsing the document.
+ */
+export function isFloatingPointClipOverlap(finding: HyperframeLintFinding): boolean {
+  if (finding.code !== "overlapping_clips_same_track") return false;
+  const match = finding.message.match(
+    /ending at ([\d.eE+-]+)s overlaps with clip starting at ([\d.eE+-]+)s/,
+  );
+  if (!match) return false;
+  const end = Number(match[1]);
+  const start = Number(match[2]);
+  return Number.isFinite(end) && Number.isFinite(start) &&
+    end - start < CLIP_OVERLAP_EPSILON_SEC;
+}
+
 export async function validateDirectComposition(
   projectDir: string,
   draft: DirectCompositionDraft,
@@ -471,11 +493,19 @@ export async function validateDirectComposition(
     }
   }
 
+  // The pinned linter compares clip end (data-start + data-duration, summed
+  // in floating point) against the next clip's start with zero tolerance, so
+  // contiguous storyboard windows like 7.4s + 4.2s "overlap" the 11.6s scene
+  // by 1e-15s and burn the whole bounded repair loop on a phantom the model
+  // cannot see. A sub-millisecond overlap is unrenderable and unfixable —
+  // drop it before it reaches the gate (2026-07-03 live-create incident).
   let findings: HyperframeLintFinding[] = [];
   try {
     const lint = await lintHyperframeHtml(html, { filePath: "index.html" });
-    findings = lint.findings;
-    errors.push(...lint.findings
+    findings = lint.findings.filter(
+      (finding: HyperframeLintFinding) => !isFloatingPointClipOverlap(finding),
+    );
+    errors.push(...findings
       .filter((finding: HyperframeLintFinding) => finding.severity === "error")
       .map((finding: HyperframeLintFinding) => `${finding.code}: ${finding.message}`));
   } catch (error) {
@@ -577,7 +607,7 @@ function storyboardMarkdown(title: string, scenes: DirectScene[]): string {
       scene.outgoingCut ? `- Outgoing cut: ${scene.outgoingCut}` : "",
       scene.cut
         ? `- Executable cut: ${scene.cut.style}${
-          scene.cut.style === "object-match"
+          scene.cut.style === "object-match" || scene.cut.style === "shape-match"
             ? ` (${scene.cut.focalPartOut} → ${scene.cut.focalPartIn})`
             : ""
         }`

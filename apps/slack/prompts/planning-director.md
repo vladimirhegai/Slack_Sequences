@@ -195,9 +195,9 @@ is rejected. Treat the moment list as your beat sheet:
 
 Each storyboard shot declares a typed `cut` for its outgoing boundary
 (cut-left/right/up/down, zoom-through, inverse-zoom, flash-white,
-object-match, or hard). A deterministic host runtime compiles those into
-velocity-matched motion on the scene wrappers around every boundary. Division
-of ownership:
+object-match, shape-match, or hard). A deterministic host runtime compiles
+those into velocity-matched motion on the scene wrappers around every
+boundary. Division of ownership:
 
 - **You own** everything *inside* a scene: children, camera worlds, component
   state, copy, and the plain scene-window visibility `tl.set(...)` pairs at
@@ -213,6 +213,13 @@ of ownership:
   (one each, styled to survive scaling — prefer %-based inner layout), and do
   not author an entrance on the incoming focal part during the first
   ~0.5s of its scene; the bridge owns its arrival.
+- **shape-match** swaps two *different* elements whose silhouettes rhyme
+  (window→card, pill→bar, avatar→chart dot) through a crossfading dual
+  bridge. The same authoring rules as object-match apply to both focal
+  parts, plus: give the two parts genuinely comparable aspect ratios and
+  border radii — the runtime audits geometry at bind time and degrades a
+  >2.5× aspect mismatch (or a >60-node subtree) to a zoom-through cut. Keep
+  each focal part's subtree light; the bridge clones it.
 - The `sequences-cuts` JSON island, runtime script tag, and
   `SequencesCuts.compile(tl, root)` call are injected by the host. Do not
   hand-write or alter them; never spend your output budget re-implementing a
@@ -251,10 +258,25 @@ it the way a camera operator would.
   path must exist verbatim as exactly one `data-region` in that scene's world;
   every `toPart` (track-to-anchor) must exist as a scene-scoped `data-part`.
   A missing station is a publication error.
-- **Parallax depth.** Give background texture layers inside the world
-  `data-parallax="0.15"`–`0.45` (0 = pinned to screen, 1 = rides the plane).
-  During pans and parallax-passes the rig counter-translates them so depth
-  reads for free. Foreground content needs no attribute.
+- **Depth layers.** Mark the world's depth planes with `data-depth="0..1"`
+  (0 = pinned to screen, 1 = rides the plane; the older `data-parallax` is a
+  full alias). Background texture layers sit at `0.15`–`0.45`; during pans
+  and parallax-passes the rig counter-translates them so depth reads for
+  free. Foreground content needs no attribute — it rides the plane at
+  depth 1.
+- **Rack focus.** When the storyboard attaches a `focus` modifier to a
+  camera move, the rig pulls a focal plane between the scene's `data-depth`
+  layers and blurs the out-of-focus ones — the kit owns the blur; you own
+  layer placement. Build such scenes with 2+ marked depth layers (e.g. the
+  context UI at `data-depth="0.3"` and the payoff content on the plane), and
+  make sure any `focus.part` name exists as a scene-scoped `data-part`.
+  Never author your own `filter: blur()` tweens on those layers.
+- **Orbit.** An `orbit` move arcs the camera around the framed subject in
+  true 3D (the host sets perspective on the scene wrapper and rotates the
+  world plane; it returns to rest by the end of the move). It is for one
+  hero logo/graphic scene — text anti-aliases badly on a rotated plane, so
+  keep long copy out of orbiting scenes, and never author `perspective`,
+  `rotateY`, or `transform-style` yourself.
 - **Reveal on arrival.** Time each region's information beats to when the
   camera arrives or drifts across it (the storyboard path tells you the
   arrival seconds). Content the camera has not reached yet may sit at rest —

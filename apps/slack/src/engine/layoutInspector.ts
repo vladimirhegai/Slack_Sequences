@@ -1274,6 +1274,26 @@ export async function inspectDirectComposition(
       const element = document.querySelector("[data-composition-id][data-duration]");
       return Number.parseFloat(element?.getAttribute("data-duration") ?? "0");
     });
+    // The cut runtime may degrade a boundary at bind time (shape-match's
+    // geometry audit compiles zoom-through instead of a broken bridge). That
+    // is a designed, deterministic decision — surface it as a warning so the
+    // operator sees why the premium cut did not appear, never as a blocker.
+    const degradedCutWarnings = await page.evaluate(() => {
+      const bindings = (window as unknown as {
+        __sequencesCutBindings?: Array<{
+          cut?: { style?: string; fromScene?: string; toScene?: string };
+          degraded?: boolean;
+          reason?: string;
+        }>;
+      }).__sequencesCutBindings ?? [];
+      return bindings
+        .filter((binding) => binding?.degraded)
+        .map((binding) =>
+          `cut_degraded: ${binding.cut?.style ?? "cut"} ` +
+          `${binding.cut?.fromScene ?? "?"}->${binding.cut?.toScene ?? "?"} ` +
+          `compiled as zoom-through: ${binding.reason ?? "geometry audit failed"}`
+        );
+    });
     const tweenBoundaries = await collectTweenBoundaries(page);
     const samples = buildDirectLayoutSampleTimes(draft.storyboard, tweenBoundaries, duration);
     const interactionPlan = parseInteractionPlan(draft.html).plan;
@@ -1445,6 +1465,7 @@ export async function inspectDirectComposition(
       .map(formatIssue);
     const warnings = [
       ...runtime.filter((entry) => entry.level === "warning").map((entry) => `browser_warning: ${entry.text}`),
+      ...degradedCutWarnings,
       // Geometry, occlusion, overlap, and contrast are screenshot/layout
       // heuristics. They are useful repair feedback but cannot prove that an
       // authored composition is unusable, so they never become publication

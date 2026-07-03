@@ -621,7 +621,8 @@ placement on the world is the second legitimate use of absolute coordinates.
 Inside every region, return to flow: pick a layout class and use \`.zone\` /
 \`.stack\` as usual. Size regions near viewport proportions so a framed region
 fills the frame. Depth texture inside the world may declare
-\`data-parallax="0.15"\`–\`0.45\` for host-driven parallax.
+\`data-depth="0.15"\`–\`0.45\` (\`data-parallax\` is an alias) for host-driven
+parallax and rack-focus blur.
 
 The 12-column guide, centerlines, thirds, and baseline are debug guides—not
 placement slots. Grid/Flexbox owns settled layout; GSAP transforms own motion.

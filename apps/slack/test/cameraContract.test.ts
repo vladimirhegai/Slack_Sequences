@@ -81,6 +81,53 @@ describe("normalizeStoryboardCameraIntent", () => {
     }, window)).toBeUndefined();
   });
 
+  it("normalizes orbit arcs and rack-focus modifiers with hard clamps", () => {
+    const camera = normalizeStoryboardCameraIntent({
+      version: 1,
+      path: [
+        {
+          version: 1,
+          move: "orbit",
+          toRegion: "logo-stage",
+          startSec: 0,
+          durationSec: 2,
+          arcDeg: 90,
+          focus: { part: "brand-mark", blurMaxPx: 40 },
+        },
+        {
+          version: 1,
+          move: "drift",
+          toRegion: "logo-stage",
+          startSec: 2,
+          durationSec: 2,
+          focus: { depth: 3 },
+        },
+      ],
+    }, window);
+    expect(camera?.path[0]).toMatchObject({
+      move: "orbit",
+      arcDeg: 35,
+      focus: { part: "brand-mark", blurMaxPx: 10 },
+    });
+    // Explicit depth clamps to 0..1 and gets the default blur ceiling.
+    expect(camera?.path[1]?.focus).toEqual({ depth: 1, blurMaxPx: 6 });
+    // arcDeg is orbit-only; a focus naming neither part nor depth degrades away.
+    const stray = normalizeStoryboardCameraIntent({
+      version: 1,
+      path: [{
+        version: 1,
+        move: "pan",
+        toRegion: "hero",
+        startSec: 0,
+        durationSec: 2,
+        arcDeg: 20,
+        focus: { blurMaxPx: 8 },
+      }],
+    }, window);
+    expect(stray?.path[0]?.arcDeg).toBeUndefined();
+    expect(stray?.path[0]?.focus).toBeUndefined();
+  });
+
   it("recovers scene-relative camera times in later shots", () => {
     const camera = normalizeStoryboardCameraIntent({
       version: 1,
@@ -165,6 +212,43 @@ describe("resolveCameraPlan", () => {
     expect(resolveCameraPlan([scene({ id: "plain", startSec: 0, durationSec: 5 })]).scenes)
       .toEqual([]);
   });
+
+  it("carries orbit arc + focus through resolve and the island round-trip", () => {
+    const plan = resolveCameraPlan([
+      scene({
+        id: "hero",
+        startSec: 0,
+        durationSec: 6,
+        camera: {
+          version: 1,
+          path: [
+            { version: 1, move: "orbit", toRegion: "logo-stage", startSec: 0, durationSec: 2 },
+            {
+              version: 1,
+              move: "push-in",
+              toRegion: "logo-stage",
+              startSec: 3,
+              durationSec: 1.5,
+              focus: { part: "brand-mark", blurMaxPx: 8 },
+            },
+          ],
+        },
+      }),
+    ]);
+    const orbit = plan.scenes[0]!.segments.find((segment) => segment.move === "orbit")!;
+    expect(orbit).toMatchObject({ arcDeg: 28, zoom: 1.06, ease: "seqGlide" });
+    const push = plan.scenes[0]!.segments.find((segment) => segment.move === "push-in")!;
+    expect(push.focus).toEqual({ part: "brand-mark", blurMaxPx: 8 });
+    // Gap fills never inherit the focus modifier.
+    expect(
+      plan.scenes[0]!.segments.filter((segment) => segment.move === "drift" && segment.focus),
+    ).toEqual([]);
+    const parsed = parseCameraPlan(
+      `<script type="application/json" id="sequences-camera">${JSON.stringify(plan)}</script>`,
+    );
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.plan).toEqual(plan);
+  });
 });
 
 describe("auditCameraEnergy", () => {
@@ -206,6 +290,17 @@ describe("auditCameraEnergy", () => {
         durationSec: 6,
         cut: { version: 1, style: "zoom-through" },
       }),
+      scene({ id: "b", startSec: 6, durationSec: 6 }),
+    ])).toEqual([]);
+  });
+
+  it("accepts a 3D orbit as the high-energy peak", () => {
+    const orbit: DirectScene["camera"] = {
+      version: 1,
+      path: [{ version: 1, move: "orbit", toRegion: "logo-stage", startSec: 1, durationSec: 2 }],
+    };
+    expect(auditCameraEnergy([
+      scene({ id: "a", startSec: 0, durationSec: 6, camera: orbit }),
       scene({ id: "b", startSec: 6, durationSec: 6 }),
     ])).toEqual([]);
   });
@@ -335,6 +430,41 @@ describe("validateCameraContract", () => {
       [cameraScene],
     );
     expect(result.errors.some((error) => error.includes('region "metrics"'))).toBe(true);
+  });
+
+  it("validates focus parts scene-scoped and warns when no depth layers exist", () => {
+    const focusScene = scene({
+      id: "journey",
+      startSec: 0,
+      durationSec: 8,
+      camera: {
+        version: 1,
+        path: [
+          { version: 1, move: "hold", toRegion: "hero", startSec: 0, durationSec: 1 },
+          {
+            version: 1,
+            move: "push-in",
+            toRegion: "metrics",
+            startSec: 4,
+            durationSec: 1,
+            focus: { part: "draft-line", blurMaxPx: 6 },
+          },
+        ],
+      },
+    });
+    const island = JSON.stringify(resolveCameraPlan([focusScene]));
+    // The focus part is missing from the scene → error; no depth layers → warning.
+    const missing = validateCameraContract(html({ island }), [focusScene]);
+    expect(missing.errors.some((error) => error.includes('part "draft-line"'))).toBe(true);
+    expect(missing.warnings.some((warning) => warning.includes("rack-focus"))).toBe(true);
+    // With the part and a data-depth layer both present, the plan is clean.
+    const bound = html({ island }).replace(
+      '<div data-region="metrics"></div>',
+      '<div data-region="metrics" data-depth="0.3"><span data-part="draft-line"></span></div>',
+    );
+    const result = validateCameraContract(bound, [focusScene]);
+    expect(result.errors).toEqual([]);
+    expect(result.warnings.filter((warning) => warning.includes("rack-focus"))).toEqual([]);
   });
 
   it("warns when an authored tween targets the world plane", () => {

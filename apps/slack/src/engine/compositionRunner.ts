@@ -31,6 +31,7 @@ import {
 } from "./interactionContract.ts";
 import {
   CUT_RUNTIME_FILE,
+  CUT_SHAPE_HINTS,
   CUT_STYLES,
   normalizeStoryboardCutIntent,
   resolveCutPlan,
@@ -151,6 +152,8 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
                     entrySec: { type: "number" },
                     focalPartOut: { type: "string" },
                     focalPartIn: { type: "string" },
+                    shapeOut: { type: "string", enum: [...CUT_SHAPE_HINTS] },
+                    shapeIn: { type: "string", enum: [...CUT_SHAPE_HINTS] },
                   },
                   required: ["version", "style"],
                   additionalProperties: false,
@@ -171,6 +174,16 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
                           fromRegion: { type: "string" },
                           fromPart: { type: "string" },
                           zoom: { type: "number" },
+                          arcDeg: { type: "number" },
+                          focus: {
+                            type: "object",
+                            properties: {
+                              part: { type: "string" },
+                              depth: { type: "number" },
+                              blurMaxPx: { type: "number" },
+                            },
+                            additionalProperties: false,
+                          },
                           startSec: { type: "number" },
                           durationSec: { type: "number" },
                           ease: {
@@ -1868,6 +1881,8 @@ export interface StoryboardPlanRequirements {
   minCameraMoves?: number;
   requireMultiStationWorld?: boolean;
   requireObjectMatch?: boolean;
+  requireShapeMatch?: boolean;
+  requireRackFocus?: boolean;
 }
 
 export function validateStoryboardPlan(
@@ -1964,7 +1979,7 @@ export function validateStoryboardPlan(
     errors.push("storyboard total duration must be 6-60 seconds");
   }
   // Camera-era density floor: a framing is a shot or a full camera move
-  // (pan/whip/push-in/pull-back/track-to-anchor/parallax-pass/orbit-lite).
+  // (pan/whip/push-in/pull-back/track-to-anchor/parallax-pass/orbit-lite/orbit).
   // The viewer must get a new framing roughly every 3.5 seconds — either by
   // cutting or by moving the camera across the scene's spatial world.
   const cameraMoves = storyboard.reduce(
@@ -2004,6 +2019,21 @@ export function validateStoryboardPlan(
     !storyboard.some((scene) => scene.cut?.style === "object-match")
   ) {
     errors.push("the brief explicitly requests an object-match cut, but none is planned");
+  }
+  if (
+    requirements.requireShapeMatch &&
+    !storyboard.some((scene) => scene.cut?.style === "shape-match")
+  ) {
+    errors.push("the brief explicitly requests a shape-match cut, but none is planned");
+  }
+  if (
+    requirements.requireRackFocus &&
+    !storyboard.some((scene) => scene.camera?.path.some((move) => move.focus))
+  ) {
+    errors.push(
+      "the brief explicitly requests a rack-focus pull, but no camera move carries a " +
+        '"focus" modifier — attach focus:{part|depth, blurMaxPx} to the move that lands on the payoff',
+    );
   }
   const presentComponentKinds = new Set(
     storyboard.flatMap((scene) => (scene.components ?? []).map((component) => component.kind)),
@@ -2287,6 +2317,12 @@ export function inferStoryboardPlanRequirements(
     ...(/\bobject[\s-]?match cuts?\b/i.test(brief)
       ? { requireObjectMatch: true }
       : {}),
+    ...(/\bshape[\s-]?match(?:ed)?\s+(?:cuts?|transitions?|boundar(?:y|ies))\b/i.test(brief)
+      ? { requireShapeMatch: true }
+      : {}),
+    ...(/\brack[\s-]?focus\b|\bfocus pull\b|\bdepth of field\b/i.test(brief)
+      ? { requireRackFocus: true }
+      : {}),
   };
 }
 
@@ -2322,8 +2358,9 @@ export async function requestStoryboardPlan(
   });
   const cacheKey = createHash("sha256").update(JSON.stringify({
     // Bump when the storyboard contract changes shape (v2: StoryboardMomentV1,
-    // v3: typed components + beats; v4: brief-derived coverage requirements.
-    contract: 4,
+    // v3: typed components + beats; v4: brief-derived coverage requirements;
+    // v5: shape-match cuts + orbit/rack-focus camera vocabulary).
+    contract: 5,
     provider: provider.id,
     model: model ?? null,
     brief: args.brief,
@@ -2371,8 +2408,18 @@ export async function requestStoryboardPlan(
     "never freezes), pan (reframe to a region), whip (fast swoosh reframe),",
     "push-in (commit deeper into a region), pull-back (widen to reveal",
     "context), track-to-anchor (land tight on one data-part), parallax-pass",
-    "(lateral travel that separates data-parallax depth layers), orbit-lite",
-    "(subtle 2.5D arc). Times are absolute seconds inside the shot window.",
+    "(lateral travel that separates data-depth layers), orbit-lite",
+    "(subtle 2.5D arc), orbit (a true 3D arc around the framed subject,",
+    'optional "arcDeg" up to 35 — reserve it for ONE hero logo/graphic scene',
+    "per film, never a text-heavy scene, and never overlapping a cursor",
+    "interaction). Times are absolute seconds inside the shot window.",
+    "RACK FOCUS — any camera move may carry a",
+    '"focus":{"part":"data-part","blurMaxPx":6} (or {"depth":0..1}) modifier:',
+    "the rig pulls a focal plane between the scene's data-depth layers,",
+    "blurring the others in proportion to depth distance. Two consecutive",
+    "moves with different focus targets stage a cinematic focus pull",
+    "(defocus the background context, then land focus on the payoff detail).",
+    "Use it only in scenes the author will build with 2+ depth layers.",
     "CAMERA ENERGY — camera verbs must track the film's energy curve, never",
     "distribute one verb evenly. Peak scenes get a whip, a hard push-in",
     '("zoom":1.35+), or a zoom-through/inverse-zoom cut INTO them; valleys get',
@@ -2414,7 +2461,14 @@ export async function requestStoryboardPlan(
     "(progressing deeper), inverse-zoom (arriving at a payoff), flash-white (one",
     "energetic reset at most), object-match (a focal element visibly travels to a",
     "matching element in the next shot; requires focalPartOut/focalPartIn data-part",
-    "names the author will create). The host compiles the cut deterministically;",
+    "names the author will create), shape-match (two DIFFERENT elements whose",
+    "silhouettes rhyme — a search pill lands as a status bar, a window becomes a",
+    "card, an avatar circle becomes a chart dot — swap across the boundary through",
+    "a crossfading bridge; requires focalPartOut/focalPartIn, plus optional",
+    'shapeOut/shapeIn hints from pill|bar|card|circle|window as your own',
+    "silhouette self-check. Declare shape-match only when the two silhouettes",
+    "genuinely rhyme; a >2.5x aspect mismatch degrades to zoom-through at bind",
+    "time). The host compiles the cut deterministically;",
     "the prose outgoingCut must describe the same editorial idea as cut.style.",
     "Name one frame.md flow scaffold in spatialIntent.composition for every shot:",
     "layout-center-stack, layout-split, layout-editorial-left, layout-meta-top,",
@@ -2445,6 +2499,13 @@ export async function requestStoryboardPlan(
       ? [
           "The brief explicitly asks for object-match cuts; plan at least one typed",
           "object-match boundary with both focal part names.",
+        ]
+      : []),
+    ...(requirements.requireShapeMatch
+      ? [
+          "The brief explicitly asks for a shape-match transition; plan at least one",
+          "typed shape-match boundary with both focal part names and shapeOut/shapeIn",
+          "silhouette hints, at the story beat where the two elements' meanings connect.",
         ]
       : []),
     "",
@@ -2499,10 +2560,14 @@ export async function requestStoryboardPlan(
     '"rules":["known rule"],"capabilityIds":["zero or more exact index ids"],',
     '"continuityAnchor":"what the eye tracks across this boundary",',
     '"outgoingCut":"cut mechanism and destination",',
-    '"cut":{"version":1,"style":"cut-left|cut-right|cut-up|cut-down|zoom-through|inverse-zoom|flash-white|object-match|hard",',
-    '"focalPartOut":"only for object-match","focalPartIn":"only for object-match"},',
-    '"camera":{"version":1,"path":[{"version":1,"move":"hold|drift|pan|whip|push-in|pull-back|track-to-anchor|parallax-pass|orbit-lite",',
+    '"cut":{"version":1,"style":"cut-left|cut-right|cut-up|cut-down|zoom-through|inverse-zoom|flash-white|object-match|shape-match|hard",',
+    '"focalPartOut":"for object-match/shape-match","focalPartIn":"for object-match/shape-match",',
+    '"shapeOut":"optional shape-match hint: pill|bar|card|circle|window","shapeIn":"same"},',
+    '"camera":{"version":1,"path":[{"version":1,"move":"hold|drift|pan|whip|push-in|pull-back|track-to-anchor|parallax-pass|orbit-lite|orbit",',
     '"toRegion":"region name (or toPart for track-to-anchor)","zoom":1,"startSec":0,"durationSec":1.2,',
+    '"arcDeg":28,"focus":{"part":"data-part to pull focus onto","depth":0.35,"blurMaxPx":6},',
+    "arcDeg only for orbit; focus is an optional rack-focus modifier on any move,",
+    "with either part or depth (not both).",
     '"ease":"optional: seqSwoosh|seqWhip|seqImpulse|seqSettle|seqGlide|seqDrift|seqAnticipate"}]},',
     'Use "camera":{"version":1,"path":[]} for a shot without a camera path.',
     "The first path entry establishes the entry framing: start with a short",
@@ -3030,6 +3095,40 @@ function lockedLayoutGuidance(scenes: DirectScene[]): string {
       `- Morph twins (${[...new Set(morphPairs)].join(", ")}) need comparable box`,
       "  shapes, corner radii, and visual weight so the FLIP reads as one object",
       "  transforming rather than a jump.",
+    );
+  }
+  const shapePairs = scenes.flatMap((scene) =>
+    scene.cut?.style === "shape-match" && scene.cut.focalPartOut && scene.cut.focalPartIn
+      ? [`${scene.cut.focalPartOut}→${scene.cut.focalPartIn}`]
+      : []
+  );
+  if (shapePairs.length) {
+    lines.push(
+      `- Shape-match focal parts (${[...new Set(shapePairs)].join(", ")}) must keep`,
+      "  comparable aspect ratios and border radii (within ~2.5×) and light",
+      "  subtrees (≤60 nodes) or the boundary degrades to zoom-through at bind",
+      "  time. Keep both parts on-frame at their scene's entry framing.",
+    );
+  }
+  const focusScenes = scenes.filter((scene) =>
+    scene.camera?.path.some((move) => move.focus)
+  );
+  if (focusScenes.length) {
+    lines.push(
+      `- Scenes ${focusScenes.map((scene) => `"${scene.id}"`).join(", ")} plan a rack-focus`,
+      "  pull: build each with 2+ data-depth layers (context plane ~0.3, payoff",
+      "  on the world plane) and author any focus.part as a scene-scoped",
+      "  data-part. The rig owns all blur.",
+    );
+  }
+  const orbitScenes = scenes.filter((scene) =>
+    scene.camera?.path.some((move) => move.move === "orbit")
+  );
+  if (orbitScenes.length) {
+    lines.push(
+      `- Scenes ${orbitScenes.map((scene) => `"${scene.id}"`).join(", ")} orbit in 3D:`,
+      "  keep them graphic (logo, hero UI, marks) rather than long copy, and",
+      "  author no perspective/rotateY/transform-style of your own.",
     );
   }
   const hasSimultaneousBeats = scenes.some((scene) => {

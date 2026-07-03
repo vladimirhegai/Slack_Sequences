@@ -122,20 +122,36 @@ typed spatial/focal intent and semantic cursor interactions. A versioned local
 runtime resolves hotspot/target/ripple geometry under camera transforms;
 interaction-time browser QA is enforced and persisted with each revision.
 Shots may also declare typed outgoing cuts (`hard`, directional,
-zoom/inverse-zoom, flash, or object-match). `cutContract.ts` resolves those
-declarations and `sequences-cuts.v1.js` compiles host-owned, seek-safe boundary
-motion into the canonical timeline; `compositionRunner.ts` injects the binding
-from the locked storyboard so the source author cannot silently omit it.
+zoom/inverse-zoom, flash, object-match, or shape-match). `cutContract.ts`
+resolves those declarations and `sequences-cuts.v1.js` compiles host-owned,
+seek-safe boundary motion into the canonical timeline; `compositionRunner.ts`
+injects the binding from the locked storyboard so the source author cannot
+silently omit it.
 Object-match uses measured `data-part` geometry, while static validation catches
 missing bindings and warns when authored scene-wrapper tweens compete with the
-cut runtime.
+cut runtime. Shape-match (2026-07-03) swaps two *different* rhyming-silhouette
+elements through a dual-bridge crossfade with border-radius interpolation; a
+bind-time geometry audit (>2.5× aspect, >60-node subtree, off-frame parts)
+degrades the boundary to zoom-through with a typed reason that browser QA
+surfaces as a `cut_degraded:` warning, and the static gate warns when a bridge
+lands outside the incoming scene's entry framing
+(`test/cutShapeMatch.browser.test.ts` proves both paths).
 Scenes may also declare a typed **camera path** over a continuous spatial world:
 `data-camera-world` is a plane larger than the viewport with named
 `data-region` stations, and `cameraContract.ts` +
 `templates/sequences-camera.v1.js` compile `hold`/`drift`/`pan`/`whip`/
-`push-in`/`pull-back`/`track-to-anchor`/`parallax-pass`/`orbit-lite` moves into
-seek-safe world transforms (gaps auto-fill with drift so the camera never
-silently freezes; `data-parallax` layers get depth counter-motion). The same
+`push-in`/`pull-back`/`track-to-anchor`/`parallax-pass`/`orbit-lite`/`orbit`
+moves into seek-safe world transforms (gaps auto-fill with drift so the camera
+never silently freezes; `data-depth` layers — `data-parallax` is an alias —
+get depth counter-motion). `orbit` (2026-07-03) is a true 3D arc: perspective
+on the scene wrapper, a `rotateY` sandwich on the flat world plane returning
+to rest, counted as a high-energy peak, and deterministically forbidden from
+overlapping a cursor interaction. Any camera segment may carry a rack-focus
+`focus` modifier (`{part|depth, blurMaxPx ≤ 10}`): the runtime pulls a
+tweened focal plane across the scene's depth layers, blurring the others
+(≤4 layers, layers only, never the world element — the CSS-filter-flattens-3D
+landmine); `test/cameraDepth.browser.test.ts` proves both effects and their
+determinism under out-of-order seek. The same
 runtime registers the Sequences ease library (`seqSwoosh`, `seqWhip`,
 `seqImpulse`, `seqSettle`, `seqGlide`, `seqDrift`, `seqAnticipate`,
 `seqMicrobounce`) in every composition for authored beats. Storyboards scale

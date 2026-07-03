@@ -309,6 +309,75 @@ point an agent at the listed file.
   build machinery + hash churn for a subtle delta over the proven hand-tuned
   curves. Revisit only with rendered A/B evidence.
 
+### Shape-match cuts + camera depth (2026-07-03, second pass)
+
+Implements `BREAKTHROUGH_match_cut.md` (v1) and `BREAKTHROUGH_camera_depth.md`
+(level 1 + rack focus):
+
+- **`shape-match` cut style** (`cutContract.ts` + `bindShapeMatch` in
+  `sequences-cuts.v1.js`): two *different* rhyming-silhouette elements swap
+  across a boundary through a dual-bridge crossfade (both parts cloned into
+  the overlay, one live-measured interpolated rect path, mid-flight 0.35–0.65
+  crossfade, border-radius interpolation). Optional planner hints
+  `shapeOut`/`shapeIn` (`pill|bar|card|circle|window`) exist purely as the
+  model's silhouette self-check. `object-match` is untouched.
+- **Bind-time geometry audit + typed degrade**: >2.5× aspect mismatch,
+  >60-node focal subtree, or a mostly off-frame static part compiles the
+  boundary as `zoom-through` instead of flying a broken bridge, recording
+  `{degraded, reason}` on `__sequencesCutBindings`; `layoutInspector` surfaces
+  it as a `cut_degraded:` browser-QA warning (never a blocker). QA and render
+  run the identical decision because the audit lives in the runtime compile.
+- **Entry-framing warning** (static gate): a bridged cut whose `focalPartIn`
+  is a component stationed at a region the incoming camera path does not open
+  on gets a deterministic warning — the likeliest field failure (bridge flies
+  outside the entry framing).
+- **`requireShapeMatch`**: "shape-match transition/cut/boundary" in a brief
+  becomes a blocking storyboard requirement, mirroring `requireObjectMatch`
+  (probe-confirmed: GLM uses the style well only when the brief demands it).
+- **`orbit` camera verb (level 1)** (`cameraContract.ts` +
+  `sequences-camera.v1.js`): a true 3D arc around the framed subject —
+  `perspective: 1200px` on the scene wrapper, a viewport-centered `rotateY`
+  sandwich on the flat world plane (returns to rest; no preserve-3d, so the
+  whip-blur filter landmine is structurally avoided). `arcDeg` clamps 8–35
+  (default 28). Counts as a framing and as a high-energy peak; cursor
+  interactions overlapping an orbit window are a deterministic
+  `validateInteractionContract` error. `orbit-lite` unchanged.
+- **Rack focus as a segment modifier**: any camera segment may carry
+  `focus: {part|depth, blurMaxPx ≤ 10}`. The runtime resolves the focal
+  depth (a part's enclosing depth layer, or explicit 0..1) and drives
+  `blur = intensity · blurMax · |layerDepth − focalDepth|` across ≤4 depth
+  layers via tweened proxies — blur on layers only, never the world element.
+  Unresolvable focus or no depth layers compiles no filter tweens (a static
+  warning flags the wasted rack); consecutive focus segments chain into a
+  visible focus pull.
+- **`data-depth` alias**: one depth vocabulary for parallax counter-motion
+  and focus blur; `data-parallax` remains fully supported.
+- **Proof**: `test/cutShapeMatch.browser.test.ts` (matched pair flies, the
+  deliberately mismatched pair degrades with the aspect reason),
+  `test/cameraDepth.browser.test.ts` (rotateY + perspective + focus blur,
+  byte-identical transforms/filters under out-of-order seek), contract unit
+  tests across cut/camera/interaction suites, and a paid OpenRouter live
+  create (2026-07-03, `live-depth-shapematch-20260703b`) whose brief demanded
+  all three: GLM planned `shape-match deploy-pill→deploy-status-bar`
+  (pill/bar hints), a two-segment rack pull (`parallax-pass` focus depth
+  0.35 → `track-to-anchor` focus on `rollback-button`), and `orbit arc=28`
+  on the logo-resolve scene; the film published as `hyperframes-direct`
+  with 13/13 moments bound and no fallback. The run also proved the degrade
+  live — DeepSeek authored the status bar 11× too wide, and the geometry
+  audit compiled that boundary as zoom-through with the typed aspect reason
+  in browser QA. Storyboard cache contract bumped to v5.
+- **FP clip-overlap fix** (`isFloatingPointClipOverlap`,
+  `directComposition.ts`): the pinned linter's zero-tolerance
+  `data-start + data-duration` sum rejected contiguous storyboard windows
+  (7.4 + 4.2 = 11.600000000000001 "overlaps" 11.6) and burned an entire
+  bounded repair loop on a phantom the model cannot see — found by the first
+  paid live run of this pass. Sub-millisecond overlaps are now filtered
+  before the gate.
+- **`requireRackFocus`**: "rack focus" / "focus pull" / "depth of field" in a
+  brief becomes a blocking storyboard requirement (the first live run showed
+  GLM reads "focus onto X" as `track-to-anchor` unless the requirement is
+  explicit).
+
 **Breakthrough handoff candidate:** promote rendered temporal evidence into the
 live publication boundary. Static source inspection can prove that a tween or
 component beat exists, but not that two review frames are perceptually or

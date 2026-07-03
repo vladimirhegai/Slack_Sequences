@@ -201,6 +201,37 @@ describe("interaction contract", () => {
     );
   });
 
+  it("rejects a cursor interaction whose window overlaps a 3D orbit move", () => {
+    const orbitScene: DirectScene = {
+      ...scene(),
+      camera: {
+        version: 1,
+        path: [{ version: 1, move: "orbit", toRegion: "hero", startSec: 4.8, durationSec: 1 }],
+      },
+    };
+    const result = validateInteractionContract(html(), [orbitScene], 6);
+    expect(result.errors.some((error) =>
+      error.includes('overlaps an orbit camera move in scene "cta"')
+    )).toBe(true);
+    // orbit-lite (flat 2D arc) and a non-overlapping orbit stay legal.
+    const liteScene: DirectScene = {
+      ...scene(),
+      camera: {
+        version: 1,
+        path: [{ version: 1, move: "orbit-lite", toRegion: "hero", startSec: 4.8, durationSec: 1 }],
+      },
+    };
+    expect(validateInteractionContract(html(), [liteScene], 6).errors).toEqual([]);
+    const laterScene: DirectScene = {
+      ...scene(),
+      camera: {
+        version: 1,
+        path: [{ version: 1, move: "orbit", toRegion: "hero", startSec: 5.9, durationSec: 0.1 }],
+      },
+    };
+    expect(validateInteractionContract(html(), [laterScene], 6).errors).toEqual([]);
+  });
+
   it("routes a bounded cursor revision through Flash and patches only intent JSON", async () => {
     const complete = vi.fn(async (_prompt: string, _options?: CompleteOptions) => JSON.stringify({
       mode: "interaction-patch",

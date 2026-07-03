@@ -180,8 +180,11 @@ layout inside each region). The host injects sequences-camera.v1.js, the
 sequences-camera JSON island, and SequencesCamera.compile(tl, root), and owns
 the world plane's transform — never tween data-camera-world yourself. Region/
 part names in the plan must exist verbatim in the scene. Depth layers inside
-the world may declare data-parallax="0.15"-"0.45" (0 = screen-locked) for
-host-driven parallax during pans.
+the world may declare data-depth="0..1" (0 = screen-locked, 1 = rides the
+plane; data-parallax is an alias) for host-driven parallax during pans and
+host-owned rack-focus blur when a camera move carries a focus modifier —
+never author your own blur on depth layers. An orbit move rotates the world
+plane in 3D (host-owned perspective); never author perspective/rotateY.
 
 **Motion-native components:** storyboard-declared components are authored as
 one element each with data-part="<declared id>" + data-component="<kind>"

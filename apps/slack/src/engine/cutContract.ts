@@ -35,7 +35,8 @@ export type CutStyle =
   | "zoom-through"
   | "inverse-zoom"
   | "flash-white"
-  | "object-match";
+  | "object-match"
+  | "shape-match";
 
 export const CUT_STYLES: ReadonlySet<CutStyle> = new Set<CutStyle>([
   "hard",
@@ -47,6 +48,28 @@ export const CUT_STYLES: ReadonlySet<CutStyle> = new Set<CutStyle>([
   "inverse-zoom",
   "flash-white",
   "object-match",
+  "shape-match",
+]);
+
+/**
+ * Planner-side silhouette hints for shape-match. They carry no runtime
+ * geometry — the runtime measures live rects — and exist purely so the model
+ * self-checks that the two focal parts genuinely rhyme as silhouettes.
+ */
+export type CutShapeHint = "pill" | "bar" | "card" | "circle" | "window";
+
+export const CUT_SHAPE_HINTS: ReadonlySet<CutShapeHint> = new Set<CutShapeHint>([
+  "pill",
+  "bar",
+  "card",
+  "circle",
+  "window",
+]);
+
+/** Cut styles that carry a focal element across the boundary via a bridge. */
+const BRIDGED_STYLES: ReadonlySet<CutStyle> = new Set<CutStyle>([
+  "object-match",
+  "shape-match",
 ]);
 
 /** A scene's declaration of its own outgoing boundary. */
@@ -59,10 +82,14 @@ export interface SceneCutIntentV1 {
   exitSec?: number;
   /** Entry deceleration window after the boundary, seconds. */
   entrySec?: number;
-  /** object-match: data-part carried out of this scene. */
+  /** object-match/shape-match: data-part carried out of this scene. */
   focalPartOut?: string;
-  /** object-match: data-part it lands on in the next scene. */
+  /** object-match/shape-match: data-part it lands on in the next scene. */
   focalPartIn?: string;
+  /** shape-match: silhouette hint for the outgoing part (planner self-check). */
+  shapeOut?: CutShapeHint;
+  /** shape-match: silhouette hint for the incoming part (planner self-check). */
+  shapeIn?: CutShapeHint;
 }
 
 /** A fully resolved boundary the runtime can bind mechanically. */
@@ -75,6 +102,8 @@ export interface CutIntentV1 extends Required<Pick<SceneCutIntentV1, "version" |
   entrySec: number;
   focalPartOut?: string;
   focalPartIn?: string;
+  shapeOut?: CutShapeHint;
+  shapeIn?: CutShapeHint;
 }
 
 export interface CutPlanV1 {
@@ -91,6 +120,7 @@ const STYLE_DEFAULTS: Record<Exclude<CutStyle, "hard">, { exitSec: number; entry
   "inverse-zoom": { exitSec: 0.24, entrySec: 0.5 },
   "flash-white": { exitSec: 0.18, entrySec: 0.4 },
   "object-match": { exitSec: 0.22, entrySec: 0.5 },
+  "shape-match": { exitSec: 0.22, entrySec: 0.5 },
 };
 
 function finite(value: unknown): value is number {
@@ -106,10 +136,16 @@ function stablePart(value: unknown): string {
   return /^[a-z][a-z0-9-]{0,63}$/.test(raw) ? raw : "";
 }
 
+function shapeHint(value: unknown): CutShapeHint | "" {
+  const raw = typeof value === "string" ? value.trim() as CutShapeHint : "";
+  return raw && CUT_SHAPE_HINTS.has(raw) ? raw : "";
+}
+
 /**
  * Normalize a storyboard scene's typed cut declaration. Unknown styles,
- * malformed params, or an object-match without both parts degrade to no cut
- * rather than failing the storyboard — the film stays buildable.
+ * malformed params, or a bridged style (object-match/shape-match) without
+ * both parts degrade to no cut rather than failing the storyboard — the film
+ * stays buildable.
  */
 export function normalizeStoryboardCutIntent(value: unknown): SceneCutIntentV1 | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -119,14 +155,18 @@ export function normalizeStoryboardCutIntent(value: unknown): SceneCutIntentV1 |
   if (style === "hard") return { version: 1, style };
   const focalPartOut = stablePart(object.focalPartOut);
   const focalPartIn = stablePart(object.focalPartIn);
-  if (style === "object-match" && (!focalPartOut || !focalPartIn)) return undefined;
+  if (BRIDGED_STYLES.has(style) && (!focalPartOut || !focalPartIn)) return undefined;
+  const shapeOut = shapeHint(object.shapeOut);
+  const shapeIn = shapeHint(object.shapeIn);
   return {
     version: 1,
     style,
     ...(finite(object.travelPx) ? { travelPx: clamp(object.travelPx, 80, 420) } : {}),
     ...(finite(object.exitSec) ? { exitSec: clamp(object.exitSec, 0.12, 0.6) } : {}),
     ...(finite(object.entrySec) ? { entrySec: clamp(object.entrySec, 0.2, 0.9) } : {}),
-    ...(style === "object-match" ? { focalPartOut, focalPartIn } : {}),
+    ...(BRIDGED_STYLES.has(style) ? { focalPartOut, focalPartIn } : {}),
+    ...(style === "shape-match" && shapeOut ? { shapeOut } : {}),
+    ...(style === "shape-match" && shapeIn ? { shapeIn } : {}),
   };
 }
 
@@ -166,6 +206,8 @@ export function resolveCutPlan(scenes: DirectScene[]): CutPlanV1 {
       entrySec,
       ...(intent.focalPartOut ? { focalPartOut: intent.focalPartOut } : {}),
       ...(intent.focalPartIn ? { focalPartIn: intent.focalPartIn } : {}),
+      ...(intent.shapeOut ? { shapeOut: intent.shapeOut } : {}),
+      ...(intent.shapeIn ? { shapeIn: intent.shapeIn } : {}),
     });
   }
   return { version: 1, cuts };
@@ -226,9 +268,11 @@ export function parseCutPlan(html: string): { plan?: CutPlanV1; errors: string[]
     }
     const focalPartOut = stablePart(cut.focalPartOut);
     const focalPartIn = stablePart(cut.focalPartIn);
-    if (style === "object-match" && (!focalPartOut || !focalPartIn)) {
-      errors.push(`cut[${index}] object-match needs focalPartOut and focalPartIn`);
+    if (BRIDGED_STYLES.has(style) && (!focalPartOut || !focalPartIn)) {
+      errors.push(`cut[${index}] ${style} needs focalPartOut and focalPartIn`);
     }
+    const shapeOut = shapeHint(cut.shapeOut);
+    const shapeIn = shapeHint(cut.shapeIn);
     if (errors.some((error) => error.startsWith(`cut[${index}]`))) return [];
     return [{
       version: 1,
@@ -241,6 +285,8 @@ export function parseCutPlan(html: string): { plan?: CutPlanV1; errors: string[]
       entrySec: cut.entrySec as number,
       ...(focalPartOut ? { focalPartOut } : {}),
       ...(focalPartIn ? { focalPartIn } : {}),
+      ...(style === "shape-match" && shapeOut ? { shapeOut } : {}),
+      ...(style === "shape-match" && shapeIn ? { shapeIn } : {}),
     }];
   });
   return errors.length ? { errors } : { plan: { version: 1, cuts }, errors: [] };
@@ -279,6 +325,7 @@ export function validateCutContract(
     errors.push("sequences-cuts island differs from the storyboard's resolved cut plan");
   }
   const sceneIds = new Set(scenes.map((scene) => scene.id));
+  const scenesById = new Map(scenes.map((scene) => [scene.id, scene]));
   // The runtime binds focal parts scene-scoped (outgoing in fromScene,
   // incoming in toScene), so the static gate must check the same scope — a
   // part that exists only in the other scene would pass a whole-document
@@ -288,6 +335,29 @@ export function validateCutContract(
     if (!sceneIds.has(cut.fromScene) || !sceneIds.has(cut.toScene)) {
       errors.push(`cut ${cut.fromScene}->${cut.toScene} references an unknown scene`);
       continue;
+    }
+    // A bridge that flies toward a station the incoming camera has not framed
+    // is the likeliest field failure for bridged cuts: the flight lands on a
+    // point outside the viewport. Both sides are typed (component region vs
+    // the first camera segment's entry framing), so warn deterministically.
+    if (BRIDGED_STYLES.has(cut.style) && cut.focalPartIn) {
+      const toScene = scenesById.get(cut.toScene);
+      const firstMove = toScene?.camera?.path[0];
+      const entryFraming =
+        firstMove?.fromPart ?? firstMove?.fromRegion ?? firstMove?.toPart ?? firstMove?.toRegion;
+      const station = toScene?.components?.find(
+        (component) => component.id === cut.focalPartIn,
+      )?.region;
+      if (
+        entryFraming && station &&
+        entryFraming !== station && entryFraming !== cut.focalPartIn
+      ) {
+        warnings.push(
+          `cut ${cut.fromScene}->${cut.toScene} lands its bridge on "${cut.focalPartIn}" at station ` +
+            `"${station}", but scene "${cut.toScene}" opens framed on "${entryFraming}" — the flight ` +
+            `may land outside the entry framing; open the camera path on "${station}" or move the part`,
+        );
+      }
     }
     if (cut.focalPartOut && !partPattern(cut.focalPartOut).test(scopes.get(cut.fromScene) ?? html)) {
       errors.push(

@@ -259,7 +259,7 @@ function authoredTweenActivities(
 
 /**
  * Typed camera-rig activities. Full moves (pan/whip/push-in/pull-back/
- * track-to-anchor/parallax-pass/orbit-lite) are medium reframing beats; drift
+ * track-to-anchor/parallax-pass/orbit-lite/orbit) are medium reframing beats; drift
  * segments are small connective motion. Typed holds contribute nothing — a
  * hold is a deliberate statement of stillness the scene must earn elsewhere.
  */

@@ -51,6 +51,32 @@ describe("normalizeStoryboardCutIntent", () => {
     expect(normalizeStoryboardCutIntent({ style: "hard", travelPx: 100 }))
       .toEqual({ version: 1, style: "hard" });
   });
+
+  it("normalizes shape-match with silhouette hints and requires both parts", () => {
+    expect(normalizeStoryboardCutIntent({
+      style: "shape-match",
+      focalPartOut: "inbox-window",
+      focalPartIn: "draft-card",
+      shapeOut: "window",
+      shapeIn: "card",
+    })).toEqual({
+      version: 1,
+      style: "shape-match",
+      focalPartOut: "inbox-window",
+      focalPartIn: "draft-card",
+      shapeOut: "window",
+      shapeIn: "card",
+    });
+    // Hints are optional and unknown hints are dropped, never fatal.
+    expect(normalizeStoryboardCutIntent({
+      style: "shape-match",
+      focalPartOut: "a",
+      focalPartIn: "b",
+      shapeOut: "rhombus",
+    })).toEqual({ version: 1, style: "shape-match", focalPartOut: "a", focalPartIn: "b" });
+    expect(normalizeStoryboardCutIntent({ style: "shape-match", focalPartOut: "a" }))
+      .toBeUndefined();
+  });
 });
 
 describe("resolveCutPlan", () => {
@@ -153,6 +179,123 @@ describe("validateCutContract", () => {
     expect(result.errors.some((error) =>
       error.includes('incoming part "panel" must exist as a data-part inside scene "three"')
     )).toBe(true);
+  });
+
+  it("carries shape-match fields through resolve and parse round-trips", () => {
+    const shaped: DirectScene[] = [
+      scene({
+        id: "one",
+        startSec: 0,
+        durationSec: 4,
+        cut: {
+          version: 1,
+          style: "shape-match",
+          focalPartOut: "chip",
+          focalPartIn: "panel",
+          shapeOut: "pill",
+          shapeIn: "bar",
+        },
+      }),
+      scene({ id: "two", startSec: 4, durationSec: 4 }),
+    ];
+    const plan = resolveCutPlan(shaped);
+    expect(plan.cuts[0]).toMatchObject({
+      style: "shape-match",
+      focalPartOut: "chip",
+      focalPartIn: "panel",
+      shapeOut: "pill",
+      shapeIn: "bar",
+    });
+    const parsed = parseCutPlan(
+      `<script type="application/json" id="sequences-cuts">${JSON.stringify(plan)}</script>`,
+    );
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.plan).toEqual(plan);
+    expect(parseCutPlan(
+      '<script type="application/json" id="sequences-cuts">' +
+        JSON.stringify({
+          version: 1,
+          cuts: [{
+            version: 1,
+            style: "shape-match",
+            fromScene: "one",
+            toScene: "two",
+            atSec: 4,
+            travelPx: 230,
+            exitSec: 0.22,
+            entrySec: 0.5,
+          }],
+        }) +
+        "</script>",
+    ).errors).toContain("cut[0] shape-match needs focalPartOut and focalPartIn");
+  });
+
+  it("warns when a bridged cut lands on a part outside the incoming entry framing", () => {
+    const shaped: DirectScene[] = [
+      scene({
+        id: "one",
+        startSec: 0,
+        durationSec: 4,
+        cut: {
+          version: 1,
+          style: "shape-match",
+          focalPartOut: "chip",
+          focalPartIn: "panel",
+        },
+      }),
+      scene({
+        id: "two",
+        startSec: 4,
+        durationSec: 5,
+        components: [{ version: 1, id: "panel", kind: "stat-card", region: "metric-wall" }],
+        camera: {
+          version: 1,
+          path: [
+            { version: 1, move: "hold", toRegion: "hero-claim", startSec: 4, durationSec: 1 },
+          ],
+        },
+      }),
+    ];
+    const plan = resolveCutPlan(shaped);
+    const html = `<!doctype html><html><head>
+<script src="gsap.min.js"></script>
+<script src="sequences-cuts.v1.js"></script>
+</head><body>
+<section data-scene="one" id="one"><span data-part="chip">chip</span></section>
+<section data-scene="two" id="two"><div data-camera-world>
+<div data-region="hero-claim"></div>
+<div data-region="metric-wall"><span data-part="panel">panel</span></div>
+</div></section>
+<script type="application/json" id="sequences-cuts">${JSON.stringify(plan)}</script>
+<script>const tl = gsap.timeline({ paused: true });
+SequencesCuts.compile(tl, document.querySelector("[data-scene]").parentElement);
+</script>
+</body></html>`;
+    const result = validateCutContract(html, shaped);
+    expect(result.errors).toEqual([]);
+    expect(result.warnings.some((warning) =>
+      warning.includes('opens framed on "hero-claim"')
+    )).toBe(true);
+    // Framing the bridge's landing station clears the warning.
+    const framed = shaped.map((entry) =>
+      entry.id === "two"
+        ? {
+            ...entry,
+            camera: {
+              version: 1 as const,
+              path: [{
+                version: 1 as const,
+                move: "hold" as const,
+                toRegion: "metric-wall",
+                startSec: 4,
+                durationSec: 1,
+              }],
+            },
+          }
+        : entry
+    );
+    const framedResult = validateCutContract(html, framed);
+    expect(framedResult.warnings.filter((warning) => warning.includes("opens framed"))).toEqual([]);
   });
 
   it("warns when an authored tween competes with the runtime for a wrapper", () => {

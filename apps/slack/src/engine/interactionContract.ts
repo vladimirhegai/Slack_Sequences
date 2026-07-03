@@ -731,6 +731,22 @@ export function validateInteractionContract(
     ) {
       errors.push(`interaction "${interaction.id}" timing escapes scene "${scene.id}"`);
     }
+    // A cursor aimed at a plane mid-3D-orbit still hits (targets are measured
+    // live and getBoundingClientRect projects the rotation), but precision
+    // and legibility degrade badly on a rotated plane. Both windows are
+    // typed, so refuse the combination deterministically.
+    const orbitOverlap = (scene.camera?.path ?? []).find((move) =>
+      move.move === "orbit" &&
+      interaction.startSec < move.startSec + move.durationSec + 0.001 &&
+      end > move.startSec - 0.001
+    );
+    if (orbitOverlap) {
+      errors.push(
+        `interaction "${interaction.id}" overlaps an orbit camera move in scene "${scene.id}" ` +
+          `(${orbitOverlap.startSec}s-${(orbitOverlap.startSec + orbitOverlap.durationSec).toFixed(2)}s) — ` +
+          `cursor work on a 3D-rotated plane is not allowed; retime the interaction or the orbit`,
+      );
+    }
     if (!partPattern(interaction.targetPart).test(html)) {
       errors.push(`interaction "${interaction.id}" target part "${interaction.targetPart}" is absent`);
     }

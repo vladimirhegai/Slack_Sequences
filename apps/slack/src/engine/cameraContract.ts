@@ -6,10 +6,11 @@
  * stats, CTA moments) scattered across it. The viewer never sees the whole
  * plane at once: the storyboard declares a bounded typed camera *path* per
  * scene (hold, drift, pan, whip, push-in, pull-back, track-to-anchor,
- * parallax-pass, orbit-lite) and a deterministic host runtime
+ * parallax-pass, orbit-lite, orbit) and a deterministic host runtime
  * (`sequences-camera.v1.js`) compiles it into seek-safe, velocity-designed
- * tweens on the world plane, with parallax counter-motion on `data-parallax`
- * layers.
+ * tweens on the world plane, with parallax counter-motion on
+ * `data-depth`/`data-parallax` layers. Segments may carry a rack-focus
+ * modifier that pulls a tweened focal plane between those depth layers.
  *
  * The contract mirrors the cut/interaction architecture: planner declares
  * intent, the resolver normalizes it into a contiguous segment chain (gaps are
@@ -43,7 +44,8 @@ export type CameraMoveStyle =
   | "pull-back"
   | "track-to-anchor"
   | "parallax-pass"
-  | "orbit-lite";
+  | "orbit-lite"
+  | "orbit";
 
 export const CAMERA_MOVES: ReadonlySet<CameraMoveStyle> = new Set<CameraMoveStyle>([
   "hold",
@@ -55,6 +57,7 @@ export const CAMERA_MOVES: ReadonlySet<CameraMoveStyle> = new Set<CameraMoveStyl
   "track-to-anchor",
   "parallax-pass",
   "orbit-lite",
+  "orbit",
 ]);
 
 /** Moves that visibly re-frame the shot (everything except hold/drift). */
@@ -66,7 +69,17 @@ export const CAMERA_FULL_MOVES: ReadonlySet<CameraMoveStyle> = new Set<CameraMov
   "track-to-anchor",
   "parallax-pass",
   "orbit-lite",
+  "orbit",
 ]);
+
+/** Orbit arc clamps: enough to read as an arc, never enough to lose the page. */
+export const ORBIT_ARC_MIN_DEG = 8;
+export const ORBIT_ARC_MAX_DEG = 35;
+export const ORBIT_ARC_DEFAULT_DEG = 28;
+
+/** Rack-focus blur ceiling; software rasterization pays per blurred pixel. */
+export const FOCUS_BLUR_MAX_PX = 10;
+export const FOCUS_BLUR_DEFAULT_PX = 6;
 
 /**
  * Curated motion-graphics ease vocabulary registered by the camera runtime at
@@ -87,6 +100,22 @@ const EASE_PATTERN = new RegExp(
   `^(?:${SEQUENCES_EASES.join("|")}|(?:power[1-4]|expo|sine|circ)\\.(?:in|out|inOut)|none|linear)$`,
 );
 
+/**
+ * Rack-focus modifier on a camera segment. The runtime resolves a focal
+ * depth (from a named part's enclosing depth layer, or an explicit 0..1
+ * depth) and blurs every `data-depth`/`data-parallax` layer proportionally
+ * to its distance from the tweened focal plane. Pure enhancement: a scene
+ * with no depth layers, or an unresolvable part, compiles no filter tweens.
+ */
+export interface CameraFocusIntentV1 {
+  /** data-part whose depth layer receives focus. */
+  part?: string;
+  /** Explicit focal depth 0..1 when no part is named (1 = the content plane). */
+  depth?: number;
+  /** Max blur for the farthest layer, px (clamped to FOCUS_BLUR_MAX_PX). */
+  blurMaxPx: number;
+}
+
 /** One declared camera move inside a scene's path (times are absolute). */
 export interface CameraMoveIntentV1 {
   version: 1;
@@ -100,6 +129,10 @@ export interface CameraMoveIntentV1 {
   fromPart?: string;
   /** Multiplier on the comfortable fit zoom for the target (1 = fit). */
   zoom?: number;
+  /** orbit: total arc swept around the framed subject, degrees. */
+  arcDeg?: number;
+  /** Optional rack-focus pull attached to this move's window. */
+  focus?: CameraFocusIntentV1;
   startSec: number;
   durationSec: number;
   ease?: string;
@@ -124,6 +157,10 @@ export interface CameraSegmentV1 {
   toPart?: string;
   fromRegion?: string;
   fromPart?: string;
+  /** orbit only: total arc swept, degrees. */
+  arcDeg?: number;
+  /** Rack-focus pull bound to this segment's window. */
+  focus?: CameraFocusIntentV1;
 }
 
 export interface SceneCameraPlanV1 {
@@ -153,6 +190,7 @@ const MOVE_DEFAULTS: Record<CameraMoveStyle, MoveDefaults> = {
   "track-to-anchor": { ease: "seqSwoosh", zoom: 1, minSec: 0.5, maxSec: 4 },
   "parallax-pass": { ease: "seqGlide", zoom: 1, minSec: 0.8, maxSec: 6 },
   "orbit-lite": { ease: "seqGlide", zoom: 1.06, minSec: 0.8, maxSec: 6 },
+  orbit: { ease: "seqGlide", zoom: 1.06, minSec: 0.8, maxSec: 6 },
 };
 
 /** How far a gap-filling drift travels toward the next framing. */
@@ -188,6 +226,27 @@ function round(value: number): number {
 function stableName(value: unknown): string {
   const raw = typeof value === "string" ? value.trim() : "";
   return /^[a-z][a-z0-9-]{0,63}$/.test(raw) ? raw : "";
+}
+
+/**
+ * Normalize a focus modifier. A focus that names neither a part nor a depth
+ * cannot resolve a focal plane and degrades to no modifier. Key order is
+ * stable (part, depth, blurMaxPx) because validation compares plans by
+ * JSON.stringify.
+ */
+function normalizeFocus(value: unknown): CameraFocusIntentV1 | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const object = value as Record<string, unknown>;
+  const part = stableName(object.part);
+  const depth = finite(object.depth) ? clamp(object.depth, 0, 1) : undefined;
+  if (!part && depth === undefined) return undefined;
+  return {
+    ...(part ? { part } : {}),
+    ...(depth !== undefined && !part ? { depth: round(depth) } : {}),
+    blurMaxPx: finite(object.blurMaxPx)
+      ? round(clamp(object.blurMaxPx, 1, FOCUS_BLUR_MAX_PX))
+      : FOCUS_BLUR_DEFAULT_PX,
+  };
 }
 
 /**
@@ -233,6 +292,7 @@ export function normalizeStoryboardCameraIntent(
     const ease = typeof item.ease === "string" && EASE_PATTERN.test(item.ease.trim())
       ? item.ease.trim()
       : undefined;
+    const focus = normalizeFocus(item.focus);
     return [{
       version: 1,
       move,
@@ -243,6 +303,10 @@ export function normalizeStoryboardCameraIntent(
       ...(fromRegion ? { fromRegion } : {}),
       ...(fromPart ? { fromPart } : {}),
       ...(finite(item.zoom) ? { zoom: clamp(item.zoom, ZOOM_MIN, ZOOM_MAX) } : {}),
+      ...(move === "orbit" && finite(item.arcDeg)
+        ? { arcDeg: round(clamp(item.arcDeg, ORBIT_ARC_MIN_DEG, ORBIT_ARC_MAX_DEG)) }
+        : {}),
+      ...(focus ? { focus } : {}),
       ...(ease ? { ease } : {}),
     }];
   }).sort((a, b) => a.startSec - b.startSec);
@@ -348,6 +412,10 @@ export function resolveCameraPlan(scenes: DirectScene[]): CameraPlanV1 {
         ...entry.target,
         ...(isFirst && entry.move.fromRegion ? { fromRegion: entry.move.fromRegion } : {}),
         ...(isFirst && entry.move.fromPart ? { fromPart: entry.move.fromPart } : {}),
+        ...(entry.move.move === "orbit"
+          ? { arcDeg: entry.move.arcDeg ?? ORBIT_ARC_DEFAULT_DEG }
+          : {}),
+        ...(entry.move.focus ? { focus: entry.move.focus } : {}),
       });
       cursor = endSec;
     }
@@ -457,6 +525,7 @@ export function parseCameraPlan(html: string): { plan?: CameraPlanV1; errors: st
       const toPart = stableName(segment.toPart);
       const fromRegion = stableName(segment.fromRegion);
       const fromPart = stableName(segment.fromPart);
+      const focus = normalizeFocus(segment.focus);
       return [{
         move,
         startSec: segment.startSec as number,
@@ -468,6 +537,10 @@ export function parseCameraPlan(html: string): { plan?: CameraPlanV1; errors: st
         ...(toPart ? { toPart } : {}),
         ...(fromRegion ? { fromRegion } : {}),
         ...(fromPart ? { fromPart } : {}),
+        ...(move === "orbit" && finite(segment.arcDeg)
+          ? { arcDeg: clamp(segment.arcDeg, ORBIT_ARC_MIN_DEG, ORBIT_ARC_MAX_DEG) }
+          : {}),
+        ...(focus ? { focus } : {}),
       }];
     });
     return sceneId && segments.length ? [{ sceneId, segments }] : [];
@@ -563,13 +636,25 @@ export function validateCameraContract(
           );
         }
       }
-      for (const part of [segment.toPart, segment.fromPart]) {
+      for (const part of [segment.toPart, segment.fromPart, segment.focus?.part]) {
         if (part && !attributePattern("data-part", part).test(scope)) {
           errors.push(
             `scene "${scenePlan.sceneId}" camera targets part "${part}" but no data-part="${part}" exists in that scene`,
           );
         }
       }
+    }
+    // Focus is enhancement-never-veto (no layers → no filter tweens), but a
+    // planned rack that silently does nothing wastes the shot; surface it.
+    if (
+      scenePlan.segments.some((segment) => segment.focus) &&
+      !/\bdata-(?:depth|parallax)\s*=/i.test(scope)
+    ) {
+      warnings.push(
+        `scene "${scenePlan.sceneId}" plans a rack-focus pull but has no data-depth/data-parallax ` +
+          `layers, so the focus modifier compiles to nothing — mark the scene's depth planes with ` +
+          `data-depth="0..1"`,
+      );
     }
     // The camera rig owns the world plane's transform. An authored tween on
     // the same element is the classic two-owners bug; surface it rather than
@@ -594,6 +679,7 @@ const ENERGETIC_CUT_STYLES = new Set([
   "inverse-zoom",
   "flash-white",
   "object-match",
+  "shape-match",
 ]);
 
 /**
@@ -614,6 +700,7 @@ export function auditCameraEnergy(storyboard: DirectScene[]): string[] {
   );
   const hasHighEnergyMove = fullMoves.some((move) =>
     move.move === "whip" ||
+    move.move === "orbit" ||
     (move.move === "push-in" && (move.zoom ?? MOVE_DEFAULTS["push-in"].zoom) >= HIGH_ENERGY_PUSH_ZOOM)
   );
   const hasEnergeticCut = storyboard.some(
@@ -621,10 +708,10 @@ export function auditCameraEnergy(storyboard: DirectScene[]): string[] {
   );
   if (durationSec >= 12 && !hasHighEnergyMove && !hasEnergeticCut) {
     findings.push(
-      `camera/energy: a ${durationSec.toFixed(0)}s film has no high-energy peak — no whip, no ` +
-        `push-in with zoom >= ${HIGH_ENERGY_PUSH_ZOOM}, and no zoom-through/inverse-zoom/` +
-        `flash-white/object-match cut anywhere. Give the energy curve's peak scene one whip or a ` +
-        `push-in with "zoom":1.35, or make one boundary an energetic cut style`,
+      `camera/energy: a ${durationSec.toFixed(0)}s film has no high-energy peak — no whip or orbit, ` +
+        `no push-in with zoom >= ${HIGH_ENERGY_PUSH_ZOOM}, and no zoom-through/inverse-zoom/` +
+        `flash-white/object-match/shape-match cut anywhere. Give the energy curve's peak scene one ` +
+        `whip, an orbit, or a push-in with "zoom":1.35, or make one boundary an energetic cut style`,
     );
   }
   if (fullMoves.length >= 4) {

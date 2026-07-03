@@ -20,6 +20,7 @@ import {
 import {
   commitDirectComposition,
   hasDirectComposition,
+  isFloatingPointClipOverlap,
   loadDirectComposition,
   undoDirectComposition,
   validateDirectComposition,
@@ -54,6 +55,33 @@ const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   vi.unstubAllEnvs();
+});
+
+describe("floating-point clip-overlap filter", () => {
+  const finding = (message: string) => ({
+    code: "overlapping_clips_same_track",
+    severity: "error" as const,
+    message,
+  });
+
+  it("drops the IEEE-754 phantom overlap that burned the 2026-07-03 live create", () => {
+    expect(isFloatingPointClipOverlap(finding(
+      "Track 1: clip ending at 11.600000000000001s overlaps with clip starting at 11.6s. " +
+        "Overlapping clips on the same track cause rendering conflicts.",
+    ))).toBe(true);
+  });
+
+  it("keeps genuine overlaps and unrelated findings", () => {
+    expect(isFloatingPointClipOverlap(finding(
+      "Track 1: clip ending at 12.4s overlaps with clip starting at 11.6s. " +
+        "Overlapping clips on the same track cause rendering conflicts.",
+    ))).toBe(false);
+    expect(isFloatingPointClipOverlap({
+      code: "timed_element_missing_clip_class",
+      severity: "error" as const,
+      message: "clip ending at 11.600000000000001s overlaps with clip starting at 11.6s",
+    })).toBe(false);
+  });
 });
 
 describe("world-layout station map normalization", () => {
