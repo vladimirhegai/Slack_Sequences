@@ -87,4 +87,30 @@ tl.fromTo("#close-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: .4
     expect(report.errors).toEqual([]);
     expect(report.warnings).toEqual([]);
   });
+
+  it("does not let ambient drift or decorative rules impersonate story beats", () => {
+    const driftingScenes: DirectScene[] = scenes.map((scene) => ({
+      ...scene,
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "drift",
+          toRegion: `${scene.id}-region`,
+          startSec: scene.startSec,
+          durationSec: scene.durationSec,
+        }],
+      },
+    }));
+    const report = analyzeMotionDensity(html(`
+tl.fromTo("#signal-rule", { scaleX: 0 }, { scaleX: 1, duration: .6 }, 2.4);
+tl.fromTo("#proof-divider", { scaleX: 0 }, { scaleX: 1, duration: .6 }, 7.4);
+tl.fromTo("#close-glow", { opacity: 0 }, { opacity: 1, duration: .6 }, 12.4);
+`), driftingScenes, 15);
+    expect(report.activities.filter((activity) =>
+      activity.source.startsWith("camera:") || activity.source.startsWith("gsap.")
+    ).every((activity) => activity.kind === "small")).toBe(true);
+    expect(report.errors.join("\n")).toContain("no major cut");
+    expect(report.errors.join("\n")).toContain('scene "signal" has 0 authored');
+  });
 });

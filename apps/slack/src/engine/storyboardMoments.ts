@@ -114,8 +114,19 @@ export function normalizeStoryboardMoments(
     const change = typeof item.change === "string" ? item.change.trim() : "";
     const motionIntent = typeof item.motionIntent === "string" ? item.motionIntent.trim() : "";
     const importance = item.importance === "primary" ? "primary" : "supporting";
-    const atSec = Number(item.atSec);
-    if (!id || !title || !change || !Number.isFinite(atSec)) return [];
+    const rawAtSec = Number(item.atSec);
+    if (!id || !title || !change || !Number.isFinite(rawAtSec)) return [];
+    // Models frequently restart timing at zero inside each scene even though
+    // the schema asks for composition time. Treat an otherwise valid offset
+    // before a later scene's start as scene-relative instead of clamping every
+    // moment to the entrance (which fabricated dead zones and clustering).
+    const atSec =
+      scene.startSec > 0 &&
+      rawAtSec >= 0 &&
+      rawAtSec < scene.startSec &&
+      rawAtSec <= scene.durationSec
+        ? scene.startSec + rawAtSec
+        : rawAtSec;
     return [{
       version: 1,
       id: /^[a-z][a-z0-9-]{0,63}$/.test(id) ? id : "",

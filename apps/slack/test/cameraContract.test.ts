@@ -6,6 +6,7 @@ import {
   CAMERA_FULL_MOVES,
   CAMERA_RUNTIME_FILE,
   SEQUENCES_EASES,
+  auditCameraEnergy,
   cameraMotionWindows,
   cameraRuntimeSource,
   normalizeStoryboardCameraIntent,
@@ -79,6 +80,20 @@ describe("normalizeStoryboardCameraIntent", () => {
       path: [{ version: 1, move: "pan", toRegion: "Hero Station!", startSec: 0, durationSec: 2 }],
     }, window)).toBeUndefined();
   });
+
+  it("recovers scene-relative camera times in later shots", () => {
+    const camera = normalizeStoryboardCameraIntent({
+      version: 1,
+      path: [
+        { version: 1, move: "pan", toRegion: "trace", startSec: 0.4, durationSec: 0.8 },
+        { version: 1, move: "push-in", toRegion: "risk", startSec: 2.1, durationSec: 0.7 },
+      ],
+    }, { startSec: 8, durationSec: 5 });
+    expect(camera?.path).toMatchObject([
+      { move: "pan", toRegion: "trace", startSec: 8.4, durationSec: 0.8 },
+      { move: "push-in", toRegion: "risk", startSec: 10.1, durationSec: 0.7 },
+    ]);
+  });
 });
 
 describe("resolveCameraPlan", () => {
@@ -99,7 +114,10 @@ describe("resolveCameraPlan", () => {
     ]);
     expect(plan.scenes).toHaveLength(1);
     const segments = plan.scenes[0]!.segments;
-    expect(segments.map((segment) => segment.move)).toEqual(["hold", "drift", "whip", "drift"]);
+    // The fill before a whip is split: approach drift, then a short
+    // seqAnticipate wind-up that dips the camera backward before the commit.
+    expect(segments.map((segment) => segment.move))
+      .toEqual(["hold", "drift", "drift", "whip", "drift"]);
     // Contiguous and covering [0, 10].
     expect(segments[0]!.startSec).toBe(0);
     for (let index = 1; index < segments.length; index += 1) {
@@ -108,7 +126,14 @@ describe("resolveCameraPlan", () => {
     expect(segments[segments.length - 1]!.endSec).toBe(10);
     // The gap drift approaches the upcoming framing; the tail drift creeps.
     expect(segments[1]).toMatchObject({ toRegion: "metrics", blend: 0.24 });
-    expect(segments[3]).toMatchObject({ toRegion: "metrics", blend: 0 });
+    expect(segments[2]).toMatchObject({
+      move: "drift",
+      ease: "seqAnticipate",
+      blend: 0.06,
+      toRegion: "metrics",
+    });
+    expect(segments[2]!.endSec - segments[2]!.startSec).toBeCloseTo(0.22, 5);
+    expect(segments[4]).toMatchObject({ toRegion: "metrics", blend: 0 });
   });
 
   it("applies per-move zoom and ease defaults", () => {
@@ -139,6 +164,79 @@ describe("resolveCameraPlan", () => {
   it("produces no plan for scenes without camera intents", () => {
     expect(resolveCameraPlan([scene({ id: "plain", startSec: 0, durationSec: 5 })]).scenes)
       .toEqual([]);
+  });
+});
+
+describe("auditCameraEnergy", () => {
+  const gentleCamera = (region: string): DirectScene["camera"] => ({
+    version: 1,
+    path: [{ version: 1, move: "pan", toRegion: region, startSec: 0.5, durationSec: 1.2 }],
+  });
+
+  it("flags a 12s+ film with no high-energy camera move or energetic cut", () => {
+    const findings = auditCameraEnergy([
+      scene({ id: "a", startSec: 0, durationSec: 6, camera: gentleCamera("hero") }),
+      scene({ id: "b", startSec: 6, durationSec: 6, camera: gentleCamera("metrics") }),
+    ]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatch(/no high-energy peak/);
+  });
+
+  it("accepts a whip, a hard push-in, or an energetic cut as the peak", () => {
+    const whip: DirectScene["camera"] = {
+      version: 1,
+      path: [{ version: 1, move: "whip", toRegion: "metrics", startSec: 1, durationSec: 0.5 }],
+    };
+    expect(auditCameraEnergy([
+      scene({ id: "a", startSec: 0, durationSec: 6, camera: whip }),
+      scene({ id: "b", startSec: 6, durationSec: 6 }),
+    ])).toEqual([]);
+    const hardPush: DirectScene["camera"] = {
+      version: 1,
+      path: [{ version: 1, move: "push-in", toRegion: "hero", zoom: 1.35, startSec: 1, durationSec: 1 }],
+    };
+    expect(auditCameraEnergy([
+      scene({ id: "a", startSec: 0, durationSec: 6, camera: hardPush }),
+      scene({ id: "b", startSec: 6, durationSec: 6 }),
+    ])).toEqual([]);
+    expect(auditCameraEnergy([
+      scene({
+        id: "a",
+        startSec: 0,
+        durationSec: 6,
+        cut: { version: 1, style: "zoom-through" },
+      }),
+      scene({ id: "b", startSec: 6, durationSec: 6 }),
+    ])).toEqual([]);
+  });
+
+  it("does not require a peak from a short film", () => {
+    expect(auditCameraEnergy([
+      scene({ id: "a", startSec: 0, durationSec: 4, camera: gentleCamera("hero") }),
+      scene({ id: "b", startSec: 4, durationSec: 4 }),
+    ])).toEqual([]);
+  });
+
+  it("flags four or more full moves sharing one verb", () => {
+    const pan = (region: string, at: number): NonNullable<DirectScene["camera"]>["path"][number] => ({
+      version: 1,
+      move: "pan",
+      toRegion: region,
+      startSec: at,
+      durationSec: 1,
+    });
+    const findings = auditCameraEnergy([
+      scene({
+        id: "a",
+        startSec: 0,
+        durationSec: 8,
+        camera: { version: 1, path: [pan("one", 0), pan("two", 2), pan("three", 4), pan("four", 6)] },
+        cut: { version: 1, style: "zoom-through" },
+      }),
+      scene({ id: "b", startSec: 8, durationSec: 6 }),
+    ]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatch(/same verb "pan"/);
   });
 });
 
@@ -226,6 +324,17 @@ describe("validateCameraContract", () => {
       .some((error) => error.includes(CAMERA_RUNTIME_FILE))).toBe(true);
     expect(validateCameraContract(html({ compileCall: false }), [cameraScene]).errors
       .some((error) => error.includes("SequencesCamera.compile"))).toBe(true);
+  });
+
+  it("ignores data-region strings in trailing scripts after a closed scene", () => {
+    const result = validateCameraContract(
+      html({
+        regions: ["hero"],
+        extraScript: 'const template = `<div data-region="metrics"></div>`;',
+      }),
+      [cameraScene],
+    );
+    expect(result.errors.some((error) => error.includes('region "metrics"'))).toBe(true);
   });
 
   it("warns when an authored tween targets the world plane", () => {

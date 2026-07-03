@@ -130,6 +130,28 @@ describe("interaction contract", () => {
     ), { numRuns: 500 });
   });
 
+  it("recovers scene-relative interaction timing in later shots", () => {
+    const normalized = normalizeStoryboardInteractionIntents([{
+      ...interaction,
+      startSec: 0.4,
+      arriveSec: 0.9,
+      pressSec: 1.05,
+      releaseSec: 1.2,
+      holdUntilSec: 1.5,
+    }], {
+      sceneId: "cta",
+      startSec: 4,
+      durationSec: 2,
+    });
+    expect(normalized[0]).toMatchObject({
+      startSec: 4.4,
+      arriveSec: 4.9,
+      pressSec: 5.05,
+      releaseSec: 5.2,
+      holdUntilSec: 5.5,
+    });
+  });
+
   it("discards strict-schema filler fields and redundant movement before a click", () => {
     const result = normalizeStoryboardInteractionIntents([
       {

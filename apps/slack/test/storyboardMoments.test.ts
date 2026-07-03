@@ -74,6 +74,19 @@ describe("moment floors", () => {
 });
 
 describe("validatePlannedMoments", () => {
+  it("recovers scene-relative moment times in later shots", () => {
+    const normalized = normalizeStoryboardMoments([
+      {
+        id: "relative-proof",
+        atSec: 2.3,
+        title: "Proof resolves",
+        visualState: "trace is resolved",
+        change: "the trace waterfall settles",
+      },
+    ], { sceneId: "proof", startSec: 5, durationSec: 5 });
+    expect(normalized[0]!.atSec).toBe(7.3);
+  });
+
   it("rejects a 15s plan with too few moments", () => {
     const planned = scenes.map((scene) => ({
       ...scene,

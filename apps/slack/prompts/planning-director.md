@@ -235,6 +235,11 @@ it the way a camera operator would.
   lay content out with the normal flow scaffolds (`.zone`, `.stack`, `.row`).
   Size regions near viewport proportions (roughly 1600–1920 × 800–1080) so a
   framed region fills the frame with intent.
+- **When the job supplies a "World-layout station map", it wins.** Those plane
+  sizes and station rects were derived deterministically from the storyboard's
+  grid cells; copy them verbatim instead of choosing your own coordinates.
+  Free placement is how stations end up clipping each other or sitting half
+  out of frame.
 - **The host owns the world transform.** When the locked storyboard gives a
   scene a `camera` path, the host injects the `sequences-camera` JSON island,
   the `sequences-camera.v1.js` runtime, and the `SequencesCamera.compile(tl,

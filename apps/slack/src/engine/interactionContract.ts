@@ -264,25 +264,40 @@ function normalizeStoryboardTiming(
     feedback === "press-ripple";
   const hasHold = finite(object.holdUntilSec);
   const minimumGap = Math.min(0.1, span / (needsPress ? 8 : 4));
+  const rawStart = finite(object.startSec) ? object.startSec : undefined;
+  const sceneOffset =
+    rawStart !== undefined &&
+    context.startSec > 0 &&
+    rawStart >= 0 &&
+    rawStart < context.startSec &&
+    rawStart <= context.durationSec
+      ? context.startSec
+      : 0;
+  const shifted = (value: unknown): number | undefined =>
+    finite(value) ? value + sceneOffset : undefined;
 
-  let startSec = finite(object.startSec)
-    ? clamp(object.startSec, low, high - minimumGap)
+  let startSec = rawStart !== undefined
+    ? clamp(rawStart + sceneOffset, low, high - minimumGap)
     : low + span * 0.12;
-  let arriveSec = finite(object.arriveSec)
-    ? Math.max(object.arriveSec, startSec + minimumGap)
+  const rawArrive = shifted(object.arriveSec);
+  let arriveSec = rawArrive !== undefined
+    ? Math.max(rawArrive, startSec + minimumGap)
     : startSec + span * 0.28;
+  const rawPress = shifted(object.pressSec);
   let pressSec = needsPress
-    ? finite(object.pressSec)
-      ? Math.max(object.pressSec, arriveSec + minimumGap)
+    ? rawPress !== undefined
+      ? Math.max(rawPress, arriveSec + minimumGap)
       : arriveSec + Math.max(0.12, minimumGap)
     : undefined;
+  const rawRelease = shifted(object.releaseSec);
   let releaseSec = needsPress
-    ? finite(object.releaseSec)
-      ? Math.max(object.releaseSec, pressSec! + minimumGap)
+    ? rawRelease !== undefined
+      ? Math.max(rawRelease, pressSec! + minimumGap)
       : pressSec! + Math.max(0.14, minimumGap)
     : undefined;
+  const rawHold = shifted(object.holdUntilSec);
   let holdUntilSec = hasHold
-    ? Math.max(object.holdUntilSec as number, releaseSec ?? arriveSec)
+    ? Math.max(rawHold!, releaseSec ?? arriveSec)
     : undefined;
 
   const end = holdUntilSec ?? releaseSec ?? arriveSec;

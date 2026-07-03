@@ -445,14 +445,41 @@
     swap: compileSwap,
   };
 
+  // Follow-through: beats declared at the same instant land 45ms apart, in
+  // declaration order, so elements settle in cascade instead of freezing on
+  // one shared frame. The shift stays far below the moment-evidence window.
+  function staggerBeats(beats) {
+    var ordered = beats.slice().sort(function (a, b) { return a.startSec - b.startSec; });
+    var clusterStart = null;
+    var clusterIndex = 0;
+    var result = [];
+    for (var i = 0; i < ordered.length; i += 1) {
+      var beat = ordered[i];
+      if (clusterStart !== null && beat.startSec - clusterStart <= 0.05) {
+        clusterIndex += 1;
+        var offset = clusterIndex * 0.045;
+        beat = Object.assign({}, beat, {
+          startSec: beat.startSec + offset,
+          endSec: beat.endSec + offset,
+        });
+      } else {
+        clusterStart = beat.startSec;
+        clusterIndex = 0;
+      }
+      result.push(beat);
+    }
+    return result;
+  }
+
   function compileScene(timeline, root, scenePlan) {
     var scene = root.querySelector('[data-scene="' + CSS.escape(scenePlan.sceneId) + '"]');
     if (!scene) {
       throw new Error('component plan references absent scene "' + scenePlan.sceneId + '"');
     }
     var bound = 0;
-    for (var i = 0; i < scenePlan.beats.length; i += 1) {
-      var beat = scenePlan.beats[i];
+    var beats = staggerBeats(scenePlan.beats);
+    for (var i = 0; i < beats.length; i += 1) {
+      var beat = beats[i];
       var el = scene.querySelector('[data-part="' + CSS.escape(beat.component) + '"]');
       if (!el) fail(beat.id, 'component "' + beat.component + '" is absent');
       if (beat.kind === "morph") {

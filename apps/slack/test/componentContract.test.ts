@@ -67,6 +67,13 @@ describe("normalizeStoryboardComponentBeats", () => {
     expect(beats[1]!.atSec).toBe(8);
   });
 
+  it("recovers scene-relative beat times in later shots", () => {
+    const beats = normalizeStoryboardComponentBeats([
+      { version: 1, id: "b1", component: "search-bar", kind: "type", atSec: 1.4, text: "latency" },
+    ], { sceneId: "later", startSec: 6, durationSec: 4 }, components);
+    expect(beats[0]!.atSec).toBe(7.4);
+  });
+
   it("drops beats referencing undeclared components or missing required args", () => {
     expect(normalizeStoryboardComponentBeats([
       { version: 1, id: "b1", component: "ghost", kind: "open", atSec: 1 },
@@ -245,6 +252,14 @@ describe("validateComponentContract", () => {
     expect(morphTargetGone.errors.length).toBeGreaterThan(0);
   });
 
+  it("ignores data-part strings in trailing scripts after a closed scene", () => {
+    const html = componentHtml().replace(
+      "</body>",
+      '<script>const template = `<div data-part="search-bar"></div>`;</script></body>',
+    );
+    expect(validateComponentContract(html, [componentScene()]).errors).toEqual([]);
+  });
+
   it("warns (never blocks) when kit classes or planned regions are missing", () => {
     const result = validateComponentContract(
       componentHtml({ searchAttrs: 'class="hand-rolled" data-component="search" data-part="search-bar"' })
@@ -342,6 +357,10 @@ describe("catalog / kit / runtime coherence", () => {
         expect(componentSupportsBeat(spec.kind, beat)).toBe(true);
       }
     }
+  });
+
+  it("supports streamed terminal confirmation output", () => {
+    expect(componentSupportsBeat("terminal", "stream")).toBe(true);
   });
 
   it("renders bounded planning vocabulary and an authoring reference", () => {

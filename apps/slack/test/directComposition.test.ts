@@ -8,6 +8,8 @@ import {
 } from "@sequences/platform/providers";
 import {
   applyCompositionRepair,
+  inferStoryboardPlanRequirements,
+  normalizeWorldLayout,
   parseCompositionResponse,
   parseStoryboardResponse,
   quarantineFailedInteractions,
@@ -52,6 +54,30 @@ const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   vi.unstubAllEnvs();
+});
+
+describe("world-layout station map normalization", () => {
+  it("keeps valid stations and drops junk entry-by-entry", () => {
+    expect(normalizeWorldLayout([
+      { region: "hero-claim", cell: [0, 0] },
+      { region: "metric-wall", cell: [1, 0] },
+      { region: "Bad Region", cell: [0, 1] }, // not kebab-case
+      { region: "too-far", cell: [3, 0] }, // out of range
+      { region: "fractional", cell: [0.5, 0] }, // not an integer
+      { region: "metric-wall", cell: [0, -1] }, // duplicate region
+      { region: "same-cell", cell: [1, 0] }, // duplicate cell
+      "junk",
+    ], true)).toEqual([
+      { region: "hero-claim", cell: [0, 0] },
+      { region: "metric-wall", cell: [1, 0] },
+    ]);
+  });
+
+  it("drops the map entirely without a camera path or when malformed", () => {
+    expect(normalizeWorldLayout([{ region: "hero", cell: [0, 0] }], false)).toEqual([]);
+    expect(normalizeWorldLayout({ region: "hero" }, true)).toEqual([]);
+    expect(normalizeWorldLayout(undefined, true)).toEqual([]);
+  });
 });
 
 describe("deterministic interaction target reconciliation", () => {
@@ -287,6 +313,100 @@ describe("direct HyperFrames composition", () => {
     expect(validation.errors).toEqual([]);
   });
 
+  it("normalizes model-authored display/visibility tweens before static validation", async () => {
+    const dir = projectDir();
+    const value = draft();
+    value.html = value.html
+      .replace(
+        'tl.set("#hook", { opacity: 1 }, 0);',
+        'tl.set("#hook", { display: "grid", visibility: "visible" }, 0);',
+      )
+      .replace(
+        'tl.set("#hook", { opacity: 0 }, 3.99);',
+        'tl.set("#hook", { display: "none" }, 3.99);',
+      )
+      .replace(
+        'tl.fromTo("#payoff-title", { scale: 0.82, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.7, ease: "back.out(1.6)" }, 4.2);',
+        'tl.fromTo("#payoff-title", { scale: 0.82, visibility: "hidden" }, { scale: 1, visibility: "visible", duration: 0.7, ease: "back.out(1.6)" }, 4.2);',
+      );
+    const complete = vi.fn().mockResolvedValue(response(value));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: value.storyboard,
+    });
+
+    expect(result.attempts).toBe(1);
+    expect(result.draft.html).toContain('tl.set("#hook", { opacity: 1 }, 0);');
+    expect(result.draft.html).toContain('tl.set("#hook", { opacity: 0 }, 3.99);');
+    expect(result.draft.html).toContain(
+      'tl.fromTo("#payoff-title", { opacity: 0, scale: 0.82 }, { opacity: 1, scale: 1, duration: 0.7, ease: "back.out(1.6)" }, 4.2);',
+    );
+    expect(result.draft.html).not.toMatch(
+      /(?:\.(?:to|from|fromTo|set)|gsap\.(?:to|from|fromTo|set))\s*\([^;]{0,1000}\b(?:display|visibility)\s*:/is,
+    );
+  });
+
+  it("deduplicates declared component data-part bindings before validation", async () => {
+    const dir = projectDir();
+    const value = draft();
+    value.storyboard[1]!.components = [{
+      version: 1,
+      id: "error-chart-card",
+      kind: "chart-line",
+      region: "chart-zone",
+      role: "hero",
+    }];
+    value.storyboard[1]!.beats = [{
+      version: 1,
+      id: "error-chart-draw",
+      sceneId: "payoff",
+      component: "error-chart-card",
+      kind: "chart",
+      atSec: 4.5,
+      durationSec: 1,
+    }];
+    value.html = value.html.replace(
+      '<div class="panel" data-layout-important data-layout-anchor="frame:center"><h1 id="payoff-title">Rollback in one click.</h1><p>Ship with nerve.</p></div>',
+      '<div class="panel cmp cmp-chart-line" data-component="chart-line" data-part="error-chart-card" data-layout-important data-layout-anchor="frame:center">' +
+        '<svg><path data-part="error-chart-card"></path><circle data-part="error-chart-card"></circle></svg>' +
+        '<h1 id="payoff-title">Rollback in one click.</h1><p>Ship with nerve.</p></div>',
+    );
+    const complete = vi.fn().mockResolvedValue(response(value));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: value.storyboard,
+    });
+
+    const scene = result.draft.html.match(
+      /<section[^>]*data-scene="payoff"[\s\S]*?<\/section>/,
+    )?.[0] ?? "";
+    expect(scene.match(/data-part="error-chart-card"/g)).toHaveLength(1);
+    expect(scene).toContain('data-part="error-chart-card-aux-1"');
+    expect(scene).toContain('data-part="error-chart-card-aux-2"');
+    expect(scene).toContain('data-region="chart-zone"');
+    expect(result.attempts).toBe(1);
+  });
+
   it("reports a truncated response as a token-limit problem, not a missing tag", () => {
     const value = draft();
     // The model opened the first tag but ran out of output budget before closing it.
@@ -337,6 +457,41 @@ describe("direct HyperFrames composition", () => {
     expect(() => parseStoryboardResponse(
       `<storyboard_json>${JSON.stringify(plan.slice(0, 2))}</storyboard_json>`,
     )).toThrow(/3-10 distinct shots/);
+  });
+
+  it("turns explicit component/camera direction into blocking plan coverage", () => {
+    const requirements = inferStoryboardPlanRequirements(
+      "Use one large spatial UI world with camera pushes and pans, object-match cuts, " +
+        "and component beats for search, command palette, table, stat card, terminal, " +
+        "toast, progress, and chart.",
+      18,
+    );
+    expect(requirements).toMatchObject({
+      targetDurationSec: 18,
+      minRequestedComponentKinds: 6,
+      minComponentBeats: 8,
+      minCameraMoves: 2,
+      requireMultiStationWorld: true,
+      requireObjectMatch: true,
+    });
+    expect(requirements.requestedComponentKinds).toHaveLength(8);
+    expect(() =>
+      parseStoryboardResponse(JSON.stringify(storyboard()), requirements)
+    ).toThrow(/motion-native product components/);
+    expect(() =>
+      parseStoryboardResponse(JSON.stringify(storyboard()), requirements)
+    ).toThrow(/spatial camera choreography/);
+  });
+
+  it("never demands more component kinds than the brief names", () => {
+    const requirements = inferStoryboardPlanRequirements(
+      "Show motion-native components: the search bar morphs into a command " +
+        "palette, plus a stat card with the key metric.",
+      16,
+    );
+    expect(requirements.requestedComponentKinds).toHaveLength(3);
+    // The floor is capped at the requested count so the brief stays satisfiable.
+    expect(requirements.minRequestedComponentKinds).toBe(3);
   });
 
   it("keeps typed boundary cuts and degrades unusable ones before source authoring", () => {
@@ -547,8 +702,14 @@ describe("direct HyperFrames composition", () => {
     });
     expect(complete).toHaveBeenCalledTimes(2);
     const conceptOptions = complete.mock.calls[0]?.[1] as {
+      thinkingMode?: string;
+      model?: string;
       responseFormat?: { json_schema?: { name?: string } };
     };
+    expect(conceptOptions).toMatchObject({
+      thinkingMode: "high",
+      model: "z-ai/glm-5.2",
+    });
     expect(conceptOptions.responseFormat?.json_schema?.name).toBe("sequences_concept");
     const storyboardPrompt = complete.mock.calls[1]?.[0] as string;
     expect(storyboardPrompt).toContain("<concept_json>");
@@ -557,7 +718,7 @@ describe("direct HyperFrames composition", () => {
     expect(fs.existsSync(path.join(dir, "planning", "concept.json"))).toBe(true);
   });
 
-  it("routes the high-leverage storyboard pass to reasoning-enabled GLM 5.2", async () => {
+  it("routes storyboard expansion to reasoning-enabled GLM 5.2 at medium effort", async () => {
     vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
     const dir = projectDir();
     const complete = vi.fn().mockResolvedValue(
@@ -582,13 +743,45 @@ describe("direct HyperFrames composition", () => {
       responseFormat?: { type?: string; json_schema?: { name?: string } };
     };
     expect(options).toMatchObject({
-      maxTokens: 16_384,
-      thinkingMode: "high",
+      maxTokens: 30_720,
+      thinkingMode: "medium",
       model: "z-ai/glm-5.2",
     });
     expect(options.responseFormat).toMatchObject({
       type: "json_schema",
       json_schema: { name: "sequences_storyboard" },
+    });
+  });
+
+  it("streams the reasoning storyboard so long GLM thinking does not look idle", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
+    const dir = projectDir();
+    const complete = vi.fn(async () => {
+      throw new Error("non-streaming transport should not be used");
+    });
+    const streamComplete = vi.fn(async () =>
+      JSON.stringify({ storyboard: storyboard() })
+    );
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "streaming planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+      streamComplete,
+    };
+    await expect(requestStoryboardPlan(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+    })).resolves.toEqual(storyboard());
+    expect(complete).not.toHaveBeenCalled();
+    expect(streamComplete).toHaveBeenCalledTimes(1);
+    const streamOptions = (streamComplete.mock.calls as unknown[][])[0]?.[1];
+    expect(streamOptions).toMatchObject({
+      model: "z-ai/glm-5.2",
+      thinkingMode: "medium",
+      maxTokens: 30_720,
     });
   });
 
@@ -669,6 +862,61 @@ describe("direct HyperFrames composition", () => {
     expect(plan).toEqual(storyboard());
   });
 
+  it("retries an empty streamed completion from the provider", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
+    const dir = projectDir();
+    const streamComplete = vi.fn()
+      .mockRejectedValueOnce(new Error("OpenRouter returned an empty completion"))
+      .mockResolvedValueOnce(JSON.stringify({ storyboard: storyboard() }));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete: vi.fn(),
+      streamComplete,
+    };
+    const plan = await requestStoryboardPlan(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+    });
+    expect(streamComplete).toHaveBeenCalledTimes(2);
+    expect(plan).toEqual(storyboard());
+  });
+
+  it("recovers a truncated reasoning storyboard with lower effort", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
+    const dir = projectDir();
+    const complete = vi.fn()
+      .mockRejectedValueOnce(
+        new ProviderOutputTruncatedError("OpenRouter", 30_720, '{"storyboard":['),
+      )
+      .mockResolvedValueOnce(JSON.stringify({ storyboard: storyboard() }));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const plan = await requestStoryboardPlan(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+    });
+    expect(plan).toEqual(storyboard());
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(complete.mock.calls[0]?.[1]).toMatchObject({
+      maxTokens: 30_720,
+      thinkingMode: "medium",
+    });
+    expect(complete.mock.calls[1]?.[1]).toMatchObject({
+      maxTokens: 8_192,
+      thinkingMode: "none",
+    });
+  });
+
   it("retries an upstream idle timeout inside the same source attempt", async () => {
     const dir = projectDir();
     const complete = vi.fn()
@@ -689,6 +937,35 @@ describe("direct HyperFrames composition", () => {
     });
     expect(result.attempts).toBe(1);
     expect(complete).toHaveBeenCalledTimes(2);
+  });
+
+  it("streams long source authoring when the provider supports it", async () => {
+    const dir = projectDir();
+    const complete = vi.fn(async () => {
+      throw new Error("non-streaming source transport should not be used");
+    });
+    const streamComplete = vi.fn(async () => response(draft()));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "streaming author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+      streamComplete,
+    };
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: draft().storyboard,
+    });
+    expect(result.attempts).toBe(1);
+    expect(complete).not.toHaveBeenCalled();
+    expect(streamComplete).toHaveBeenCalledTimes(1);
+    expect((streamComplete.mock.calls as unknown[][])[0]?.[1]).toMatchObject({
+      model: "deepseek/deepseek-v4-pro",
+      thinkingMode: "none",
+    });
   });
 
   it("surfaces an actionable message when storyboard timeouts exhaust retries", async () => {
@@ -725,9 +1002,9 @@ describe("direct HyperFrames composition", () => {
     await expect(
       requestStoryboardPlan(provider, { brief: "Launch Relay", projectDir: dir, skills: skills() }),
     ).rejects.toThrow(/missing <storyboard_json>/);
-    // The bounded artifact is retried exactly once with the deterministic
-    // findings appended; transport-level retries never fire for content errors.
-    expect(complete).toHaveBeenCalledTimes(2);
+    // The bounded artifact gets two retries with findings appended;
+    // transport-level retries never fire for content errors.
+    expect(complete).toHaveBeenCalledTimes(3);
     expect(complete.mock.calls[1]?.[0]).toContain("Previous attempt rejected");
   });
 
@@ -1494,6 +1771,76 @@ describe("direct HyperFrames composition", () => {
         '[data-cursor-id="pointer"]{display:none!important}',
       );
       expect(result.draft.html).toContain("Ship with nerve.");
+    } finally {
+      inspector.mockImplementation(priorImplementation!);
+    }
+  });
+
+  it("quarantines runtime-level unsupported optional interaction plans", async () => {
+    const dir = projectDir();
+    const value = draft();
+    value.storyboard[1]!.interactions = [{
+      version: 1,
+      id: "runtime-broken-click",
+      sceneId: "payoff",
+      cursorId: "pointer",
+      targetPart: "primary-action",
+      action: "click",
+      startSec: 4.4,
+      arriveSec: 5,
+      pressSec: 5.1,
+      releaseSec: 5.25,
+      from: "frame:bottom-right",
+      path: "human",
+      aimX: 0.5,
+      aimY: 0.5,
+      feedback: "press",
+    }];
+    value.html = value.html.replace(
+      '<div class="panel" data-layout-important data-layout-anchor="frame:center"><h1 id="payoff-title">',
+      '<div class="panel" data-part="primary-action" data-layout-important data-layout-anchor="frame:center"><h1 id="payoff-title">',
+    );
+    const inspector = vi.mocked(inspectDirectComposition);
+    const priorImplementation = inspector.getMockImplementation();
+    inspector.mockImplementation(async (_projectDir, candidate) => {
+      const hasInteraction = candidate.storyboard.some((scene) => scene.interactions?.length);
+      return hasInteraction
+        ? {
+            ok: false,
+            strictOk: false,
+            samples: [],
+            issues: [],
+            errors: ["browser_runtime: unsupported sequences interaction plan"],
+            warnings: [],
+          }
+        : {
+            ok: true,
+            strictOk: true,
+            samples: [0, 2, 4, 6, 8],
+            issues: [],
+            errors: [],
+            warnings: [],
+          };
+    });
+    try {
+      const complete = vi.fn().mockResolvedValue(response(value));
+      const provider: AgentProvider = {
+        id: "openrouter-api",
+        label: "test author",
+        kind: "api",
+        detect: async () => ({ available: true, detail: "test" }),
+        complete,
+      };
+      const result = await requestDirectComposition(provider, {
+        brief: "Launch Relay",
+        projectDir: dir,
+        skills: skills(),
+        lockedStoryboard: value.storyboard,
+      });
+      expect(result.attempts).toBe(3);
+      expect(result.draft.storyboard[1]!.interactions).toBeUndefined();
+      expect(result.draft.html).toContain('"interactions":[]');
+      expect(result.draft.html).toContain("data-sequences-quarantine");
     } finally {
       inspector.mockImplementation(priorImplementation!);
     }

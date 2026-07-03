@@ -205,6 +205,18 @@ function opacityOnly(keys: Set<string>): boolean {
   );
 }
 
+/**
+ * Decorative polish is welcome, but it cannot prove that the story advanced.
+ * These targets are the common atmospheric/ornamental layers authors animate
+ * to make a frame feel alive. Classify them as connective motion so a glow,
+ * underline, grain pass, or divider cannot satisfy the liveness or storyboard
+ * moment contracts by itself.
+ */
+function decorativeTarget(target: string): boolean {
+  return /(?:^|[#.\s_\[\]-])(?:accent-?)?(?:underline|rule|divider|hairline|bloom|glow|grain|vignette|keylight|atmosphere|ambient|decor(?:ation|ative)?|particle|spark|noise)(?:$|[#.\s_\[\]-])/i
+    .test(target);
+}
+
 function authoredTweenActivities(
   html: string,
   scenes: DirectScene[],
@@ -234,7 +246,7 @@ function authoredTweenActivities(
       continue;
     }
     activities.push({
-      kind: "medium",
+      kind: decorativeTarget(target) ? "small" : "medium",
       source: `gsap.${method}`,
       startSec: round(clamp(position, 0, sceneEnd(scene))),
       endSec: round(clamp(position + duration, 0, sceneEnd(scene))),
@@ -349,6 +361,9 @@ function mergedGaps(
   durationSec: number,
 ): Array<{ startSec: number; endSec: number; durationSec: number }> {
   const windows = activities
+    // Small activity is connective polish (camera drift, grain, glows,
+    // underlines). It must not hide a stretch with no information change.
+    .filter((activity) => activity.kind !== "small")
     .map((activity) => ({
       start: clamp(activity.startSec, 0, durationSec),
       end: clamp(Math.max(activity.endSec, activity.startSec + 0.04), 0, durationSec),
@@ -452,7 +467,7 @@ export function analyzeMotionDensity(
     for (const scene of scenes) {
       const sceneEndSec = sceneEnd(scene);
       const beats = [
-        ...authored.activities,
+        ...authored.activities.filter((activity) => activity.kind !== "small"),
         ...component,
         ...camera.filter((a) => a.kind === "medium"),
       ]
@@ -498,7 +513,10 @@ export function analyzeMotionDensity(
           `give each beat an explicit composition time`,
       );
     }
-    const starts = authored.activities.map((activity) => activity.startSec).sort((a, b) => a - b);
+    const starts = authored.activities
+      .filter((activity) => activity.kind !== "small")
+      .map((activity) => activity.startSec)
+      .sort((a, b) => a - b);
     for (const [index, start] of starts.entries()) {
       const count = starts.filter((time) => time >= start && time < start + DENSE_WINDOW_SEC).length;
       if (count > MAX_BEATS_PER_WINDOW) {
@@ -512,7 +530,10 @@ export function analyzeMotionDensity(
     }
   }
   const sceneReports = scenes.map((scene) => {
-    const beats = [...authored.activities, ...component]
+    const beats = [
+      ...authored.activities.filter((activity) => activity.kind !== "small"),
+      ...component,
+    ]
       .filter((activity) => activity.sceneId === scene.id);
     return {
       sceneId: scene.id,

@@ -76,7 +76,8 @@
   var REGION_MARGIN_RATIO = 0.04;
   var PART_MARGIN_RATIO = 0.16;
   var CREEP_ZOOM = 1.028;
-  var ORBIT_DEG = 2.2;
+  var ORBIT_DEG = 7;
+  var WHIP_BLUR_PX = 7;
 
   function clamp(value, minimum, maximum) {
     return Math.min(maximum, Math.max(minimum, value));
@@ -144,6 +145,19 @@
 
   function nearlySame(a, b) {
     return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) < 4 && Math.abs(a.z - b.z) < 0.01;
+  }
+
+  // Per-whip blur state. A factory (not an inline closure in the segment loop)
+  // so multiple whips in one scene each drive their own proxy. Blur is a pure
+  // function of the proxy, cleared at rest — deterministic under seek.
+  function makeWhipBlur(world) {
+    var proxy = { b: 0 };
+    return {
+      proxy: proxy,
+      apply: function () {
+        world.style.filter = proxy.b > 0.05 ? "blur(" + proxy.b.toFixed(2) + "px)" : "";
+      },
+    };
   }
 
   function tween(timeline, target, fromVars, toVars, at) {
@@ -246,6 +260,22 @@
           ease: segment.ease,
           onUpdate: apply,
         }, segment.startSec);
+      }
+      if (segment.move === "whip") {
+        var blur = makeWhipBlur(world);
+        var blurHalf = duration / 2;
+        tween(timeline, blur.proxy, { b: 0 }, {
+          b: WHIP_BLUR_PX,
+          duration: blurHalf,
+          ease: "sine.in",
+          onUpdate: blur.apply,
+        }, segment.startSec);
+        tween(timeline, blur.proxy, { b: WHIP_BLUR_PX }, {
+          b: 0,
+          duration: blurHalf,
+          ease: "sine.out",
+          onUpdate: blur.apply,
+        }, segment.startSec + blurHalf);
       }
       if (segment.move === "orbit-lite") {
         var sign = end.x >= state.x ? 1 : -1;

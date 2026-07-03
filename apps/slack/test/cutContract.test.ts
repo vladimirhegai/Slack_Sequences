@@ -94,8 +94,8 @@ function htmlFor(plan: CutPlanV1, extras = ""): string {
 </head><body>
 <div data-composition-id="test" data-duration="12">
 <section data-scene="one" id="one"><span data-part="chip">chip</span></section>
-<section data-scene="two" id="two"><span data-part="chip">chip</span><span data-part="panel">panel</span></section>
-<section data-scene="three" id="three"></section>
+<section data-scene="two" id="two"><span data-part="chip">chip</span></section>
+<section data-scene="three" id="three"><span data-part="panel">panel</span></section>
 </div>
 <script type="application/json" id="sequences-cuts">${JSON.stringify(plan)}</script>
 <script>const tl = gsap.timeline({ paused: true });${extras}
@@ -134,7 +134,25 @@ describe("validateCutContract", () => {
     const plan = resolveCutPlan(scenes);
     const html = htmlFor(plan).replace(/<span data-part="panel">panel<\/span>/, "");
     const result = validateCutContract(html, scenes);
-    expect(result.errors.some((error) => error.includes('"panel" is absent'))).toBe(true);
+    expect(result.errors.some((error) =>
+      error.includes('incoming part "panel" must exist as a data-part inside scene "three"')
+    )).toBe(true);
+  });
+
+  it("rejects a focal part that exists only in the WRONG scene", () => {
+    // The runtime binds scene-scoped; a whole-document check would pass this
+    // and detonate in browser QA (the 2026-07-03 morph-proof failure).
+    const plan = resolveCutPlan(scenes);
+    const html = htmlFor(plan).replace(
+      /<section data-scene="two" id="two"><span data-part="chip">chip<\/span><\/section>\n<section data-scene="three" id="three"><span data-part="panel">panel<\/span><\/section>/,
+      '<section data-scene="two" id="two"><span data-part="chip">chip</span>' +
+        '<span data-part="panel">panel</span></section>\n' +
+        '<section data-scene="three" id="three"></section>',
+    );
+    const result = validateCutContract(html, scenes);
+    expect(result.errors.some((error) =>
+      error.includes('incoming part "panel" must exist as a data-part inside scene "three"')
+    )).toBe(true);
   });
 
   it("warns when an authored tween competes with the runtime for a wrapper", () => {

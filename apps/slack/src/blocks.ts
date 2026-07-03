@@ -6,6 +6,7 @@ import type { KnownBlock, View } from "@slack/types";
 import type {
   McpToolName,
   OrchestratorProgress,
+  StageReceipt,
   Tone,
   ToolCallReceipt,
 } from "./orchestrator.ts";
@@ -246,7 +247,11 @@ const TOOL_LABELS: Record<McpToolName, string> = {
 };
 
 /** Live, incrementally updated work trace shown while the lifecycle is running. */
-export function thinkingStepsBlocks(title: string, steps: ThinkingStep[]): KnownBlock[] {
+export function thinkingStepsBlocks(
+  title: string,
+  steps: ThinkingStep[],
+  etaLabel?: string,
+): KnownBlock[] {
   const lines = steps.map((step) => {
     const icon =
       step.state === "running"
@@ -277,6 +282,12 @@ export function thinkingStepsBlocks(title: string, steps: ThinkingStep[]): Known
         text: `:sparkles: *Thinking steps for "${escapeMrkdwn(title)}"*\n${lines.join("\n")}`,
       },
     },
+    ...(etaLabel
+      ? [{
+          type: "context" as const,
+          elements: [{ type: "mrkdwn" as const, text: `:stopwatch: ${etaLabel}` }],
+        }]
+      : []),
   ];
 }
 
@@ -310,6 +321,14 @@ export interface ResultView {
   fallback?: { stage: string };
   provider: string;
   renderQuality?: "draft" | "high";
+  /**
+   * Demo-operator receipts (`/sequences debug on`): the model-stage trail with
+   * attempt counts. Argument-free by construction — stage names, statuses,
+   * attempts, durations only.
+   */
+  debugStages?: StageReceipt[];
+  /** Countdown shown on the "rendering" headline (e.g. "~60s remaining"). */
+  renderEtaLabel?: string;
   /** The per-job frame.md design system chosen for this video, if any. */
   frame?: {
     label: string;
@@ -325,7 +344,9 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
       ? `:movie_camera: *"${title}" is ready* - draft below.`
       : view.videoStage === "unavailable"
         ? `:movie_camera: *"${title}" - storyboard ready.* Couldn't render the video on this host; thumbnails above.`
-        : `:hourglass_flowing_sand: *"${title}" - storyboard ready.* Rendering the video...`;
+        : `:hourglass_flowing_sand: *"${title}" - storyboard ready.* Rendering the video...${
+            view.renderEtaLabel ? ` (${view.renderEtaLabel})` : ""
+          }`;
   const path = view.usedMcp ? "through an MCP-first lifecycle" : "through the in-process engine";
   const planned = view.usedPreset
     ? `curated demo plan ${path}`
@@ -344,6 +365,14 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
       return `\`${call.tool}\` ${mark} ${call.durationMs}ms`;
     })
     .join("  -  ");
+  const debugTrace = (view.debugStages ?? [])
+    .map((stage) => {
+      const mark = stage.status === "succeeded" ? ":white_check_mark:" : ":x:";
+      const attempts =
+        stage.attempts !== undefined && stage.attempts > 1 ? ` · ${stage.attempts} attempts` : "";
+      return `${mark} \`${stage.stage}\`${attempts} · ${Math.round(stage.durationMs / 100) / 10}s`;
+    })
+    .join("\n");
   const skillReceipt = (view.skillsUsed ?? []).map((name) => `\`/${name}\``).join(" - ");
   const slackReceipt = (view.slackMcpTools ?? []).map((name) => `\`${name}\``).join(" - ");
   const frameReceipt = view.frame
@@ -371,6 +400,15 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
       ? [{
           type: "context" as const,
           elements: [{ type: "mrkdwn" as const, text: `*Build trace*  -  ${buildTrace}` }],
+        }]
+      : []),
+    ...(debugTrace
+      ? [{
+          type: "section" as const,
+          text: {
+            type: "mrkdwn" as const,
+            text: `:mag: *Debug — model stage receipts* (\`/sequences debug off\` to hide)\n${debugTrace}`,
+          },
         }]
       : []),
     ...(frameReceipt

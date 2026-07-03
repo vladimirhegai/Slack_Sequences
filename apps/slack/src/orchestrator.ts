@@ -104,9 +104,20 @@ export function assembleBrief(fields: BriefFields): string {
   if (fields.tone) {
     lines.push(`Preferred motion profile: ${fields.tone} — a ${TONE_HINT[fields.tone]} feel.`);
   }
-  if (fields.lengthSec) lines.push(`Target length: about ${fields.lengthSec} seconds.`);
+  if (fields.lengthSec) {
+    const lower = Math.max(6, Math.floor(fields.lengthSec * 0.8));
+    const upper = Math.min(60, Math.ceil(fields.lengthSec * 1.2));
+    lines.push(
+      `Target runtime: around ${fields.lengthSec} seconds. This is a pacing center, not an ` +
+        `exact duration; ${lower}-${upper} seconds is acceptable when the edit plays better.`,
+    );
+  }
   if (fields.context) lines.push(`Extra context: ${fields.context}`);
   lines.push(
+    "Treat product facts, quoted UI copy, and requested product beats as coverage constraints. " +
+      "Treat shot lists and motion notes as creative intent, not a literal edit: synthesize them " +
+      "into one authored visual argument, atomize long prose into short screen copy, and never " +
+      "paste the launch paragraph onto a card.",
     "Build a launch reel: a hook, the product/feature in action, the metric that matters, optional proof, and a CTA close.",
   );
   return lines.join("\n");
@@ -156,6 +167,8 @@ export interface StageReceipt {
   stage: AuthoringStage;
   status: "succeeded" | "failed";
   durationMs: number;
+  /** How many model attempts the stage consumed (1 = clean first pass). */
+  attempts?: number;
 }
 
 export interface FrameInfo {
@@ -192,6 +205,17 @@ export interface OrchestratorProgress {
 }
 
 export type ProgressCallback = (progress: OrchestratorProgress) => void | Promise<void>;
+
+/**
+ * Live pulse for the named model-authoring stages (frame-design, storyboard,
+ * source-author) — the long silent window before any MCP tool runs. Feeds the
+ * ETA countdown in Slack; never gates work.
+ */
+export type StageProgressCallback = (
+  stage: AuthoringStage,
+  phase: "started" | "completed",
+  durationMs?: number,
+) => void;
 
 async function reportProgress(
   callback: ProgressCallback | undefined,
@@ -619,6 +643,17 @@ export interface CreateVideoOptions extends BriefFields {
   render?: boolean;
   preferMcp?: boolean;
   onProgress?: ProgressCallback;
+  /** Pulse for the model-authoring stages; drives the Slack ETA countdown. */
+  onStageProgress?: StageProgressCallback;
+  /**
+   * Model-free proof film when creative authoring is exhausted. ON by default:
+   * the result is explicitly labeled (`VideoResult.fallback` + the Slack
+   * fallback banner and debug receipts keep it honest), and a labeled proof
+   * film beats a raw error in front of a demo audience. Operators who prefer
+   * visible failures opt out per call or with
+   * SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0.
+   */
+  allowDeterministicFallback?: boolean;
   /**
    * Skip the planning brain and apply this plan directly. A function receives the
    * freshly-initialized project so it can reference seeded asset ids. This is the
@@ -653,25 +688,33 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     // deterministic fallback is an explicitly labeled outcome — never
     // disguised as creative output.
     const stages: StageReceipt[] = [];
+    const pulseStage = (
+      stage: AuthoringStage,
+      phase: "started" | "completed",
+      durationMs?: number,
+    ): void => {
+      try {
+        options.onStageProgress?.(stage, phase, durationMs);
+      } catch {
+        // Progress display must never disturb the build.
+      }
+    };
     const runStage = async <T>(
       stage: AuthoringStage,
       run: () => Promise<T>,
     ): Promise<{ value?: T; error?: unknown }> => {
       const started = performance.now();
+      pulseStage(stage, "started");
       try {
         const value = await run();
-        stages.push({
-          stage,
-          status: "succeeded",
-          durationMs: Math.round(performance.now() - started),
-        });
+        const durationMs = Math.round(performance.now() - started);
+        stages.push({ stage, status: "succeeded", durationMs });
+        pulseStage(stage, "completed", durationMs);
         return { value };
       } catch (error) {
-        stages.push({
-          stage,
-          status: "failed",
-          durationMs: Math.round(performance.now() - started),
-        });
+        const durationMs = Math.round(performance.now() - started);
+        stages.push({ stage, status: "failed", durationMs });
+        pulseStage(stage, "completed", durationMs);
         process.stderr.write(
           `[orchestrator] stage "${stage}" failed: ${
             error instanceof Error ? error.message : String(error)
@@ -682,29 +725,49 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     };
     const stageReason = (error: unknown): string =>
       (error instanceof Error ? error.message : String(error)).slice(0, 300);
+    // Attempt counters are out-params the retry loops write into; the debug
+    // receipt trail renders them so an operator can see silent retries.
+    const setStageAttempts = (stage: AuthoringStage, count: number): void => {
+      if (count <= 0) return;
+      const receipt = [...stages].reverse().find((entry) => entry.stage === stage);
+      if (receipt) receipt.attempts = count;
+    };
 
     // Per-job frame.md: bounded art direction + deterministic design tools.
     // Hard brand/contrast/font constraints, tunable recommendations, safe
     // fallback — buildJobFrame degrades internally, so a throw here is real.
-    const frame = await buildJobFrame({
-      provider,
-      projectDir: dir,
-      brief,
-      tone: options.tone,
-      evidence: options.context,
-      brandName: options.brandName ?? options.product,
-    });
+    const framed = await runStage("frame-design", () =>
+      buildJobFrame({
+        provider,
+        projectDir: dir,
+        brief,
+        tone: options.tone,
+        evidence: options.context,
+        brandName: options.brandName ?? options.product,
+      }));
+    if (!framed.value) {
+      throw new Error(
+        `Creative authoring failed during frame-design. No generic video was published. ` +
+          `${stageReason(framed.error)}`,
+      );
+    }
+    const frame = framed.value;
     let authoredDraft: DirectCompositionDraft | undefined;
     let fallbackInfo: VideoResult["fallback"];
+    const storyboardAttempts = { count: 0 };
     const planned = await runStage("storyboard-plan", () =>
       requestStoryboardPlan(provider, {
         brief,
         projectDir: dir,
         skills,
         frameMd: frame.frameMd,
+        targetDurationSec: options.lengthSec,
+        attempts: storyboardAttempts,
       }));
+    setStageAttempts("storyboard-plan", storyboardAttempts.count);
     let authoredError: unknown;
     if (planned.value) {
+      const authorAttempts = { count: 0 };
       const authored = await runStage("source-author", () =>
         requestDirectComposition(provider, {
           brief,
@@ -712,7 +775,9 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
           skills,
           frameMd: frame.frameMd,
           lockedStoryboard: planned.value,
+          attempts: authorAttempts,
         }));
+      setStageAttempts("source-author", authorAttempts.count);
       if (authored.value) {
         authoredDraft = authored.value.draft;
       }
@@ -721,9 +786,18 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     if (!authoredDraft) {
       const failedStage: AuthoringStage = planned.value ? "source-author" : "storyboard-plan";
       const reason = stageReason(planned.error ?? authoredError);
+      const allowFallback =
+        options.allowDeterministicFallback ??
+        process.env.SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK !== "0";
+      if (!allowFallback) {
+        throw new Error(
+          `Creative authoring failed during ${failedStage}. No generic video was published. ` +
+            `${reason}`,
+        );
+      }
       process.stderr.write(
         `[orchestrator] model authoring unavailable at stage "${failedStage}"; ` +
-          `publishing the deterministic safe fallback\n`,
+          `publishing the explicitly enabled deterministic safe fallback\n`,
       );
       fallbackInfo = { stage: failedStage, reason };
       authoredDraft = buildFallbackComposition({

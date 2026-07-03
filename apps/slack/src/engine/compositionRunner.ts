@@ -17,6 +17,7 @@ import {
   validateDirectComposition,
   type DirectCompositionDraft,
   type DirectScene,
+  type WorldLayoutCellV1,
 } from "./directComposition.ts";
 import {
   inspectDirectComposition,
@@ -39,6 +40,7 @@ import {
   CAMERA_MOVES,
   CAMERA_RUNTIME_FILE,
   SEQUENCES_EASES,
+  auditCameraEnergy,
   injectCameraRuntimeTag,
   normalizeStoryboardCameraIntent,
   resolveCameraPlan,
@@ -76,6 +78,7 @@ import {
   creativeModel,
   creativeThinkingMode,
   productionModel,
+  thinkingOverride,
 } from "./modelPolicy.ts";
 
 const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -97,10 +100,11 @@ const MAX_REPAIR_PATCHES = 16;
 // Camera-era storyboards carry typed camera paths and more shots, so the
 // compact JSON artifact needs more room than the pre-rig 4K ceiling.
 const STORYBOARD_MAX_TOKENS = 6_144;
-// GLM spends its budget on reasoning before the compact JSON artifact; its
-// provider ceiling is ~33K output tokens, so give the reasoning storyboard
-// enough room that a long think cannot truncate the artifact.
-const REASONING_STORYBOARD_MAX_TOKENS = 16_384;
+// GLM spends this shared budget on reasoning before the JSON artifact.
+// OpenRouter currently exposes a 32,768-token completion ceiling for GLM 5.2;
+// reserving almost all of it prevents a good long think from truncating the
+// actual storyboard at the old 16K application cap.
+const REASONING_STORYBOARD_MAX_TOKENS = 30_720;
 const MAX_AUTHOR_SEGMENTS = 3;
 
 function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat"]> {
@@ -456,7 +460,22 @@ function storyboardThinkingMode(
   provider: AgentProvider,
   model: string | undefined,
 ): CompleteOptions["thinkingMode"] {
-  return creativeThinkingMode(provider, model);
+  const override = thinkingOverride("SLACK_SEQUENCES_STORYBOARD_THINKING");
+  if (override) return override;
+  const creative = creativeThinkingMode(provider, model);
+  // The cached concept pass already spends high effort on taste. Storyboard
+  // expansion is a large strict artifact; medium preserves deliberation while
+  // reserving budget/time for the JSON that the source author needs.
+  return creative === "high" ? "medium" : creative;
+}
+
+/**
+ * Full-document source emission defaults to reasoning off — DeepSeek-style
+ * models spend the whole budget on source, not deliberation. The override
+ * exists so operators can measure whether a reasoning pass earns its latency.
+ */
+function authorThinkingMode(): CompleteOptions["thinkingMode"] {
+  return thinkingOverride("SLACK_SEQUENCES_AUTHOR_THINKING") ?? "none";
 }
 
 function tagged(raw: string, name: string): string {
@@ -582,6 +601,16 @@ function extractIndexHtmlSource(raw: string): string {
 function isOutputTruncation(error: unknown): boolean {
   return error instanceof ProviderOutputTruncatedError ||
     (error instanceof Error && /truncat|output-token limit|finish_reason.?length/i.test(error.message));
+}
+
+/**
+ * Some OpenRouter endpoints (Kimi K2.7, GPT-5 tiers) reject `reasoning: none`
+ * with an HTTP 400. The retry loops downgrade reasoning on recovery passes to
+ * protect the completion budget, so this must be detected reactively — the
+ * next attempt keeps a minimal reasoning floor instead of failing the stage.
+ */
+function isReasoningMandatoryError(error: unknown): boolean {
+  return error instanceof Error && /reasoning is mandatory/i.test(error.message);
 }
 
 function appendContinuation(prefix: string, continuation: string): string {
@@ -880,7 +909,12 @@ async function completeSourceWithContinuation(
   let lastTruncation: ProviderOutputTruncatedError | undefined;
   for (let segment = 1; segment <= MAX_AUTHOR_SEGMENTS; segment += 1) {
     try {
-      const output = await completeWithRetry(provider, prompt, {
+      // Long HTML generations can be actively producing tokens while an
+      // OpenRouter route's non-streaming proxy reports an upstream idle
+      // timeout. Consume the stream when the provider exposes it; the helper
+      // still returns only the final accumulated text and preserves
+      // ProviderOutputTruncatedError partials for continuation below.
+      const output = await completeReasoningWithRetry(provider, prompt, {
         ...options,
         ...(accumulated ? { assistantPrefill: accumulated } : {}),
       }, "author source");
@@ -908,12 +942,269 @@ async function completeSourceWithContinuation(
   );
 }
 
+function inferVisibilityOpacity(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim().replace(/^["']|["']$/g, "").toLowerCase();
+  if (
+    normalized === "none" ||
+    normalized === "hidden" ||
+    normalized === "collapse" ||
+    normalized === "0" ||
+    normalized === "false"
+  ) {
+    return 0;
+  }
+  if (
+    normalized === "block" ||
+    normalized === "flex" ||
+    normalized === "grid" ||
+    normalized === "inline" ||
+    normalized === "inline-block" ||
+    normalized === "visible" ||
+    normalized === "1" ||
+    normalized === "true"
+  ) {
+    return 1;
+  }
+  return undefined;
+}
+
+function cleanGsapVarsObject(source: string): { source: string; changed: boolean } {
+  const forbidden =
+    /(["']?)(display|visibility)\1\s*:\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_$][\w$.-]*|-?\d+(?:\.\d+)?|true|false|null)\s*,?/gi;
+  const values = [...source.matchAll(forbidden)].map((match) => match[3]);
+  if (!values.length) return { source, changed: false };
+
+  let body = source.slice(1, -1);
+  body = body.replace(
+    /,\s*(["']?)(display|visibility)\1\s*:\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_$][\w$.-]*|-?\d+(?:\.\d+)?|true|false|null)\s*/gi,
+    "",
+  );
+  body = body.replace(
+    /^\s*(["']?)(display|visibility)\1\s*:\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[A-Za-z_$][\w$.-]*|-?\d+(?:\.\d+)?|true|false|null)\s*,?\s*/i,
+    "",
+  );
+  body = body.replace(/,\s*}/g, "}").replace(/^\s*,\s*/, "");
+
+  const cleaned = `{${body}}`;
+  if (/\b(?:opacity|autoAlpha)\s*:/.test(cleaned)) {
+    return { source: cleaned, changed: cleaned !== source };
+  }
+  const inferred = values
+    .map(inferVisibilityOpacity)
+    .find((opacity): opacity is number => opacity !== undefined);
+  if (inferred === undefined) return { source: cleaned, changed: cleaned !== source };
+
+  const trimmedBody = body.trim();
+  const addition = `opacity: ${inferred}`;
+  return {
+    source: trimmedBody ? `{ ${addition}, ${trimmedBody} }` : `{ ${addition} }`,
+    changed: true,
+  };
+}
+
+function rewriteGsapCallVars(call: string): { call: string; repairs: number } {
+  let output = "";
+  let cursor = 0;
+  let repairs = 0;
+  for (let index = 0; index < call.length; index += 1) {
+    if (call[index] !== "{") continue;
+    let depth = 1;
+    let quote: string | undefined;
+    let escaped = false;
+    let end = -1;
+    for (let scan = index + 1; scan < call.length; scan += 1) {
+      const next = call[scan]!;
+      if (quote) {
+        if (escaped) {
+          escaped = false;
+        } else if (next === "\\") {
+          escaped = true;
+        } else if (next === quote) {
+          quote = undefined;
+        }
+        continue;
+      }
+      if (next === "\"" || next === "'" || next === "`") {
+        quote = next;
+      } else if (next === "{") {
+        depth += 1;
+      } else if (next === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          end = scan;
+          break;
+        }
+      }
+    }
+    if (end < 0) break;
+    const objectSource = call.slice(index, end + 1);
+    const cleaned = cleanGsapVarsObject(objectSource);
+    if (cleaned.changed) {
+      output += call.slice(cursor, index) + cleaned.source;
+      cursor = end + 1;
+      repairs += 1;
+    }
+    index = end;
+  }
+  if (!repairs) return { call, repairs };
+  return { call: output + call.slice(cursor), repairs };
+}
+
+function normalizeGsapDisplayVisibilityTweens(source: string): { html: string; repairs: number } {
+  const callStart = /\b(?:gsap|[A-Za-z_$][\w$]*)\s*\.\s*(?:to|from|fromTo|set)\s*\(/g;
+  let html = "";
+  let cursor = 0;
+  let repairs = 0;
+  for (const match of source.matchAll(callStart)) {
+    const start = match.index ?? 0;
+    const open = source.indexOf("(", start);
+    if (open < 0) continue;
+    let depth = 1;
+    let quote: string | undefined;
+    let escaped = false;
+    let close = -1;
+    for (let index = open + 1; index < source.length; index += 1) {
+      const char = source[index]!;
+      if (quote) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === "\\") {
+          escaped = true;
+        } else if (char === quote) {
+          quote = undefined;
+        }
+        continue;
+      }
+      if (char === "\"" || char === "'" || char === "`") {
+        quote = char;
+      } else if (char === "(") {
+        depth += 1;
+      } else if (char === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          close = index;
+          break;
+        }
+      }
+    }
+    if (close < 0) continue;
+    const call = source.slice(start, close + 1);
+    const rewritten = rewriteGsapCallVars(call);
+    if (rewritten.repairs) {
+      html += source.slice(cursor, start) + rewritten.call;
+      cursor = close + 1;
+      repairs += rewritten.repairs;
+    }
+  }
+  if (!repairs) return { html: source, repairs };
+  return { html: html + source.slice(cursor), repairs };
+}
+
+function normalizeJsonIsland(
+  source: string,
+  id: string,
+  payload: string,
+): { html: string; repairs: number; found: boolean } {
+  const pattern = new RegExp(
+    `(<script\\b[^>]*\\bid\\s*=\\s*(["'])${regexpEscape(id)}\\2[^>]*>)([\\s\\S]*?)(<\\/script>)`,
+    "gi",
+  );
+  let found = false;
+  let repairs = 0;
+  const html = source.replace(pattern, (match, open: string, _quote: string, body: string, close: string) => {
+    if (!found) {
+      found = true;
+      if (body === payload) return match;
+      repairs += 1;
+      return `${open}${payload}${close}`;
+    }
+    repairs += 1;
+    return "";
+  });
+  return { html, repairs, found };
+}
+
+function ensureTagAttr(tag: string, name: string, value: string): string {
+  const escaped = regexpEscape(name);
+  const pattern = new RegExp(`\\b${escaped}\\s*=\\s*(["'])(.*?)\\1`, "i");
+  if (pattern.test(tag)) {
+    return tag.replace(pattern, `${name}="${value}"`);
+  }
+  return tag.replace(/>$/, ` ${name}="${value}">`);
+}
+
+function reconcileComponentBindings(
+  source: string,
+  scenes: DirectScene[],
+): { html: string; repairs: number } {
+  let html = source;
+  let repairs = 0;
+  for (const scene of scenes) {
+    if (!scene.components?.length) continue;
+    const sceneTags = [...html.matchAll(
+      /<[a-z][\w:-]*\b[^>]*\bdata-scene\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)[^>]*>/gi,
+    )];
+    const sceneIndex = sceneTags.findIndex((match) =>
+      htmlAttr(match[0], "data-scene") === scene.id
+    );
+    if (sceneIndex < 0) continue;
+    const scopeStart = sceneTags[sceneIndex]!.index;
+    const scopeEnd = sceneTags[sceneIndex + 1]?.index ?? html.length;
+    let scope = html.slice(scopeStart, scopeEnd);
+    for (const component of scene.components) {
+      const tags = [...scope.matchAll(/<[a-z][\w:-]*\b[^>]*>/gi)]
+        .map((match) => match[0])
+        .filter((tag) => htmlAttr(tag, "data-part") === component.id);
+      if (!tags.length) continue;
+      const canonicalOccurrence = Math.max(
+        0,
+        tags.findIndex((tag) => htmlAttr(tag, "data-component") === component.kind),
+      );
+      const needsRegion = Boolean(
+        component.region &&
+        !new RegExp(
+          `\\bdata-region\\s*=\\s*(["'])${regexpEscape(component.region)}\\1`,
+          "i",
+        ).test(scope),
+      );
+      let occurrence = 0;
+      let duplicate = 0;
+      scope = scope.replace(/<[a-z][\w:-]*\b[^>]*>/gi, (tag) => {
+        if (htmlAttr(tag, "data-part") !== component.id) return tag;
+        const isCanonical = occurrence === canonicalOccurrence;
+        occurrence += 1;
+        if (isCanonical) {
+          let next = ensureTagAttr(tag, "data-component", component.kind);
+          if (component.region && needsRegion) {
+            next = ensureTagAttr(next, "data-region", component.region);
+          }
+          if (next !== tag) repairs += 1;
+          return next;
+        }
+        duplicate += 1;
+        repairs += 1;
+        return ensureTagAttr(tag, "data-part", `${component.id}-aux-${duplicate}`);
+      });
+    }
+    html = html.slice(0, scopeStart) + scope + html.slice(scopeEnd);
+  }
+  return { html, repairs };
+}
+
 function applyDeterministicSourceRepairs(
   draft: DirectCompositionDraft,
   projectDir: string,
   lockedStoryboard?: DirectScene[],
 ): DirectCompositionDraft {
   let html = draft.html;
+  const visibilityTweens = normalizeGsapDisplayVisibilityTweens(html);
+  if (visibilityTweens.repairs) {
+    html = visibilityTweens.html;
+    process.stderr.write(
+      `[author] normalized ${visibilityTweens.repairs} GSAP display/visibility tween(s)\n`,
+    );
+  }
   if (lockedStoryboard?.length) {
     const authoredScenes = [...html.matchAll(
       /<([a-z][\w:-]*)\b[^>]*\bdata-scene(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?[^>]*>/gis,
@@ -1024,14 +1315,10 @@ function applyDeterministicSourceRepairs(
       repairedBindings += 1;
     }
     const payload = JSON.stringify({ version: 1, interactions });
-    const islandPattern =
-      /(<script\b[^>]*\bid\s*=\s*(["'])sequences-interactions\2[^>]*>)([\s\S]*?)(<\/script>)/i;
-    if (islandPattern.test(html)) {
-      const updated = html.replace(islandPattern, `$1${payload}$4`);
-      if (updated !== html) {
-        html = updated;
-        repairedBindings += 1;
-      }
+    const normalizedIsland = normalizeJsonIsland(html, "sequences-interactions", payload);
+    if (normalizedIsland.found) {
+      html = normalizedIsland.html;
+      repairedBindings += normalizedIsland.repairs;
     } else {
       const timelineScript = /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
       if (timelineScript?.index !== undefined) {
@@ -1041,6 +1328,8 @@ function applyDeterministicSourceRepairs(
         repairedBindings += 1;
       }
     }
+    const islandPattern =
+      /(<script\b[^>]*\bid\s*=\s*(["'])sequences-interactions\2[^>]*>)([\s\S]*?)(<\/script>)/i;
     const timelineName = html.match(
       /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*gsap\.timeline\s*\(/,
     )?.[1];
@@ -1226,6 +1515,18 @@ function applyDeterministicSourceRepairs(
   // so their bindings are injected deterministically from the locked
   // storyboard: the author never spends output budget on state mechanics and
   // can never silently drop a planned beat.
+  {
+    const componentBindings = reconcileComponentBindings(
+      html,
+      lockedStoryboard ?? draft.storyboard,
+    );
+    if (componentBindings.repairs) {
+      html = componentBindings.html;
+      process.stderr.write(
+        `[author] reconciled ${componentBindings.repairs} component binding(s)\n`,
+      );
+    }
+  }
   const componentPlan = resolveComponentPlan(lockedStoryboard ?? draft.storyboard);
   if (componentPlan.scenes.length) {
     let repairedComponents = 0;
@@ -1333,7 +1634,7 @@ function isTransientProviderError(error: unknown): boolean {
   return (
     name === "TimeoutError" ||
     name === "AbortError" ||
-    /aborted due to timeout|operation was aborted|the operation timed out|idle timeout|upstream.*timeout|fetch failed|network|terminated|socket hang ?up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|503|502|429/i.test(
+    /returned an empty completion|aborted due to timeout|operation was aborted|the operation timed out|idle timeout|upstream.*timeout|fetch failed|network|terminated|socket hang ?up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|503|502|429/i.test(
       message,
     )
   );
@@ -1372,11 +1673,88 @@ async function completeWithRetry(
   throw lastError;
 }
 
+/**
+ * Reasoning-heavy OpenRouter calls should use the streaming transport when it
+ * exists. GLM can spend minutes thinking before a non-streaming response is
+ * returned, which leaves the upstream route idle long enough to be killed even
+ * though generation is healthy. Streaming reasoning deltas keeps the route
+ * active; the callbacks intentionally discard private reasoning and collect
+ * only the provider's final text.
+ */
+async function completeReasoningWithRetry(
+  provider: AgentProvider,
+  prompt: string,
+  options: CompleteOptions,
+  label: string,
+  attempts = 3,
+): Promise<string> {
+  if (!provider.streamComplete) {
+    return completeWithRetry(provider, prompt, options, label, attempts);
+  }
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await provider.streamComplete(prompt, options, () => {}, () => {});
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || isOutputTruncation(error) || !isTransientProviderError(error)) {
+        throw error;
+      }
+      process.stderr.write(
+        `[${label}] attempt ${attempt}/${attempts} transient streaming fault: ` +
+          `${error instanceof Error ? error.message : String(error)} â€” retrying\n`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1_500 * attempt));
+    }
+  }
+  throw lastError;
+}
+
 function compactSkillText(text: string): string {
   return text
     .replace(/<(blueprint|motion-rule)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
     .replace(/\n{3,}/g, "\n\n")
     .slice(0, COMPACT_SKILL_BUDGET_CHARS);
+}
+
+/**
+ * Normalize a scene's optional world-layout station map. Kept only when the
+ * scene declares a camera path (a station map without a camera is dead
+ * weight); junk regions, non-integer or out-of-range cells, and duplicate
+ * regions/cells are dropped entry-by-entry — layout guidance degrades to
+ * free placement rather than failing the storyboard.
+ */
+export function normalizeWorldLayout(
+  value: unknown,
+  hasCameraPath: boolean,
+): WorldLayoutCellV1[] {
+  if (!hasCameraPath || !Array.isArray(value)) return [];
+  const seenRegions = new Set<string>();
+  const seenCells = new Set<string>();
+  const entries: WorldLayoutCellV1[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const item = raw as Record<string, unknown>;
+    const region = typeof item.region === "string" &&
+        /^[a-z][a-z0-9-]{0,63}$/.test(item.region.trim())
+      ? item.region.trim()
+      : "";
+    const cell = Array.isArray(item.cell) && item.cell.length === 2 ? item.cell : undefined;
+    const cx = Number(cell?.[0]);
+    const cy = Number(cell?.[1]);
+    if (
+      !region || seenRegions.has(region) ||
+      !Number.isInteger(cx) || !Number.isInteger(cy) ||
+      Math.abs(cx) > 2 || Math.abs(cy) > 2 ||
+      seenCells.has(`${cx},${cy}`)
+    ) {
+      continue;
+    }
+    seenRegions.add(region);
+    seenCells.add(`${cx},${cy}`);
+    entries.push({ region, cell: [cx, cy] });
+  }
+  return entries;
 }
 
 function parseStoryboard(raw: string): DirectScene[] {
@@ -1401,6 +1779,7 @@ function parseStoryboard(raw: string): DirectScene[] {
     const spatialIntent = normalizeStoryboardSpatialIntent(scene.spatialIntent);
     const cut = normalizeStoryboardCutIntent(scene.cut);
     const camera = normalizeStoryboardCameraIntent(scene.camera, { startSec, durationSec });
+    const worldLayout = normalizeWorldLayout(scene.worldLayout, Boolean(camera?.path.length));
     const components = normalizeStoryboardComponents(scene.components);
     const beats = normalizeStoryboardComponentBeats(
       scene.beats,
@@ -1453,6 +1832,7 @@ function parseStoryboard(raw: string): DirectScene[] {
       ...(typeof scene.outgoingCut === "string" ? { outgoingCut: scene.outgoingCut } : {}),
       ...(cut ? { cut } : {}),
       ...(camera ? { camera } : {}),
+      ...(worldLayout.length ? { worldLayout } : {}),
       ...(components.length ? { components } : {}),
       ...(beats.length ? { beats } : {}),
       ...(spatialIntent ? { spatialIntent } : {}),
@@ -1480,7 +1860,20 @@ function parseStoryboard(raw: string): DirectScene[] {
   }));
 }
 
-export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {
+export interface StoryboardPlanRequirements {
+  targetDurationSec?: number;
+  requestedComponentKinds?: ComponentKind[];
+  minRequestedComponentKinds?: number;
+  minComponentBeats?: number;
+  minCameraMoves?: number;
+  requireMultiStationWorld?: boolean;
+  requireObjectMatch?: boolean;
+}
+
+export function validateStoryboardPlan(
+  storyboard: DirectScene[],
+  requirements: StoryboardPlanRequirements = {},
+): string[] {
   const errors: string[] = [];
   if (storyboard.length < 3 || storyboard.length > 10) {
     errors.push("storyboard must contain 3-10 distinct shots");
@@ -1589,6 +1982,57 @@ export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {
         `camera paths over a larger data-camera-world`,
     );
   }
+  if (requirements.minCameraMoves && cameraMoves < requirements.minCameraMoves) {
+    errors.push(
+      `the brief explicitly requests spatial camera choreography; plan at least ` +
+        `${requirements.minCameraMoves} typed camera moves, not ${cameraMoves}`,
+    );
+  }
+  if (
+    requirements.requireMultiStationWorld &&
+    !storyboard.some((scene) =>
+      (scene.camera?.path.filter((move) => CAMERA_FULL_MOVES.has(move.move)).length ?? 0) >= 2
+    )
+  ) {
+    errors.push(
+      "the brief requests one large spatial UI world; at least one shot must travel through " +
+        "multiple stations with two or more typed camera moves",
+    );
+  }
+  if (
+    requirements.requireObjectMatch &&
+    !storyboard.some((scene) => scene.cut?.style === "object-match")
+  ) {
+    errors.push("the brief explicitly requests an object-match cut, but none is planned");
+  }
+  const presentComponentKinds = new Set(
+    storyboard.flatMap((scene) => (scene.components ?? []).map((component) => component.kind)),
+  );
+  const requestedComponentKinds = requirements.requestedComponentKinds ?? [];
+  const coveredRequestedKinds = requestedComponentKinds.filter((kind) =>
+    presentComponentKinds.has(kind)
+  );
+  if (
+    requirements.minRequestedComponentKinds &&
+    coveredRequestedKinds.length < requirements.minRequestedComponentKinds
+  ) {
+    const missing = requestedComponentKinds.filter((kind) => !presentComponentKinds.has(kind));
+    errors.push(
+      `the brief explicitly requests motion-native product components; plan at least ` +
+        `${requirements.minRequestedComponentKinds} requested kinds, but only ` +
+        `${coveredRequestedKinds.length} are present (missing: ${missing.join(", ")})`,
+    );
+  }
+  const componentBeats = storyboard.reduce(
+    (count, scene) => count + (scene.beats?.length ?? 0),
+    0,
+  );
+  if (requirements.minComponentBeats && componentBeats < requirements.minComponentBeats) {
+    errors.push(
+      `the brief explicitly requests component choreography; plan at least ` +
+        `${requirements.minComponentBeats} typed component beats, not ${componentBeats}`,
+    );
+  }
   const foregrounds = new Set(storyboard.map((scene) => scene.foreground?.toLowerCase()));
   const cameras = new Set(storyboard.map((scene) => scene.cameraIntent?.toLowerCase()));
   if (foregrounds.size < Math.min(3, storyboard.length)) {
@@ -1602,10 +2046,16 @@ export function validateStoryboardPlan(storyboard: DirectScene[]): string[] {
   // entrances, repeat visual states, or leave dead intervals — before any
   // source budget is spent.
   errors.push(...validatePlannedMoments(storyboard, expectedStart));
+  // Camera-energy audit: every 12s+ film needs at least one high-energy
+  // element, and four-plus full moves may not share one verb.
+  errors.push(...auditCameraEnergy(storyboard));
   return [...new Set(errors)];
 }
 
-export function parseStoryboardResponse(raw: string): DirectScene[] {
+export function parseStoryboardResponse(
+  raw: string,
+  requirements: StoryboardPlanRequirements = {},
+): DirectScene[] {
   const knownCapabilities = new Set(
     loadCapabilityIndex().capabilities.map((capability) => capability.id),
   );
@@ -1615,7 +2065,7 @@ export function parseStoryboardResponse(raw: string): DirectScene[] {
       ? { capabilityIds: scene.capabilityIds.filter((id) => knownCapabilities.has(id)) }
       : {}),
   }));
-  const errors = validateStoryboardPlan(storyboard);
+  const errors = validateStoryboardPlan(storyboard, requirements);
   if (errors.length) throw new Error(`invalid storyboard plan: ${errors.join("; ")}`);
   return storyboard;
 }
@@ -1702,7 +2152,7 @@ export async function requestConceptDirection(
   // deployments (or deterministic tests) run the storyboard pass directly.
   if (process.env.SLACK_SEQUENCES_CONCEPT_PASS === "0") return undefined;
   const model = storyboardModel(provider);
-  const thinkingMode = storyboardThinkingMode(provider, model);
+  const thinkingMode = creativeThinkingMode(provider, model);
   const cacheKey = createHash("sha256").update(JSON.stringify({
     contract: 1,
     provider: provider.id,
@@ -1796,6 +2246,50 @@ function storyboardReference(text: string): string {
   return [capability, blueprints].filter(Boolean).join("\n\n").slice(0, 14_000);
 }
 
+export function inferStoryboardPlanRequirements(
+  brief: string,
+  targetDurationSec?: number,
+): StoryboardPlanRequirements {
+  const componentSignals: Array<[RegExp, ComponentKind]> = [
+    [/\bsearch\b/i, "search"],
+    [/\bcommand[\s-]?palette\b/i, "command-palette"],
+    [/\btable\b/i, "table"],
+    [/\bstat[\s-]?card\b|\brisk score\b/i, "stat-card"],
+    [/\bterminal\b/i, "terminal"],
+    [/\btoast\b/i, "toast"],
+    [/\bprogress\b/i, "progress"],
+    [/\bchart\b/i, "chart-line"],
+  ];
+  const requestedComponentKinds = componentSignals.flatMap(([pattern, kind]) =>
+    pattern.test(brief) ? [kind] : []
+  );
+  const explicitComponents =
+    /\bcomponent beats?\b|\bcomponents?\s+for\b|\bmotion-native components?\b/i.test(brief);
+  const explicitCamera =
+    /\blarge spatial\b|\bspatial ui world\b|\bcamera (?:push|pan|whip|move|travel)/i.test(brief);
+  return {
+    ...(targetDurationSec ? { targetDurationSec } : {}),
+    ...(requestedComponentKinds.length ? { requestedComponentKinds } : {}),
+    ...(explicitComponents && requestedComponentKinds.length
+      ? {
+          // Never demand more kinds than the brief actually names — a brief
+          // with 2-3 explicit kinds must stay satisfiable.
+          minRequestedComponentKinds: Math.min(
+            requestedComponentKinds.length,
+            Math.max(4, Math.ceil(requestedComponentKinds.length * 0.75)),
+          ),
+          minComponentBeats: Math.max(6, requestedComponentKinds.length),
+        }
+      : {}),
+    ...(explicitCamera
+      ? { minCameraMoves: 2, requireMultiStationWorld: true }
+      : {}),
+    ...(/\bobject[\s-]?match cuts?\b/i.test(brief)
+      ? { requireObjectMatch: true }
+      : {}),
+  };
+}
+
 export async function requestStoryboardPlan(
   provider: AgentProvider,
   args: {
@@ -1803,7 +2297,10 @@ export async function requestStoryboardPlan(
     projectDir: string;
     skills: RetrievedSkillContext;
     frameMd?: string;
+    targetDurationSec?: number;
     options?: CompleteOptions;
+    /** Out-param: written each attempt so stage receipts can report retries. */
+    attempts?: { count: number };
   },
 ): Promise<DirectScene[]> {
   const structuredOutput = supportsStructuredOutputs(provider);
@@ -1811,6 +2308,10 @@ export async function requestStoryboardPlan(
   const thinkingMode = storyboardThinkingMode(provider, model);
   const maxTokens =
     thinkingMode === "none" ? STORYBOARD_MAX_TOKENS : REASONING_STORYBOARD_MAX_TOKENS;
+  const requirements = inferStoryboardPlanRequirements(
+    args.brief,
+    args.targetDurationSec,
+  );
   // GLM job #1: the concept pass. Its artifact is cached independently, so a
   // storyboard retry never re-spends the concept call.
   const concept = await requestConceptDirection(provider, {
@@ -1821,13 +2322,14 @@ export async function requestStoryboardPlan(
   });
   const cacheKey = createHash("sha256").update(JSON.stringify({
     // Bump when the storyboard contract changes shape (v2: StoryboardMomentV1,
-    // v3: typed components + beats).
-    contract: 3,
+    // v3: typed components + beats; v4: brief-derived coverage requirements.
+    contract: 4,
     provider: provider.id,
     model: model ?? null,
     brief: args.brief,
     frameMd: args.frameMd ?? null,
     concept: concept ?? null,
+    requirements,
     registryVersion: args.skills.registryVersion,
     blueprints: args.skills.blueprintIds,
   })).digest("hex");
@@ -1841,7 +2343,7 @@ export async function requestStoryboardPlan(
         storyboard?: DirectScene[];
       };
       if (cached.version === 1 && cached.key === cacheKey && cached.storyboard) {
-        const errors = validateStoryboardPlan(cached.storyboard);
+        const errors = validateStoryboardPlan(cached.storyboard, requirements);
         if (!errors.length) return cached.storyboard;
       }
     } catch {
@@ -1871,11 +2373,23 @@ export async function requestStoryboardPlan(
     "context), track-to-anchor (land tight on one data-part), parallax-pass",
     "(lateral travel that separates data-parallax depth layers), orbit-lite",
     "(subtle 2.5D arc). Times are absolute seconds inside the shot window.",
+    "CAMERA ENERGY — camera verbs must track the film's energy curve, never",
+    "distribute one verb evenly. Peak scenes get a whip, a hard push-in",
+    '("zoom":1.35+), or a zoom-through/inverse-zoom cut INTO them; valleys get',
+    "a short hold or slow drift so the claim can breathe. A 12s+ film with no",
+    "whip, no 1.3+ push-in, and no energetic cut is rejected deterministically.",
     "Rhythm pattern that works: whip to a region, drift while its content",
     "reveals, then whip onward — alternate loud and quiet camera energy.",
     "Give a camera path to any shot longer than ~4 seconds; name 2-4 regions",
     "per world using stable kebab-case (hero-claim, metric-wall, ui-demo,",
     "cta-station). track-to-anchor requires a toPart the author will create.",
+    "WORLD LAYOUT — for any shot whose camera visits 2+ stations, also declare",
+    '"worldLayout": pin each region to a distinct viewport-sized grid cell of',
+    "the world plane. [0,0] is the entry framing; [1,0] is one full screen",
+    "right, [0,-1] one up (cells range -2..2). Make cell adjacency match the",
+    "camera journey (a pan right should land on the cell to the right). The",
+    "author receives exact pixel rects per station, so stations never clip",
+    "each other or sit half out of frame.",
     "For a 10s+ film, plan visible development inside shots: a 4.5s+ shot must",
     "have at least two non-wrapper component/camera beats, with one in the back",
     "half. Three long scenes without internal events reads as a slide deck.",
@@ -1889,7 +2403,10 @@ export async function requestStoryboardPlan(
     "state change on the same frame is the signature move. Morph beats are the",
     "film's showpiece transitions: search→command-palette, card→modal,",
     "table→list. Use 1-2 morphs per film where the story earns them, never",
-    "decoratively. Beats are host-compiled, so declaring them costs the source",
+    "decoratively. A morph beat's morphTo must name a component DECLARED in",
+    "the same shot's components array — always declare BOTH twins (e.g. the",
+    "search AND the command-palette) or the plan is rejected.",
+    "Beats are host-compiled, so declaring them costs the source",
     "budget nothing — prefer typed beats over prose asks for UI motion.",
     "Every shot's boundary is a typed, machine-executed cut. Choose cut.style from:",
     "hard (intentional register break), cut-left/right/up/down (velocity-matched",
@@ -1905,6 +2422,31 @@ export async function requestStoryboardPlan(
     "semantic zones within that scaffold, not as guessed canvas coordinates.",
     "Registry capabilities are a reuse-first vocabulary, not a mandatory quota.",
     "Use only capability ids that appear in the supplied synced index.",
+    ...(requirements.minRequestedComponentKinds
+      ? [
+          "",
+          "BRIEF-SPECIFIC COMPONENT COVERAGE â€” this brief explicitly asks for",
+          `motion-native ${requirements.requestedComponentKinds?.join(", ")} components.`,
+          `Plan at least ${requirements.minRequestedComponentKinds} of those distinct kinds and at least`,
+          `${requirements.minComponentBeats} typed component beats. Product beats must become`,
+          "visible UI state changes; mentioning them only in foreground prose does not count.",
+        ]
+      : []),
+    ...(requirements.minCameraMoves
+      ? [
+          "",
+          "BRIEF-SPECIFIC CAMERA COVERAGE â€” this brief explicitly asks for a",
+          `spatial camera world. Plan at least ${requirements.minCameraMoves} full typed camera`,
+          "moves, with one shot traveling through multiple named stations. A set of",
+          "static shots or a single minor pan does not satisfy the request.",
+        ]
+      : []),
+    ...(requirements.requireObjectMatch
+      ? [
+          "The brief explicitly asks for object-match cuts; plan at least one typed",
+          "object-match boundary with both focal part names.",
+        ]
+      : []),
     "",
     "STORYBOARD MOMENTS — the real review contract. A moment is one reviewable",
     "CHANGED STATE the viewer can point at: a typed word replacing another, a",
@@ -1966,6 +2508,8 @@ export async function requestStoryboardPlan(
     "The first path entry establishes the entry framing: start with a short",
     "hold or drift on the region the cut lands on, or give the first full move",
     "a fromRegion. The host fills every timing gap with drift automatically.",
+    '"worldLayout":[{"region":"metric-wall","cell":[1,0]}] — required for shots',
+    "whose camera visits 2+ regions; one distinct cell per region, integers -2..2.",
     '"components":[{"version":1,"id":"kebab-case-part-name","kind":"one of the component kit kinds",',
     '"region":"optional camera region it lives at","role":"hero|support"}],',
     '"beats":[{"version":1,"id":"kebab-case","component":"declared component id","kind":"type|open|close|select|press|set-state|count|progress|chart|rows|stream|highlight|morph|swap",',
@@ -2000,11 +2544,14 @@ export async function requestStoryboardPlan(
     "cursor actor, hotspot, endpoint, press, visibility lifecycle, and ripple.",
   ].filter(Boolean).join("\n");
   // The storyboard is a bounded artifact: when the model returns a plan that
-  // deterministic validation rejects, retry only this stage once with the
+  // deterministic validation rejects, retry only this stage with the
   // exact findings — never fall through to the safe fallback on a first
   // creative miss, and never replay the concept pass.
   let lastValidationError: Error | undefined;
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  let recoveringFromTruncation = false;
+  let reasoningFloor: CompleteOptions["thinkingMode"] | undefined;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    if (args.attempts) args.attempts.count = attempt;
     const prompt = attempt === 1 || !lastValidationError
       ? basePrompt
       : [
@@ -2021,24 +2568,55 @@ export async function requestStoryboardPlan(
         ].join("\n");
     let raw: string;
     try {
+      // Only TRUNCATION recovery strips reasoning to protect the completion
+      // budget. Validation-rejection retries keep the configured reasoning:
+      // the 2026-07-03 experiment matrix showed reasoning-stripped GLM retries
+      // failing the moment grid in 3 of 4 runs, while every passing storyboard
+      // landed on a full-reasoning attempt.
+      const recoveryPass = recoveringFromTruncation;
+      const downgraded: CompleteOptions["thinkingMode"] =
+        recoveryPass && thinkingMode !== "none"
+          ? "none"
+          : thinkingMode;
+      const attemptThinkingMode =
+        reasoningFloor && downgraded === "none" ? reasoningFloor : downgraded;
+      const attemptMaxTokens = recoveryPass && thinkingMode !== "none"
+        ? Math.min(maxTokens, 8_192)
+        : maxTokens;
       process.stderr.write(
-        `[storyboard] attempt ${attempt}/2 · ${model ? `model ${model}` : "provider primary model"} · ` +
-          `reasoning ${thinkingMode} · max ${maxTokens} tokens\n`,
+        `[storyboard] attempt ${attempt}/3 · ${model ? `model ${model}` : "provider primary model"} · ` +
+          `reasoning ${attemptThinkingMode} · max ${attemptMaxTokens} tokens\n`,
       );
-      raw = await completeWithRetry(provider, prompt, {
+      raw = await completeReasoningWithRetry(provider, prompt, {
         ...args.options,
         // A reasoning storyboard pass on a loaded provider can run long; give it more
         // wall-clock headroom than a plain chat call, and let completeWithRetry absorb
         // a transient stall instead of failing the whole build on the first abort.
-        timeoutMs: 180_000,
-        maxTokens,
-        // GLM's budget includes reasoning plus the compact JSON artifact; give it
-        // twice the non-reasoning budget while keeping the one-shot task bounded.
-        thinkingMode,
+        timeoutMs: recoveryPass ? 120_000 : 360_000,
+        maxTokens: attemptMaxTokens,
+        // GLM's budget includes reasoning plus the compact JSON artifact; use
+        // nearly the full route ceiling while keeping the artifact bounded.
+        thinkingMode: attemptThinkingMode,
         ...(structuredOutput ? { responseFormat: storyboardResponseFormat() } : {}),
         ...(model ? { model } : {}),
       }, "storyboard");
     } catch (error) {
+      if (attempt < 3 && isOutputTruncation(error)) {
+        recoveringFromTruncation = true;
+        process.stderr.write(
+          `[storyboard] attempt ${attempt}/3 exhausted its completion budget; ` +
+            `retrying the bounded artifact with lower reasoning effort\n`,
+        );
+        continue;
+      }
+      if (attempt < 3 && isReasoningMandatoryError(error)) {
+        reasoningFloor = "minimal";
+        process.stderr.write(
+          `[storyboard] attempt ${attempt}/3: this endpoint mandates reasoning; ` +
+            `retrying with a minimal reasoning floor\n`,
+        );
+        continue;
+      }
       if (isTransientProviderError(error)) {
         throw new Error(
           "the planning model kept timing out while drafting the storyboard — this is usually a " +
@@ -2049,11 +2627,11 @@ export async function requestStoryboardPlan(
     }
     let storyboard: DirectScene[];
     try {
-      storyboard = parseStoryboardResponse(raw);
+      storyboard = parseStoryboardResponse(raw, requirements);
     } catch (error) {
-      if (attempt < 2 && error instanceof Error && !isOutputTruncation(error)) {
+      if (attempt < 3 && error instanceof Error && !isOutputTruncation(error)) {
         process.stderr.write(
-          `[storyboard] attempt ${attempt}/2 rejected: ${error.message.slice(0, 600)} — retrying with findings\n`,
+          `[storyboard] attempt ${attempt}/3 rejected: ${error.message.slice(0, 600)} — retrying with findings\n`,
         );
         lastValidationError = error;
         continue;
@@ -2220,14 +2798,13 @@ export function quarantineFailedInteractions(
   });
   const interactions = storyboard.flatMap((scene) => scene.interactions ?? []);
   const payload = JSON.stringify({ version: 1, interactions });
-  const islandPattern =
-    /(<script\b[^>]*\bid\s*=\s*(["'])sequences-interactions\2[^>]*>)([\s\S]*?)(<\/script>)/i;
-  if (!islandPattern.test(draft.html)) {
+  const island = normalizeJsonIsland(draft.html, "sequences-interactions", payload);
+  if (!island.found) {
     // Static validation will reject the unchanged mismatch; do not pretend the
     // enhancement was isolated when its canonical island was absent.
     return { draft, removedIds: [] };
   }
-  let html = draft.html.replace(islandPattern, `$1${payload}$4`);
+  let html = island.html;
   const liveCursorIds = new Set(interactions.map((interaction) => interaction.cursorId));
   const orphanCursorIds = draft.storyboard
     .flatMap((scene) => scene.interactions ?? [])
@@ -2246,6 +2823,40 @@ export function quarantineFailedInteractions(
     );
   }
   return { draft: { storyboard, html }, removedIds };
+}
+
+function browserInteractionIssues(
+  draft: DirectCompositionDraft,
+  browserQa: DirectBrowserQaResult,
+): DirectLayoutIssue[] {
+  const issues = [...browserQa.issues];
+  if (
+    !browserQa.errors.some((error) =>
+      /unsupported sequences interaction plan|could not bind interaction|cursor "[^"]+" must be inside data-camera-overlay/i
+        .test(error)
+    )
+  ) {
+    return issues;
+  }
+  const alreadyScoped = new Set(
+    issues
+      .filter((issue) => issue.code.startsWith("interaction_") && issue.interactionId)
+      .map((issue) => issue.interactionId!),
+  );
+  for (const interaction of draft.storyboard.flatMap((scene) => scene.interactions ?? [])) {
+    if (alreadyScoped.has(interaction.id)) continue;
+    issues.push({
+      code: "interaction_runtime_plan",
+      severity: "error",
+      time: interaction.startSec,
+      interactionId: interaction.id,
+      selector: `[interaction="${interaction.id}"]`,
+      message: "Optional interaction plan failed browser runtime compilation.",
+      fixHint: "Publish the film without this optional cursor choreography.",
+      source: "sequences",
+    });
+  }
+  return issues;
 }
 
 function quarantineStaticInteractionErrors(
@@ -2299,7 +2910,7 @@ async function recoverByQuarantiningInteractions(
 > {
   const quarantined = quarantineFailedInteractions(
     candidate.draft,
-    candidate.browserQa.issues,
+    browserInteractionIssues(candidate.draft, candidate.browserQa),
   );
   if (!quarantined.removedIds.length) return undefined;
   process.stderr.write(
@@ -2356,6 +2967,82 @@ function componentReferenceFor(scenes: DirectScene[] | undefined): string {
     for (const component of scene.components ?? []) kinds.add(component.kind);
   }
   return kinds.size ? componentAuthoringReference(kinds) : "";
+}
+
+/**
+ * Deterministic placement text for scenes whose storyboard pinned camera
+ * stations to world grid cells. Free placement is the main source of
+ * clipping and off-camera stations; exact rects remove the guesswork
+ * without any schema change on the author's side.
+ */
+function worldLayoutGuidance(scenes: DirectScene[]): string {
+  const blocks = scenes
+    .filter((scene) => scene.worldLayout?.length)
+    .map((scene) => {
+      const cells = scene.worldLayout!;
+      const xs = cells.map((entry) => entry.cell[0]);
+      const ys = cells.map((entry) => entry.cell[1]);
+      // Cell [0,0] is the entry framing and always part of the plane.
+      const minX = Math.min(...xs, 0);
+      const minY = Math.min(...ys, 0);
+      const planeW = (Math.max(...xs, 0) - minX + 1) * 1920;
+      const planeH = (Math.max(...ys, 0) - minY + 1) * 1080;
+      const rows = cells.map(({ region, cell }) => {
+        const left = (cell[0] - minX) * 1920 + 260;
+        const top = (cell[1] - minY) * 1080 + 140;
+        return `  - data-region="${region}": position:absolute; left:${left}px; top:${top}px; ` +
+          `width:1400px; height:800px — keep its content inside with at least an 8% inner margin`;
+      });
+      return [
+        `- scene "${scene.id}": size its data-camera-world plane exactly ` +
+          `${planeW}x${planeH}px and place each station at these rects:`,
+        ...rows,
+      ].join("\n");
+    });
+  if (!blocks.length) return "";
+  return [
+    "## World-layout station map (deterministic placement)",
+    "The locked storyboard pinned each camera station to a viewport-sized grid",
+    "cell. Use these exact plane sizes and station rects verbatim — they",
+    "guarantee stations never clip each other or drift half out of frame:",
+    ...blocks,
+  ].join("\n");
+}
+
+/**
+ * Small always-on layout reminders derived from the locked storyboard —
+ * the cheap deterministic guardrails that otherwise cost a repair round.
+ */
+function lockedLayoutGuidance(scenes: DirectScene[]): string {
+  const lines = [
+    "## Layout guidance (derived from the locked storyboard)",
+    "- Keep primary content inside the 5% safe area of its framing. Content at",
+    "  a camera station must fit that station's box; never let two stations'",
+    "  content overlap on the plane.",
+  ];
+  const morphPairs = scenes.flatMap((scene) =>
+    (scene.beats ?? [])
+      .filter((beat) => beat.kind === "morph" && beat.morphTo)
+      .map((beat) => `${beat.component}→${beat.morphTo}`)
+  );
+  if (morphPairs.length) {
+    lines.push(
+      `- Morph twins (${[...new Set(morphPairs)].join(", ")}) need comparable box`,
+      "  shapes, corner radii, and visual weight so the FLIP reads as one object",
+      "  transforming rather than a jump.",
+    );
+  }
+  const hasSimultaneousBeats = scenes.some((scene) => {
+    const times = (scene.beats ?? []).map((beat) => beat.atSec).sort((a, b) => a - b);
+    return times.some((time, index) => index >= 2 && time - times[index - 2]! <= 0.1);
+  });
+  if (hasSimultaneousBeats) {
+    lines.push(
+      "- Three or more component beats land together: lay their components on a",
+      "  shared grid with one consistent gap, so the cascade settles as a set.",
+    );
+  }
+  return lines.join("\n");
 }
 
 function creationPrompt(args: {
@@ -2455,6 +3142,8 @@ function creationPrompt(args: {
         "<locked_storyboard_json>",
         JSON.stringify(args.lockedStoryboard, null, 2),
         "</locked_storyboard_json>",
+        ...[worldLayoutGuidance(args.lockedStoryboard)].filter(Boolean),
+        lockedLayoutGuidance(args.lockedStoryboard),
       ].join("\n")
     : "";
   const lockedResponse = args.lockedStoryboard
@@ -2499,6 +3188,14 @@ function creationPrompt(args: {
     "otherwise default to 4-6 scenes and lean on camera worlds for density.",
     "Scenes sharing one data-camera-world with several data-region stations are",
     "cheaper than extra full scenes — reuse CSS classes and shared primitives.",
+    "Do not paste brief paragraphs into the frame. Product facts are evidence;",
+    "turn them into terse labels, values, UI states, and short claims. A product",
+    "beat requested in the brief must become visible component behavior, not a",
+    "sentence describing that behavior.",
+    "Spend the motion budget on information change: component state, camera",
+    "arrival, object continuity, chart/trace resolution, cursor action, and",
+    "kinetic type. Underlines, dividers, fades, glows, and ambient drift are",
+    "supporting polish and never the main event of a storyboard moment.",
     "No comments, duplicated per-scene styles, embedded data URLs, verbose SVG",
     "paths, or explanatory text. Completeness outranks ornamental source volume.",
     args.compact
@@ -2521,6 +3218,8 @@ interface DirectCompositionArgs {
   lockedStoryboard?: DirectScene[];
   revisionInstruction?: string;
   options?: CompleteOptions;
+  /** Out-param: written each attempt so stage receipts can report retries. */
+  attempts?: { count: number };
 }
 
 async function authorComposition(
@@ -2542,14 +3241,19 @@ async function authorComposition(
   }> = [];
   const structuredPatches = supportsStructuredOutputs(provider);
   const productionTier = productionModel(provider);
+  let reasoningFloor: CompleteOptions["thinkingMode"] | undefined;
   // One initial authoring pass plus at most two bounded repairs.
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+    if (args.attempts) args.attempts.count = attempt;
     const patchMode = Boolean(scratch);
     // Never downgrade a full-document recovery because of its attempt number.
     // A separately configured repair model is eligible only when a valid
     // scratch document exists and the task is a bounded exact patch.
     const repairTier = patchMode ? repairModel(provider) : undefined;
     const selectedTier = repairTier ?? productionTier;
+    const baseThinking = patchMode ? repairThinkingMode(repairTier) : authorThinkingMode();
+    const attemptThinking =
+      reasoningFloor && baseThinking === "none" ? reasoningFloor : baseThinking;
     const prompt = creationPrompt({
       ...args,
       validationFeedback,
@@ -2561,16 +3265,14 @@ async function authorComposition(
       `[author] attempt ${attempt}/3 · prompt ${prompt.length} chars · ` +
       `${compact ? "compact repair" : "full context"} · ` +
       `${repairTier ? "explicit repair tier" : selectedTier ?? "provider primary tier"} · ` +
-      `reasoning ${patchMode ? repairThinkingMode(repairTier) : "off"}\n`,
+      `reasoning ${attemptThinking}\n`,
     );
     try {
       const completeOptions: CompleteOptions = {
         ...args.options,
         timeoutMs: 360_000,
-        // Code emission does not benefit from DeepSeek's expensive high/xhigh
-        // reasoning pass. Keeping it off reserves the whole budget for source.
         maxTokens: patchMode ? REPAIR_MAX_TOKENS : authorMaxTokens(),
-        thinkingMode: patchMode ? repairThinkingMode(repairTier) : "none",
+        thinkingMode: attemptThinking,
         ...(patchMode && structuredPatches ? { responseFormat: PATCH_RESPONSE_FORMAT } : {}),
         ...(selectedTier ? { model: selectedTier } : {}),
       };
@@ -2644,7 +3346,7 @@ async function authorComposition(
       }
       if (
         !browserQa.ok &&
-        browserQa.issues.some((issue) =>
+        browserInteractionIssues(draft, browserQa).some((issue) =>
           issue.severity === "error" &&
           issue.code.startsWith("interaction_") &&
           Boolean(issue.interactionId)
@@ -2692,14 +3394,32 @@ async function authorComposition(
       lastError = new Error(validationFeedback.join("; "));
     } catch (error) {
       const truncated = isOutputTruncation(error);
-      process.stderr.write(
-        `[author] attempt ${attempt}/3 failed: ` +
-          `${error instanceof Error ? error.message : String(error)}\n`,
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[author] attempt ${attempt}/3 failed: ${message}\n`);
+      if (isReasoningMandatoryError(error)) {
+        // Endpoint rejects reasoning:none outright — retry the same work with
+        // a minimal floor instead of burning attempts on identical 400s.
+        reasoningFloor = "minimal";
+        lastError = error;
+        continue;
+      }
+      // A parse failure (bad wrapper/JSON, not a validation finding) gets one
+      // structural reminder — Flash-tier authors drift on the envelope more
+      // often than on the content.
+      const parseFailure = !truncated &&
+        /missing <index_html>|patches_json (?:is not valid JSON|must contain)|storyboard_json is not valid/i
+          .test(message);
       validationFeedback = [
         truncated
           ? `The previous response exhausted its output budget. Return a complete document under ${COMPOSITION_SOURCE_BUDGET_CHARS.toLocaleString("en-US")} characters; simplify source, not the visual thesis.`
-          : error instanceof Error ? error.message : String(error),
+          : message,
+        ...(parseFailure
+          ? [
+              patchMode
+                ? "Structural reminder: emit exactly one JSON array of patch edits (patches_json) and nothing else — no prose, Markdown fences, or commentary."
+                : "Structural reminder: emit exactly one <index_html>…</index_html> block containing the complete document and nothing else — no prose, Markdown fences, or commentary.",
+            ]
+          : []),
       ];
       if (truncated) {
         // A truncated full composition cannot be repaired because it never
@@ -2861,7 +3581,7 @@ async function requestContinuityCritique(
     "## Response contract",
     'Return only a JSON object: {"verdict":"ship"|"repair","directives":["..."]}.',
   ].join("\n");
-  const raw = await completeWithRetry(provider, prompt, {
+  const raw = await completeReasoningWithRetry(provider, prompt, {
     ...args.options,
     timeoutMs: 120_000,
     maxTokens: thinkingMode === "none" ? 1_024 : 8_192,

@@ -95,4 +95,59 @@ describe("Slack blocks", () => {
     expect(text).toContain("local fallback");
     expect(text).toContain("Render video (high)");
   });
+
+  it("appends the ETA countdown line to thinking steps when provided", () => {
+    const withEta = JSON.stringify(thinkingStepsBlocks("Relay", [
+      { tool: "submit_plan", state: "running" },
+    ], "~45s remaining"));
+    const withoutEta = JSON.stringify(thinkingStepsBlocks("Relay", [
+      { tool: "submit_plan", state: "running" },
+    ]));
+
+    expect(withEta).toContain("~45s remaining");
+    expect(withoutEta).not.toContain("remaining");
+  });
+
+  it("shows the model-stage receipt trail only when debug receipts are passed", () => {
+    const base = {
+      jobId: "job-1",
+      title: "Relay",
+      outline: "1. hook",
+      lint: "lint: clean",
+      videoStage: "ready" as const,
+      usedMcp: false,
+      provider: "openrouter-api",
+    };
+    const withDebug = JSON.stringify(resultBlocks({
+      ...base,
+      debugStages: [
+        { stage: "frame-design", status: "succeeded", durationMs: 4_200 },
+        { stage: "storyboard-plan", status: "succeeded", durationMs: 61_000, attempts: 2 },
+        { stage: "source-author", status: "failed", durationMs: 12_000, attempts: 3 },
+      ],
+    }));
+    const withoutDebug = JSON.stringify(resultBlocks(base));
+
+    expect(withDebug).toContain("Debug — model stage receipts");
+    expect(withDebug).toContain("`storyboard-plan` · 2 attempts · 61s");
+    expect(withDebug).toContain(":x: `source-author` · 3 attempts · 12s");
+    // Clean first passes show no attempt count noise.
+    expect(withDebug).toContain("`frame-design` · 4.2s");
+    expect(withoutDebug).not.toContain("Debug — model stage receipts");
+  });
+
+  it("shows a render countdown on the rendering headline when provided", () => {
+    const section = resultBlocks({
+      jobId: "job-1",
+      title: "Relay",
+      outline: "1. hook",
+      lint: "lint: clean",
+      videoStage: "rendering",
+      usedMcp: false,
+      provider: "openrouter-api",
+      renderEtaLabel: "~60s remaining",
+    })[0];
+    const text = section?.type === "section" && section.text?.type === "mrkdwn" ? section.text.text : "";
+    expect(text).toContain("Rendering the video... (~60s remaining)");
+  });
 });

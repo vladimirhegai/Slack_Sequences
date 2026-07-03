@@ -86,8 +86,9 @@ layer. Two caveats shape how we *consume* these:
    not vendored. `hyperframes.json` points `registry` at GitHub-raw; `media-use`
    needs the `heygen` CLI + key. Our product is Railway/Docker, provenance-clean,
    and does no network fetch at render time — so a **sync / vendor / allowlist
-   step** must front both before the planner may select from them. This is the
-   single largest real gap (see §9).
+   step** must front both before the planner may select from them. The offline
+   sync + capability-aware retrieval are built; source approval/materialization
+   is the remaining gap (see §9).
 2. **Studio's live keyframe / arc / gesture editing is a human, in-browser tool.**
    It is excellent but neither headless nor reachable from Slack. Our editing
    surface is the Slack audition → revise → critic loop, not the Studio timeline.
@@ -176,8 +177,8 @@ Two different LLMs run, on two different providers; keep them distinct:
   and returns a bounded evidence pack. Always needs an OpenAI key.
 - **Planning / authoring bot — the main agent.** Selected by
   `SLACK_SEQUENCES_PROVIDER`; the live Railway deployment uses OpenRouter
-  (DeepSeek) and authors HyperFrames directly. This is the agent the recipes and
-  the revised laws below govern.
+  (GLM for direction/storyboard, DeepSeek for source) and authors HyperFrames
+  directly. This is the agent the recipes and the revised laws below govern.
 
 The OpenRouter author uses a deliberate three-role policy:
 
@@ -202,6 +203,24 @@ one ambiguous sibling cannot discard the safe work. Provider
 assistant prefill, allowing one logical document to span multiple bounded
 completions without spending a repair attempt. Compact regeneration remains the
 fallback for providers that cannot return a partial completion.
+
+GLM's reasoning and structured JSON share one completion budget. The storyboard
+pass therefore uses 30,720 tokens under OpenRouter's 32,768-token GLM 5.2
+ceiling, allows a six-minute provider turn, and retries a truncated artifact once
+at lower reasoning effort. The cached concept uses high effort for taste;
+beat-expansion and continuity review use medium effort so the large strict JSON
+artifact keeps the time/token budget it needs. Reasoning-heavy storyboard and
+critic calls use the provider's streaming transport so reasoning deltas keep
+OpenRouter's upstream route active without being logged or persisted. This is
+separate from DeepSeek source continuation.
+Briefs that explicitly request component kinds, a spatial UI world, or
+object-match cuts become deterministic storyboard coverage requirements; prose
+mention alone cannot satisfy them.
+
+Camera intent accepts absolute composition seconds as canonical input and also
+recovers unambiguous scene-relative offsets for later shots. The offset is
+shifted as a whole before clamping; start/end arithmetic must never mix the two
+time domains, because that collapses valid moves to zero duration.
 
 Flash also routes revisions that touch only an existing interaction's timing,
 path, approach, normalized aim, or press scale. The result is locally validated
@@ -437,10 +456,20 @@ validation warns on probable wrapper double ownership.
 Static liveness validation now sits beside that ownership rule. `motionDensity.ts`
 does not look at pixels; it classifies scene starts/cuts as major activity,
 authored GSAP/component/camera beats as medium activity, and cursor interactions
-as medium activity. On 10s+, 3+ shot films it asks the bounded repair loop to fix
+as medium activity. Camera drift and decorative glows, rules, dividers,
+underlines, grain, and similar polish are small activity and cannot prove a
+storyboard moment or close a quiet interval. On 10s+, 3+ shot films it asks the
+bounded repair loop to fix
 long quiet gaps, front-loaded shots, under-beaten longer scenes, and over-dense
-bursts. These warnings can improve a live draft, but they are heuristic and do
-not override the browser-valid publication fallback.
+bursts. Liveness and unbound-moment findings block publication; over-density
+remains advisory.
+
+Exhausted storyboard/source authoring never masquerades as creative output:
+the `fallbackComposition.ts` proof film ships by default but is explicitly
+labeled (`VideoResult.fallback = { stage, reason }`, the Slack fallback banner,
+and the `/sequences debug on` receipt trail), so an audience sees a working
+film while the operator sees the truth. Opt out with
+`SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0` to fail visibly instead.
 
 The planner retrieves only the selected blueprint, cited motion rules, component
 contracts, and relevant slice of `frame.md`. It never receives the entire
@@ -637,9 +666,14 @@ orchestrator submits a minimal flow-first direct composition from the brief and
 
 ## 9. Capability index, registry sync, and in-Slack audition
 
-The planner cannot reuse what it cannot see. Today the bot retrieves blueprints
-and rules but is **blind to the 50+ registry catalog** — exactly the
-duplicate-building risk this product must avoid.
+The planner cannot reuse what it cannot see.
+
+> **Implemented: sync + retrieval.** `scripts/syncCapabilityIndex.ts` emits the
+> normalized offline `capabilities/capability-index.json`, and
+> `src/agent/capabilityIndex.ts` gives the planner capability-aware retrieval
+> over it (see ROADMAP §9 checklist for exact state). **Still open:** source
+> approval/materialization (instantiating known-good blocks instead of citing
+> their metadata) and the in-Slack audition below.
 
 **Registry sync (deterministic).** A build step pulls the registry manifest plus
 each `registry-item.json`, vendors the approved subset locally with provenance,

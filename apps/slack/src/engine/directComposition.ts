@@ -68,6 +68,18 @@ const MANIFEST_FILE = "manifest.json";
 const REVISIONS_DIR = "revisions";
 const MAX_SOURCE_CHARS = 500_000;
 
+/**
+ * One camera station pinned to a viewport-sized grid cell of the scene's
+ * data-camera-world plane. `[0,0]` is the entry framing; `[1,0]` is one full
+ * viewport to the right, `[0,-1]` one up. Declared by the storyboard for
+ * multi-station shots so the author receives deterministic pixel rects
+ * instead of free placement (the source of clipping/off-camera stations).
+ */
+export interface WorldLayoutCellV1 {
+  region: string;
+  cell: [number, number];
+}
+
 export interface DirectScene {
   id: string;
   title: string;
@@ -87,6 +99,8 @@ export interface DirectScene {
   cut?: SceneCutIntentV1;
   /** Typed camera path over this scene's data-camera-world plane. */
   camera?: SceneCameraIntentV1;
+  /** Optional station map: which data-region sits in which world grid cell. */
+  worldLayout?: WorldLayoutCellV1[];
   /** Declared motion-native components (each authored as one data-part element). */
   components?: SceneComponentSpecV1[];
   /** Typed state-change beats on declared components (times are absolute). */
@@ -948,16 +962,26 @@ function thumbnailCaptures(manifest: DirectCompositionManifest): ThumbnailCaptur
         ...moments.filter((entry) => entry.moment.importance === "primary"),
         ...moments.filter((entry) => entry.moment.importance !== "primary"),
       ].slice(0, MAX_MOMENT_THUMBNAILS);
+  // The outgoing cut's exit window animates the scene wrapper off; capturing
+  // inside it produces a mid-transition frame.
+  const cutExitByScene = new Map(
+    resolveCutPlan(manifest.scenes).cuts.map((cut) => [cut.fromScene, cut.exitSec]),
+  );
   return selected
-    .map(({ moment, scene }, index) => ({
-      key: `m${String(index + 1).padStart(2, "0")}-${moment.id}`,
-      // Let the beat land: capture just after the changed state arrives, but
-      // never past the scene window it belongs to.
-      atSec: Math.min(
-        moment.atSec + 0.42,
-        scene.startSec + scene.durationSec - 0.05,
-      ),
-    }))
+    .map(({ moment, scene }, index) => {
+      // Capture the SETTLED state: just after the bound evidence finishes
+      // (typing done, camera arrived, chart drawn) rather than mid-animation.
+      // Unbound/legacy moments keep the old post-atSec offset.
+      const settledSec = moment.evidence
+        ? moment.evidence.endSec + 0.08
+        : moment.atSec + 0.42;
+      const latestSec =
+        scene.startSec + scene.durationSec - 0.05 - (cutExitByScene.get(scene.id) ?? 0);
+      return {
+        key: `m${String(index + 1).padStart(2, "0")}-${moment.id}`,
+        atSec: Math.min(Math.max(settledSec, scene.startSec), Math.max(scene.startSec, latestSec)),
+      };
+    })
     .sort((a, b) => a.atSec - b.atSec)
     .map((capture, index) => ({
       ...capture,

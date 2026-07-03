@@ -144,6 +144,18 @@ roughly every 3.5s); camera bindings are injected deterministically from the
 locked storyboard and gated by `validateCameraContract`; layout QA suppresses
 heuristics during camera transits and for off-frame world stations; the
 model-free fallback ships a camera world as the deterministic proof path.
+Camera motion is *energy-graded* (2026-07-03): `auditCameraEnergy` blocks 12s+
+storyboards with no high-energy peak (whip / zoom≥1.3 push-in / energetic cut)
+or a single repeated verb; the resolver splits the drift before committed
+moves into a short `seqAnticipate` wind-up; whips carry host-compiled motion
+blur; storyboards may pin regions to viewport-sized grid cells (`worldLayout`)
+that the author prompt converts into deterministic station rects so content
+stops clipping or drifting off-camera. Simultaneous component beats settle in
+a 45ms cascade (follow-through). Slack shows an **ETA countdown** (persisted
+per-stage EMA, `stageTimings.ts`) instead of a stopwatch, and
+`/sequences debug on|off` appends a model-stage receipt trail
+(stage/status/attempts/duration) to results — details in ROADMAP's 2026-07-03
+polish-pass section.
 A host-owned **cinematography kit** (`engine/cinemaKit.ts` +
 `templates/sequences-cinema.v1.css`) is injected inline into every direct
 composition: automatic film grain + vignette, key-light fields, hero blooms,
@@ -210,28 +222,33 @@ and rejects unbound moments, a missed floor, or (for declared plans) dead
 intervals. Legacy/fallback storyboards without declared moments get moments
 synthesized from the same activity evidence. Moments drive the Slack storyboard
 outline (timestamped rows grouped under scenes), the thumbnail strip (one frame
-per moment, primaries first, cap 10), `STORYBOARD.md`, and `motion-plan.json`.
+per moment, primaries first, cap 10, captured just after each moment's bound
+evidence *settles* and before the outgoing cut window — never mid-animation),
+`STORYBOARD.md`, and `motion-plan.json`.
 
 **Staged planning (GLM as three bounded jobs).** Live create now runs: a cached
 **concept pass** (thesis, narrative pressure, energy curve, motif, color arc,
 one risk — `requestConceptDirection`, kill-switch
 `SLACK_SEQUENCES_CONCEPT_PASS=0`), the **beat-expansion storyboard pass**
-(consumes the concept artifact; one bounded retry with deterministic findings
-on a rejected plan), DeepSeek source authoring against the locked storyboard,
+(consumes the concept artifact; up to two bounded retries with deterministic
+findings on a rejected/truncated plan), DeepSeek source authoring against the locked storyboard,
 then a **continuity critic** pass (GLM reviews the implemented film's moment
 evidence + motion-density contact sheet and returns ≤5 bounded repair
 directives; DeepSeek applies them as patches; deterministic QA accepts or
 rejects — kill-switch `SLACK_SEQUENCES_CREATIVE_CRITIC=0`; any critic failure
 keeps the pre-critique draft). Each artifact is cached independently.
 
-**Explicit fallback stages.** `createVideo` attributes failures to named stages
-(`storyboard-plan`, `source-author`); `VideoResult.stages` carries argument-free
-receipts and `VideoResult.fallback = { stage, reason }` marks a published
-deterministic fallback. Slack results label the fallback explicitly (stage name
-only, never model output); `sequence:check` reports
-`authoringMode/fallbackStage/moments/unboundMoments`. The fallback composition
-itself obeys the full moment contract (13 declared, evidence-bound moments over
-a camera-world pan; duration clamped to 20s) and a fallback is never cached
+**Honest, labeled fallbacks.** `createVideo` attributes failures to named stages
+(`frame-design`, `storyboard-plan`, `source-author`); `VideoResult.stages`
+carries argument-free receipts (with per-stage retry `attempts` when
+`/sequences debug on` is set). When storyboard/source recovery is exhausted,
+the deterministic model-free proof film ships **by default** —
+`VideoResult.fallback = { stage, reason }` marks it and Slack labels it, so
+the audience never sees a raw error while the operator sees exactly what
+happened. Opt out with `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0` to
+fail visibly instead (frame-design failures always fail visibly). The
+fallback obeys the full contract (11 declared, evidence-bound information
+moments over a camera-world pan; duration clamped to 20s) and is never cached
 under a model-artifact key.
 
 Agent-facing local checks use `npm run sequence:check --workspace

@@ -96,7 +96,7 @@ export function buildFallbackComposition(
   // Hook: headline → tools line → ghost mark → accent rule (back half).
   const hookHead = 0.15;
   const hookTools = r2(Math.max(hookHead + 0.6, first * 0.32));
-  const hookMark = r2(first * 0.55);
+  const hookMark = r2(first * 0.62);
   const hookRule = r2(first * 0.78);
   // Proof: context copy → audience line → camera pan → proof panel → progress.
   const proofContext = r2(starts[1]! + 0.15);
@@ -109,7 +109,7 @@ export function buildFallbackComposition(
   // Close: lockup → rule → CTA → promise.
   const closeLockup = r2(starts[2]! + 0.2);
   const closeRule = r2(starts[2]! + third * 0.45);
-  const closeCta = r2(starts[2]! + third * 0.62);
+  const closeCta = r2(starts[2]! + third * 0.5);
   const closePromise = r2(Math.min(starts[2]! + third * 0.82, duration - 0.7));
 
   const storyboard: DirectScene[] = [
@@ -153,15 +153,6 @@ export function buildFallbackComposition(
           visualState: "Ghost product initial balances the headline",
           change: "Brand presence enters the frame",
           motionIntent: "reveal",
-          importance: "supporting",
-        }),
-        moment("fallback-hook", {
-          id: "hook-rule",
-          atSec: hookRule + 0.1,
-          title: "Accent rule underlines the claim",
-          visualState: "Accent rule drawn under the headline",
-          change: "The claim is committed",
-          motionIntent: "draw-on",
           importance: "supporting",
         }),
       ],
@@ -290,15 +281,6 @@ export function buildFallbackComposition(
           change: "The film resolves to the brand",
           motionIntent: "resolve",
           importance: "primary",
-        }),
-        moment("fallback-close", {
-          id: "close-rule",
-          atSec: closeRule + 0.1,
-          title: "Divider draws",
-          visualState: "Hairline rule under the lockup",
-          change: "The close is composed",
-          motionIntent: "draw-on",
-          importance: "supporting",
         }),
         moment("fallback-close", {
           id: "close-cta",

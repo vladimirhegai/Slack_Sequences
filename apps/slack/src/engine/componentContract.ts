@@ -119,7 +119,9 @@ export const COMPONENT_CATALOG: ComponentKindSpec[] = [
     kind: "app-window",
     className: "cmp-window",
     purpose: "Browser/app frame with chrome bar — the container for product UI",
-    beats: [],
+    // Product worlds often use the window itself as the alert/card stack.
+    // The generic rows compiler already targets data-cmp-item descendants.
+    beats: ["rows"],
     markup:
       `<div class="cmp cmp-window material-hero" data-component="app-window" data-part="demo-app">` +
       `<div class="cmp-chrome"><i></i><i></i><i></i><span class="cmp-chrome-title">acme.app</span></div>` +
@@ -309,7 +311,7 @@ export const COMPONENT_CATALOG: ComponentKindSpec[] = [
     kind: "terminal",
     className: "cmp-terminal",
     purpose: "Terminal/code card: mono lines, typed commands",
-    beats: ["type", "rows"],
+    beats: ["type", "rows", "stream"],
     markup:
       `<div class="cmp cmp-terminal inset-well" data-component="terminal" data-part="cli">` +
       `<div class="cmp-line"><span class="cmp-prompt">$</span><span class="cmp-text" data-cmp-text>acme deploy --prod</span></div>` +
@@ -507,7 +509,15 @@ export function normalizeStoryboardComponentBeats(
     if (!id || !component || !kind || !COMPONENT_BEAT_KINDS.has(kind)) return [];
     if (!componentIds.has(component)) return [];
     if (!finite(item.atSec)) return [];
-    const atSec = clamp(item.atSec, scene.startSec, sceneEnd);
+    const rawAtSec = item.atSec;
+    const candidateAtSec =
+      scene.startSec > 0 &&
+      rawAtSec >= 0 &&
+      rawAtSec < scene.startSec &&
+      rawAtSec <= scene.durationSec
+        ? scene.startSec + rawAtSec
+        : rawAtSec;
+    const atSec = clamp(candidateAtSec, scene.startSec, sceneEnd);
     const text = typeof item.text === "string" ? item.text.trim().slice(0, 220) : "";
     const toState = typeof item.toState === "string"
       ? item.toState.trim().toLowerCase().slice(0, 24)
@@ -751,10 +761,22 @@ function sceneScopes(html: string): Array<{ id: string; scope: string }> {
   const tags = [...html.matchAll(
     /<[a-z][\w:-]*\b[^>]*\bdata-scene\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>/gi,
   )];
-  return tags.map((tag, index) => ({
-    id: (tag[1] ?? tag[2] ?? tag[3] ?? "").trim(),
-    scope: html.slice(tag.index, tags[index + 1]?.index ?? html.length),
-  }));
+  return tags.map((tag, index) => {
+    const tagName = tag[0].match(/^<([a-z][\w:-]*)\b/i)?.[1];
+    const nextScene = tags[index + 1]?.index ?? html.length;
+    let end = nextScene;
+    if (tagName) {
+      const close = new RegExp(`</${tagName}\\s*>`, "i")
+        .exec(html.slice(tag.index + tag[0].length, nextScene));
+      if (close?.index !== undefined) {
+        end = tag.index + tag[0].length + close.index + close[0].length;
+      }
+    }
+    return {
+      id: (tag[1] ?? tag[2] ?? tag[3] ?? "").trim(),
+      scope: html.slice(tag.index, end),
+    };
+  });
 }
 
 function attributeMatches(scope: string, attribute: string, value: string): number {

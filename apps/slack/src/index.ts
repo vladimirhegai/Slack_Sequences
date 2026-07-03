@@ -43,6 +43,15 @@ import { getSlackUserToken } from "./slackTokenStore.ts";
 import { slackInstallUrl } from "./slackOAuth.ts";
 import { retrieveSlackMcpContext } from "./slackMcpContext.ts";
 import { runDiagnostics } from "./diagnostics.ts";
+import { isDebugEnabled, setDebugEnabled } from "./debugFlags.ts";
+import {
+  CREATE_STEPS,
+  EtaTracker,
+  REVISE_STEPS,
+  estimateStepMs,
+  formatEtaMs,
+  recordStepDuration,
+} from "./engine/stageTimings.ts";
 import { loadJobFrame, publicFrameMd } from "./engine/frameDesign.ts";
 
 const botToken = process.env.SLACK_BOT_TOKEN;
@@ -111,40 +120,102 @@ function runJobInBackground(
   runInBackground(label, task().finally(() => activeJobs.delete(jobId)));
 }
 
+/** Honest phase copy for each named model stage while it runs. */
+const STAGE_PHASES: Record<string, string> = {
+  "frame-design": "Choosing a visual direction…",
+  "storyboard-plan": "Shaping the story beats…",
+  "source-author": "Building the HyperFrames composition…",
+};
+
 /**
- * Until the first real progress step lands, the planning/authoring model call
- * produces no Slack updates — the "Building" message would otherwise sit frozen
- * on "Drafting a launch reel…" for the whole (often multi-minute) model turn,
- * which reads as "stuck". This ticks that message with a phase hint + elapsed
- * seconds so the user can see it is alive. Returns a stop() that the progress
- * reporter calls the instant a real step arrives; stop() is idempotent.
+ * One live "Building…" view per run: model-stage pulses, MCP tool steps, and a
+ * 5s ticker all render the SAME message through one serialized writer, so the
+ * countdown stays fresh for the whole build (the old heartbeat died at the
+ * first progress step and the old copy showed climbing elapsed seconds, which
+ * reads as "stuck" to anyone watching a multi-minute generation).
  */
-function startBuildingHeartbeat(
-  client: WebClient,
-  channel: string,
-  messageTs: string,
-  title: string,
-  phases: string[],
-): () => void {
-  const startedAt = Date.now();
-  let stopped = false;
-  const tick = async (): Promise<void> => {
-    if (stopped) return;
-    const elapsed = Math.round((Date.now() - startedAt) / 1000);
-    const phase = phases[Math.min(Math.floor(elapsed / 15), phases.length - 1)];
-    if (stopped) return;
-    await safeUpdate(client, {
-      channel,
-      ts: messageTs,
-      blocks: buildingBlocks(title, `${phase} · ${elapsed}s`),
-      text: `Building “${title}”…`,
-    });
-  };
-  const timer = setInterval(() => void tick(), 5_000);
-  return () => {
-    stopped = true;
-    clearInterval(timer);
-  };
+class BuildingView {
+  private readonly steps = new Map<McpToolName, ThinkingStep>();
+  private phase = "Gathering the launch details…";
+  private stopped = false;
+  private timer?: ReturnType<typeof setInterval>;
+  private writing: Promise<void> = Promise.resolve();
+  private readonly client: WebClient;
+  private readonly channel: string;
+  private readonly messageTs: string;
+  private readonly title: string;
+  private readonly tracker: EtaTracker;
+
+  constructor(
+    client: WebClient,
+    channel: string,
+    messageTs: string,
+    title: string,
+    tracker: EtaTracker,
+  ) {
+    this.client = client;
+    this.channel = channel;
+    this.messageTs = messageTs;
+    this.title = title;
+    this.tracker = tracker;
+    this.timer = setInterval(() => this.render(), 5_000);
+  }
+
+  /** Model-stage pulse (frame-design / storyboard-plan / source-author). */
+  onStage(stage: string, phase: "started" | "completed", durationMs?: number): void {
+    if (phase === "started") {
+      this.tracker.start(stage);
+      this.phase = STAGE_PHASES[stage] ?? this.phase;
+    } else {
+      this.tracker.complete(stage, durationMs);
+    }
+    this.render();
+  }
+
+  /** MCP tool step (submit/preview/render/…): the visible Thinking-Steps trace. */
+  onProgress(progress: OrchestratorProgress): void {
+    const previous = this.steps.get(progress.tool);
+    if (progress.phase === "started") {
+      this.tracker.start(progress.tool);
+      this.steps.set(progress.tool, {
+        tool: progress.tool,
+        state: "running",
+        quality: progress.quality ?? previous?.quality,
+      });
+    } else {
+      this.tracker.complete(progress.tool, progress.receipt?.durationMs);
+      this.steps.set(progress.tool, {
+        tool: progress.tool,
+        state: progress.receipt?.status ?? "succeeded",
+        durationMs: progress.receipt?.durationMs,
+        quality: progress.quality ?? previous?.quality,
+      });
+    }
+    this.render();
+  }
+
+  /** Idempotent; the final storyboard/result update replaces this view. */
+  stop(): void {
+    this.stopped = true;
+    if (this.timer) clearInterval(this.timer);
+  }
+
+  private render(): void {
+    if (this.stopped) return;
+    const eta = this.tracker.label();
+    const blocks = this.steps.size
+      ? thinkingStepsBlocks(this.title, [...this.steps.values()], eta)
+      : buildingBlocks(this.title, `${this.phase} · ${eta}`);
+    // Serialize chat.update calls so a slow write can't be overtaken by a
+    // newer one and then land stale.
+    this.writing = this.writing.then(() =>
+      safeUpdate(this.client, {
+        channel: this.channel,
+        ts: this.messageTs,
+        blocks,
+        text: `Building “${this.title}”…`,
+      }));
+  }
 }
 
 async function safeUpdate(
@@ -230,6 +301,8 @@ function stageBlocks(
     fallback: result.fallback ? { stage: result.fallback.stage } : undefined,
     provider: result.provider,
     renderQuality,
+    debugStages: isDebugEnabled() ? result.stages : undefined,
+    renderEtaLabel: stage === "rendering" ? formatEtaMs(estimateStepMs("render")) : undefined,
     frame: result.frame
       ? { label: result.frame.label, basis: result.frame.basis, brandMatched: result.frame.brandMatched }
       : undefined,
@@ -312,6 +385,10 @@ async function deliverVideo(
     quality: "draft",
     onProgress: args.onProgress,
   });
+  // Teach the countdown: fold the real render duration into the persisted EMA.
+  for (const call of rendered.toolCalls) {
+    if (call.status === "succeeded") recordStepDuration(call.tool, call.durationMs);
+  }
   const result = {
     ...args.result,
     mp4Path: rendered.mp4Path,
@@ -392,20 +469,14 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     return;
   }
   const messageTs = posted.ts as string;
-  const reportProgress = makeProgressReporter(client, args.channel, messageTs, args.product);
-  const stopHeartbeat = startBuildingHeartbeat(client, args.channel, messageTs, args.product, [
-    "Gathering the launch details…",
-    "Choosing a visual direction…",
-    "Shaping the story beats…",
-    "Building the HyperFrames composition…",
-    "Polishing the first composition draft…",
-  ]);
-  // The first real step ends the silent window — drop the heartbeat so it can't
-  // overwrite the live Thinking-Steps trace.
-  const onProgress: ProgressCallback = async (progress) => {
-    stopHeartbeat();
-    await reportProgress(progress);
-  };
+  const view = new BuildingView(
+    client,
+    args.channel,
+    messageTs,
+    args.product,
+    new EtaTracker(args.presetPlan ? ["submit_plan", "render_preview"] : CREATE_STEPS),
+  );
+  const onProgress: ProgressCallback = (progress) => view.onProgress(progress);
 
   createJob({
     id: jobId,
@@ -463,11 +534,12 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
       presetPlan: args.presetPlan,
       render: false,
       onProgress,
+      onStageProgress: (stage, phase, durationMs) => view.onStage(stage, phase, durationMs),
     });
     result.slackMcpTools = slackMcpTools;
     result.slackMcpNote = slackMcpNote;
   } catch (error) {
-    stopHeartbeat();
+    view.stop();
     updateJob(jobId, { status: "error" });
     await safeUpdate(client, {
       channel: args.channel,
@@ -477,9 +549,8 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     });
     return;
   }
-  // Authoring finished (success). If a step somehow never fired, end the silent
-  // window now so the storyboard update replaces the heartbeat cleanly.
-  stopHeartbeat();
+  // Authoring finished (success) — the storyboard update replaces the live view.
+  view.stop();
 
   updateJob(jobId, { status: "building", projectDir: result.projectDir });
   await safeUpdate(client, {
@@ -529,17 +600,14 @@ async function runRevise(client: WebClient, jobId: string, instruction: string):
 
   const messageTs = posted.ts as string;
   const threadTs = job.threadTs ?? job.messageTs;
-  const reportProgress = makeProgressReporter(client, job.channel, messageTs, job.title);
-  const stopHeartbeat = startBuildingHeartbeat(client, job.channel, messageTs, job.title, [
-    "Reading the revision notes…",
-    "Finding the scenes that need to change…",
-    "Reworking the HyperFrames composition…",
-    "Polishing the updated composition…",
-  ]);
-  const onProgress: ProgressCallback = async (progress) => {
-    stopHeartbeat();
-    await reportProgress(progress);
-  };
+  const view = new BuildingView(
+    client,
+    job.channel,
+    messageTs,
+    job.title,
+    new EtaTracker(REVISE_STEPS),
+  );
+  const onProgress: ProgressCallback = (progress) => view.onProgress(progress);
   updateJob(jobId, { status: "building" });
 
   // Tier 1: apply the tweak + re-thumbnail (zero-token where the matcher is sure).
@@ -552,7 +620,7 @@ async function runRevise(client: WebClient, jobId: string, instruction: string):
       onProgress,
     });
   } catch (error) {
-    stopHeartbeat();
+    view.stop();
     updateJob(jobId, { status: "ready" });
     await safeUpdate(client, {
       channel: job.channel,
@@ -562,7 +630,7 @@ async function runRevise(client: WebClient, jobId: string, instruction: string):
     });
     return;
   }
-  stopHeartbeat();
+  view.stop();
 
   updateJob(jobId, { status: "building" });
   await safeUpdate(client, {
@@ -791,8 +859,21 @@ app.command("/sequences", async ({ command, ack, client, respond }) => {
         "• `/sequences` — open the modal and turn a launch into an on-brand video.\n" +
         "• `/sequences demo` — build a ready-made *Relay v2* launch reel (no setup).\n" +
         "• `/sequences mcp-test` — self-check every service (MCP, render host, Slack, config).\n" +
+        "• `/sequences debug on|off` — show/hide the model-stage receipt trail on results.\n" +
         "• *🎬 Make a launch video* message shortcut — draft a video from any message.\n" +
         "• Reply in a reel’s thread to revise it; common tweaks like “shorter” and “warmer” need no model.",
+    });
+    return;
+  }
+
+  if (text === "debug" || text === "debug on" || text === "debug off") {
+    if (text !== "debug") setDebugEnabled(text === "debug on");
+    const enabled = isDebugEnabled();
+    await respond({
+      response_type: "ephemeral",
+      text: enabled
+        ? ":mag: Debug receipts are *on* — result messages will include the model-stage trail (attempts, durations, fallback attribution). `/sequences debug off` to hide."
+        : ":mag: Debug receipts are *off* — result messages stay clean. `/sequences debug on` to show the model-stage trail.",
     });
     return;
   }

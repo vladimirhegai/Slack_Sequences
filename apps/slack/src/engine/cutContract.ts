@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { sceneScopes } from "./cameraContract.ts";
 import type { DirectScene } from "./directComposition.ts";
 
 export const CUT_RUNTIME_VERSION = 1;
@@ -278,16 +279,27 @@ export function validateCutContract(
     errors.push("sequences-cuts island differs from the storyboard's resolved cut plan");
   }
   const sceneIds = new Set(scenes.map((scene) => scene.id));
+  // The runtime binds focal parts scene-scoped (outgoing in fromScene,
+  // incoming in toScene), so the static gate must check the same scope — a
+  // part that exists only in the other scene would pass a whole-document
+  // check and then fail cut compilation in the browser.
+  const scopes = new Map(sceneScopes(html).map((scene) => [scene.id, scene.scope]));
   for (const cut of parsed.plan.cuts) {
     if (!sceneIds.has(cut.fromScene) || !sceneIds.has(cut.toScene)) {
       errors.push(`cut ${cut.fromScene}->${cut.toScene} references an unknown scene`);
       continue;
     }
-    if (cut.focalPartOut && !partPattern(cut.focalPartOut).test(html)) {
-      errors.push(`cut ${cut.fromScene}->${cut.toScene} outgoing part "${cut.focalPartOut}" is absent`);
+    if (cut.focalPartOut && !partPattern(cut.focalPartOut).test(scopes.get(cut.fromScene) ?? html)) {
+      errors.push(
+        `cut ${cut.fromScene}->${cut.toScene} outgoing part "${cut.focalPartOut}" must exist as a ` +
+          `data-part inside scene "${cut.fromScene}"`,
+      );
     }
-    if (cut.focalPartIn && !partPattern(cut.focalPartIn).test(html)) {
-      errors.push(`cut ${cut.fromScene}->${cut.toScene} incoming part "${cut.focalPartIn}" is absent`);
+    if (cut.focalPartIn && !partPattern(cut.focalPartIn).test(scopes.get(cut.toScene) ?? html)) {
+      errors.push(
+        `cut ${cut.fromScene}->${cut.toScene} incoming part "${cut.focalPartIn}" must exist as a ` +
+          `data-part inside scene "${cut.toScene}"`,
+      );
     }
     // The runtime owns the scene wrapper's transform/filter/opacity around this
     // boundary. An authored tween on the same wrapper is the classic

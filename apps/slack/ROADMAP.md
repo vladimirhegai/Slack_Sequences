@@ -76,7 +76,11 @@ point an agent at the listed file.
 - Project-local pointer geometry resolution (`sequences-interactions.v1.js`) and interaction-time browser QA (`qa/spatial.json`).
 - `frame.md` supplies six flow-first scene compositions plus semantic `.zone` / `.stack` / `.row` / `.cluster` helpers. Primary content stays in safe-area Grid/Flex flow; scoped absolute positioning remains available for decoration and deliberate hero overlap.
 - Interaction targets are reconciled only when an exact element id or one unique semantic candidate makes the binding unambiguous; genuinely ambiguous interactions still quarantine safely.
-- Browser-QA infrastructure failure now publishes a statically valid draft with an explicit QA marker. If storyboard/HTML authoring itself fails, `fallbackComposition.ts` produces a simple three-shot, frame-colored direct composition instead of surfacing a Slack error.
+- Browser-QA infrastructure failure still publishes a statically valid draft
+  with an explicit QA marker. Exhausted storyboard/source authoring ships the
+  labeled `fallbackComposition.ts` proof film by default (Slack banner + debug
+  receipts mark it); `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0` opts out
+  to a visible named-stage error instead.
 - Model A/B (July 1): DeepSeek remains the default production author. The GLM override emitted truncated/invalid inline JavaScript and failed all three static-validation attempts; GLM remains on bounded frame/storyboard decisions, where it is reliable and high leverage.
 - Post-change paid RADAR smoke: guessed `top/left/right/bottom` pixel edges fell from 47 to 0, absolute rules from 20 to 11, and all four shots selected named flow layouts with ten semantic zones. Replaying its planned CTA click through the final binding normalizer produced clean interaction QA; arrival, press, and release all landed inside the target.
 
@@ -147,12 +151,13 @@ point an agent at the listed file.
   interaction / positioned non-wrapper tween), synthesis for storyboards that
   declare none, moment-led Slack outlines, and a per-moment thumbnail strip
   (primaries first, cap 10). GLM planning is staged into three bounded jobs —
-  cached concept pass → moment-bearing storyboard (one findings-driven retry) →
+  cached concept pass → moment-bearing storyboard (up to two findings-driven retries) →
   post-authoring continuity critic whose ≤5 directives are applied as DeepSeek
   patches under full deterministic QA. `createVideo` attributes failures to
-  named stages and labels the deterministic fallback explicitly in Slack and in
-  `sequence:check` (`fallbackStage`, `moments`, `unboundMoments`); the fallback
-  film itself carries 13 evidence-bound moments.
+  named stages. Normal Slack creates fail visibly instead of publishing generic
+  work; `sequence:check` preserves the stage/reason, and an explicitly enabled
+  emergency fallback carries 11 evidence-bound information moments. Decorative
+  underline/divider beats no longer mint moments.
 ### Motion-native component system (2026-07-02)
 - Components are the **fourth host-owned contract** beside cuts, camera, and
   interactions: the storyboard declares typed per-scene `components`
@@ -163,6 +168,9 @@ point an agent at the listed file.
   state changes at absolute seconds (`type`, `open`, `close`, `select`,
   `press`, `set-state`, `count`, `progress`, `chart`, `rows`, `stream`,
   `highlight`, `swap`, `morph`).
+- Terminal components support `stream` as well as `type`/`rows`; the runtime
+  already compiled streamed text generically, and the catalog now exposes that
+  capability so plans such as “terminal confirms rollback” are not rejected.
 - `engine/componentContract.ts` normalizes/resolves the plan;
   `compositionRunner.ts` injects the `sequences-components` JSON island,
   `templates/sequences-components.v1.js`, and the
@@ -201,7 +209,117 @@ point an agent at the listed file.
   injected both the cut bindings and the cinematography kit; the author used
   kit classes (`.material-hero`, `.inset-well`) on its own surfaces. GLM's
   reasoning storyboard budget was raised 8K→16K after the first attempt proved
-  8K truncates (reasoning eats the budget; provider ceiling is ~33K).
+  8K truncates. The exact Relay reproduction on 2026-07-02 then proved 16K also
+  truncates because reasoning and JSON share the budget. The live limit is now
+  30,720 under the route's 32,768-token ceiling, with six-minute headroom and
+  one lower-reasoning truncation retry. The concept stays at high reasoning;
+  beat expansion and continuity review use medium reasoning and the streaming
+  transport, preventing healthy long reasoning from looking like an idle
+  upstream request.
+
+### Relay fallback incident and anti-slideshow hardening (2026-07-02)
+
+- The supplied Relay screenshots exactly matched `fallbackComposition.ts`
+  (`Now shipping`, ghost product initial, `What changed`, one proof card,
+  centered `See what shipped`). This proved the component/camera authoring
+  systems had never run; the result was not evidence that DeepSeek authored a
+  boring film.
+- The first paid local replay preserved the full failure chain:
+  `frame-design` and GLM concept succeeded; the storyboard request first timed
+  out, then ended with `finish_reason=length` at the old 16,384-token cap;
+  `storyboard-plan` failed and the old orchestrator published the three-scene
+  proof. DeepSeek source authoring was never reached.
+- Normal create now refuses that substitution silently: since 2026-07-03 the
+  labeled fallback ships by default (`VideoResult.fallback` + Slack banner +
+  debug receipts) with `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0` as the
+  fail-visibly opt-out.
+- A user duration is communicated as a ±20% pacing center rather than an exact
+  cut length, but it is not a publication gate; the editor may run longer or
+  shorter when the richer cut plays better.
+  Brief product facts/quoted UI copy remain constraints, while shot and motion
+  notes are interpreted as creative intent; long launch prose must be atomized
+  into labels, values, and UI states.
+- Briefs that explicitly name motion-native components, a large spatial world,
+  camera travel, or object-match cuts create plan-time coverage gates. The
+  Relay brief requires at least six of its eight named component kinds, eight
+  typed component beats, two full camera moves, one multi-station world, and
+  one object-match boundary.
+- Ambient drift and decorative glows/rules/dividers/underlines are now small
+  activity. They cannot close a liveness gap, count as a scene information
+  beat, or prove a storyboard moment.
+- Camera normalization had a separate silent-loss bug: when a later shot used
+  natural scene-relative move times, the normalizer clamped the start to the
+  absolute scene boundary but computed the end from the unshifted offset. Every
+  move collapsed to zero duration and the path disappeared. Unambiguous
+  scene-relative offsets are now shifted into composition time before clamping.
+
+### Polish pass — camera energy, deterministic positioning, honest fallbacks (2026-07-03)
+
+- **ETA countdown** (`src/engine/stageTimings.ts` + `BuildingView` in
+  `index.ts`): the Slack build message shows estimated time *remaining* for
+  the whole run instead of an elapsed stopwatch. Per-step seeds + a persisted
+  EMA (`.data/stage-timings.json`) re-estimate after every stage completion;
+  real render durations feed the EMA; overruns degrade to "still working…"
+  copy. Judges are never surprised by a long generation.
+- **`/sequences debug on|off`** (`src/debugFlags.ts`): persisted operator
+  toggle that appends an argument-free model-stage receipt trail
+  (stage/status/attempts/duration + fallback labeling) to result messages —
+  the demo-day way to see every retry and fallback that happened.
+- **Thinking knobs**: `SLACK_SEQUENCES_STORYBOARD_THINKING` /
+  `SLACK_SEQUENCES_AUTHOR_THINKING` override a stage's reasoning effort
+  (`modelPolicy.thinkingOverride`); unset/invalid keeps built-in defaults.
+- **Camera-energy audit** (`auditCameraEnergy`, `cameraContract.ts`): blocking
+  storyboard findings when a 12s+ film has no high-energy peak (no whip, no
+  push-in with zoom ≥ 1.3, no zoom-through/inverse-zoom/flash-white/
+  object-match cut) or when 4+ full camera moves all share one verb. The
+  storyboard prompt binds camera verbs to the concept pass's energy curve;
+  the audit makes that guidance enforceable in one findings-retry.
+- **Anticipation wind-up** (`resolveCameraPlan`): the gap-fill drift before a
+  whip/push-in/track-to-anchor is split so a 0.22s `seqAnticipate` segment
+  (blend 0.06) lerps the camera backward past its start before the move
+  commits. Pure resolver change — validation and injection share the resolver.
+- **Whip motion blur + wider orbit** (`sequences-camera.v1.js`): whip segments
+  drive a 0→7px→0 blur on the world plane (per-segment proxy, seek-safe);
+  `ORBIT_DEG` 2.2 → 7 so orbit-lite reads as an arc, not a wobble.
+- **Staggered settle** (`sequences-components.v1.js`): component beats declared
+  at the same instant land 45ms apart in cascade — follow-through instead of
+  one frozen shared frame.
+- **World-layout station map** (`worldLayout` on `DirectScene`): the storyboard
+  pins each camera region to a viewport-sized grid cell (`[0,0]` entry,
+  integers −2..2); the author prompt renders deterministic plane sizes and
+  station rects (1400×800 boxes centered per cell) so stations stop clipping
+  each other or drifting off-camera. Degrades to free placement when absent.
+  A small always-on layout-guidance block (safe area, morph-twin box parity,
+  shared-grid gaps for simultaneous beats) rides with every locked storyboard.
+- **Settled thumbnails** (`thumbnailCaptures`): moment frames are captured just
+  after their bound evidence *ends* (`evidence.endSec + 0.08s`), clamped inside
+  the scene and before the outgoing cut's exit window — no more mid-animation
+  storyboard frames.
+- **Fallback default flip**: see "Honest, labeled fallbacks" above/CLAUDE.md.
+- **Stage-receipt attempts**: the storyboard/author retry loops write their
+  attempt count into `StageReceipt.attempts` via an out-param;
+  `/sequences debug on` renders it.
+- **Reasoning-mandatory floor**: endpoints that 400 on `reasoning: none`
+  (Kimi K2.7, GPT-5 tiers) no longer kill a stage — the retry keeps a
+  `minimal` reasoning floor. Found live by the 2026-07-03 model experiments.
+- **Author parse-failure reminder**: a wrapper/JSON parse failure (not a
+  validation finding) appends one structural reminder line to the retry.
+- **Spring easing decision**: deliberately skipped baking
+  `@hyperframes/core` `generateSpringEaseData` curves into the camera runtime —
+  build machinery + hash churn for a subtle delta over the proven hand-tuned
+  curves. Revisit only with rendered A/B evidence.
+
+**Breakthrough handoff candidate:** promote rendered temporal evidence into the
+live publication boundary. Static source inspection can prove that a tween or
+component beat exists, but not that two review frames are perceptually or
+semantically different enough. The hard next step is a seek-and-render judge
+that combines frame-difference/optical-flow evidence with a vision critic over
+the primary storyboard moments, rejects near-identical or illegible states, and
+returns bounded repair directives. `temporalInspector.ts` already supplies
+sampling and change curves, but this needs latency/cost budgets, thresholds that
+do not punish intentional holds, rendered-text legibility checks, caching, and
+careful false-positive evaluation. This is the one high-leverage task to hand to
+the engineering team rather than bolt onto the static gate casually.
 
 ---
 
@@ -277,7 +395,9 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 - [x] **Bound authoring cost:** completion ceilings, truncated craft contexts, reasoning disabled for DeepSeek, strict schema patches.
 - [x] **Storyboard-first, frame-validated authoring:** pre-planning cuts, committing `STORYBOARD.md` + `motion-plan.json` before source generation.
 - [x] **Flow-first placement vocabulary:** six named scene compositions and semantic zones in every job's `frame.md`.
-- [x] **Never-error create fallback:** static-only publication on QA infrastructure failure plus a deterministic direct composition when authoring fails.
+- [x] **Honest create failure policy:** static-only publication on QA
+      infrastructure failure; exhausted storyboard/source authoring fails
+      visibly. The deterministic proof film is emergency opt-in only.
 
 ### 2. Revised architecture laws as the planning prompt
 - [x] **Write `prompts/planning-director.md`:** instructing revised laws (transactional edits, scoped freedom, RAG index).

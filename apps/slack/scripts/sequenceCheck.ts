@@ -25,6 +25,7 @@ import {
   type DirectValidationResult,
 } from "../src/engine/directComposition.ts";
 import { reportTemporalEvidence } from "../src/engine/temporalInspector.ts";
+import { CAMERA_FULL_MOVES } from "../src/engine/cameraContract.ts";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.SLACK_SEQUENCES_DATA_DIR ??= path.join(appDir, ".data");
@@ -378,7 +379,9 @@ async function main(): Promise<void> {
     environment: {
       providerEnv: process.env.SLACK_SEQUENCES_PROVIDER ?? null,
       storyboardModel: process.env.SLACK_SEQUENCES_STORYBOARD_MODEL ?? null,
-      productionModel: process.env.SLACK_SEQUENCES_PRODUCTION_MODEL ?? null,
+      storyboardThinking: process.env.SLACK_SEQUENCES_STORYBOARD_THINKING ?? null,
+      productionModel: process.env.SEQUENCES_OPENROUTER_MODEL ?? null,
+      authorThinking: process.env.SLACK_SEQUENCES_AUTHOR_THINKING ?? null,
       repairModel: process.env.SLACK_SEQUENCES_REPAIR_MODEL ?? null,
       hasOpenRouterKey: Boolean(process.env.OPENROUTER_API_KEY),
       hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
@@ -432,6 +435,33 @@ async function main(): Promise<void> {
             0,
           )
         : null,
+      componentKinds: direct?.manifest
+        ? [...new Set(direct.manifest.scenes.flatMap((scene) =>
+            (scene.components ?? []).map((component) => component.kind)
+          ))].sort()
+        : null,
+      componentBeatCount: direct?.manifest
+        ? direct.manifest.scenes.reduce(
+            (count, scene) => count + (scene.beats?.length ?? 0),
+            0,
+          )
+        : null,
+      fullCameraMoveCount: direct?.manifest
+        ? direct.manifest.scenes.reduce(
+            (count, scene) =>
+              count +
+              (scene.camera?.path.filter((move) => CAMERA_FULL_MOVES.has(move.move)).length ?? 0),
+            0,
+          )
+        : null,
+      multiStationWorldCount: direct?.manifest
+        ? direct.manifest.scenes.filter((scene) =>
+            (scene.camera?.path.filter((move) => CAMERA_FULL_MOVES.has(move.move)).length ?? 0) >= 2
+          ).length
+        : null,
+      objectMatchCutCount: direct?.manifest
+        ? direct.manifest.scenes.filter((scene) => scene.cut?.style === "object-match").length
+        : null,
       browserValidated: (direct?.manifest as { qa?: { browserValidated?: boolean } } | undefined)?.qa?.browserValidated ?? null,
       layoutSamples: (direct?.manifest as { qa?: { layoutSamples?: number } } | undefined)?.qa?.layoutSamples ?? null,
       qaWarningCount: (direct?.manifest as { qa?: { warningCount?: number } } | undefined)?.qa?.warningCount ?? null,
@@ -467,6 +497,11 @@ async function main(): Promise<void> {
     thumbnails: result.thumbnailPaths.length,
     moments: report.checks.momentCount,
     unboundMoments: report.checks.unboundMomentCount,
+    componentKinds: report.checks.componentKinds,
+    componentBeats: report.checks.componentBeatCount,
+    fullCameraMoves: report.checks.fullCameraMoveCount,
+    multiStationWorlds: report.checks.multiStationWorldCount,
+    objectMatchCuts: report.checks.objectMatchCutCount,
     motionWarnings: report.checks.motionWarningCount,
     qaWarnings: report.checks.qaWarningCount,
     mp4: result.mp4Path ?? null,

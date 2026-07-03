@@ -1,0 +1,8 @@
+{
+  "product": "Relay",
+  "whatShipped": "Relay launched Release Command Center: AI search across Slack, GitHub, traces, and deploy logs; live deploy risk score; sub-100ms trace lookup; one-click rollback; audit-ready incident timeline; 40% faster cold starts.",
+  "audience": "backend engineers, SRE leads, and platform teams evaluating observability and release tooling",
+  "tone": "crisp-saas",
+  "lengthSec": 18,
+  "context": "Make this an 18-second 16:9 launch film. Visual arc: noisy deploy chaos becomes one calm command center. Use a dark graphite interface, precise cyan highlights, and a warm amber success state at the end.\n\nShow these product beats: alert cards stacking up, search typing \"checkout latency,\" search morphing into a command palette, trace waterfall resolving in under 100ms, deploy risk score counting down from 82 to 12, cursor selecting \"Rollback safe version,\" toast saying \"Rollback queued,\" terminal stream confirming the rollback, error-rate chart dropping, final CTA: \"Ship faster. Roll back safely.\"\n\nMotion direction: use one large spatial UI world with camera pushes and pans, object-match cuts between UI surfaces, component beats for search, command palette, table, stat card, terminal, toast, progress, and chart. Keep it clean, product-forward, and not generic AI sparkles. Aim for at least 8 clear storyboard moments."
+}

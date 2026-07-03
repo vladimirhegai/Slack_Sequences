@@ -78,25 +78,10 @@ owns that Socket Mode connection. A second process = duplicate Slack replies.
 
 ### Source loop (while editing)
 
-```powershell
-npm run typecheck --workspace @sequences/slack
-npm run test --workspace @sequences/slack
-npm run mcp:demo --workspace @sequences/slack
-npm run direct:demo --workspace @sequences/slack
-npm run sequence:check --workspace @sequences/slack -- --demo --no-mcp --format both
-npm run film:demo --workspace @sequences/slack
-```
-
-For engine/render/Docker/Chromium/FFmpeg/HyperFrames/media changes:
-
-```powershell
-$env:VERIFY_RENDER = "1"
-try { npm run film:demo --workspace @sequences/slack }
-finally { Remove-Item Env:VERIFY_RENDER -ErrorAction SilentlyContinue }
-
-docker build -t sequences-slack .
-docker run --rm -e VERIFY_RENDER=1 sequences-slack npm run film:demo -w @sequences/slack
-```
+The canonical command sequences live in **[CLAUDE.md → Verification & Testing
+Ladder](CLAUDE.md#verification--testing-ladder)** — §1 is the routine source
+gate, §2 the render/Docker gate for engine/render/Chromium/FFmpeg/HyperFrames
+changes. Run those; they are not repeated here.
 
 The deterministic demos and MCP smoke do not call a paid model. `film:demo`
 exercises typed cuts and writes compact temporal evidence under the ignored
@@ -127,6 +112,22 @@ Add `--temporal` when Chrome is available and you want pixel evidence, or
 `--render` when FFmpeg/Chrome MP4 output is part of the check. This command does
 not call Slack hosted MCP and does not post to Slack; use the sandbox flow for
 OAuth, hosted-MCP, Socket Mode, and Slack upload verification.
+
+The regression fixture for the July 2 Relay incident preserves the exact modal
+brief and its component/camera direction:
+
+```powershell
+npm run sequence:check --workspace @sequences/slack -- `
+  --input ../../evals/relay-launch-film.json `
+  --provider openrouter-api `
+  --no-mcp `
+  --format both
+```
+
+Pass criteria: `authoringMode: hyperframes-direct`, no fallback stage, runtime
+reported for review (the target is guidance, not a publication gate), at least six requested component kinds/eight typed
+component beats, at least two full camera moves with one multi-station world,
+an object-match cut, and no motion/moment publication error.
 
 ---
 
@@ -216,7 +217,14 @@ OPENROUTER_API_KEY=sk-or-v1-...
 #   Set a creative scope to "primary" to keep it on the production model.
 # SLACK_SEQUENCES_LIGHT_MODEL=deepseek/deepseek-v4-flash # bounded helper only
 # SLACK_SEQUENCES_REPAIR_MODEL=... # optional; unset keeps structural repair on Pro
+# SLACK_SEQUENCES_STORYBOARD_THINKING=medium # reasoning-effort override (storyboard)
+# SLACK_SEQUENCES_AUTHOR_THINKING=none # reasoning-effort override (source author)
+#   auto|none|minimal|low|medium|high|xhigh|max; unset keeps built-in defaults.
 # SLACK_SEQUENCES_INTERACTION_QA=enforce
+# When storyboard/source authoring is exhausted, the labeled model-free proof
+# film ships by DEFAULT (VideoResult.fallback + the Slack fallback banner +
+# `/sequences debug on` receipts keep it honest). Opt out to fail visibly:
+# SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0
 
 # B — reuse OpenAI temporarily
 # SLACK_SEQUENCES_PROVIDER=openai-api
@@ -288,18 +296,10 @@ GitHub push to deploy (autodeploy is off). `link` the CLI once
 
 ### Deploy sequence
 
-1. **Source gate** (and, before an important deploy, the monorepo CI gate —
-   GitHub Actions tests the whole repo):
-
-```powershell
-git status --short
-npm run typecheck --workspace @sequences/slack
-npm run test --workspace @sequences/slack
-npm run mcp:demo --workspace @sequences/slack
-npm run film:demo --workspace @sequences/slack
-# before an important deploy:
-npm run typecheck; npm test; npm run test:perf
-```
+1. **Source gate** — run the ladder in
+   [CLAUDE.md → Verification & Testing Ladder](CLAUDE.md#verification--testing-ladder)
+   §1 (plus §3, the monorepo CI gate, before an important deploy). Check
+   `git status --short` first so nothing unintended ships.
 
 2. **Commit locally, then publish to the correct Slack GitHub repository:**
 
@@ -381,6 +381,15 @@ can coexist — and vice versa.
 - `missing_scope`: update manifest, reinstall, refresh bot token, redeploy.
 - Connect prompt: complete `/slack/install` for that user.
 - Planning fails: confirm `SLACK_SEQUENCES_PROVIDER` + its API key.
+- `HTTP 403 key limit exceeded`: raise/reset the OpenRouter key's total limit;
+  the request did not reach GLM or DeepSeek.
+- A result whose scene ids are `fallback-hook`, `fallback-proof`, and
+  `fallback-close` is the model-free proof, not model-authored creative output.
+  Normal creates no longer publish it; check whether the emergency fallback
+  variable was enabled.
+- `storyboard-plan` truncation: verify the current code logs a 30,720-token GLM
+  budget and a lower-reasoning second attempt. A 16,384-token line means the
+  deployment is stale.
 - Hosted MCP fails: confirm app MCP enablement, user scopes, redirect URL,
   `OPENAI_API_KEY`, per-user OAuth.
 - Thumbnails work but MP4 fails: inspect Chromium, FFmpeg, Railway memory.
