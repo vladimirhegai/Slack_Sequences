@@ -489,6 +489,17 @@ discovery pass (Goal B) from the 2026-07-03 HANDOFF:
   same labeled ramped fallback. Post-fix enhancement-pass mechanics remain
   proven by `test/cutDiscovery.browser.test.ts` and the injection re-entry
   regression.
+- **Volunteered ramps degrade, never veto** (2026-07-04 live incident,
+  found by the first real `/sequences` create after deploy): GLM reaches for
+  the new `timeRamp` vocabulary even when the brief never asks for slow
+  motion, and a mis-placed volunteered dip (unsolvable window, unmotivated
+  hold) burned all three storyboard attempts on blocking findings about an
+  *optional* enhancement — attempt 2 failed on the motivation gate alone.
+  `dropUnusableVolunteeredTimeRamps` now strips shot-1 / over-cap /
+  unsolvable / unmotivated dips before plan validation whenever the brief
+  does not `requireTimeRamp`; brief-demanded ramps keep the blocking
+  findings (the retry loop is the delivery mechanism there, proven by
+  `timeramp-live-1`).
 
 ---
 

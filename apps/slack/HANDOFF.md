@@ -119,3 +119,11 @@ Details + proof inventory: ROADMAP.md "Speed ramping + shape-match discovery
     the proven-broken binding (this rejected both a healthy cut-discovery
     upgrade and a healthy critic patch on the 2026-07-04 live run before the
     fix). Any NEW post-authoring pass must follow the same rule.
+12. **New plan-gate rules must not veto volunteered enhancements.** The first
+    live `/sequences` after the timeRamp deploy fell back because GLM kept
+    volunteering dips that failed the new blocking gates
+    (`dropUnusableVolunteeredTimeRamps` now strips them pre-validation when
+    the brief doesn't demand a ramp). When you add typed vocabulary + gates,
+    always ask: what happens when the model volunteers it badly on a brief
+    that never asked? Degrade, don't block — reserve blocking findings for
+    brief-derived requirements.

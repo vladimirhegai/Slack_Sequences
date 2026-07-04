@@ -16,6 +16,7 @@ import {
 } from "../src/engine/timeRamp.ts";
 import {
   applyDeterministicSourceRepairs,
+  dropUnusableVolunteeredTimeRamps,
   validateStoryboardPlan,
 } from "../src/engine/compositionRunner.ts";
 import { analyzeMotionDensity } from "../src/engine/motionDensity.ts";
@@ -259,6 +260,75 @@ describe("timeRamp storyboard plan gates", () => {
         error.includes("shot 1 must open at native speed")
       ),
     ).toBe(true);
+  });
+});
+
+describe("volunteered timeRamp degradation (2026-07-04 live incident)", () => {
+  // GLM reaches for the ramp vocabulary even when the brief never asks for
+  // slow motion; a mis-placed volunteered dip must degrade to no dip instead
+  // of vetoing the whole plan through three storyboard attempts.
+  it("drops an unsolvable volunteered dip so the plan gate passes", () => {
+    const base = scenes(true);
+    // Make the declared ramp unsolvable: hold+recovery cannot fit the shot.
+    const broken = base.map((scene) =>
+      scene.timeRamp
+        ? {
+            ...scene,
+            durationSec: 2.5,
+            timeRamp: { ...scene.timeRamp, atSec: scene.startSec + 1.5 },
+          }
+        : scene
+    );
+    // Keep the scene graph contiguous after shortening scene two.
+    broken[2] = { ...broken[2]!, startSec: broken[1]!.startSec + 2.5 };
+    expect(
+      validateStoryboardPlan(broken).some((error) => error.includes("timeRamp")),
+    ).toBe(true);
+    const sanitized = dropUnusableVolunteeredTimeRamps(broken);
+    expect(sanitized.some((scene) => scene.timeRamp)).toBe(false);
+    expect(
+      validateStoryboardPlan(sanitized).some((error) => error.includes("timeRamp")),
+    ).toBe(false);
+  });
+
+  it("drops an unmotivated dip and a shot-1 dip, keeps a motivated one", () => {
+    const base = scenes(true);
+    // Unmotivated (no declared moment inside the hold) → dropped.
+    expect(
+      dropUnusableVolunteeredTimeRamps(base).some((scene) => scene.timeRamp),
+    ).toBe(false);
+    // Shot-1 dip → dropped.
+    const shotOne = scenes(false).map((scene, index) =>
+      index === 0
+        ? { ...scene, timeRamp: { version: 1 as const, atSec: 1, slowTo: 0.4 } }
+        : scene
+    );
+    expect(
+      dropUnusableVolunteeredTimeRamps(shotOne).some((scene) => scene.timeRamp),
+    ).toBe(false);
+    // Motivated + solvable → kept verbatim.
+    const resolved = resolveTimeRampPlan(base).ramps[0]!;
+    const hold = timeRampHoldWindow(resolved);
+    const motivated = base.map((scene) =>
+      scene.timeRamp
+        ? {
+            ...scene,
+            moments: [{
+              version: 1 as const,
+              id: "dip-payoff",
+              sceneId: scene.id,
+              atSec: (hold.contentStartSec + hold.contentEndSec) / 2,
+              title: "Payoff lands",
+              visualState: "metric resolves",
+              change: "value lands",
+              motionIntent: "resolve",
+              importance: "primary" as const,
+            }],
+          }
+        : scene
+    );
+    const kept = dropUnusableVolunteeredTimeRamps(motivated);
+    expect(kept.find((scene) => scene.id === "s-two")?.timeRamp).toBeDefined();
   });
 });
 

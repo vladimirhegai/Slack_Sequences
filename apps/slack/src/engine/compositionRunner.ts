@@ -2221,6 +2221,53 @@ export function validateStoryboardPlan(
   return [...new Set(errors)];
 }
 
+/**
+ * Drop VOLUNTEERED timeRamp dips that break the ramp contract instead of
+ * letting them veto the whole plan. GLM reaches for the vocabulary even when
+ * the brief never asks for slow motion, and a mis-placed dip (unsolvable
+ * window, no motivating moment, shot 1, over the per-film cap) used to burn
+ * all three storyboard attempts on findings about an optional enhancement —
+ * the 2026-07-04 live incident. When the brief explicitly demands a ramp
+ * (`requireTimeRamp`), the blocking findings stay: the retry loop is the
+ * delivery mechanism there.
+ */
+export function dropUnusableVolunteeredTimeRamps(storyboard: DirectScene[]): DirectScene[] {
+  const scenes = [...storyboard];
+  for (let pass = 0; pass < scenes.length; pass += 1) {
+    const plan = resolveTimeRampPlan(scenes);
+    let dropped = false;
+    for (const [index, scene] of scenes.entries()) {
+      if (!scene.timeRamp) continue;
+      let reason = "";
+      if (index === 0) {
+        reason = "shot 1 opens at native speed";
+      } else {
+        const resolved = plan.ramps.find((ramp) => ramp.sceneId === scene.id);
+        if (!resolved) {
+          reason = "the dip cannot be solved inside the shot (window or per-film cap)";
+        } else {
+          const hold = timeRampHoldWindow(resolved);
+          const motivated = (scene.moments ?? []).some((moment) =>
+            moment.atSec >= hold.contentStartSec - 0.35 &&
+            moment.atSec <= hold.contentEndSec + 0.35
+          );
+          if (!motivated) reason = "no declared moment inside the slow-motion hold";
+        }
+      }
+      if (reason) {
+        const { timeRamp: _dropped, ...rest } = scene;
+        scenes[index] = rest;
+        dropped = true;
+        process.stderr.write(
+          `[storyboard] dropped volunteered timeRamp on "${scene.id}": ${reason}\n`,
+        );
+      }
+    }
+    if (!dropped) break;
+  }
+  return scenes;
+}
+
 export function parseStoryboardResponse(
   raw: string,
   requirements: StoryboardPlanRequirements = {},
@@ -2228,12 +2275,17 @@ export function parseStoryboardResponse(
   const knownCapabilities = new Set(
     loadCapabilityIndex().capabilities.map((capability) => capability.id),
   );
-  const storyboard = parseStoryboard(extractStoryboardSource(raw)).map((scene) => ({
+  let storyboard = parseStoryboard(extractStoryboardSource(raw)).map((scene) => ({
     ...scene,
     ...(scene.capabilityIds
       ? { capabilityIds: scene.capabilityIds.filter((id) => knownCapabilities.has(id)) }
       : {}),
   }));
+  // Ramps are enhancements: a volunteered dip degrades to no dip rather than
+  // vetoing the plan. Brief-demanded ramps keep their blocking findings.
+  if (!requirements.requireTimeRamp) {
+    storyboard = dropUnusableVolunteeredTimeRamps(storyboard);
+  }
   const errors = validateStoryboardPlan(storyboard, requirements);
   if (errors.length) throw new Error(`invalid storyboard plan: ${errors.join("; ")}`);
   return storyboard;
