@@ -230,6 +230,26 @@ export function buildingBlocks(title: string, note = "Getting the launch details
   ];
 }
 
+/** Static handoff shown immediately above the uploaded storyboard images. */
+export function storyboardReadyBlocks(
+  title: string,
+  note = "Storyboard preview below.",
+): KnownBlock[] {
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `:framed_picture: *"${escapeMrkdwn(title)}" storyboard ready*`,
+      },
+    },
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: escapeMrkdwn(note) }],
+    },
+  ];
+}
+
 export interface ThinkingStep {
   tool: McpToolName;
   state: "running" | "succeeded" | "fallback" | "failed";

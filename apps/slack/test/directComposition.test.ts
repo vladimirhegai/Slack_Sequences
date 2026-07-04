@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ProviderOutputTruncatedError,
   type AgentProvider,
@@ -51,6 +51,12 @@ vi.mock("../src/engine/layoutInspector.ts", () => ({
 }));
 
 const roots: string[] = [];
+
+beforeEach(() => {
+  // The small-agent shape hint rides in parallel with the concept pass and
+  // would shift these call-count-sensitive specs; it has its own test file.
+  vi.stubEnv("SLACK_SEQUENCES_SHAPE_HINT", "0");
+});
 
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });

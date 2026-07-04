@@ -605,6 +605,197 @@ export function resolveComponentPlan(scenes: DirectScene[]): ComponentPlanV1 {
   return { version: 1, scenes: planScenes };
 }
 
+/* ----------------------------------------------------- redundancy dedupe */
+
+/**
+ * Property channels: two beats in the same channel on the same component
+ * animate the same visual properties, so overlapping windows fight — the
+ * runtime would drive one element's text/scale/fill from two tweens at once.
+ */
+const BEAT_CHANNELS: Record<ComponentBeatKind, string> = {
+  type: "text",
+  stream: "text",
+  swap: "text",
+  count: "value",
+  progress: "fill",
+  chart: "chart",
+  rows: "rows",
+  open: "panel",
+  close: "panel",
+  select: "pulse",
+  press: "pulse",
+  highlight: "pulse",
+  "set-state": "state",
+  morph: "morph",
+};
+
+/** Pulse kinds repeated in quick succession read as a stutter, not emphasis. */
+const PULSE_KINDS: ReadonlySet<ComponentBeatKind> = new Set(["press", "select", "highlight"]);
+/** A same-kind pulse on one component within this window is a double fire. */
+const PULSE_REPEAT_WINDOW_SEC = 1.5;
+/** Slack around a cursor press inside which a pulse beat is a duplicate. */
+const CURSOR_PRESS_SLACK_SEC = 0.45;
+
+export interface BeatDedupeResult {
+  scenes: DirectScene[];
+  /** Human-readable log lines, one per dropped/converted beat. */
+  dropped: string[];
+}
+
+/**
+ * Deterministic de-double pass over a parsed storyboard, run before moments
+ * top-up and validation. Planners double-trigger motion three ways, and each
+ * plays as the same defect on screen — an element pulsing/animating twice in
+ * quick succession:
+ *
+ * 1. the same pulse beat (press/select/highlight) repeated on one component
+ *    within ~1.5s;
+ * 2. two beats in one property channel overlapping on one component (two
+ *    counts, type over swap, open over close);
+ * 3. a `press`/`select` beat scheduled on the same part a cursor interaction
+ *    is already pressing — the interaction runtime owns the press scale, so
+ *    the beat is a second pulse on the same frames (it survives as a pure
+ *    `set-state` when it carries a state change).
+ *
+ * Beats degrade (drop/convert) instead of vetoing the plan, mirroring
+ * `dropUnusableVolunteeredTimeRamps`.
+ */
+export function dedupeRedundantBeats(storyboard: DirectScene[]): BeatDedupeResult {
+  const dropped: string[] = [];
+  const scenes = storyboard.map((scene) => {
+    const beats = scene.beats ?? [];
+    if (!beats.length) return scene;
+    const supportsSetState = new Map(
+      (scene.components ?? []).map((component) => [
+        component.id,
+        componentSupportsBeat(component.kind, "set-state"),
+      ]),
+    );
+    const pressWindows = (scene.interactions ?? [])
+      .filter((intent) =>
+        (intent.feedback === "press" || intent.feedback === "press-ripple") &&
+        intent.pressSec != null
+      )
+      .map((intent) => ({
+        part: intent.targetPart,
+        start: intent.pressSec! - CURSOR_PRESS_SLACK_SEC,
+        end: (intent.releaseSec ?? intent.pressSec! + 0.3) + CURSOR_PRESS_SLACK_SEC,
+      }));
+    const kept: ComponentBeatIntentV1[] = [];
+    let changed = false;
+    for (const beat of beats) {
+      const startSec = beat.atSec;
+      const endSec = beat.atSec + beatDuration(beat);
+      // Rule 3: cursor press already pulses this part on these frames.
+      if (PULSE_KINDS.has(beat.kind)) {
+        const cursorPress = pressWindows.find((window) =>
+          window.part === beat.component &&
+          startSec < window.end &&
+          endSec > window.start
+        );
+        if (cursorPress) {
+          changed = true;
+          if (beat.kind === "press" && beat.toState && supportsSetState.get(beat.component)) {
+            kept.push({ ...beat, kind: "set-state" });
+            dropped.push(
+              `scene "${scene.id}": beat "${beat.id}" (${beat.kind} on ${beat.component}) ` +
+                `overlaps a cursor press on the same part — kept as set-state only`,
+            );
+          } else {
+            dropped.push(
+              `scene "${scene.id}": beat "${beat.id}" (${beat.kind} on ${beat.component}) ` +
+                `duplicates a cursor press on the same part in the same window`,
+            );
+          }
+          continue;
+        }
+      }
+      const conflict = kept.find((earlier) => {
+        if (earlier.component !== beat.component) return false;
+        const earlierEnd = earlier.atSec + beatDuration(earlier);
+        // Rule 1: repeated pulse of the same kind in quick succession (a
+        // select of a different item is navigation, not a stutter).
+        if (
+          PULSE_KINDS.has(beat.kind) &&
+          earlier.kind === beat.kind &&
+          !(beat.kind === "select" && earlier.item !== beat.item) &&
+          startSec - earlier.atSec < PULSE_REPEAT_WINDOW_SEC
+        ) {
+          return true;
+        }
+        // Rule 2: same property channel, overlapping windows.
+        return BEAT_CHANNELS[earlier.kind] === BEAT_CHANNELS[beat.kind] &&
+          startSec < earlierEnd &&
+          endSec > earlier.atSec;
+      });
+      if (conflict) {
+        changed = true;
+        dropped.push(
+          `scene "${scene.id}": beat "${beat.id}" (${beat.kind} on ${beat.component}) ` +
+            `re-triggers "${conflict.id}" (${conflict.kind}) on the same component — dropped`,
+        );
+        continue;
+      }
+      kept.push(beat);
+    }
+    if (!changed) return scene;
+    return { ...scene, beats: kept };
+  });
+  return { scenes, dropped };
+}
+
+/* --------------------------------------------------- complexity governor */
+
+/** Seconds of scene time each declared component needs to carry meaning. */
+const SEC_PER_COMPONENT = 1.2;
+/** Hard per-scene ceiling regardless of duration. */
+const MAX_COMPONENTS_PER_SCENE = 4;
+/** Seconds of film each declared component costs the author to build. */
+const FILM_SEC_PER_COMPONENT = 2.0;
+
+/**
+ * Deterministic plan-complexity audit, run at storyboard validation. The
+ * 2026-07-04 baseline failure mode: GLM declared 11 components (4 in one
+ * 2.7s scene) for an 18s film, and the source author burned all three
+ * attempts failing to bind them — the film shipped as the deterministic
+ * fallback. A storyboard finding-retry is far cheaper than an author
+ * failure, so plans that exceed what an author can actually build (and a
+ * viewer can actually read) are rejected with precise, fixable findings.
+ */
+export function auditComponentComplexity(
+  scenes: Array<Pick<DirectScene, "id" | "durationSec" | "components">>,
+): string[] {
+  const findings: string[] = [];
+  let total = 0;
+  let filmSec = 0;
+  for (const scene of scenes) {
+    const count = scene.components?.length ?? 0;
+    total += count;
+    filmSec += scene.durationSec;
+    const cap = Math.min(
+      MAX_COMPONENTS_PER_SCENE,
+      Math.max(1, Math.floor(scene.durationSec / SEC_PER_COMPONENT)),
+    );
+    if (count > cap) {
+      findings.push(
+        `components/complexity: scene "${scene.id}" (${scene.durationSec.toFixed(1)}s) declares ` +
+          `${count} components — a viewer cannot read more than ${cap} product surfaces in that ` +
+          `window and the author cannot build them; keep <= ${cap} (let one component carry ` +
+          `several beats, or drop the surfaces that are set dressing)`,
+      );
+    }
+  }
+  const filmCap = Math.max(2, Math.ceil(filmSec / FILM_SEC_PER_COMPONENT));
+  if (total > filmCap) {
+    findings.push(
+      `components/complexity: the plan declares ${total} components across ${filmSec.toFixed(0)}s ` +
+        `— more surfaces than a film this length can introduce with meaning. Keep <= ${filmCap} ` +
+        `total: reuse one declared component across beats instead of declaring a new one per idea`,
+    );
+  }
+  return findings;
+}
+
 /* ------------------------------------------------------- runtime + kit IO */
 
 export function componentRuntimeSource(): string {

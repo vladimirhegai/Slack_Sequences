@@ -281,6 +281,15 @@ it the way a camera operator would.
   camera arrives or drifts across it (the storyboard path tells you the
   arrival seconds). Content the camera has not reached yet may sit at rest —
   it does not need entrance tweens before it is ever framed.
+- **Overlap camera and content motion.** The camera travelling is not a
+  waiting period: let a region's first beat begin during the last ~30% of the
+  move that frames it, so the landing and the state change read as one
+  gesture. A film where every beat waits for the camera to park feels
+  stop-start.
+- **Keep a region's content inside its station box.** The rig frames the
+  region's rect; anything hanging outside that rect is clipped half out of
+  frame when the camera arrives. Give every station an inner margin (~8%)
+  and never let a child overflow the region bounds.
 - **Cursors stay in screen space** (`data-camera-overlay`, as with any camera
   work). The interaction runtime already resolves geometry under the rig's
   transforms.

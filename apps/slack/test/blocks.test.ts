@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildingBlocks, resultBlocks, thinkingStepsBlocks } from "../src/blocks.ts";
+import {
+  buildingBlocks,
+  resultBlocks,
+  storyboardReadyBlocks,
+  thinkingStepsBlocks,
+} from "../src/blocks.ts";
 
 describe("Slack blocks", () => {
   it("escapes user-controlled mrkdwn in titles", () => {
@@ -7,6 +12,13 @@ describe("Slack blocks", () => {
     expect(block).toMatchObject({
       text: { text: expect.stringContaining("&lt;!channel&gt;") },
     });
+  });
+
+  it("uses a non-rendering marker above storyboard uploads", () => {
+    const text = JSON.stringify(storyboardReadyBlocks("Relay"));
+    expect(text).toContain("storyboard ready");
+    expect(text).toContain("Storyboard preview below");
+    expect(text).not.toContain("Rendering the video");
   });
 
   const actionIds = (

@@ -3,7 +3,9 @@ import {
   COMPONENT_CATALOG,
   COMPONENT_KIT_STYLE_ID,
   COMPONENT_RUNTIME_FILE,
+  auditComponentComplexity,
   componentAuthoringReference,
+  dedupeRedundantBeats,
   componentKitSource,
   componentMotionWindows,
   componentPlanningVocabulary,
@@ -408,5 +410,170 @@ describe("deterministic fallback proof", () => {
     const parsed = parseComponentPlan(draft.html);
     expect(parsed.errors).toEqual([]);
     expect(parsed.plan).toEqual(resolveComponentPlan(draft.storyboard));
+  });
+});
+
+describe("dedupeRedundantBeats", () => {
+  const beat = (
+    id: string,
+    component: string,
+    kind: ComponentBeatIntentV1["kind"],
+    atSec: number,
+    extra: Partial<ComponentBeatIntentV1> = {},
+  ): ComponentBeatIntentV1 => ({
+    version: 1,
+    id,
+    sceneId: "s1",
+    component,
+    kind,
+    atSec,
+    ...extra,
+  });
+
+  it("drops a same-kind pulse repeated on one component in quick succession", () => {
+    const result = dedupeRedundantBeats([scene({
+      id: "s1",
+      startSec: 0,
+      durationSec: 8,
+      components: declared(["cta", "button"]),
+      beats: [beat("first", "cta", "press", 2), beat("stutter", "cta", "press", 2.8)],
+    })]);
+    expect(result.scenes[0]?.beats?.map((entry) => entry.id)).toEqual(["first"]);
+    expect(result.dropped).toHaveLength(1);
+    expect(result.dropped[0]).toContain("stutter");
+  });
+
+  it("keeps pulses that are far apart, on different components, or different select items", () => {
+    const result = dedupeRedundantBeats([scene({
+      id: "s1",
+      startSec: 0,
+      durationSec: 12,
+      components: declared(["cta", "button"], ["menu", "dropdown"]),
+      beats: [
+        beat("a", "cta", "press", 1),
+        beat("b", "cta", "press", 4), // far apart: emphasis, not stutter
+        beat("c", "menu", "select", 5, { item: 1 }),
+        beat("d", "menu", "select", 5.8, { item: 3 }), // navigation, not stutter
+      ],
+    })]);
+    expect(result.scenes[0]?.beats).toHaveLength(4);
+    expect(result.dropped).toEqual([]);
+  });
+
+  it("drops the later of two overlapping beats in one property channel", () => {
+    const result = dedupeRedundantBeats([scene({
+      id: "s1",
+      startSec: 0,
+      durationSec: 8,
+      components: declared(["metric", "stat-card"]),
+      beats: [
+        beat("count-a", "metric", "count", 2, { durationSec: 1.6 }),
+        beat("count-b", "metric", "count", 2.8, { durationSec: 1.2 }), // fights count-a
+        beat("shine", "metric", "highlight", 2.9), // different channel: kept
+      ],
+    })]);
+    expect(result.scenes[0]?.beats?.map((entry) => entry.id)).toEqual(["count-a", "shine"]);
+  });
+
+  it("degrades a press beat under a cursor press to set-state (or drops it)", () => {
+    const interaction = {
+      version: 1 as const,
+      id: "click-cta",
+      sceneId: "s1",
+      cursorId: "cursor",
+      targetPart: "cta",
+      action: "click" as const,
+      startSec: 16,
+      arriveSec: 17.2,
+      pressSec: 17.4,
+      releaseSec: 17.6,
+      from: "frame:center" as const,
+      path: "direct" as const,
+      aimX: 0.5,
+      aimY: 0.5,
+      feedback: "press-ripple" as const,
+    };
+    const withState = dedupeRedundantBeats([scene({
+      id: "s1",
+      startSec: 15,
+      durationSec: 4,
+      components: declared(["cta", "button"]),
+      beats: [beat("cta-press", "cta", "press", 17.5, { toState: "sent" })],
+      interactions: [interaction],
+    })]);
+    expect(withState.scenes[0]?.beats?.[0]).toMatchObject({ kind: "set-state", toState: "sent" });
+    const bare = dedupeRedundantBeats([scene({
+      id: "s1",
+      startSec: 15,
+      durationSec: 4,
+      components: declared(["cta", "button"]),
+      beats: [beat("cta-press", "cta", "press", 17.5)],
+      interactions: [interaction],
+    })]);
+    expect(bare.scenes[0]?.beats).toEqual([]);
+    expect(bare.dropped[0]).toContain("duplicates a cursor press");
+  });
+
+  it("returns scenes untouched when nothing is redundant", () => {
+    const input = [scene({
+      id: "s1",
+      startSec: 0,
+      durationSec: 6,
+      components: declared(["search-bar", "search"]),
+      beats: [beat("typing", "search-bar", "type", 1, { text: "latency" })],
+    })];
+    const result = dedupeRedundantBeats(input);
+    expect(result.scenes[0]).toBe(input[0]);
+    expect(result.dropped).toEqual([]);
+  });
+});
+
+describe("auditComponentComplexity", () => {
+  it("flags a scene declaring more components than its window can read", () => {
+    // The 2026-07-04 baseline failure: 4 components in one 2.7s scene.
+    const findings = auditComponentComplexity([
+      scene({
+        id: "anomaly-whip-peak",
+        startSec: 0,
+        durationSec: 2.7,
+        components: declared(
+          ["win", "app-window"],
+          ["side", "sidebar"],
+          ["chart", "chart-line"],
+          ["stat", "stat-card"],
+        ),
+      }),
+    ]);
+    expect(findings.some((finding) => finding.includes('scene "anomaly-whip-peak"'))).toBe(true);
+  });
+
+  it("flags a film declaring more components than its duration can introduce", () => {
+    const scenes = Array.from({ length: 6 }, (_, index) =>
+      scene({
+        id: `s${index}`,
+        startSec: index * 3,
+        durationSec: 3,
+        components: declared([`a${index}`, "stat-card"], [`b${index}`, "toast"]),
+      }));
+    const findings = auditComponentComplexity(scenes);
+    expect(findings.some((finding) => finding.includes("across"))).toBe(true);
+  });
+
+  it("accepts a plan an author can actually build", () => {
+    expect(auditComponentComplexity([
+      scene({
+        id: "s1",
+        startSec: 0,
+        durationSec: 4,
+        components: declared(["palette", "command-palette"]),
+      }),
+      scene({ id: "s2", startSec: 4, durationSec: 3, components: [] }),
+      scene({
+        id: "s3",
+        startSec: 7,
+        durationSec: 5,
+        components: declared(["metric", "stat-card"], ["chart", "chart-line"]),
+      }),
+    ])).toEqual([]);
   });
 });

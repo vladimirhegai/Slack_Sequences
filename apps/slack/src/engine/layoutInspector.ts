@@ -28,6 +28,7 @@ import {
   parseCutPlan,
 } from "./cutContract.ts";
 import {
+  CAMERA_FULL_MOVES,
   CAMERA_RUNTIME_FILE,
   cameraMotionWindows,
   cameraRuntimeSource,
@@ -230,7 +231,8 @@ function loadBrowserAudit(name: "layout-audit.browser.js" | "contrast-audit.brow
  * successful, non-infra results are cached; every failing or degraded draft is
  * always re-measured live. Opt out with SLACK_SEQUENCES_QA_CACHE=0.
  */
-const QA_CACHE_VERSION = 1;
+// v2: camera-arrival framing audit (camera_framed_clipped) joined the pass.
+const QA_CACHE_VERSION = 2;
 
 /** Everything environment-side that can change the verdict for the same draft. */
 let cachedStaticFingerprint: string | undefined;
@@ -1828,6 +1830,149 @@ export async function inspectDirectComposition(
     ];
     const insideCutWindow = (time: number): boolean =>
       boundaryWindows.some((window) => time >= window.start && time <= window.end);
+
+    // Camera-arrival framing audit (2026-07-04). The off-world suppression
+    // above deliberately exempts content whose station the camera has not
+    // framed *yet* — which also meant nothing ever verified content at the
+    // moment its station IS framed, so a component overflowing its region
+    // shipped half-clipped at every arrival. For each full-move landing that
+    // frames a station at fit zoom, seek to just after the move settles and
+    // require the station's visible content to actually be on frame. A
+    // second, later sample must confirm each finding so mid-entrance travel
+    // never masquerades as clipping.
+    const measureArrivalClipping = async (
+      time: number,
+      sceneId: string,
+      part: string | undefined,
+      region: string | undefined,
+    ): Promise<Array<{ selector: string; text: string; fraction: number }>> => {
+      await seekContent(time);
+      return page.evaluate((payload: {
+        sceneId: string;
+        part?: string;
+        region?: string;
+      }) => {
+        const root = document.querySelector<HTMLElement>(
+          "[data-composition-id][data-width][data-height]",
+        );
+        if (!root) return [];
+        const rootRect = root.getBoundingClientRect();
+        const scene = root.querySelector<HTMLElement>(
+          `[data-scene="${CSS.escape(payload.sceneId)}"]`,
+        );
+        const station = payload.part
+          ? scene?.querySelector<HTMLElement>(`[data-part="${CSS.escape(payload.part)}"]`)
+          : payload.region
+            ? scene?.querySelector<HTMLElement>(`[data-region="${CSS.escape(payload.region)}"]`)
+            : null;
+        if (!scene || !station) return [];
+        const MEDIA = new Set(["IMG", "SVG", "VIDEO", "CANVAS", "PICTURE"]);
+        const opacityCache = new Map<Element, number>();
+        const chainOpacity = (element: Element | null): number => {
+          if (!element || (!root.contains(element) && element !== root)) return 1;
+          const cached = opacityCache.get(element);
+          if (cached !== undefined) return cached;
+          const style = getComputedStyle(element);
+          const own = style.display === "none" || style.visibility === "hidden"
+            ? 0
+            : Number.parseFloat(style.opacity);
+          const value = (Number.isFinite(own) ? own : 1) * chainOpacity(element.parentElement);
+          opacityCache.set(element, value);
+          return value;
+        };
+        const clipped: Array<{ selector: string; text: string; fraction: number }> = [];
+        const flagged: Element[] = [];
+        for (const element of [station, ...Array.from(station.querySelectorAll<HTMLElement>("*"))]) {
+          if (element.closest("[data-layout-ignore]")) continue;
+          // Outermost finding wins; its children clip for the same reason.
+          if (flagged.some((parent) => parent.contains(element))) continue;
+          const hasText = Array.from(element.childNodes).some((node) =>
+            node.nodeType === Node.TEXT_NODE && /\S/.test(node.textContent ?? ""),
+          );
+          const isContent = hasText ||
+            MEDIA.has(element.tagName.toUpperCase()) ||
+            element.hasAttribute("data-part");
+          if (!isContent) continue;
+          const rect = element.getBoundingClientRect();
+          if (rect.width < 12 || rect.height < 12) continue;
+          if (chainOpacity(element) < 0.15) continue;
+          const visibleWidth = Math.max(
+            0,
+            Math.min(rect.right, rootRect.right) - Math.max(rect.left, rootRect.left),
+          );
+          const visibleHeight = Math.max(
+            0,
+            Math.min(rect.bottom, rootRect.bottom) - Math.max(rect.top, rootRect.top),
+          );
+          const fraction = (visibleWidth * visibleHeight) / (rect.width * rect.height);
+          if (fraction >= 0.62) continue;
+          const partName = element.getAttribute("data-part");
+          const className = (element.getAttribute("class") ?? "").trim().split(/\s+/)[0];
+          clipped.push({
+            selector: partName
+              ? `[data-part="${partName}"]`
+              : element.tagName.toLowerCase() + (className ? `.${className}` : ""),
+            text: (element.textContent ?? "").trim().slice(0, 60),
+            fraction,
+          });
+          flagged.push(element);
+          if (clipped.length >= 6) break;
+        }
+        return clipped;
+      }, { sceneId, ...(part ? { part } : {}), ...(region ? { region } : {}) });
+    };
+    for (const scenePlan of parseCameraPlan(draft.html).plan?.scenes ?? []) {
+      const scene = draft.storyboard.find((entry) => entry.id === scenePlan.sceneId);
+      if (!scene) continue;
+      const sceneEnd = scene.startSec + scene.durationSec;
+      for (const segment of scenePlan.segments) {
+        if (!CAMERA_FULL_MOVES.has(segment.move) || segment.blend < 1) continue;
+        if (!segment.toRegion && !segment.toPart) continue;
+        // A zoom above fit crops the station deliberately; audit fit framings.
+        if (segment.zoom > 1.05) continue;
+        const settleAt = Math.min(segment.endSec + 0.35, sceneEnd - 0.1);
+        if (settleAt <= segment.endSec - 0.01 || insideCutWindow(settleAt)) continue;
+        const found = await measureArrivalClipping(
+          settleAt,
+          scenePlan.sceneId,
+          segment.toPart,
+          segment.toRegion,
+        );
+        if (!found.length) continue;
+        const confirmAt = Math.min(settleAt + 0.8, sceneEnd - 0.05);
+        const confirmed = confirmAt > settleAt + 0.05 && !insideCutWindow(confirmAt)
+          ? await measureArrivalClipping(
+              confirmAt,
+              scenePlan.sceneId,
+              segment.toPart,
+              segment.toRegion,
+            )
+          : found;
+        const confirmedSelectors = new Set(confirmed.map((entry) => entry.selector));
+        const station = segment.toPart
+          ? `part "${segment.toPart}"`
+          : `region "${segment.toRegion}"`;
+        for (const clip of found.filter((entry) => confirmedSelectors.has(entry.selector)).slice(0, 4)) {
+          rawIssues.push({
+            code: "camera_framed_clipped",
+            severity: "error",
+            time: settleAt,
+            selector: clip.selector,
+            ...(clip.text ? { text: clip.text } : {}),
+            message:
+              `Camera ${segment.move} lands on ${station} in scene "${scenePlan.sceneId}" at ` +
+              `${segment.endSec.toFixed(1)}s, but ${clip.selector} is only ` +
+              `${Math.round(clip.fraction * 100)}% inside the frame after the move settles — ` +
+              `the audience sees it clipped.`,
+            fixHint:
+              "Content at a camera station must fit that station's box: move the element fully " +
+              "inside its data-region rect (with an ~8% inner margin), shrink it, or relocate it " +
+              "to the station the camera actually frames.",
+            source: "sequences",
+          });
+        }
+      }
+    }
 
     // Blank-frame guard (2026-07-03 incident: a live film published with the
     // promised content never on frame). A scene is near-blank when EVERY

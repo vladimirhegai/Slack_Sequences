@@ -82,4 +82,11 @@ describe("EtaTracker", () => {
     expect(formatEtaMs(45_000)).toBe("~45s remaining");
     expect(formatEtaMs(150_000)).toMatch(/min remaining$/);
   });
+
+  it("shows an optimistic half-time estimate and rounds down", async () => {
+    const { formatEtaMs, visibleEtaMs } = await load();
+    expect(visibleEtaMs(16 * 60_000)).toBe(8 * 60_000);
+    expect(formatEtaMs(visibleEtaMs(16 * 60_000))).toBe("~8 min remaining");
+    expect(formatEtaMs(49_000)).toBe("~45s remaining");
+  });
 });

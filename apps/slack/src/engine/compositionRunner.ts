@@ -65,9 +65,11 @@ import {
   COMPONENT_KIT_FILE,
   COMPONENT_KIT_VERSION,
   COMPONENT_RUNTIME_FILE,
+  auditComponentComplexity,
   componentAuthoringReference,
   componentPlanningVocabulary,
   componentSupportsBeat,
+  dedupeRedundantBeats,
   injectComponentKit,
   injectComponentRuntimeTag,
   normalizeStoryboardComponentBeats,
@@ -87,6 +89,7 @@ import { readFrameMeta } from "./frameDesign.ts";
 import {
   creativeModel,
   creativeThinkingMode,
+  lightModel,
   productionModel,
   storyboardRescueModel,
   thinkingOverride,
@@ -2427,6 +2430,10 @@ export function validateStoryboardPlan(
   // Camera-energy audit: every 12s+ film needs at least one high-energy
   // element, and four-plus full moves may not share one verb.
   errors.push(...auditCameraEnergy(storyboard));
+  // Complexity governor: a plan the author cannot build (too many component
+  // surfaces for the duration) fails HERE, where a retry costs one storyboard
+  // call, not downstream where it burns every author attempt.
+  errors.push(...auditComponentComplexity(storyboard));
   return [...new Set(errors)];
 }
 
@@ -2494,6 +2501,16 @@ export function parseStoryboardResponse(
   // vetoing the plan. Brief-demanded ramps keep their blocking findings.
   if (!requirements.requireTimeRamp) {
     storyboard = dropUnusableVolunteeredTimeRamps(storyboard);
+  }
+  // Double-triggered motion (repeated pulses, overlapping same-channel beats,
+  // press beats under a cursor press) degrades to single triggers before
+  // moments bind to beat evidence.
+  const deduped = dedupeRedundantBeats(storyboard);
+  if (deduped.dropped.length) {
+    storyboard = deduped.scenes;
+    for (const line of deduped.dropped) {
+      process.stderr.write(`[storyboard] ${line}\n`);
+    }
   }
   // Moment paperwork the plan already proves is filled in by the host, not
   // retried: a marginal dead interval that has a typed beat/camera/cut in it
@@ -2679,6 +2696,175 @@ export async function requestConceptDirection(
   }
 }
 
+/* --------------------------------------------------- storyboard shape hint */
+
+export interface StoryboardShape {
+  id: string;
+  /** Segment skeleton, human-readable. */
+  label: string;
+  /** What kind of brief this shape serves. */
+  best: string;
+}
+
+/**
+ * Curated narrative skeletons. Deliberately structural — pacing and segment
+ * order only, zero visual/creative vocabulary — so the small selector model
+ * is never in charge of taste.
+ */
+export const STORYBOARD_SHAPES: readonly StoryboardShape[] = [
+  {
+    id: "problem-turn-product-cta",
+    label: "problem (short) → turn (short) → product proof (long) → CTA resolve (short)",
+    best: "pain-led briefs where the product resolves a named workflow problem",
+  },
+  {
+    id: "hook-demo-payoff",
+    label: "cold hook (short) → guided product demo (long) → payoff metric + CTA (medium)",
+    best: "feature launches whose UI walkthrough is the star",
+  },
+  {
+    id: "stat-proof-tour",
+    label: "hero stat (medium) → proof tour across product surfaces (long) → brand resolve (short)",
+    best: "metric- or performance-led stories",
+  },
+  {
+    id: "feature-triptych",
+    label: "three feature vignettes (equal, medium) → unifying claim + CTA (medium)",
+    best: "multi-feature releases with no single hero feature",
+  },
+  {
+    id: "before-after",
+    label: "before state (medium) → transformation beat (short) → after state (medium) → CTA (short)",
+    best: "workflow-transformation stories with a clear old-way/new-way contrast",
+  },
+  {
+    id: "crescendo-reveal",
+    label: "quiet claim (short) → building evidence (medium) → energetic peak reveal (medium) → still resolve (short)",
+    best: "brand-forward launches built around one big reveal",
+  },
+];
+
+export interface StoryboardShapeHint {
+  shape: StoryboardShape;
+  why: string;
+}
+
+/**
+ * Parse + validate the small model's selection. Anything but an exact
+ * template id degrades to no hint — the selector is deterministically
+ * rejectable by construction.
+ */
+export function parseStoryboardShapeHint(raw: string): StoryboardShapeHint | undefined {
+  const source = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = source.indexOf("{");
+  if (start < 0) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(source.slice(start, source.lastIndexOf("}") + 1));
+  } catch {
+    return undefined;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const object = value as Record<string, unknown>;
+  const shape = STORYBOARD_SHAPES.find((entry) => entry.id === object.shape);
+  if (!shape) return undefined;
+  const why = typeof object.why === "string" ? object.why.trim().slice(0, 160) : "";
+  return { shape, why };
+}
+
+/**
+ * Small-agent helper pass: a light model picks the film's pacing skeleton
+ * from the curated template list. It runs in PARALLEL with the concept pass
+ * (flash returns in seconds while GLM reasons for tens of them), so it adds
+ * roughly zero wall-clock; its output is one prompt paragraph the storyboard
+ * model treats as a default, never a veto. Structure selection is the whole
+ * mandate — creativity and design stay with the big models. Kill switch:
+ * SLACK_SEQUENCES_SHAPE_HINT=0.
+ */
+export async function requestStoryboardShape(
+  provider: AgentProvider,
+  args: {
+    brief: string;
+    projectDir: string;
+    options?: CompleteOptions;
+  },
+): Promise<StoryboardShapeHint | undefined> {
+  if (process.env.SLACK_SEQUENCES_SHAPE_HINT === "0") return undefined;
+  const model = lightModel(provider);
+  if (!model) return undefined;
+  const cacheKey = createHash("sha256").update(JSON.stringify({
+    contract: 1,
+    provider: provider.id,
+    model,
+    brief: args.brief,
+    shapes: STORYBOARD_SHAPES.map((shape) => shape.id),
+  })).digest("hex");
+  const planningDir = path.join(args.projectDir, "planning");
+  const cacheFile = path.join(planningDir, "shape.json");
+  if (fs.existsSync(cacheFile)) {
+    try {
+      const cached = JSON.parse(fs.readFileSync(cacheFile, "utf8")) as {
+        version?: number;
+        key?: string;
+        hint?: { shape?: string; why?: string };
+      };
+      if (cached.version === 1 && cached.key === cacheKey && cached.hint?.shape) {
+        const shape = STORYBOARD_SHAPES.find((entry) => entry.id === cached.hint!.shape);
+        if (shape) return { shape, why: cached.hint.why ?? "" };
+      }
+    } catch {
+      // A partial cache from an interrupted write is ignored and replaced.
+    }
+  }
+  const prompt = [
+    "SYSTEM: You are a pacing analyst for short SaaS launch films. Pick the",
+    "narrative skeleton that best fits the brief below. You choose STRUCTURE",
+    "only; every creative decision belongs to a later pass.",
+    "Available shapes:",
+    ...STORYBOARD_SHAPES.map((shape) => `- "${shape.id}": ${shape.label} — best for ${shape.best}`),
+    "",
+    "## Brief",
+    args.brief.slice(0, 6_000),
+    "",
+    "## Response contract",
+    'Return only a JSON object: {"shape":"<exact shape id>","why":"<one sentence, <=140 chars>"}.',
+  ].join("\n");
+  try {
+    const raw = await completeReasoningWithRetry(provider, prompt, {
+      ...args.options,
+      timeoutMs: 45_000,
+      maxTokens: 256,
+      thinkingMode: "none",
+      model,
+    }, "shape");
+    const hint = parseStoryboardShapeHint(raw);
+    if (!hint) {
+      process.stderr.write("[shape] selector response was not a valid template pick; continuing without a shape hint\n");
+      return undefined;
+    }
+    fs.mkdirSync(planningDir, { recursive: true });
+    const temporary = `${cacheFile}.${process.pid}.tmp`;
+    fs.writeFileSync(
+      temporary,
+      JSON.stringify(
+        { version: 1, key: cacheKey, hint: { shape: hint.shape.id, why: hint.why } },
+        null,
+        2,
+      ) + "\n",
+      "utf8",
+    );
+    fs.renameSync(temporary, cacheFile);
+    process.stderr.write(`[shape] selected "${hint.shape.id}"${hint.why ? ` — ${hint.why}` : ""}\n`);
+    return hint;
+  } catch (error) {
+    process.stderr.write(
+      `[shape] selector unavailable (${error instanceof Error ? error.message : String(error)}); ` +
+        "continuing without a shape hint\n",
+    );
+    return undefined;
+  }
+}
+
 function storyboardReference(text: string): string {
   const capability = text.match(
     /## Synced HyperFrames capability index[\s\S]*?(?=\n## Available scene blueprints)/,
@@ -2764,13 +2950,22 @@ export async function requestStoryboardPlan(
     args.targetDurationSec,
   );
   // GLM job #1: the concept pass. Its artifact is cached independently, so a
-  // storyboard retry never re-spends the concept call.
-  const concept = await requestConceptDirection(provider, {
-    brief: args.brief,
-    projectDir: args.projectDir,
-    frameMd: args.frameMd,
-    options: args.options,
-  });
+  // storyboard retry never re-spends the concept call. The light-model shape
+  // selector rides in parallel — it finishes long before GLM's reasoning
+  // does, so the hint is free wall-clock-wise.
+  const [concept, shapeHint] = await Promise.all([
+    requestConceptDirection(provider, {
+      brief: args.brief,
+      projectDir: args.projectDir,
+      frameMd: args.frameMd,
+      options: args.options,
+    }),
+    requestStoryboardShape(provider, {
+      brief: args.brief,
+      projectDir: args.projectDir,
+      options: args.options,
+    }),
+  ]);
   const cacheKey = createHash("sha256").update(JSON.stringify({
     // Bump when the storyboard contract changes shape (v2: StoryboardMomentV1,
     // v3: typed components + beats; v4: brief-derived coverage requirements;
@@ -2782,6 +2977,7 @@ export async function requestStoryboardPlan(
     brief: args.brief,
     frameMd: args.frameMd ?? null,
     concept: concept ?? null,
+    shape: shapeHint?.shape.id ?? null,
     requirements,
     registryVersion: args.skills.registryVersion,
     blueprints: args.skills.blueprintIds,
@@ -2829,6 +3025,14 @@ export async function requestStoryboardPlan(
     'optional "arcDeg" up to 35 — reserve it for ONE hero logo/graphic scene',
     "per film, never a text-heavy scene, and never overlapping a cursor",
     "interaction). Times are absolute seconds inside the shot window.",
+    'COMPOUND MOVES — any full move may carry "zoom": a pan with "zoom":1.2',
+    "travels AND zooms in one continuous operated move. NEVER plan",
+    "pan-then-push-in (or track-then-push-in) on the same region as two serial",
+    "steps — it plays as travel, dead stop, zoom (the amateur tell); declare",
+    "ONE move with the zoom on it (the host merges such adjacent pairs anyway).",
+    "Camera motion and content motion are expected to overlap: schedule",
+    "component beats and reveals DURING pans/drifts, not after the camera",
+    "parks.",
     "RACK FOCUS — any camera move may carry a",
     '"focus":{"part":"data-part","blurMaxPx":6} (or {"depth":0..1}) modifier:',
     "the rig pulls a focal plane between the scene's data-depth layers,",
@@ -2871,6 +3075,16 @@ export async function requestStoryboardPlan(
     "search AND the command-palette) or the plan is rejected.",
     "Beats are host-compiled, so declaring them costs the source",
     "budget nothing — prefer typed beats over prose asks for UI motion.",
+    "COMPONENT BUDGET — components are the expensive resource (the author must",
+    "build full product markup for every one, and the viewer must read it):",
+    "at most 1 component per ~1.2s of its scene (never more than 4 per scene)",
+    "and about 1 per 2s of film overall. One component carrying three beats is",
+    "ALWAYS better than three components carrying one beat each. Never declare",
+    "a component that exists only as set dressing.",
+    "Do not schedule a press/select/highlight beat on the same component a",
+    "cursor interaction is pressing at the same time — the cursor's press",
+    "feedback already animates the target, and the doubled pulse reads as a",
+    "stutter.",
     "Every shot's boundary is a typed, machine-executed cut. Choose cut.style from:",
     "hard (intentional register break), cut-left/right/up/down (velocity-matched",
     "directional carry — the default for scene-to-scene motion), zoom-through",
@@ -2965,6 +3179,20 @@ export async function requestStoryboardPlan(
           "follow the energy curve, carry the motif across cuts, and realize the",
           "color arc through scene grades.",
           `<concept_json>${JSON.stringify(concept)}</concept_json>`,
+          "",
+        ]
+      : []),
+    ...(shapeHint
+      ? [
+          "## Narrative shape (template-selected pacing skeleton)",
+          `A structural pre-pass chose "${shapeHint.shape.id}" for this brief` +
+            `${shapeHint.why ? ` (${shapeHint.why})` : ""}:`,
+          `  ${shapeHint.shape.label}`,
+          "Use it as the DEFAULT segment order and duration weighting when you",
+          "distribute shots. It is pacing scaffolding, not creative direction:",
+          "deviate whenever the brief evidence or the concept demands a",
+          "different structure, and it never overrides the moments, density,",
+          "or energy contracts.",
           "",
         ]
       : []),
@@ -3666,6 +3894,9 @@ function creationPrompt(args: {
       "semantic groups into .zone children of the existing .layout-split,",
       ".layout-editorial-left, .layout-meta-top, .layout-hero-band, or",
       ".layout-center-stack flow container. Prefer that structural repair over offsets.",
+      "For camera_framed_clipped findings, the named element hangs outside the station",
+      "rect the camera frames: move it fully inside its data-region box (keep an ~8%",
+      "inner margin) or shrink it — never move the region itself or edit the camera plan.",
       "For motion/liveness findings, add seek-safe GSAP beats on child elements,",
       "semantic component parts, or data-camera-world wrappers at explicit",
       "composition times. Do not animate scene wrappers to fake activity.",

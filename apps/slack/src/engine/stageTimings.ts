@@ -34,6 +34,12 @@ const SEED_MS: Record<string, number> = {
 
 const DEFAULT_STEP_MS = 15_000;
 const EMA_ALPHA = 0.3;
+/**
+ * Public ETAs intentionally use the optimistic half of observed wall time.
+ * The learned timings still retain the full measurements, so this only changes
+ * perception/copy and never scheduling, timeouts, or telemetry.
+ */
+const VISIBLE_ETA_FACTOR = 0.5;
 
 function timingsFile(): string {
   return path.join(dataDir(), "stage-timings.json");
@@ -72,6 +78,12 @@ export function estimateStepMs(step: TimedStep): number {
   return SEED_MS[step] ?? DEFAULT_STEP_MS;
 }
 
+/** Convert a measured/learned duration into the deliberately optimistic UI ETA. */
+export function visibleEtaMs(ms: number): number {
+  if (!Number.isFinite(ms) || ms <= 0) return 0;
+  return Math.floor(ms * VISIBLE_ETA_FACTOR);
+}
+
 /**
  * One tracker per build. Seed it with the steps the flow expects; steps that
  * start unexpectedly are added on the fly, and expected steps that never run
@@ -107,7 +119,10 @@ export class EtaTracker {
         total += estimateStepMs(step);
       }
     }
-    return total;
+    // Discount the remaining wall time after subtracting elapsed time. This
+    // keeps the optimistic countdown moving instead of reaching zero halfway
+    // through a normally paced stage.
+    return visibleEtaMs(total);
   }
 
   /**
@@ -126,9 +141,9 @@ export class EtaTracker {
  * pretends to a precision the estimate does not have.
  */
 export function formatEtaMs(ms: number): string {
-  const seconds = Math.max(5, Math.round(ms / 5_000) * 5);
+  const seconds = Math.max(5, Math.floor(ms / 5_000) * 5);
   if (seconds >= 90) {
-    const minutes = Math.round(seconds / 30) / 2;
+    const minutes = Math.floor(seconds / 30) / 2;
     return `~${minutes} min remaining`;
   }
   return `~${seconds}s remaining`;

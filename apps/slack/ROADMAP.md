@@ -594,6 +594,74 @@ burned. The film had reviewable development in those windows; the *paperwork*
 
 ---
 
+### Motion-quality pass — de-doubled beats, compound camera, arrival QA, shape hint (2026-07-04)
+
+A quality audit against a live baseline (`improve-baseline-1`) fixed five
+defect classes the viewer reads as "messy":
+
+- **Double-triggered animations** (`componentContract.ts`
+  `dedupeRedundantBeats`, run in `parseStoryboardResponse` before moment
+  top-up): the same pulse beat (press/select/highlight) repeated on one
+  component within ~1.5s, two beats overlapping in one property channel
+  (text/value/fill/chart/rows/panel/pulse/morph), and a `press`/`select`
+  beat scheduled under a cursor-press interaction on the same part (the
+  interaction runtime already owns that scale pulse — the baseline plan had
+  exactly this on its CTA) all degrade to single triggers; a press with a
+  `toState` survives as pure `set-state`. Degrade-never-veto, logged per drop.
+- **Unmotivated blur**: the rack-focus runtime never released — after one
+  focus pull, out-of-focus layers stayed blurred for the rest of the scene.
+  `sequences-camera.v1.js` now ramps intensity back to zero over ≤0.45s when
+  the focused segment ends (contiguous pulls still hand off directly);
+  `cameraDepth.browser.test.ts` proves the release.
+- **Camera-unaware placement / half-clipped components**: layout QA's
+  off-world suppression exempted unframed stations but nothing audited them
+  when framed. `layoutInspector.ts` now runs a **camera-arrival framing
+  audit**: for every full-move landing at fit zoom it seeks past the settle,
+  measures the framed station's meaning-bearing content against the viewport,
+  confirms on a second sample (so mid-entrance travel can't false-positive),
+  and reports `camera_framed_clipped` findings with a station-rect fix hint.
+- **Compound camera moves** (`cameraContract.ts` `mergeCompoundMoves`):
+  pan/track/parallax immediately followed by push-in/pull-back on the same
+  target merges into ONE move (reframe verb + zoom multiplier) — the
+  pan-then-zoom dead stop is gone; pan/track max windows widened to 6s for
+  merged spans; a zoomed compound move now counts as a high-energy peak; the
+  storyboard prompt teaches `zoom`-carrying moves and overlapping content
+  beats during camera transit.
+- **Plan-complexity governor** (`componentContract.ts`
+  `auditComponentComplexity`): the baseline storyboard declared 11 components
+  (4 in one 2.7s scene) for an 18s film and the author burned all three
+  attempts failing to bind them. Scenes are now capped at 1 component per
+  ~1.2s (max 4) and films at ~1 per 2s, as storyboard-stage blocking findings
+  (a storyboard retry is far cheaper than an author failure), with matching
+  budget guidance in the prompt.
+
+Plus the first **small-agent helper** (`requestStoryboardShape`): DeepSeek
+flash picks the film's pacing skeleton from six curated structural templates
+(`STORYBOARD_SHAPES`) in PARALLEL with the GLM concept pass (≈zero added
+wall-clock). The hint is one prompt paragraph the storyboard model treats as a
+default, never a veto; anything but an exact template id degrades to no hint
+(`parseStoryboardShapeHint`), and `SLACK_SEQUENCES_SHAPE_HINT=0` disables it.
+Structure only — creativity and design stay with the big models.
+
+**Live evidence (paid runs, 2026-07-04):** the post-fix run's storyboard hit
+the complexity finding once and fixed it in one retry (7 components / 6 beats
+vs the baseline's 11/13), and GLM planned a compound `pan` with `zoom:1.1`
+unprompted. **Known next bottleneck — source-author reliability:** both paid
+runs ultimately shipped the labeled fallback from `source-author`. Baseline:
+the (then-ungoverned) plan was unbuildable. Post-fix: the authored draft was
+structurally complete but one chart component had no bars (a runtime bind
+exception aborts the whole compile, so browser QA reports an opaque
+`Waiting failed: 12000ms` plus the real console error), and the compact
+4K-token repair fixed the chart while breaking the last scene's markup
+(`incoming scene is absent` at cut bind — present to static regex validation,
+absent to the DOM). Levers to explore next: persist failed author scratches
+under `planning/attempts/` for diagnosis, escalate a *bind-exception* repair
+back to full-context authoring instead of a compact patch, and a static
+kit-markup completeness check (declared chart kinds must contain bars/stroke
+markup) so bind failures surface as named findings before the browser.
+
+---
+
 ## Current Architecture
 
 ```mermaid

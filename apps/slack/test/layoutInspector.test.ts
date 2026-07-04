@@ -6,8 +6,12 @@ import {
   buildDirectLayoutSampleTimes,
   inspectDirectComposition,
 } from "../src/engine/layoutInspector.ts";
+import {
+  CAMERA_RUNTIME_FILE,
+  resolveCameraPlan,
+} from "../src/engine/cameraContract.ts";
 import { findBrowserExecutable } from "../src/engine/render.ts";
-import type { DirectCompositionDraft } from "../src/engine/directComposition.ts";
+import type { DirectCompositionDraft, DirectScene } from "../src/engine/directComposition.ts";
 
 const roots: string[] = [];
 
@@ -105,6 +109,68 @@ const tl=gsap.timeline({paused:true});
 tl.set("#one",{opacity:1},0).set("#one",{opacity:0},1.99);
 tl.set("#two",{opacity:1},2).set("#two",{opacity:0},10);
 window.__timelines["blank-test"]=tl;
+</script></body></html>`,
+  };
+}
+
+/**
+ * A camera world whose framed station has one child hanging past the station
+ * rect: the camera pans to `stat-wall` at fit zoom and `overflow-stat` is
+ * only ~40% on frame after the move settles — the exact half-clipped
+ * component defect the camera-arrival audit exists to catch. The sibling
+ * copy inside the rect is the negative control.
+ */
+function cameraClippedDraft(): DirectCompositionDraft {
+  const storyboard: DirectScene[] = [
+    {
+      id: "tour",
+      title: "Tour",
+      purpose: "Travel from the claim to the stat wall",
+      startSec: 0,
+      durationSec: 4,
+      camera: {
+        version: 1,
+        path: [
+          { version: 1, move: "hold", toRegion: "intro", startSec: 0, durationSec: 1 },
+          { version: 1, move: "pan", toRegion: "stat-wall", startSec: 1, durationSec: 1 },
+        ],
+      },
+    },
+  ];
+  const island = JSON.stringify(resolveCameraPlan(storyboard));
+  return {
+    storyboard,
+    html: `<!doctype html>
+<html><head><script src="gsap.min.js"></script>
+<script src="${CAMERA_RUNTIME_FILE}"></script><style>
+html,body{margin:0;width:800px;height:600px;overflow:hidden;background:#10131a}
+#root{--space-safe:60px;position:relative;width:800px;height:600px;overflow:hidden;color:#fff}
+.scene{position:absolute;inset:0;opacity:0}
+.world{position:relative;width:1600px;height:1200px}
+.station{position:absolute}
+h1{margin:0;font:700 48px/1.1 Arial}
+p{margin:0;font:400 24px/1.3 Arial}
+</style></head><body>
+<main id="root" data-composition-id="camera-clip-test" data-width="800" data-height="600" data-duration="4">
+  <section id="tour" class="scene clip" data-scene="tour" data-start="0" data-duration="4" data-track-index="1">
+    <div class="world" data-camera-world>
+      <div class="station" data-region="intro" style="left:20px;top:20px;width:700px;height:520px">
+        <h1>One live view</h1>
+      </div>
+      <div class="station" data-region="stat-wall" style="left:800px;top:40px;width:700px;height:520px">
+        <p style="position:absolute;left:40px;top:60px;width:300px">Latency under control</p>
+        <div data-part="overflow-stat" style="position:absolute;left:560px;top:120px;width:400px;height:120px;background:#232936;font:700 40px/1.2 Arial">99.98% uptime</div>
+      </div>
+    </div>
+  </section>
+</main>
+<script type="application/json" id="sequences-camera">${island}</script>
+<script>
+window.__timelines=window.__timelines||{};
+const tl=gsap.timeline({paused:true});
+tl.set("#tour",{opacity:1},0).set("#tour",{opacity:0},4);
+SequencesCamera.compile(tl,document.getElementById("root"));
+window.__timelines["camera-clip-test"]=tl;tl.seek(0);
 </script></body></html>`,
   };
 }
@@ -365,6 +431,22 @@ describe("direct layout inspector", () => {
       expect(result.ok, JSON.stringify(result.errors)).toBe(true);
       expect(result.issues.some((issue) => issue.code === "near_blank_scene")).toBe(false);
       expect(result.errors.some((error) => error.startsWith("near_blank_film:"))).toBe(false);
+    },
+    60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "flags content the camera frames half out of frame, and only that content",
+    async () => {
+      const result = await inspectDirectComposition(projectDir(), cameraClippedDraft());
+      expect(result.ok, JSON.stringify(result.errors)).toBe(true);
+      const clipped = result.issues.filter((issue) => issue.code === "camera_framed_clipped");
+      expect(clipped.some((issue) => issue.selector === '[data-part="overflow-stat"]')).toBe(true);
+      // The in-rect copy and the station itself are the negative controls.
+      expect(clipped.every((issue) => issue.selector === '[data-part="overflow-stat"]')).toBe(true);
+      // The finding requests repair without blocking a runnable film.
+      expect(result.strictOk).toBe(false);
+      expect(result.warnings.some((warning) => warning.includes("camera_framed_clipped"))).toBe(true);
     },
     60_000,
   );

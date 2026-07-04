@@ -15,6 +15,7 @@ import {
   errorBlocks,
   hdReadyBlocks,
   resultBlocks,
+  storyboardReadyBlocks,
   thinkingStepsBlocks,
   type ThinkingStep,
   type VideoStage,
@@ -51,6 +52,7 @@ import {
   estimateStepMs,
   formatEtaMs,
   recordStepDuration,
+  visibleEtaMs,
 } from "./engine/stageTimings.ts";
 import { loadJobFrame, publicFrameMd } from "./engine/frameDesign.ts";
 
@@ -302,7 +304,9 @@ function stageBlocks(
     provider: result.provider,
     renderQuality,
     debugStages: isDebugEnabled() ? result.stages : undefined,
-    renderEtaLabel: stage === "rendering" ? formatEtaMs(estimateStepMs("render")) : undefined,
+    renderEtaLabel: stage === "rendering"
+      ? formatEtaMs(visibleEtaMs(estimateStepMs("render")))
+      : undefined,
     frame: result.frame
       ? { label: result.frame.label, basis: result.frame.basis, brandMatched: result.frame.brandMatched }
       : undefined,
@@ -329,6 +333,43 @@ async function uploadFrame(
     filename: "frame.md",
     initial_comment: `:art: Design system for this video — *${result.frame.label}* (${result.frame.basis}${result.frame.brandMatched ? ", brand-matched" : ""})`,
   });
+}
+
+/**
+ * Post the mutable render/result card after storyboard assets so Slack's visual
+ * order matches the actual two-tier delivery. If posting a second message
+ * fails, fall back to updating the original marker so the job can still finish.
+ */
+async function postRenderingStatus(
+  client: WebClient,
+  args: {
+    channel: string;
+    threadTs?: string;
+    fallbackMessageTs: string;
+    jobId: string;
+    title: string;
+    result: VideoResult;
+  },
+): Promise<string> {
+  const blocks = stageBlocks(args.jobId, args.title, args.result, "rendering");
+  try {
+    const posted = await postMessageWithAutoJoin(client, {
+      channel: args.channel,
+      thread_ts: args.threadTs,
+      blocks,
+      text: `“${args.title}” storyboard ready; rendering video`,
+    });
+    return typeof posted.ts === "string" ? posted.ts : args.fallbackMessageTs;
+  } catch (error) {
+    logBackgroundError("could not post rendering status below storyboard", error);
+    await safeUpdate(client, {
+      channel: args.channel,
+      ts: args.fallbackMessageTs,
+      blocks,
+      text: `“${args.title}” storyboard ready; rendering video`,
+    });
+    return args.fallbackMessageTs;
+  }
 }
 
 function makeProgressReporter(
@@ -556,7 +597,7 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
   await safeUpdate(client, {
     channel: args.channel,
     ts: messageTs,
-    blocks: stageBlocks(jobId, args.product, result, "rendering"),
+    blocks: storyboardReadyBlocks(args.product),
     text: `“${args.product}” storyboard ready`,
   });
   try {
@@ -566,12 +607,21 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     logBackgroundError("thumbnail upload failed", error);
     await safeNotify(args.notifyFailure, error);
   }
+  const renderMessageTs = await postRenderingStatus(client, {
+    channel: args.channel,
+    threadTs: args.threadTs,
+    fallbackMessageTs: messageTs,
+    jobId,
+    title: args.product,
+    result,
+  });
+  updateJob(jobId, { messageTs: renderMessageTs });
 
   // Tier 2: render the MP4 asynchronously, then update the message + upload it.
   await deliverVideo(client, {
     channel: args.channel,
     threadTs: args.threadTs,
-    messageTs,
+    messageTs: renderMessageTs,
     jobId,
     title: args.product,
     result,
@@ -636,7 +686,7 @@ async function runRevise(client: WebClient, jobId: string, instruction: string):
   await safeUpdate(client, {
     channel: job.channel,
     ts: messageTs,
-    blocks: stageBlocks(jobId, job.title, result, "rendering"),
+    blocks: storyboardReadyBlocks(job.title, "Updated storyboard preview below."),
     text: `“${job.title}” storyboard updated`,
   });
   try {
@@ -644,12 +694,20 @@ async function runRevise(client: WebClient, jobId: string, instruction: string):
   } catch (error) {
     logBackgroundError("revised thumbnail upload failed", error);
   }
+  const renderMessageTs = await postRenderingStatus(client, {
+    channel: job.channel,
+    threadTs,
+    fallbackMessageTs: messageTs,
+    jobId,
+    title: job.title,
+    result,
+  });
 
   // Tier 2: re-render the MP4, then update the message + upload it.
   await deliverVideo(client, {
     channel: job.channel,
     threadTs,
-    messageTs,
+    messageTs: renderMessageTs,
     jobId,
     title: job.title,
     result,
@@ -700,7 +758,7 @@ async function runUndo(client: WebClient, jobId: string): Promise<void> {
   await safeUpdate(client, {
     channel: job.channel,
     ts: messageTs,
-    blocks: stageBlocks(jobId, job.title, result, "rendering"),
+    blocks: storyboardReadyBlocks(job.title, "Restored storyboard preview below."),
     text: `“${job.title}” reverted`,
   });
   try {
@@ -708,12 +766,20 @@ async function runUndo(client: WebClient, jobId: string): Promise<void> {
   } catch (error) {
     logBackgroundError("undo thumbnail upload failed", error);
   }
+  const renderMessageTs = await postRenderingStatus(client, {
+    channel: job.channel,
+    threadTs,
+    fallbackMessageTs: messageTs,
+    jobId,
+    title: job.title,
+    result,
+  });
 
   // Tier 2: re-render the reverted state + upload.
   await deliverVideo(client, {
     channel: job.channel,
     threadTs,
-    messageTs,
+    messageTs: renderMessageTs,
     jobId,
     title: job.title,
     result,

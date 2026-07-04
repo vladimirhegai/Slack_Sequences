@@ -183,15 +183,31 @@ interface MoveDefaults {
 const MOVE_DEFAULTS: Record<CameraMoveStyle, MoveDefaults> = {
   hold: { ease: "none", zoom: 1, minSec: 0.2, maxSec: 15 },
   drift: { ease: "seqDrift", zoom: 1, minSec: 0.2, maxSec: 15 },
-  pan: { ease: "seqSwoosh", zoom: 1, minSec: 0.4, maxSec: 3 },
+  // pan/track max is sized for COMPOUND windows (reframe + zoom merged into
+  // one move), not just the raw reframe.
+  pan: { ease: "seqSwoosh", zoom: 1, minSec: 0.4, maxSec: 6 },
   whip: { ease: "seqWhip", zoom: 1, minSec: 0.25, maxSec: 1.1 },
   "push-in": { ease: "seqSettle", zoom: 1.22, minSec: 0.5, maxSec: 6 },
   "pull-back": { ease: "seqSettle", zoom: 0.8, minSec: 0.5, maxSec: 6 },
-  "track-to-anchor": { ease: "seqSwoosh", zoom: 1, minSec: 0.5, maxSec: 4 },
+  "track-to-anchor": { ease: "seqSwoosh", zoom: 1, minSec: 0.5, maxSec: 6 },
   "parallax-pass": { ease: "seqGlide", zoom: 1, minSec: 0.8, maxSec: 6 },
   "orbit-lite": { ease: "seqGlide", zoom: 1.06, minSec: 0.8, maxSec: 6 },
   orbit: { ease: "seqGlide", zoom: 1.06, minSec: 0.8, maxSec: 6 },
 };
+
+/**
+ * Reframe verbs that merge with an immediately-following push-in/pull-back on
+ * the same target into ONE compound move (travel + zoom simultaneously).
+ * Whip is excluded: its violence depends on the short window, and a whip may
+ * simply carry `zoom` itself.
+ */
+const COMPOUND_REFRAME_MOVES: ReadonlySet<CameraMoveStyle> = new Set<CameraMoveStyle>([
+  "pan",
+  "track-to-anchor",
+  "parallax-pass",
+]);
+/** Max gap between a reframe and its zoom for the pair to read as one move. */
+const COMPOUND_MERGE_GAP_SEC = 0.4;
 
 /** How far a gap-filling drift travels toward the next framing. */
 const DRIFT_BLEND = 0.24;
@@ -313,7 +329,41 @@ export function normalizeStoryboardCameraIntent(
   if (!path.length) return undefined;
   // A path no move of which names a framing target cannot bind to the world.
   if (!path.some((move) => move.toRegion || move.toPart)) return undefined;
-  return { version: 1, path };
+  return { version: 1, path: mergeCompoundMoves(path) };
+}
+
+/**
+ * Planners routinely stage "pan to the region, then push in on it" as two
+ * serial moves, which plays as travel → dead stop → zoom — the awkward-pause
+ * tell. A reframe immediately followed by a push-in/pull-back on the SAME
+ * target is one compound camera move (travel and zoom together, like an
+ * operated camera), so merge the pair: the reframe verb and ease survive,
+ * the zoom (and any focus modifier) comes from the zoom move, and the window
+ * spans both declarations.
+ */
+function mergeCompoundMoves(path: CameraMoveIntentV1[]): CameraMoveIntentV1[] {
+  const merged: CameraMoveIntentV1[] = [];
+  for (const move of path) {
+    const previous = merged[merged.length - 1];
+    const previousTarget = previous ? (previous.toPart ?? previous.toRegion) : undefined;
+    const moveTarget = move.toPart ?? move.toRegion;
+    if (
+      previous &&
+      (move.move === "push-in" || move.move === "pull-back") &&
+      COMPOUND_REFRAME_MOVES.has(previous.move) &&
+      previousTarget &&
+      // An untargeted zoom inherits the reframe's target — same subject.
+      (!moveTarget || moveTarget === previousTarget) &&
+      move.startSec - (previous.startSec + previous.durationSec) <= COMPOUND_MERGE_GAP_SEC
+    ) {
+      previous.durationSec = round(move.startSec + move.durationSec - previous.startSec);
+      previous.zoom = move.zoom ?? MOVE_DEFAULTS[move.move].zoom;
+      if (move.focus && !previous.focus) previous.focus = move.focus;
+      continue;
+    }
+    merged.push({ ...move });
+  }
+  return merged;
 }
 
 interface TargetRef {
@@ -701,7 +751,9 @@ export function auditCameraEnergy(storyboard: DirectScene[]): string[] {
   const hasHighEnergyMove = fullMoves.some((move) =>
     move.move === "whip" ||
     move.move === "orbit" ||
-    (move.move === "push-in" && (move.zoom ?? MOVE_DEFAULTS["push-in"].zoom) >= HIGH_ENERGY_PUSH_ZOOM)
+    // Any full move that commits to a hard zoom counts — including a compound
+    // pan/track that zooms while it travels (the merged pan-then-push-in).
+    (move.zoom ?? MOVE_DEFAULTS[move.move].zoom) >= HIGH_ENERGY_PUSH_ZOOM
   );
   const hasEnergeticCut = storyboard.some(
     (scene) => scene.cut && ENERGETIC_CUT_STYLES.has(scene.cut.style),

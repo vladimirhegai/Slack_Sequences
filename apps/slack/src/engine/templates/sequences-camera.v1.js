@@ -81,6 +81,10 @@
   var WHIP_BLUR_PX = 7;
   var PERSPECTIVE_PX = 1200;
   var FOCUS_LAYER_CAP = 4;
+  /** Max seconds a rack takes to release after its segment ends. */
+  var FOCUS_RELEASE_SEC = 0.45;
+  /** Pulls closer than this hand off blur directly instead of releasing. */
+  var FOCUS_HANDOFF_SEC = 0.3;
 
   function clamp(value, minimum, maximum) {
     return Math.min(maximum, Math.max(minimum, value));
@@ -208,6 +212,7 @@
       });
     }
     if (!pulls.length) return;
+    var sceneEnd = segments[segments.length - 1].endSec;
     var proxy = { d: pulls[0].depth, i: 0, m: pulls[0].blurMax };
     var applyFocus = function () {
       for (var i = 0; i < blurLayers.length; i += 1) {
@@ -221,7 +226,12 @@
       var pull = pulls[p];
       var duration = pull.segment.endSec - pull.segment.startSec;
       var pullSec = Math.max(0.3, Math.min(duration, duration * 0.6));
-      var fromVars = previous
+      // A pull hands off directly only when the next focused segment begins
+      // as this one ends; otherwise the rack released in between (below) and
+      // this pull ramps in fresh.
+      var handoff = previous &&
+        pull.segment.startSec - previous.segment.endSec <= FOCUS_HANDOFF_SEC;
+      var fromVars = handoff
         ? { d: previous.depth, i: 1, m: previous.blurMax }
         : { d: pull.depth, i: 0, m: pull.blurMax };
       tween(timeline, proxy, fromVars, {
@@ -232,6 +242,29 @@
         ease: "sine.inOut",
         onUpdate: applyFocus,
       }, pull.segment.startSec);
+      // Release: focus is motivated only while its segment frames the shot.
+      // When the next pull is not contiguous, blur ramps back to zero at the
+      // segment's end instead of squatting on the scene's remaining shots —
+      // the "blurred for no reason" defect. A pull ending flush with the
+      // scene has no room (and no need) to release; the cut clears it.
+      var next = pulls[p + 1];
+      var releaseAt = pull.segment.endSec;
+      var releaseRoom = Math.min(
+        FOCUS_RELEASE_SEC,
+        (next ? next.segment.startSec : sceneEnd) - releaseAt,
+      );
+      var contiguous = next &&
+        next.segment.startSec - pull.segment.endSec <= FOCUS_HANDOFF_SEC;
+      if (!contiguous && releaseRoom > 0.05) {
+        tween(timeline, proxy, { d: pull.depth, i: 1, m: pull.blurMax }, {
+          d: pull.depth,
+          i: 0,
+          m: pull.blurMax,
+          duration: releaseRoom,
+          ease: "sine.out",
+          onUpdate: applyFocus,
+        }, releaseAt);
+      }
       previous = pull;
     }
     applyFocus();

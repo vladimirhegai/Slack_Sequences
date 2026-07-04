@@ -184,7 +184,24 @@ moves into a short `seqAnticipate` wind-up; whips carry host-compiled motion
 blur; storyboards may pin regions to viewport-sized grid cells (`worldLayout`)
 that the author prompt converts into deterministic station rects so content
 stops clipping or drifting off-camera. Simultaneous component beats settle in
-a 45ms cascade (follow-through). Slack shows an **ETA countdown** (persisted
+a 45ms cascade (follow-through).
+The 2026-07-04 **motion-quality pass** removed the "messy" tells: a reframe
+immediately followed by push-in/pull-back on the same target merges into ONE
+compound move (`mergeCompoundMoves` — no more pan-then-zoom dead stop; a
+zoomed compound counts as the high-energy peak); rack-focus blur *releases*
+(≤0.45s) when its segment ends instead of squatting on the scene;
+`dedupeRedundantBeats` degrades double-triggered motion (repeated pulses,
+overlapping same-channel beats, press beats under a cursor press) to single
+triggers at storyboard parse; `auditComponentComplexity` blocks plans the
+author cannot build (>1 component per ~1.2s scene / cap 4, >1 per 2s film);
+and browser QA runs a **camera-arrival framing audit** (`camera_framed_clipped`)
+that seeks each full-move landing and proves the framed station's content is
+actually on frame (double-sampled so entrances can't false-positive). A
+light-model **shape hint** (`requestStoryboardShape`, `STORYBOARD_SHAPES`,
+kill switch `SLACK_SEQUENCES_SHAPE_HINT=0`) picks a pacing skeleton from six
+structural templates in parallel with the concept pass — deterministically
+rejectable, structure only, never creative authority. Details in ROADMAP's
+2026-07-04 motion-quality section. Slack shows an **ETA countdown** (persisted
 per-stage EMA, `stageTimings.ts`) instead of a stopwatch, and
 `/sequences debug on|off` appends a model-stage receipt trail
 (stage/status/attempts/duration) to results — details in ROADMAP's 2026-07-03

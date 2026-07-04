@@ -664,3 +664,90 @@ describe("runtime source hygiene", () => {
     expect(source).not.toMatch(/Date\.now|performance\.now|Math\.random|setTimeout|setInterval|requestAnimationFrame/);
   });
 });
+
+describe("compound camera moves", () => {
+  it("merges pan-then-push-in on the same region into one compound move", () => {
+    const camera = normalizeStoryboardCameraIntent({
+      version: 1,
+      path: [
+        { version: 1, move: "pan", toRegion: "metric-wall", startSec: 1, durationSec: 1 },
+        { version: 1, move: "push-in", toRegion: "metric-wall", startSec: 2.2, durationSec: 1.4, zoom: 1.35 },
+      ],
+    }, window);
+    expect(camera?.path).toHaveLength(1);
+    expect(camera?.path[0]).toMatchObject({
+      move: "pan",
+      toRegion: "metric-wall",
+      startSec: 1,
+      durationSec: 2.6,
+      zoom: 1.35,
+    });
+  });
+
+  it("adopts the push-in default zoom and carries its focus modifier", () => {
+    const camera = normalizeStoryboardCameraIntent({
+      version: 1,
+      path: [
+        { version: 1, move: "track-to-anchor", toPart: "hero-stat", startSec: 0, durationSec: 1 },
+        {
+          version: 1,
+          move: "push-in",
+          toPart: "hero-stat",
+          startSec: 1,
+          durationSec: 1,
+          focus: { part: "hero-stat", blurMaxPx: 6 },
+        },
+      ],
+    }, window);
+    expect(camera?.path).toHaveLength(1);
+    expect(camera?.path[0]?.zoom).toBeCloseTo(1.22);
+    expect(camera?.path[0]?.focus).toMatchObject({ part: "hero-stat" });
+  });
+
+  it("never merges different targets, distant pairs, or whip reframes", () => {
+    const differentTargets = normalizeStoryboardCameraIntent({
+      version: 1,
+      path: [
+        { version: 1, move: "pan", toRegion: "hero", startSec: 0, durationSec: 1 },
+        { version: 1, move: "push-in", toRegion: "metrics", startSec: 1, durationSec: 1 },
+      ],
+    }, window);
+    expect(differentTargets?.path).toHaveLength(2);
+    const distant = normalizeStoryboardCameraIntent({
+      version: 1,
+      path: [
+        { version: 1, move: "pan", toRegion: "hero", startSec: 0, durationSec: 1 },
+        { version: 1, move: "push-in", toRegion: "hero", startSec: 3, durationSec: 1 },
+      ],
+    }, window);
+    expect(distant?.path).toHaveLength(2);
+    const whip = normalizeStoryboardCameraIntent({
+      version: 1,
+      path: [
+        { version: 1, move: "whip", toRegion: "hero", startSec: 0, durationSec: 0.5 },
+        { version: 1, move: "push-in", toRegion: "hero", startSec: 0.5, durationSec: 1 },
+      ],
+    }, window);
+    expect(whip?.path).toHaveLength(2);
+  });
+
+  it("counts a zoomed compound pan as the film's high-energy peak", () => {
+    const storyboard = [
+      {
+        id: "a",
+        title: "a",
+        purpose: "test",
+        startSec: 0,
+        durationSec: 14,
+        camera: normalizeStoryboardCameraIntent({
+          version: 1,
+          path: [
+            { version: 1, move: "pan", toRegion: "hero", startSec: 1, durationSec: 1 },
+            { version: 1, move: "push-in", toRegion: "hero", startSec: 2, durationSec: 1.5, zoom: 1.35 },
+          ],
+        }, { startSec: 0, durationSec: 14 }),
+      },
+    ] as DirectScene[];
+    expect(auditCameraEnergy(storyboard).filter((finding) => finding.includes("high-energy"))).toEqual([]);
+  });
+});

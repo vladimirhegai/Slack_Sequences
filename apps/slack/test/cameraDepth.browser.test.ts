@@ -203,6 +203,11 @@ describe("camera depth browser contract (orbit + rack focus)", () => {
         document.querySelector<HTMLElement>(".mark")!.style.filter
       );
       expect(markFilter).toBe("");
+      // The rack releases once its segment ends: focus is motivated only
+      // while that framing holds, so the field must return to sharp instead
+      // of squatting blurred on the rest of the scene.
+      const afterFocus = await capture(5.6);
+      expect(afterFocus.textureFilter).toBe("");
       // Deterministic seek: replaying the same times after jumping around the
       // timeline must reproduce byte-identical transforms and filters.
       await capture(5.9);
