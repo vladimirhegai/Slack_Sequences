@@ -3644,8 +3644,19 @@ async function authorComposition(
           : validation.errors.slice(0, 20);
         // Never compound a malformed patch. Retry from the last statically
         // valid scratch; a malformed initial document becomes the scratch
-        // because there is no earlier authored candidate to preserve.
-        if (!patchMode) scratch = draft;
+        // because there is no earlier authored candidate to preserve —
+        // UNLESS it contradicts the locked scene graph (extra/missing/
+        // renamed scenes): patches against such a scratch are rejected
+        // atomically by lockedSceneGraphError on every attempt, so seeding
+        // it dooms the whole repair loop (2026-07-04 live probe: DeepSeek
+        // authored 6 scenes against a 5-scene plan and both bounded repairs
+        // burned on a structurally unfixable patch). Force a full re-author
+        // with the findings instead.
+        const graphBroken = Boolean(
+          args.lockedStoryboard &&
+          lockedSceneGraphError(draft.html, args.lockedStoryboard),
+        );
+        if (!patchMode && !graphBroken) scratch = draft;
         compact = true;
         lastError = new Error(validationFeedback.join("; "));
         continue;

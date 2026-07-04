@@ -489,6 +489,13 @@ discovery pass (Goal B) from the 2026-07-03 HANDOFF:
   same labeled ramped fallback. Post-fix enhancement-pass mechanics remain
   proven by `test/cutDiscovery.browser.test.ts` and the injection re-entry
   regression.
+- **A graph-broken initial document no longer dooms the repair loop**
+  (2026-07-04 live probe): when DeepSeek's first document contradicts the
+  locked scene graph (extra/missing/renamed scenes), it used to become the
+  patch scratch — and every subsequent patch was rejected atomically by
+  `lockedSceneGraphError`, guaranteeing the fallback. Such a document is now
+  never seeded as scratch; the next attempt re-authors fully with the
+  findings.
 - **Volunteered ramps degrade, never veto** (2026-07-04 live incident,
   found by the first real `/sequences` create after deploy): GLM reaches for
   the new `timeRamp` vocabulary even when the brief never asks for slow
