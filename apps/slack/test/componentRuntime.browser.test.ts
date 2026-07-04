@@ -176,5 +176,11 @@ describe("component runtime browser contract", () => {
     expect(qa.infraError).toBeUndefined();
     expect(qa.errors).toEqual([]);
     expect(qa.ok).toBe(true);
+    // Rendered temporal judge calibration: every one of these beats visibly
+    // changes the frame, so no moment may be flagged as static.
+    expect(qa.temporalJudge?.length).toBeGreaterThanOrEqual(2);
+    expect(
+      (qa.temporalJudge ?? []).filter((entry) => entry.verdict === "static"),
+    ).toEqual([]);
   }, 30_000);
 });

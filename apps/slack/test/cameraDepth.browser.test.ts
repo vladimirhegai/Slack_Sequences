@@ -228,3 +228,185 @@ describe("camera depth browser contract (orbit + rack focus)", () => {
     }
   }, 45_000);
 });
+
+/**
+ * Level-2 depth + whip-blur relocation. One scene proves the whole fence from
+ * PLAN_camera_depth_level2: the world element NEVER carries a CSS filter
+ * (whip blur lives on the backdrop lens overlay), preserve-3d therefore
+ * survives on the world, and data-depth layers separate in Z (translateZ, a
+ * pure function of orbit deflection) while the camera arcs — byte-identical
+ * under out-of-order seek, flat again at rest.
+ */
+function depth3dFilm(): { storyboard: DirectScene[]; html: string } {
+  const storyboard: DirectScene[] = [
+    {
+      id: "hero",
+      title: "Depth orbit + whip",
+      purpose: "3D-separated orbit, then a whip with lens blur",
+      startSec: 0,
+      durationSec: 7,
+      camera: {
+        version: 1,
+        path: [
+          {
+            version: 1,
+            move: "orbit",
+            toRegion: "logo-stage",
+            startSec: 0.5,
+            durationSec: 2,
+            arcDeg: 28,
+          },
+          {
+            version: 1,
+            move: "whip",
+            toRegion: "metric-wall",
+            startSec: 4,
+            durationSec: 0.8,
+          },
+        ],
+        depth3d: true,
+      },
+    },
+  ];
+  const island = JSON.stringify(resolveCameraPlan(storyboard));
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>Depth3d smoke</title><script src="gsap.min.js"></script>
+<script src="${CAMERA_RUNTIME_FILE}"></script><style>
+*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#0a0f16}
+#root{position:relative;width:1920px;height:1080px;overflow:hidden}
+.scene{position:absolute;inset:0;opacity:0}
+.world{position:relative;width:4200px;height:1400px}
+.texture{position:absolute;inset:0;background:radial-gradient(circle at 40% 40%,#1c2a3f,#0a0f16)}
+.halo{position:absolute;left:300px;top:200px;width:700px;height:700px;border-radius:50%;background:#123}
+.station{position:absolute;display:grid;place-items:center}
+.mark{width:280px;height:280px;border-radius:64px;background:#5eead4;color:#06231d;display:grid;place-items:center;font:700 96px Arial}
+.wall{width:900px;height:500px;background:#16324a;border-radius:24px}
+</style></head><body>
+<main id="root" data-composition-id="depth3d-smoke" data-width="1920" data-height="1080" data-duration="7">
+<section id="hero" class="scene clip" data-scene="hero" data-start="0" data-duration="7" data-track-index="1">
+<div class="world" data-camera-world>
+<div class="texture" data-depth="0.25"></div>
+<div class="halo" data-depth="0.8"></div>
+<div class="station" data-region="logo-stage" style="left:240px;top:160px;width:1600px;height:900px">
+<div class="mark" data-part="brand-mark">S</div>
+</div>
+<div class="station" data-region="metric-wall" style="left:2300px;top:300px;width:1600px;height:900px">
+<div class="wall" data-part="metric-wall-card"></div>
+</div>
+</div>
+</section>
+</main>
+<script type="application/json" id="sequences-camera">${island}</script>
+<script>
+window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
+tl.set("#hero",{opacity:1},0).set("#hero",{opacity:0},7);
+SequencesCamera.compile(tl,document.getElementById("root"));
+window.__timelines["depth3d-smoke"]=tl;tl.seek(0);
+</script></body></html>`;
+  return { storyboard, html };
+}
+
+interface Depth3dState {
+  worldTransform: string;
+  worldTransformStyle: string;
+  worldFilter: string;
+  textureTransform: string;
+  haloTransform: string;
+  lensBackdrop: string;
+}
+
+describe("camera depth level 2 (preserve-3d layers + whip lens)", () => {
+  it("separates layers in Z during orbit and keeps the world filter-free through a whip", async () => {
+    const browserPath = findBrowserExecutable();
+    expect(browserPath, "a Chromium/Chrome/Edge executable is required").toBeTruthy();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-depth3d-smoke-"));
+    roots.push(dir);
+    const draft = depth3dFilm();
+    const validation = validateCameraContract(draft.html, draft.storyboard);
+    expect(validation.errors).toEqual([]);
+    expect(validation.plan?.scenes[0]?.depth3d).toBe(true);
+    fs.writeFileSync(path.join(dir, "index.html"), draft.html, "utf8");
+    const require = createRequire(import.meta.url);
+    fs.copyFileSync(require.resolve("gsap/dist/gsap.min.js"), path.join(dir, "gsap.min.js"));
+    fs.writeFileSync(path.join(dir, CAMERA_RUNTIME_FILE), cameraRuntimeSource(), "utf8");
+
+    const server = await serveDir(dir);
+    const puppeteer = (await import("puppeteer-core")).default;
+    const browser = await puppeteer.launch({
+      executablePath: browserPath!,
+      headless: true,
+      args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+      const consoleErrors: string[] = [];
+      page.on("console", (message) => {
+        if (message.type() === "error" && !message.text().startsWith("Failed to load resource")) {
+          consoleErrors.push(message.text());
+        }
+      });
+      page.on("pageerror", (error) => consoleErrors.push(String(error)));
+      await page.goto(server.url, { waitUntil: "networkidle0", timeout: 30_000 });
+      await page.waitForFunction(
+        () => Object.keys((window as unknown as { __timelines?: object }).__timelines ?? {}).length > 0,
+        { timeout: 10_000 },
+      );
+
+      const capture = async (time: number): Promise<Depth3dState> =>
+        page.evaluate((at: number) => {
+          const timelines = (window as unknown as {
+            __timelines: Record<string, { pause: () => void; seek: (t: number, s?: boolean) => void }>;
+          }).__timelines;
+          for (const timeline of Object.values(timelines)) {
+            timeline.pause();
+            timeline.seek(at, false);
+          }
+          const world = document.querySelector<HTMLElement>("[data-camera-world]")!;
+          const lens = document.querySelector<HTMLElement>(".seq-whip-lens");
+          return {
+            worldTransform: world.style.transform,
+            worldTransformStyle: world.style.transformStyle,
+            worldFilter: world.style.filter,
+            textureTransform: document.querySelector<HTMLElement>(".texture")!.style.transform,
+            haloTransform: document.querySelector<HTMLElement>(".halo")!.style.transform,
+            lensBackdrop: lens ? (lens.style.backdropFilter ?? "") : "(no lens)",
+          };
+        }, time);
+
+      // Mid-orbit: the world preserves 3D, the far layer recedes and the near
+      // layer advances (opposite translateZ signs), and nothing is blurred.
+      const midOrbit = await capture(1.5);
+      expect(midOrbit.worldTransformStyle).toBe("preserve-3d");
+      expect(midOrbit.worldTransform).toContain("rotateY(");
+      expect(midOrbit.worldFilter).toBe("");
+      expect(midOrbit.textureTransform).toMatch(/translateZ\(-\d/);
+      expect(midOrbit.haloTransform).toMatch(/translateZ\(\d|translateZ\(3[0-9]/);
+      expect(midOrbit.lensBackdrop === "" || midOrbit.lensBackdrop === "(no lens)").toBe(true);
+      // At rest after the orbit, layers return to the flat plane.
+      const atRest = await capture(3.2);
+      expect(atRest.worldTransform).not.toContain("rotateY(");
+      expect(atRest.textureTransform).toMatch(/translateZ\(0(\.00)?px\)/);
+      // Mid-whip: blur lives on the backdrop lens, never the world element.
+      const midWhip = await capture(4.4);
+      expect(midWhip.worldFilter).toBe("");
+      expect(midWhip.lensBackdrop).toMatch(/^blur\(\d/);
+      // After the whip lands the lens clears.
+      const landed = await capture(5.4);
+      expect(landed.lensBackdrop).toBe("");
+      expect(landed.worldFilter).toBe("");
+      // Out-of-order seek: identical values on replay.
+      await capture(6.8);
+      await capture(0.1);
+      const replayOrbit = await capture(1.5);
+      expect(replayOrbit).toEqual(midOrbit);
+      const replayWhip = await capture(4.4);
+      expect(replayWhip).toEqual(midWhip);
+      expect(consoleErrors).toEqual([]);
+    } finally {
+      await browser.close();
+      await server.close();
+    }
+  }, 45_000);
+});

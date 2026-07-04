@@ -1,119 +1,107 @@
-# HANDOFF — next session (updated 2026-07-04, performance pass)
+# HANDOFF — next session (updated 2026-07-04, reliability + judge + depth pass)
 
-Both 2026-07-03 goals (speed ramping, shape-match v2 discovery) are **BUILT
-and live**; their breakthrough docs are retired — the shipped designs live in
-ROADMAP ("Speed ramping + shape-match discovery (2026-07-04)") and CLAUDE.md.
-The only surviving plan doc is [PLAN_camera_depth_level2.md](PLAN_camera_depth_level2.md)
-(unbuilt, fenced).
+Both remaining HANDOFF goals (rendered temporal judge, camera depth level 2)
+and all three source-author reliability levers from the motion-quality
+diagnosis are **BUILT and verified**; `PLAN_camera_depth_level2.md` is retired
+(the shipped design lives in ROADMAP "Source-author reliability + rendered
+temporal judge + camera depth level 2 (2026-07-04, later)" and CLAUDE.md).
+No plan docs survive — ROADMAP + CLAUDE.md are the inventory.
 
-## What shipped this session (2026-07-04, later): the performance pass
+## What shipped this session (2026-07-04, latest)
 
-A 15s `/sequences` create was taking up to ~15 minutes. Profiling a healthy
-paid run showed 527s wall-clock (storyboard+concept 148s, author chain 277s,
-commit re-QA 12s, render 81s) — ~80% serial model time, with stalls/retries
-supplying the rest. Four quality-neutral changes (no prompt, model, reasoning,
-or QA-threshold changes; deterministic gates still decide what ships):
+1. **Author scratch persistence** — every rejected author attempt writes
+   document + findings to `planning/attempts/author-<n>-<outcome>.*`
+   (diagnostics only, never re-enters the pipeline).
+2. **Bind-exception escalation** — the opaque `Waiting failed: 12000ms` is now
+   `runtime_bind_exception: … — <real console error>`; on that class the
+   author loop abandons the scratch and re-authors with full context instead
+   of a compact patch (the patch-fixed-the-chart-and-broke-the-scene bug).
+3. **Static kit-markup completeness** (`engine/kitMarkupAudit.ts`, linkedom):
+   the runtimes' DOM bind queries re-run statically — chartless charts,
+   itemless rows/select, fill-less progress, absent morph twins, missing
+   camera worlds/stations, and scenes present to regex but absent to a
+   spec-parsed DOM are all named blocking findings before the browser.
+4. **Rendered temporal judge** (`judgeRenderedMoments` in
+   `layoutInspector.ts`): before/mid/after downscaled frame triples around
+   every evidence-bound moment, pixel-diffed in-page; invisible claimed
+   changes become `moment_static_frame` polish findings (strictOk-blocking,
+   never unpublishing). `SLACK_SEQUENCES_TEMPORAL_JUDGE=0` kills it;
+   QA_CACHE_VERSION → 3. The mid-frame exists because a highlight pulse
+   returns to rest by the settle frame — before/after alone reads it static.
+5. **Camera depth level 2** — whip blur relocated to a `.seq-whip-lens`
+   backdrop overlay (the world element never carries a CSS filter again),
+   then opt-in `"depth3d":true` on an orbit scene: preserve-3d world,
+   per-layer `translateZ` as a pure function of orbit deflection, flat at
+   rest. Storyboard cache contract → v7. Default-off; 1080p render-cost
+   benchmarking is still open before broader-than-hero use.
 
-1. **Stream idle watchdog** — streaming calls abort after 90s with no token
-   and retry as transient (`SLACK_SEQUENCES_STREAM_IDLE_TIMEOUT_MS`).
-2. **Hedged requests** (`hedgedCompletion`, OpenRouter only) — a duplicate
-   launches after 25s; first completion wins, loser aborted. Never replaces
-   the serial retry loop (fast failures reject immediately). Kill switch
-   `SLACK_SEQUENCES_HEDGED_REQUESTS=0`, delay `SLACK_SEQUENCES_HEDGE_DELAY_MS`.
-   Costs ≤2× tokens on slow calls — policy is quality > price.
-3. **Browser-QA cache** — clean `inspectDirectComposition` results cached in
-   `<projectDir>/qa-cache/` by html+storyboard+runtime+audit hash; the commit
-   re-inspection (MCP subprocess) becomes a file read. Only `ok` non-infra
-   results are cached. Kill switch `SLACK_SEQUENCES_QA_CACHE=0`. The spatial
-   guide is now captured on every interaction pass so cached results are
-   supersets.
-4. **MCP connection pool** (`withPooledMcpClient`) — one server per job
-   across submit/preview/render; idle unref+close after 45s.
-
-Live-verified with two paid probes on the optimized pipeline: probe-2
-(Pulseboard) PASSED direct with hedges winning 3× and the commit re-QA served
-from cache (submit_composition 12.2s → 1.2s); probe-3 (Ledgerline) hit the
-pre-existing deterministic fallback after the author chain failed its 3
-bounded repairs on a component-beat binding — a model-content failure, the
-designed degrade, not a perf regression (hedge/watchdog/pool all behaved).
-
-Docs: retired `BREAKTHROUGH_{match_cut,speed_ramping,camera_depth}.md`
-(level-2 remainder → `PLAN_camera_depth_level2.md`); added
-`docs/RECIPE_STUDIO_PLAN.md` (monorepo root) — the seed plan for the
-operator-facing Recipe Studio (lite editor + chat + recipes exported as
-retrievable skills). A follow-up agent is expected to enhance that plan.
+Live-verified with one paid probe (`levers-live-1`, Pulseboard brief
+demanding the previous session's failure shape — chart + palette + orbit):
+**published `hyperframes-direct`, no fallback.** Attempt 1 repeated the old
+chart/camera-world mistakes and the kit audit named them statically (plus a
+DOM-level cut focal-part catch on attempt 2); attempt 3 passed; the critic
+applied 5 directives; the temporal judge measured 11/12 moments as real
+change and flagged one invisible tick as polish feedback; both rejected
+attempts persisted under `planning/attempts/`. Details in ROADMAP.
 
 ## Read first
 
 1. [CLAUDE.md](CLAUDE.md) — two bots, isolation, determinism boundary,
    verification ladder, publish-vs-deploy.
-2. [ROADMAP.md](ROADMAP.md) — current state; the 2026-07-04 sections are the
-   latest inventory (features, then performance).
+2. [ROADMAP.md](ROADMAP.md) — current state; the three 2026-07-04 sections
+   (motion-quality, performance, reliability+judge+depth) are the latest
+   inventory.
 
 ## Candidate next goals (in rough order of leverage)
 
-1. **Recipe Studio M1–M2** (`docs/RECIPE_STUDIO_PLAN.md`) — local cockpit over
-   the engine + recipes-as-skills retrieval; golden recipe: last-word
-   roulette.
-2. **Rendered temporal judge** — promote rendered temporal evidence into the
-   live publication boundary (see ROADMAP 2026-07-03 note); hard parts are
-   cost budgets and false-positive control.
-3. **Camera depth level 2** — fenced; see PLAN_camera_depth_level2.md (whip
-   blur must relocate off the world element first).
+1. **Recipe Studio M1–M2** (`docs/RECIPE_STUDIO_PLAN.md`, monorepo root) —
+   local cockpit over the engine + recipes-as-skills retrieval.
+2. **Temporal judge, vision half** — the deterministic frame-difference core
+   is live; the remaining half of the original breakthrough note is a vision
+   critic over the same moment frames (legibility, semantic "did the RIGHT
+   thing change"). Budget/caching machinery now exists to hang it on.
+3. **Depth3d render benchmark** — before teaching the prompt to use depth3d
+   more than once per film, benchmark software-rasterized 1080p render cost
+   of sustained preserve-3d layers.
 4. **Audio** — any soundtrack must be remapped through the same warp knots
    (`sequences-time.v1.js` header note). Do not add audio without it.
 
 ## Gotchas that will save you hours (inherited + new)
 
-1. **Injection anchors are load-bearing.** The compile-call injections anchor
-   on the registration line; the time-wrap rewrite must stay LAST and
-   `timelineRegistrationAnchor` must keep matching both plain and wrapped
-   forms. `test/timeRamp.test.ts` "all-five-contracts injection regression"
-   guards this — keep it green.
-2. **Time bases**: content (timeline) time everywhere except the enumerated
-   viewer-time consumers. A new consumer that physically seeks the registered
-   timeline converts via `warpInverseOf(parseTimeRampPlan(html).plan)` at the
-   seek — and nowhere else.
-3. **Bump the storyboard cache `contract`** (now v6) whenever the storyboard
-   shape changes — and bump `QA_CACHE_VERSION` in `layoutInspector.ts`
-   whenever inspector semantics change (runtime/audit content is already in
-   the key; version covers logic-only changes).
-4. **Vitest root gotcha**: always `npm run test --workspace @sequences/slack`
-   (never `npx vitest run --root ../..` from the monorepo root).
-5. **`sequence:check` job dirs are immutable** — a retried live probe needs a
-   fresh `--job-id` (and re-spends the concept call).
-6. **Paid live probe recipe**: set `$env:OPENROUTER_API_KEY`, then
-   `npm run sequence:check --workspace @sequences/slack -- --product ...
-   --what "<brief>" --provider openrouter-api --job-id <id> --format both`;
-   inspect `.data/projects/<id>/planning/storyboard.json` and the report's
-   `authoringMode`/`fallbackStage`. Stage receipts carry per-stage
-   durations; `--no-mcp` isolates engine issues from the MCP transport.
+1. **Injection anchors are load-bearing.** The time-wrap rewrite stays LAST
+   and `timelineRegistrationAnchor` must match plain + wrapped forms.
+   `test/timeRamp.test.ts` "all-five-contracts injection regression" guards it.
+2. **Time bases**: content time everywhere except enumerated viewer-time
+   consumers; physical seeks convert via `warpInverseOf` at the seek only.
+   The temporal judge follows this (it seeks through `seekContent`).
+3. **Bump the storyboard cache `contract`** (now v7) on storyboard shape
+   changes; bump `QA_CACHE_VERSION` (now 3) on inspector semantics changes.
+4. **Vitest root gotcha**: `npm run test --workspace @sequences/slack`, or
+   `npx vitest run --root ../.. apps/slack/test/<file>` from `apps/slack`.
+5. **`sequence:check` job dirs are immutable** — retried live probes need a
+   fresh `--job-id`.
+6. **Paid live probe recipe**: `$env:OPENROUTER_API_KEY`, then
+   `npm run sequence:check --workspace @sequences/slack -- --product …
+   --what "…" --provider openrouter-api --job-id <id> --format both`; inspect
+   `.data/projects/<id>/planning/` (now including `attempts/`) and the
+   report's `authoringMode`/`fallbackStage`.
 7. **Test styling via classes, not `data-part` attribute selectors** — bridge
    clones strip `data-part`.
-8. Finish = commit → `bash scripts/publish-public.sh "<msg>"` (publishes
-   HEAD; commit first) → `railway up` (publish does NOT deploy) → poll
-   `railway deployment list` (old instance answers `ready` on `/healthz`).
-9. **DeepSeek does not keep geometry discipline from prose** — that is why
-   cut discovery upgrades from measured geometry. Keep the scorer's caps
-   tighter than the runtime degrade so the host's own choice can never
-   degrade.
-10. **When a repair loop fails 3× on the same finding, suspect the finding**
-    (the FP clip-overlap incident).
-11. **Post-authoring passes must re-inject from the SHIPPED storyboard**
-    (`result.draft.storyboard`), never `args.lockedStoryboard`: authoring may
-    have quarantined an optional interaction, and the stale plan resurrects
-    the proven-broken binding. Any NEW post-authoring pass must follow the
-    same rule.
-12. **New plan-gate rules must not veto volunteered enhancements.** When you
-    add typed vocabulary + gates, always ask: what happens when the model
-    volunteers it badly on a brief that never asked? Degrade, don't block —
-    reserve blocking findings for brief-derived requirements
-    (`dropUnusableVolunteeredTimeRamps` is the template).
-13. **A pooled/unref'd child process must be re-`ref()`ed while awaited** —
-    an unref'd MCP client awaited with no other live handles lets node exit
-    silently mid-build with code 0 (cost this session: one mystery
-    3-second "successful" demo run).
-14. **Hedging must never replace the retry loop.** A fast primary failure
-    rejects immediately; only a *slow* primary earns a duplicate. The
-    directComposition retry-contract tests encode this — if they start
-    counting extra calls, the hedge is misbehaving.
+8. Finish = commit → `bash scripts/publish-public.sh "<msg>"` → `railway up`
+   (publish does NOT deploy) → poll `railway deployment list`.
+9. **When a repair loop fails 3× on the same finding, suspect the finding.**
+10. **Post-authoring passes re-inject from the SHIPPED storyboard**
+    (`result.draft.storyboard`), never `args.lockedStoryboard`.
+11. **New plan-gate rules must not veto volunteered enhancements** — degrade,
+    don't block (`depth3d` on an orbit-less path is the newest example).
+12. **A pooled/unref'd child process must be re-`ref()`ed while awaited.**
+13. **Hedging must never replace the retry loop.**
+14. **The world element must NEVER carry a CSS filter** — whip blur lives on
+    the `.seq-whip-lens` backdrop overlay, rack focus on layers. A filter on
+    the world silently flattens preserve-3d children (depth3d dies, no error).
+15. **Pulse-shaped evidence needs the mid-frame** — any future rendered
+    comparison that only samples before/after will call highlights, presses,
+    and ripples "static". Sample the peak.
+16. **linkedom is the static DOM oracle** — if a bind query changes in a
+    runtime template, mirror it in `kitMarkupAudit.ts` or the completeness
+    check drifts from what the browser actually resolves.

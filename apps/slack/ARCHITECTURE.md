@@ -647,8 +647,22 @@ draft
   move/stack there. Runtime errors and interaction evidence remain fully
   authoritative during cuts.
 - **Liveness:** static `motionDensity` findings are repair guidance for the
-  authoring loop and are persisted in `motion-plan.json`; rendered temporal
-  proof still comes from `temporalInspector.ts`.
+  authoring loop and are persisted in `motion-plan.json`; developer-facing
+  strips/change curves still come from `temporalInspector.ts`.
+- **Rendered temporal judge (2026-07-04):** browser QA additionally renders a
+  before/mid/after frame triple around every evidence-bound storyboard moment
+  (downscaled, on the already-open QA browser) and measures the pixel
+  difference in-page. A moment whose claimed change is invisible on screen
+  becomes a `moment_static_frame` finding: bounded-repair guidance through
+  `strictOk`, never a publication blocker for a runnable draft. Evidence is
+  persisted as `temporalJudge` in the QA result;
+  `SLACK_SEQUENCES_TEMPORAL_JUDGE=0` disables.
+- **Bind exceptions:** a loaded document that never registers its timeline is
+  classified `runtime_bind_exception` (the console error leads the message);
+  the author loop escalates it to full-context re-authoring instead of a
+  compact patch, and `kitMarkupAudit.ts` re-runs the runtimes' DOM bind
+  queries statically so most bind failures surface as named findings before
+  the browser.
 
 
 Mechanical failures can be repaired automatically: malformed wrappers, missing

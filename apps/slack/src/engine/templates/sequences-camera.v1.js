@@ -81,6 +81,11 @@
   var WHIP_BLUR_PX = 7;
   var PERSPECTIVE_PX = 1200;
   var FOCUS_LAYER_CAP = 4;
+  // Level-2 depth: how far layers separate in Z at full orbit deflection, and
+  // how many degrees of arc ramp that separation in (a pure function of the
+  // orbit proxy, so out-of-order seek stays byte-identical).
+  var DEPTH_Z_RANGE_PX = 120;
+  var DEPTH_ENVELOPE_DEG = 10;
   /** Max seconds a rack takes to release after its segment ends. */
   var FOCUS_RELEASE_SEC = 0.45;
   /** Pulls closer than this hand off blur directly instead of releasing. */
@@ -157,12 +162,37 @@
   // Per-whip blur state. A factory (not an inline closure in the segment loop)
   // so multiple whips in one scene each drive their own proxy. Blur is a pure
   // function of the proxy, cleared at rest — deterministic under seek.
-  function makeWhipBlur(world) {
+  //
+  // The blur lives on a dedicated backdrop lens overlay, NEVER on the world
+  // element: a CSS filter on the world forces 3D flattening of its children,
+  // which would silently kill level-2 depth (preserve-3d + translateZ) and any
+  // future 3D feature. The lens is a pointer-transparent sibling painted above
+  // the world; its backdrop-filter smears everything beneath it — the same
+  // full-frame whip smear, with the world's transform tree untouched.
+  function whipLens(scene) {
+    var lens = scene.querySelector(".seq-whip-lens");
+    if (lens) return lens;
+    lens = document.createElement("div");
+    lens.className = "seq-whip-lens";
+    lens.setAttribute("aria-hidden", "true");
+    if (getComputedStyle(scene).position === "static") {
+      scene.style.position = "relative";
+    }
+    lens.style.cssText =
+      "position:absolute;left:0;top:0;right:0;bottom:0;pointer-events:none;z-index:40;";
+    scene.appendChild(lens);
+    return lens;
+  }
+
+  function makeWhipBlur(scene) {
+    var lens = whipLens(scene);
     var proxy = { b: 0 };
     return {
       proxy: proxy,
       apply: function () {
-        world.style.filter = proxy.b > 0.05 ? "blur(" + proxy.b.toFixed(2) + "px)" : "";
+        var value = proxy.b > 0.05 ? "blur(" + proxy.b.toFixed(2) + "px)" : "";
+        lens.style.backdropFilter = value;
+        lens.style.webkitBackdropFilter = value;
       },
     };
   }
@@ -309,13 +339,17 @@
     var proxy = { x: start.x, y: start.y, z: start.z, r: 0, ry: 0 };
 
     // True orbit (level 1) rotates the flat world plane in 3D; perspective
-    // lives on the scene wrapper so CSS filters on the world (whip blur)
-    // cannot flatten anything — the world's own transform is unaffected.
+    // lives on the scene wrapper. The world element NEVER carries a CSS
+    // filter (whip blur lives on the lens overlay), so level-2 depth can put
+    // preserve-3d on the world: layers' translateZ then composes with the
+    // world's rotateY and they separate in Z while the camera arcs.
     var hasOrbit = false;
     for (var o = 0; o < segments.length; o += 1) {
       if (segments[o].move === "orbit") hasOrbit = true;
     }
     if (hasOrbit) scene.style.perspective = PERSPECTIVE_PX + "px";
+    var depth3d = Boolean(scenePlan.depth3d && hasOrbit && layers.length);
+    if (depth3d) world.style.transformStyle = "preserve-3d";
 
     function apply() {
       var z = proxy.z;
@@ -339,12 +373,24 @@
           transform;
       }
       world.style.transform = transform;
+      // Level-2 depth: Z separation is a pure function of the orbit
+      // deflection (proxy.ry), ramping in over the first degrees of arc and
+      // back to zero at rest — non-orbit frames render byte-identically to a
+      // flat scene, so rest-state layout and legibility never change.
+      var depthEnvelope = depth3d
+        ? Math.min(1, Math.abs(proxy.ry) / DEPTH_ENVELOPE_DEG)
+        : 0;
       for (var index = 0; index < layers.length; index += 1) {
         var layer = layers[index];
         var factor = 1 - layer.depth;
-        layer.element.style.transform =
+        var layerTransform =
           "translate(" + (proxy.x - reference.x) * factor + "px," +
           (proxy.y - reference.y) * factor + "px)";
+        if (depth3d) {
+          var layerZ = depthEnvelope * (layer.depth - 0.5) * DEPTH_Z_RANGE_PX;
+          layerTransform += " translateZ(" + layerZ.toFixed(2) + "px)";
+        }
+        layer.element.style.transform = layerTransform;
       }
     }
 
@@ -390,7 +436,7 @@
         }, segment.startSec);
       }
       if (segment.move === "whip") {
-        var blur = makeWhipBlur(world);
+        var blur = makeWhipBlur(scene);
         var blurHalf = duration / 2;
         tween(timeline, blur.proxy, { b: 0 }, {
           b: WHIP_BLUR_PX,

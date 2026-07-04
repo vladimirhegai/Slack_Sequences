@@ -654,11 +654,120 @@ exception aborts the whole compile, so browser QA reports an opaque
 `Waiting failed: 12000ms` plus the real console error), and the compact
 4K-token repair fixed the chart while breaking the last scene's markup
 (`incoming scene is absent` at cut bind — present to static regex validation,
-absent to the DOM). Levers to explore next: persist failed author scratches
-under `planning/attempts/` for diagnosis, escalate a *bind-exception* repair
-back to full-context authoring instead of a compact patch, and a static
-kit-markup completeness check (declared chart kinds must contain bars/stroke
-markup) so bind failures surface as named findings before the browser.
+absent to the DOM). All three levers named here were BUILT later the same day
+— see "Source-author reliability + rendered temporal judge + camera depth
+level 2 (2026-07-04, later)" below.
+
+---
+
+### Source-author reliability + rendered temporal judge + camera depth level 2 (2026-07-04, later)
+
+**Source-author reliability — the three levers from the motion-quality
+diagnosis, all built:**
+
+1. **Failed author scratches persist** (`compositionRunner.ts`
+   `persistAuthorAttempt`): every rejected attempt writes its document (or
+   raw response when nothing parsed) + findings JSON under
+   `planning/attempts/author-<n>-<outcome>.*`
+   (`static-rejected`/`browser-rejected`/`exception`). Best-effort,
+   diagnostics-only — a disk error never touches authoring, nothing re-enters
+   the pipeline.
+2. **Bind-exception escalation**: `layoutInspector.ts` now classifies a
+   loaded document that never registers its timeline as
+   `runtime_bind_exception` and leads with the captured console error instead
+   of the opaque `Waiting failed: 12000ms` (the timeout is the symptom, the
+   exception is the diagnosis). On that marker the author loop drops the
+   scratch and returns to **full-context re-authoring** — a compact patch
+   against a document whose DOM disagrees with its source text repairs blind
+   (the paid-run failure: the 4K patch fixed the chart and broke the last
+   scene).
+3. **Static kit-markup completeness** (`engine/kitMarkupAudit.ts`, new dep
+   `linkedom`): re-runs the cut/camera/component runtimes' exact bind queries
+   against a spec-parsed DOM inside `validateDirectComposition`. Chart beats
+   with no bars/stroke, rows/select beats with no items, progress beats with
+   no fill, absent morph twins, missing camera worlds/stations, bridged-cut
+   focal parts, and scenes that exist in source text but not in the parsed
+   DOM (`dom_markup_broken` — the repair-broke-markup class) all surface as
+   named blocking findings *before* the browser, where they previously
+   aborted the whole compile behind the timeout. Proven by
+   `test/kitMarkupAudit.test.ts` (8 cases, including the
+   present-to-regex/absent-to-DOM scene).
+
+**Rendered temporal judge (HANDOFF goal, first promotion into live QA):**
+browser QA (`layoutInspector.ts` `judgeRenderedMoments`) renders a
+before/mid/after frame triple around every evidence-bound storyboard moment —
+the same settled-capture policy as the thumbnail strip, clamped ahead of cut
+exit windows, seeking in content time — at 0.2 device scale on the
+already-open QA browser (≤3 tiny screenshots per moment, ≤12 moments, results
+ride the existing qa-cache). Frames are pixel-diffed in-page (max channel
+delta, tolerance 6); a moment whose claimed change moves fewer than ~0.12% of
+pixels in BOTH comparisons is verdict `static` and becomes a
+`moment_static_frame` finding. False-positive control, deliberately
+conservative: only moments are judged (intentional holds are never punished),
+the mid-frame catches pulse-shaped evidence that returns to rest (found live
+by the component-runtime calibration test: a `highlight` ring reads static on
+before/after alone), and findings are polish-grade — they drop `strictOk`
+and feed the bounded repair loop but never unpublish a runnable draft (the
+same boundary as every visual heuristic). Per-moment evidence
+(changedRatio/meanDelta/verdict) persists as `temporalJudge` in the QA
+result. Kill switch `SLACK_SEQUENCES_TEMPORAL_JUDGE=0`;
+`QA_CACHE_VERSION` bumped to 3. Proof: `test/temporalJudge.browser.test.ts`
+(a visible reveal passes, a tween inside a permanently-invisible container is
+flagged; kill switch leaves QA untouched) and the component-runtime film (9
+moments, 8 beat kinds, zero static verdicts). The vision-critic half of the
+original breakthrough note (semantic legibility judgment) remains future
+work; this is the deterministic frame-difference core with the cost/FP
+budget solved.
+
+**Camera depth level 2 (PLAN_camera_depth_level2.md — built, plan retired):**
+
+- **Whip-blur relocation first** (the fence's precondition): whip blur moved
+  off the world element onto a `.seq-whip-lens` overlay — a
+  pointer-transparent sibling above the world whose `backdrop-filter` smears
+  everything beneath it (same full-frame whip smear). The world element now
+  NEVER carries a CSS filter, structurally removing the
+  filter-flattens-preserve-3d landmine for good; rack focus already blurred
+  layers only.
+- **`depth3d` per-scene plan flag** (`"camera":{"depth3d":true,...}`):
+  normalize keeps it only when the merged path carries an `orbit`
+  (volunteered on a flat path → silent degrade, never a veto); resolution
+  carries it into the island; validation warns when the scene has no
+  `data-depth` layers. With the flag, the runtime puts
+  `transform-style: preserve-3d` on the world and every depth layer gains
+  `translateZ(envelope · (depth − 0.5) · 120px)` where the envelope is a pure
+  function of orbit deflection (`|ry| / 10°`, capped 1) — layers separate in
+  real 3D while the camera arcs and land flat at rest, so non-orbit frames
+  stay byte-identical and text legibility never changes. Storyboard prompt
+  teaches it as rare/hero-only; storyboard cache contract bumped to v7.
+- Proof: `test/cameraDepth.browser.test.ts` gained a second film — preserve-3d
+  + opposite-sign translateZ mid-orbit, flat at rest, world filter-free
+  mid-whip with the lens carrying the blur, byte-identical replay after
+  out-of-order seek. Remains **default-off** (opt-in flag, prompt-taught as
+  rare); render-cost benchmarking at 1080p is still open before any
+  broader-than-hero use.
+
+**Verification:** slack typecheck; full slack suite 352/352 (one pre-existing
+test updated for the named bind-exception class); `mcp:demo`, `direct:demo`,
+`sequence:check --demo --no-mcp`, `film:demo` all green.
+
+**Live evidence (paid probe `levers-live-1`, 2026-07-04):** a Pulseboard brief
+deliberately demanding the previous session's failure shape (live chart +
+palette + orbit finale) published **`hyperframes-direct`, no fallback** —
+the first paid run through this failure class to ship authored source.
+The author's attempt 1 made exactly the old mistake (missing camera world,
+missing chart `data-part`) and the kit-markup audit named it statically —
+corroborating the regex gate and adding the DOM-level cut focal-part catch on
+attempt 2 (`revenue-chart-stroke`) — so both repairs ran against named
+findings instead of a browser timeout; attempt 3 passed, the critic applied
+5 directives, 14/14 moments bound, and both rejected attempts persisted to
+`planning/attempts/`. The temporal judge ran on the live film's QA passes:
+11/12 moments measured as real change with healthy margins (0.5%–85% of
+pixels changed vs the 0.12% static threshold — the nearest real change sat
+4× above it) and flagged one genuinely invisible supporting moment (`orders-tick`,
+changedRatio 0) as `moment_static_frame` polish feedback — the film still
+published, exactly the designed boundary. The bind-exception escalation path
+did not fire this run (statics caught everything first — the intended
+ordering); its behavior is proven by `test/layoutInspector.test.ts`.
 
 ---
 
@@ -782,8 +891,10 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started
 - [x] **Static liveness repair guard (2026-07-02):** `motionDensity.ts`
       detects PowerPoint-like long quiet windows and scenes with only a
       front-loaded entrance, feeds those warnings into the bounded author repair
-      loop, and records the summary in `motion-plan.json`. Rendered temporal
-      evidence remains separate and developer-facing.
+      loop, and records the summary in `motion-plan.json`. Since 2026-07-04
+      the **rendered temporal judge** complements it inside live browser QA
+      (see the reliability+judge+depth section); `temporalInspector.ts`
+      strips/change curves remain developer-facing.
 - [x] **Continuous Spatial World / Camera Rig (2026-07-02):** the video frame is
       a fixed viewport; a scene's `data-camera-world` is a larger finite plane
       with named `data-region` stations the viewer never sees all at once. The

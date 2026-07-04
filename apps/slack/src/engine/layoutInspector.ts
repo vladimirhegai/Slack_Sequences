@@ -46,6 +46,7 @@ import {
   timeRampRuntimeSource,
   warpInverseOf,
 } from "./timeRamp.ts";
+import { resolveMomentContract } from "./storyboardMoments.ts";
 import { findBrowserExecutable } from "./render.ts";
 
 export type LayoutSeverity = "error" | "warning" | "info";
@@ -79,9 +80,32 @@ export interface DirectBrowserQaResult {
   interactions?: DirectInteractionEvidence[];
   /** Measured per-boundary focal-part geometry (feeds cut discovery). */
   boundaries?: DirectBoundaryInventory[];
+  /** Rendered temporal judge: per-moment before/after frame-difference evidence. */
+  temporalJudge?: TemporalJudgeMomentEvidence[];
   errors: string[];
   warnings: string[];
   guidePngBase64?: string;
+}
+
+/**
+ * One storyboard moment judged against rendered pixels: a frame just before
+ * its bound evidence begins versus a frame just after that evidence settles.
+ * `static` means the claimed change is not visible on screen.
+ */
+export interface TemporalJudgeMomentEvidence {
+  momentId: string;
+  title: string;
+  importance: "primary" | "supporting";
+  atSec: number;
+  beforeSec: number;
+  /** Mid-evidence frame: catches pulse-shaped changes that return to rest. */
+  midSec: number;
+  afterSec: number;
+  /** Max fraction of downscaled pixels (before→mid, before→after) whose channel delta exceeds tolerance. */
+  changedRatio: number;
+  /** Mean per-pixel max channel delta (0..255) of the stronger comparison. */
+  meanDelta: number;
+  verdict: "changed" | "static";
 }
 
 /** One visible data-part measured near a scene boundary (viewport space). */
@@ -232,7 +256,8 @@ function loadBrowserAudit(name: "layout-audit.browser.js" | "contrast-audit.brow
  * always re-measured live. Opt out with SLACK_SEQUENCES_QA_CACHE=0.
  */
 // v2: camera-arrival framing audit (camera_framed_clipped) joined the pass.
-const QA_CACHE_VERSION = 2;
+// v3: rendered temporal judge evidence + whip lens relocation.
+const QA_CACHE_VERSION = 3;
 
 /** Everything environment-side that can change the verdict for the same draft. */
 let cachedStaticFingerprint: string | undefined;
@@ -1519,6 +1544,182 @@ function formatIssue(value: DirectLayoutIssue): string {
   }`;
 }
 
+/* ----------------------------------------------- rendered temporal judge */
+
+const TEMPORAL_JUDGE_MAX_MOMENTS = 12;
+/** Frames are captured at this device scale (1920x1080 → 384x216). */
+const TEMPORAL_JUDGE_SCALE = 0.2;
+/** Channel deltas at or below this are decoder/AA noise, not change. */
+const TEMPORAL_JUDGE_PIXEL_TOLERANCE = 6;
+/**
+ * A claimed change is `static` when fewer than this fraction of downscaled
+ * pixels moved (~100 px at 384x216). Calibrated conservative: a modest
+ * type-on beat moves ~2-3x this many pixels, a camera move lights up the
+ * whole frame, while byte-identical rendering measures ~0 — so false
+ * positives require a change that is genuinely near-invisible on screen.
+ */
+const TEMPORAL_JUDGE_STATIC_RATIO = 0.0012;
+const TEMPORAL_JUDGE_STATIC_MEAN_DELTA = 0.35;
+
+function temporalJudgeEnabled(): boolean {
+  return process.env.SLACK_SEQUENCES_TEMPORAL_JUDGE !== "0";
+}
+
+/**
+ * The rendered temporal judge: for each evidence-bound storyboard moment,
+ * render one frame just before its evidence starts and one just after it
+ * settles (the thumbnail strip's capture policy), then measure the pixel
+ * difference in-page. Static source validation can prove a tween exists;
+ * only rendered pixels can prove the promised change is *visible*. Findings
+ * are polish-grade (they trigger bounded repair through strictOk) and never
+ * unpublish a runnable draft. Cost: ≤2 tiny screenshots per moment, run last
+ * on the already-open QA browser, cached with the rest of the QA result.
+ */
+async function judgeRenderedMoments(
+  page: import("puppeteer-core").Page,
+  draft: DirectCompositionDraft,
+  duration: number,
+  seekContent: (time: number) => Promise<void>,
+  viewport: { width: number; height: number },
+): Promise<TemporalJudgeMomentEvidence[]> {
+  if (!temporalJudgeEnabled()) return [];
+  if (!Number.isFinite(duration) || duration < 10) return [];
+  const bound = resolveMomentContract(draft.html, draft.storyboard, duration)
+    .moments.filter((moment) => moment.evidence);
+  if (bound.length < 2) return [];
+  const selected = (bound.length <= TEMPORAL_JUDGE_MAX_MOMENTS
+    ? bound
+    : [
+        ...bound.filter((moment) => moment.importance === "primary"),
+        ...bound.filter((moment) => moment.importance !== "primary"),
+      ].slice(0, TEMPORAL_JUDGE_MAX_MOMENTS)
+  ).slice().sort((a, b) => a.atSec - b.atSec);
+  const sceneById = new Map(draft.storyboard.map((scene) => [scene.id, scene]));
+  const cutExitByScene = new Map(
+    (parseCutPlan(draft.html).plan?.cuts ?? []).map((cut) => [cut.fromScene, cut.exitSec ?? 0]),
+  );
+  const pairs = selected.flatMap((moment) => {
+    const scene = sceneById.get(moment.sceneId);
+    const evidence = moment.evidence!;
+    const sceneStart = scene ? scene.startSec : 0;
+    const sceneEnd = scene ? scene.startSec + scene.durationSec : duration;
+    // Mirror the thumbnail capture policy: the after-frame is the SETTLED
+    // state, clamped ahead of the outgoing cut's exit window so a
+    // mid-transition frame can never poison the comparison.
+    const latest = Math.max(
+      sceneStart,
+      sceneEnd - 0.05 - (cutExitByScene.get(moment.sceneId) ?? 0),
+    );
+    const beforeSec = roundTime(
+      Math.max(sceneStart, Math.min(evidence.startSec - 0.12, latest)),
+    );
+    const afterSec = roundTime(
+      Math.min(Math.max(evidence.endSec + 0.08, beforeSec + 0.15), latest),
+    );
+    // Pulse-shaped evidence (highlight rings, press scales, ripples) returns
+    // to its rest state by the settle frame, so before/after alone reads a
+    // real pulse as static. A mid-evidence frame catches the peak.
+    const midSec = roundTime(
+      Math.min(
+        Math.max((evidence.startSec + evidence.endSec) / 2, beforeSec + 0.05),
+        latest,
+      ),
+    );
+    if (afterSec - beforeSec < 0.12) return [];
+    return [{ moment, beforeSec, midSec, afterSec }];
+  });
+  if (!pairs.length) return [];
+  // Tiny frames: drop only the device scale — CSS layout is untouched. Runs
+  // after every full-resolution capture (samples, boundaries, guide).
+  await page.setViewport({
+    width: viewport.width,
+    height: viewport.height,
+    deviceScaleFactor: TEMPORAL_JUDGE_SCALE,
+  });
+  const frames = new Map<number, string>();
+  const captureFrame = async (time: number): Promise<string> => {
+    const cached = frames.get(time);
+    if (cached) return cached;
+    await seekContent(time);
+    const png = (await page.screenshot({ type: "png", encoding: "base64" })) as string;
+    frames.set(time, png);
+    return png;
+  };
+  const evidence: TemporalJudgeMomentEvidence[] = [];
+  const diffFrames = (aB64: string, bB64: string) =>
+    page.evaluate(
+      async (aB64: string, bB64: string, tolerance: number) => {
+        const load = (base64: string): Promise<HTMLImageElement> =>
+          new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error("temporal judge frame decode failed"));
+            image.src = "data:image/png;base64," + base64;
+          });
+        const [imageA, imageB] = await Promise.all([load(aB64), load(bB64)]);
+        const width = Math.min(imageA.naturalWidth, imageB.naturalWidth);
+        const height = Math.min(imageA.naturalHeight, imageB.naturalHeight);
+        const read = (image: HTMLImageElement): Uint8ClampedArray => {
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const context = canvas.getContext("2d", { willReadFrequently: true })!;
+          context.drawImage(image, 0, 0);
+          return context.getImageData(0, 0, width, height).data;
+        };
+        const dataA = read(imageA);
+        const dataB = read(imageB);
+        let changed = 0;
+        let total = 0;
+        let sum = 0;
+        for (let index = 0; index < dataA.length; index += 4) {
+          const delta = Math.max(
+            Math.abs(dataA[index]! - dataB[index]!),
+            Math.abs(dataA[index + 1]! - dataB[index + 1]!),
+            Math.abs(dataA[index + 2]! - dataB[index + 2]!),
+          );
+          sum += delta;
+          total += 1;
+          if (delta > tolerance) changed += 1;
+        }
+        return {
+          changedRatio: total ? changed / total : 0,
+          meanDelta: total ? sum / total : 0,
+        };
+      },
+      aB64,
+      bB64,
+      TEMPORAL_JUDGE_PIXEL_TOLERANCE,
+    );
+  for (const pair of pairs) {
+    const before = await captureFrame(pair.beforeSec);
+    const mid = await captureFrame(pair.midSec);
+    const after = await captureFrame(pair.afterSec);
+    const settled = await diffFrames(before, after);
+    const peak = pair.midSec !== pair.afterSec && pair.midSec !== pair.beforeSec
+      ? await diffFrames(before, mid)
+      : settled;
+    const diff = peak.changedRatio > settled.changedRatio ? peak : settled;
+    evidence.push({
+      momentId: pair.moment.id,
+      title: pair.moment.title,
+      importance: pair.moment.importance,
+      atSec: pair.moment.atSec,
+      beforeSec: pair.beforeSec,
+      midSec: pair.midSec,
+      afterSec: pair.afterSec,
+      changedRatio: Math.round(diff.changedRatio * 1e6) / 1e6,
+      meanDelta: Math.round(diff.meanDelta * 1000) / 1000,
+      verdict:
+        diff.changedRatio < TEMPORAL_JUDGE_STATIC_RATIO &&
+        diff.meanDelta < TEMPORAL_JUDGE_STATIC_MEAN_DELTA
+          ? "static"
+          : "changed",
+    });
+  }
+  return evidence;
+}
+
 export async function inspectDirectComposition(
   projectDir: string,
   draft: DirectCompositionDraft,
@@ -2068,6 +2269,44 @@ export async function inspectDirectComposition(
       await seekContent(interactionIntents[0]!.arriveSec);
       guidePngBase64 = await renderSpatialGuide(page, interactionIntents);
     }
+    // Rendered temporal judge — must run LAST: it drops the device scale for
+    // cheap frame pairs, so every full-resolution capture is already done.
+    // A judge failure is diagnostics lost, never a QA failure.
+    let temporalJudge: TemporalJudgeMomentEvidence[] = [];
+    try {
+      temporalJudge = await judgeRenderedMoments(
+        page,
+        draft,
+        duration,
+        seekContent,
+        { width, height },
+      );
+    } catch (error) {
+      process.stderr.write(
+        `[layout-qa] rendered temporal judge skipped: ${
+          error instanceof Error ? error.message : String(error)
+        }\n`,
+      );
+    }
+    const staticMoments = temporalJudge.filter((entry) => entry.verdict === "static");
+    for (const flat of staticMoments) {
+      const issue: DirectLayoutIssue = {
+        code: "moment_static_frame",
+        severity: "warning",
+        time: flat.atSec,
+        selector: `moment:${flat.momentId}`,
+        message:
+          `moment "${flat.momentId}" (${flat.title}) claims a changed state at ${flat.atSec}s ` +
+          `but rendered frames at ${flat.beforeSec}s and ${flat.afterSec}s are near-identical ` +
+          `(${(flat.changedRatio * 100).toFixed(3)}% of pixels changed)`,
+        fixHint:
+          "make the bound evidence visibly change the frame: a larger reveal, a camera " +
+          "arrival, or a component state change the viewer can actually see",
+        source: "sequences",
+      };
+      issues.push(issue);
+      warnings.push(formatIssue(issue));
+    }
     const result: DirectBrowserQaResult = {
       // The hard browser boundary is objective runtime health. Visual audit
       // findings may trigger bounded polish, but a runnable draft is always
@@ -2078,11 +2317,13 @@ export async function inspectDirectComposition(
       strictOk:
         errors.length === 0 &&
         visualErrors.length === 0 &&
-        repairWarnings.length === 0,
+        repairWarnings.length === 0 &&
+        staticMoments.length === 0,
       samples,
       issues,
       interactions: interactionEvidence,
       ...(boundaryInventories.length ? { boundaries: boundaryInventories } : {}),
+      ...(temporalJudge.length ? { temporalJudge } : {}),
       errors: [...new Set(errors)],
       warnings: [...new Set(warnings)],
       ...(guidePngBase64 ? { guidePngBase64 } : {}),
@@ -2090,13 +2331,27 @@ export async function inspectDirectComposition(
     if (cacheKey) writeQaCache(projectDir, cacheKey, result);
     return result;
   } catch (error) {
-    const message = `browser validate/layout inspect failed: ${
-      error instanceof Error ? error.message : String(error)
-    }`;
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const runtimeErrors = runtime.filter((entry) => entry.level === "error");
+    // The loaded document never registered its timeline: a runtime exception
+    // aborted the compile (a component/cut/camera bind threw). The timeout is
+    // the symptom; the console error is the diagnosis — name the class and
+    // lead with the real exception instead of the opaque "Waiting failed".
+    const bindException =
+      documentLoaded && /waiting failed|waiting for function failed/i.test(rawMessage);
+    const message = bindException
+      ? `runtime_bind_exception: the composition threw during compile and never registered ` +
+        `its timeline${
+          runtimeErrors.length
+            ? ` — ${runtimeErrors.slice(0, 3).map((entry) => entry.text).join(" | ")}`
+            : ` (no console error was captured; the compile likely hung)`
+        }`
+      : `browser validate/layout inspect failed: ${rawMessage}`;
     const infrastructureFault =
       !documentLoaded ||
-      /target closed|session closed|protocol error|browser.*disconnect|out of memory|ENOMEM/i
-        .test(message);
+      (!bindException &&
+        /target closed|session closed|protocol error|browser.*disconnect|out of memory|ENOMEM/i
+          .test(message));
     const runtimeDetail = runtime
       .slice(0, 5)
       .map((entry) => `${entry.level}: ${entry.text}`)
@@ -2109,7 +2364,9 @@ export async function inspectDirectComposition(
       issues: [],
       interactions: [],
       errors: [
-        `${message}${runtimeDetail ? ` | ${runtimeDetail}` : ""}`,
+        bindException
+          ? message
+          : `${message}${runtimeDetail ? ` | ${runtimeDetail}` : ""}`,
       ],
       warnings: [],
     };

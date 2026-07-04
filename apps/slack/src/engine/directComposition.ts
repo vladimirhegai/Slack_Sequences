@@ -65,6 +65,7 @@ import {
   type SceneComponentSpecV1,
 } from "./componentContract.ts";
 import { validateCompositionAgainstFrame } from "./frameValidation.ts";
+import { auditKitMarkupCompleteness } from "./kitMarkupAudit.ts";
 import {
   validateMotionDensity,
   type MotionDensityReport,
@@ -468,6 +469,11 @@ export async function validateDirectComposition(
   errors.push(...timeRampValidation.errors);
   const componentValidation = validateComponentContract(html, normalized.scenes);
   errors.push(...componentValidation.errors);
+  // Bind failures abort the whole browser compile behind an opaque timeout;
+  // re-run the runtimes' bind queries against a parsed DOM here so they
+  // surface as named findings the repair loop can act on.
+  const kitMarkupAudit = auditKitMarkupCompleteness(html, normalized.scenes);
+  errors.push(...kitMarkupAudit.errors);
   const motionValidation = validateMotionDensity(
     html,
     normalized.scenes,
@@ -546,6 +552,7 @@ export async function validateDirectComposition(
       ...cameraValidation.warnings,
       ...timeRampValidation.warnings,
       ...componentValidation.warnings,
+      ...kitMarkupAudit.warnings,
       ...motionValidation.warnings,
       ...momentContract.warnings,
     ])],

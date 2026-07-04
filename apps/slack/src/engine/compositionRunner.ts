@@ -2970,8 +2970,8 @@ export async function requestStoryboardPlan(
     // Bump when the storyboard contract changes shape (v2: StoryboardMomentV1,
     // v3: typed components + beats; v4: brief-derived coverage requirements;
     // v5: shape-match cuts + orbit/rack-focus camera vocabulary; v6: timeRamp
-    // speed-ramping dips).
-    contract: 6,
+    // speed-ramping dips; v7: depth3d level-2 camera depth).
+    contract: 7,
     provider: provider.id,
     model: model ?? null,
     brief: args.brief,
@@ -3033,6 +3033,10 @@ export async function requestStoryboardPlan(
     "Camera motion and content motion are expected to overlap: schedule",
     "component beats and reveals DURING pans/drifts, not after the camera",
     "parks.",
+    'DEPTH 3D — a shot whose path has an orbit may set "depth3d":true on its',
+    '"camera" object when the scene carries 2-4 data-depth layers: the layers',
+    "then separate in real 3D while the camera arcs (rest frames stay flat and",
+    "legible). Reserve it for the same hero/graphic scene as the orbit itself.",
     "RACK FOCUS — any camera move may carry a",
     '"focus":{"part":"data-part","blurMaxPx":6} (or {"depth":0..1}) modifier:',
     "the rig pulls a focal plane between the scene's data-depth layers,",
@@ -3227,11 +3231,14 @@ export async function requestStoryboardPlan(
     '"timeRamp":{"version":1,"atSec":17.2,"slowTo":0.35,"holdSec":0.6,"recoverSec":0.9} for the',
     'one motivated slow-motion dip; use "timeRamp":{"version":1} for no ramp (the default).',
     "timeRamp atSec is absolute composition seconds where the dip begins.",
-    '"camera":{"version":1,"path":[{"version":1,"move":"hold|drift|pan|whip|push-in|pull-back|track-to-anchor|parallax-pass|orbit-lite|orbit",',
+    '"camera":{"version":1,"depth3d":true,"path":[{"version":1,"move":"hold|drift|pan|whip|push-in|pull-back|track-to-anchor|parallax-pass|orbit-lite|orbit",',
     '"toRegion":"region name (or toPart for track-to-anchor)","zoom":1,"startSec":0,"durationSec":1.2,',
     '"arcDeg":28,"focus":{"part":"data-part to pull focus onto","depth":0.35,"blurMaxPx":6},',
     "arcDeg only for orbit; focus is an optional rack-focus modifier on any move,",
     "with either part or depth (not both).",
+    "depth3d is optional and rare: only on a hero/graphic shot whose path has an",
+    "orbit AND whose scene will carry 2-4 data-depth layers — the layers then",
+    "separate in real 3D while the camera arcs. Omit it everywhere else.",
     '"ease":"optional: seqSwoosh|seqWhip|seqImpulse|seqSettle|seqGlide|seqDrift|seqAnticipate"}]},',
     'Use "camera":{"version":1,"path":[]} for a shot without a camera path.',
     "The first path entry establishes the entry framing: start with a short",
@@ -4046,6 +4053,57 @@ interface DirectCompositionArgs {
   attempts?: { count: number };
 }
 
+/**
+ * Diagnostic persistence for the author chain: every rejected attempt's
+ * document (or raw response when nothing parsed) lands under
+ * `planning/attempts/` so a failed paid run can be diagnosed offline without
+ * re-spending the model call. Best-effort only — a disk error must never
+ * affect authoring, and nothing here re-enters the pipeline.
+ */
+function persistAuthorAttempt(
+  projectDir: string,
+  attempt: number,
+  outcome: "static-rejected" | "browser-rejected" | "exception",
+  details: {
+    mode: "full" | "patch";
+    findings?: string[];
+    html?: string;
+    raw?: string;
+  },
+): void {
+  try {
+    const dir = path.join(projectDir, "planning", "attempts");
+    fs.mkdirSync(dir, { recursive: true });
+    const stem = `author-${attempt}-${outcome}`;
+    if (details.html) {
+      fs.writeFileSync(path.join(dir, `${stem}.html`), details.html, "utf8");
+    } else if (details.raw) {
+      fs.writeFileSync(
+        path.join(dir, `${stem}.raw.txt`),
+        details.raw.slice(0, 400_000),
+        "utf8",
+      );
+    }
+    fs.writeFileSync(
+      path.join(dir, `${stem}.json`),
+      JSON.stringify(
+        {
+          attempt,
+          outcome,
+          mode: details.mode,
+          at: new Date().toISOString(),
+          findings: (details.findings ?? []).slice(0, 40),
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+  } catch {
+    // Diagnostics only.
+  }
+}
+
 async function authorComposition(
   provider: AgentProvider,
   args: DirectCompositionArgs,
@@ -4091,6 +4149,7 @@ async function authorComposition(
       `${repairTier ? "explicit repair tier" : selectedTier ?? "provider primary tier"} · ` +
       `reasoning ${attemptThinking}\n`,
     );
+    let attemptRaw: string | undefined;
     try {
       const completeOptions: CompleteOptions = {
         ...args.options,
@@ -4103,6 +4162,7 @@ async function authorComposition(
       const raw = patchMode
         ? await completeWithRetry(provider, prompt, completeOptions, "author patch")
         : await completeSourceWithContinuation(provider, prompt, completeOptions);
+      attemptRaw = raw;
       process.stderr.write(`[author] attempt ${attempt}/3 response ${raw.length} chars\n`);
       const parsedDraft = patchMode
         ? applyCompositionRepair(raw, scratch!)
@@ -4142,6 +4202,11 @@ async function authorComposition(
           `[author] attempt ${attempt}/3 static validation rejected: ` +
             `${validation.errors.slice(0, 8).join(" | ").slice(0, 1_500)}\n`,
         );
+        persistAuthorAttempt(args.projectDir, attempt, "static-rejected", {
+          mode: patchMode ? "patch" : "full",
+          findings: validation.errors,
+          html: draft.html,
+        });
         const previousFeedback = validationFeedback ?? [];
         validationFeedback = patchMode
           ? [
@@ -4224,13 +4289,34 @@ async function authorComposition(
         `[author] attempt ${attempt}/3 browser QA requested repair: ` +
           `${validationFeedback.slice(0, 8).join(" | ").slice(0, 1_500)}\n`,
       );
-      scratch = draft;
-      compact = true;
+      persistAuthorAttempt(args.projectDir, attempt, "browser-rejected", {
+        mode: patchMode ? "patch" : "full",
+        findings: validationFeedback,
+        html: draft.html,
+      });
+      // A runtime bind exception means the compile aborted before the timeline
+      // registered: the document's structure lied to static validation, so a
+      // compact patch would repair blind against markup the DOM does not agree
+      // with (the 2026-07-04 paid-run bottleneck — the patch fixed the chart
+      // and broke the last scene). Escalate straight back to full-context
+      // re-authoring with the named findings instead of seeding a scratch.
+      if (browserQa.errors.some((entry) => entry.includes("runtime_bind_exception"))) {
+        scratch = undefined;
+        compact = false;
+      } else {
+        scratch = draft;
+        compact = true;
+      }
       lastError = new Error(validationFeedback.join("; "));
     } catch (error) {
       const truncated = isOutputTruncation(error);
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`[author] attempt ${attempt}/3 failed: ${message}\n`);
+      persistAuthorAttempt(args.projectDir, attempt, "exception", {
+        mode: patchMode ? "patch" : "full",
+        findings: [message],
+        raw: attemptRaw,
+      });
       if (isReasoningMandatoryError(error)) {
         // Endpoint rejects reasoning:none outright — retry the same work with
         // a minimal floor instead of burning attempts on identical 400s.

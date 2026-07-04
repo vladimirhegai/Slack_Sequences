@@ -360,7 +360,9 @@ describe("direct layout inspector", () => {
       const result = await inspectDirectComposition(projectDir(), draft);
       expect(result.ok).toBe(false);
       expect(result.infraError).toBeUndefined();
-      expect(result.errors.some((error) => error.includes("browser validate/layout inspect failed")))
+      // The timeout is classified as a runtime bind exception — the named
+      // class the author loop escalates to full-context re-authoring.
+      expect(result.errors.some((error) => error.includes("runtime_bind_exception")))
         .toBe(true);
     },
     30_000,

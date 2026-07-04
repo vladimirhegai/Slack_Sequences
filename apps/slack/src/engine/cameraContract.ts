@@ -142,6 +142,12 @@ export interface CameraMoveIntentV1 {
 export interface SceneCameraIntentV1 {
   version: 1;
   path: CameraMoveIntentV1[];
+  /**
+   * Level-2 camera depth: data-depth layers separate in Z (translateZ under
+   * preserve-3d) while an orbit arcs, instead of the flat world-plane
+   * rotation. Opt-in per scene, meaningful only with an orbit move.
+   */
+  depth3d?: true;
 }
 
 /** A resolved, contiguous camera segment the runtime binds mechanically. */
@@ -166,6 +172,8 @@ export interface CameraSegmentV1 {
 export interface SceneCameraPlanV1 {
   sceneId: string;
   segments: CameraSegmentV1[];
+  /** Layers separate in Z while an orbit arcs (level-2 depth, opt-in). */
+  depth3d?: true;
 }
 
 export interface CameraPlanV1 {
@@ -329,7 +337,16 @@ export function normalizeStoryboardCameraIntent(
   if (!path.length) return undefined;
   // A path no move of which names a framing target cannot bind to the world.
   if (!path.some((move) => move.toRegion || move.toPart)) return undefined;
-  return { version: 1, path: mergeCompoundMoves(path) };
+  const merged = mergeCompoundMoves(path);
+  // depth3d is meaningful only while an orbit arcs; a volunteered flag on an
+  // orbit-less path degrades silently rather than vetoing the plan.
+  return {
+    version: 1,
+    path: merged,
+    ...(object.depth3d === true && merged.some((move) => move.move === "orbit")
+      ? { depth3d: true as const }
+      : {}),
+  };
 }
 
 /**
@@ -479,7 +496,13 @@ export function resolveCameraPlan(scenes: DirectScene[]): CameraPlanV1 {
     } else if (cursor !== sceneEnd) {
       segments[segments.length - 1]!.endSec = sceneEnd;
     }
-    planScenes.push({ sceneId: scene.id, segments });
+    planScenes.push({
+      sceneId: scene.id,
+      segments,
+      ...(intent.depth3d && segments.some((segment) => segment.move === "orbit")
+        ? { depth3d: true as const }
+        : {}),
+    });
   }
   return { version: 1, scenes: planScenes };
 }
@@ -593,7 +616,13 @@ export function parseCameraPlan(html: string): { plan?: CameraPlanV1; errors: st
         ...(focus ? { focus } : {}),
       }];
     });
-    return sceneId && segments.length ? [{ sceneId, segments }] : [];
+    return sceneId && segments.length
+      ? [{
+          sceneId,
+          segments,
+          ...(sceneObject.depth3d === true ? { depth3d: true as const } : {}),
+        }]
+      : [];
   });
   return errors.length
     ? { errors }
@@ -693,6 +722,14 @@ export function validateCameraContract(
           );
         }
       }
+    }
+    // depth3d is enhancement-never-veto (no layers → the orbit stays flat),
+    // but a planned 3D separation that compiles to nothing wastes the shot.
+    if (scenePlan.depth3d && !/\bdata-(?:depth|parallax)\s*=/i.test(scope)) {
+      warnings.push(
+        `scene "${scenePlan.sceneId}" plans depth3d but has no data-depth/data-parallax layers, ` +
+          `so the orbit stays flat — mark 2-4 depth planes with data-depth="0..1"`,
+      );
     }
     // Focus is enhancement-never-veto (no layers → no filter tweens), but a
     // planned rack that silently does nothing wastes the shot; surface it.

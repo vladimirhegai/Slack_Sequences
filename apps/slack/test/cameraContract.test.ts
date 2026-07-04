@@ -128,6 +128,27 @@ describe("normalizeStoryboardCameraIntent", () => {
     expect(stray?.path[0]?.focus).toBeUndefined();
   });
 
+  it("keeps depth3d only when the merged path carries an orbit", () => {
+    const withOrbit = normalizeStoryboardCameraIntent({
+      version: 1,
+      depth3d: true,
+      path: [
+        { version: 1, move: "orbit", toRegion: "logo-stage", startSec: 1, durationSec: 2 },
+      ],
+    }, window);
+    expect(withOrbit?.depth3d).toBe(true);
+    // Volunteered on an orbit-less path: degrade the flag, never the plan.
+    const flat = normalizeStoryboardCameraIntent({
+      version: 1,
+      depth3d: true,
+      path: [
+        { version: 1, move: "pan", toRegion: "hero", startSec: 1, durationSec: 2 },
+      ],
+    }, window);
+    expect(flat).toBeDefined();
+    expect(flat?.depth3d).toBeUndefined();
+  });
+
   it("recovers scene-relative camera times in later shots", () => {
     const camera = normalizeStoryboardCameraIntent({
       version: 1,
@@ -248,6 +269,46 @@ describe("resolveCameraPlan", () => {
     );
     expect(parsed.errors).toEqual([]);
     expect(parsed.plan).toEqual(plan);
+  });
+
+  it("carries depth3d through resolve and a byte-equal island round-trip", () => {
+    const scenes = [
+      scene({
+        id: "hero",
+        startSec: 0,
+        durationSec: 6,
+        camera: {
+          version: 1,
+          depth3d: true,
+          path: [
+            { version: 1, move: "orbit", toRegion: "logo-stage", startSec: 0, durationSec: 2 },
+          ],
+        },
+      }),
+    ];
+    const plan = resolveCameraPlan(scenes);
+    expect(plan.scenes[0]!.depth3d).toBe(true);
+    const parsed = parseCameraPlan(
+      `<script type="application/json" id="sequences-camera">${JSON.stringify(plan)}</script>`,
+    );
+    expect(parsed.errors).toEqual([]);
+    expect(JSON.stringify(parsed.plan)).toBe(JSON.stringify(plan));
+    // A depth3d intent whose orbit did not survive resolution stays flat.
+    const flat = resolveCameraPlan([
+      scene({
+        id: "hero",
+        startSec: 0,
+        durationSec: 6,
+        camera: {
+          version: 1,
+          depth3d: true,
+          path: [
+            { version: 1, move: "pan", toRegion: "logo-stage", startSec: 0, durationSec: 2 },
+          ],
+        },
+      }),
+    ]);
+    expect(flat.scenes[0]!.depth3d).toBeUndefined();
   });
 });
 
@@ -465,6 +526,32 @@ describe("validateCameraContract", () => {
     const result = validateCameraContract(bound, [focusScene]);
     expect(result.errors).toEqual([]);
     expect(result.warnings.filter((warning) => warning.includes("rack-focus"))).toEqual([]);
+  });
+
+  it("warns when depth3d is planned but the scene has no depth layers", () => {
+    const depthScene = scene({
+      id: "journey",
+      startSec: 0,
+      durationSec: 8,
+      camera: {
+        version: 1,
+        depth3d: true,
+        path: [
+          { version: 1, move: "orbit", toRegion: "hero", startSec: 1, durationSec: 2 },
+        ],
+      },
+    });
+    const island = JSON.stringify(resolveCameraPlan([depthScene]));
+    const flat = validateCameraContract(html({ island }), [depthScene]);
+    expect(flat.errors).toEqual([]);
+    expect(flat.warnings.some((warning) => warning.includes("depth3d"))).toBe(true);
+    const layered = html({ island }).replace(
+      '<div data-region="hero"></div>',
+      '<div data-region="hero" data-depth="0.7"></div>',
+    );
+    const bound = validateCameraContract(layered, [depthScene]);
+    expect(bound.errors).toEqual([]);
+    expect(bound.warnings.filter((warning) => warning.includes("depth3d"))).toEqual([]);
   });
 
   it("warns when an authored tween targets the world plane", () => {
