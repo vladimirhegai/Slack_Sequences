@@ -41,7 +41,7 @@ import {
 import { requestTweak } from "./engine/tweakRunner.ts";
 import { generateSceneThumbnails } from "./engine/thumbs.ts";
 import { renderProject, type RenderQuality } from "./engine/render.ts";
-import { McpClient } from "./engine/mcpClient.ts";
+import { withPooledMcpClient } from "./engine/mcpClient.ts";
 import { retrieveHyperframesSkillContext } from "./agent/skillContext.ts";
 import {
   commitDirectComposition,
@@ -273,12 +273,9 @@ async function applyViaMcp(
   tool: McpToolName,
   args: Record<string, unknown>,
 ): Promise<string> {
-  const client = await McpClient.connect(dir);
-  try {
-    return await client.callTool(tool, args);
-  } finally {
-    client.close();
-  }
+  // Pooled: submit/preview/render within one job reuse a single MCP server
+  // instead of paying a tsx cold start per tool call.
+  return withPooledMcpClient(dir, (client) => client.callTool(tool, args));
 }
 
 function applyInProcess(dir: string, command: Command): void {

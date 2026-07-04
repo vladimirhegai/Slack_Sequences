@@ -4,9 +4,11 @@ import {
   plannedMomentFloor,
   publicationMomentFloor,
   resolveMomentContract,
+  topUpStoryboardMoments,
   validatePlannedMoments,
   type StoryboardMomentV1,
 } from "../src/engine/storyboardMoments.ts";
+import { CAMERA_FULL_MOVES } from "../src/engine/cameraContract.ts";
 import { buildFallbackComposition } from "../src/engine/fallbackComposition.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
 
@@ -175,6 +177,155 @@ tl.fromTo("#close-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .
     expect(contract.synthesizedCount).toBeGreaterThanOrEqual(7);
     expect(contract.errors).toEqual([]);
     expect(contract.moments.every((entry) => entry.evidence)).toBe(true);
+  });
+});
+
+describe("topUpStoryboardMoments", () => {
+  it("fills the live-incident dead intervals from typed beats and camera arrivals", () => {
+    // The 2026-07-04 Railway failure shape: rich typed evidence, but marginal
+    // ~3s windows with no declared moment killed all three GLM attempts.
+    const planned: DirectScene[] = [
+      {
+        ...scenes[0]!,
+        components: [{ version: 1, id: "sig-stat", kind: "stat-card" }],
+        beats: [{
+          version: 1,
+          id: "sig-count",
+          sceneId: "signal",
+          component: "sig-stat",
+          kind: "count",
+          atSec: 4,
+        }],
+        moments: [
+          moment("signal", "signal-m1", 0.3),
+          moment("signal", "signal-m2", 2.0),
+        ],
+      },
+      {
+        ...scenes[1]!,
+        camera: {
+          version: 1,
+          path: [{
+            version: 1,
+            move: "pan",
+            toRegion: "metric-wall",
+            startSec: 7.8,
+            durationSec: 1.2,
+          }],
+        },
+        moments: [
+          moment("proof", "proof-m1", 5.3),
+          moment("proof", "proof-m2", 7.0),
+        ],
+      },
+      {
+        ...scenes[2]!,
+        moments: [
+          moment("close", "close-m1", 10.3),
+          moment("close", "close-m2", 12.0),
+        ],
+      },
+    ];
+    expect(validatePlannedMoments(planned, 15).join("\n")).toContain("no planned moment between");
+    const topped = topUpStoryboardMoments(planned, CAMERA_FULL_MOVES);
+    expect(topped.added.map((entry) => [entry.sceneId, entry.atSec])).toEqual([
+      ["signal", 4],
+      ["proof", 9],
+    ]);
+    expect(topped.added.every((entry) => entry.importance === "supporting")).toBe(true);
+    expect(validatePlannedMoments(topped.storyboard, 15)).toEqual([]);
+    // The originals are never moved or rewritten.
+    expect(
+      topped.storyboard[0]!.moments!.filter((entry) => !entry.id.includes("-auto-")),
+    ).toEqual(planned[0]!.moments);
+  });
+
+  it("leaves a compliant plan untouched", () => {
+    const planned = scenes.map((scene) => ({
+      ...scene,
+      camera: {
+        version: 1 as const,
+        path: [{
+          version: 1 as const,
+          move: "pan" as const,
+          toRegion: "hero",
+          startSec: scene.startSec + 1,
+          durationSec: 1,
+        }],
+      },
+      moments: [
+        moment(scene.id, `${scene.id}-m1`, scene.startSec + 0.3),
+        moment(scene.id, `${scene.id}-m2`, scene.startSec + 2.3),
+        moment(scene.id, `${scene.id}-m3`, scene.startSec + 4.2),
+      ],
+    }));
+    const topped = topUpStoryboardMoments(planned, CAMERA_FULL_MOVES);
+    expect(topped.added).toEqual([]);
+    expect(topped.storyboard).toBe(planned);
+  });
+
+  it("leaves genuine dead air for the findings retry", () => {
+    // No typed evidence anywhere near the dead windows: the host must not
+    // paper over a real hole in the film.
+    const planned = scenes.map((scene) => ({
+      ...scene,
+      moments: [
+        moment(scene.id, `${scene.id}-m1`, scene.startSec + 0.3),
+        moment(scene.id, `${scene.id}-m2`, scene.startSec + 2.0),
+      ],
+    }));
+    const topped = topUpStoryboardMoments(planned, CAMERA_FULL_MOVES);
+    expect(validatePlannedMoments(topped.storyboard, 15).join("\n")).toContain(
+      "no planned moment between",
+    );
+  });
+
+  it("tops up a missed moment floor from unclaimed typed evidence", () => {
+    const beat = (sceneId: string, id: string, atSec: number) => ({
+      version: 1 as const,
+      id,
+      sceneId,
+      component: `${sceneId}-cmp`,
+      kind: "count" as const,
+      atSec,
+    });
+    const planned: DirectScene[] = [
+      {
+        id: "one", title: "One", purpose: "Open", startSec: 0, durationSec: 4,
+        beats: [beat("one", "one-b1", 1.8)],
+        moments: [moment("one", "one-m1", 0.5), moment("one", "one-m2", 3.0)],
+      },
+      {
+        id: "two", title: "Two", purpose: "Build", startSec: 4, durationSec: 4,
+        beats: [beat("two", "two-b1", 6.7)],
+        moments: [moment("two", "two-m1", 5.5), moment("two", "two-m2", 7.9)],
+      },
+      {
+        id: "three", title: "Three", purpose: "Close", startSec: 8, durationSec: 4,
+        beats: [beat("three", "three-b1", 9.3)],
+        moments: [moment("three", "three-m1", 10.4)],
+      },
+    ];
+    expect(validatePlannedMoments(planned, 12).join("\n")).toContain("at least 7");
+    const topped = topUpStoryboardMoments(planned, CAMERA_FULL_MOVES);
+    expect(topped.added.length).toBe(2);
+    expect(validatePlannedMoments(topped.storyboard, 12)).toEqual([]);
+  });
+
+  it("never manufactures a contract for short films that declared no moments", () => {
+    const short: DirectScene[] = [
+      {
+        id: "a", title: "A", purpose: "Open", startSec: 0, durationSec: 3,
+        beats: [{
+          version: 1, id: "a-b1", sceneId: "a", component: "a-cmp", kind: "count", atSec: 1.5,
+        }],
+      },
+      { id: "b", title: "B", purpose: "Mid", startSec: 3, durationSec: 3 },
+      { id: "c", title: "C", purpose: "End", startSec: 6, durationSec: 3 },
+    ];
+    const topped = topUpStoryboardMoments(short, CAMERA_FULL_MOVES);
+    expect(topped.added).toEqual([]);
+    expect(topped.storyboard).toBe(short);
   });
 });
 

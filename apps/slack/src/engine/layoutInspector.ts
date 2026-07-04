@@ -11,6 +11,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import type { DirectCompositionDraft, DirectScene } from "./directComposition.ts";
@@ -215,6 +216,97 @@ function loadBrowserAudit(name: "layout-audit.browser.js" | "contrast-audit.brow
   const file = path.join(CLI_BROWSER_SCRIPTS, name);
   if (!fs.existsSync(file)) throw new Error(`vendored HyperFrames browser audit is missing: ${name}`);
   return fs.readFileSync(file, "utf8");
+}
+
+/* ------------------------------------------------------- QA evidence cache */
+
+/**
+ * Browser QA is deterministic for a given document: same bytes, same runtimes,
+ * same audits → same verdict. A successful inspection is therefore cached on
+ * disk keyed by content hash, so the pipeline never pays a second Chrome pass
+ * for a draft it already proved healthy — most importantly the publication
+ * commit (`submit_composition`), which re-inspects the exact bytes the
+ * authoring loop just validated, usually from the MCP subprocess. Only fully
+ * successful, non-infra results are cached; every failing or degraded draft is
+ * always re-measured live. Opt out with SLACK_SEQUENCES_QA_CACHE=0.
+ */
+const QA_CACHE_VERSION = 1;
+
+/** Everything environment-side that can change the verdict for the same draft. */
+let cachedStaticFingerprint: string | undefined;
+function qaStaticFingerprint(): string {
+  if (cachedStaticFingerprint) return cachedStaticFingerprint;
+  cachedStaticFingerprint = createHash("sha256")
+    .update(JSON.stringify({
+      version: QA_CACHE_VERSION,
+      runtimes: [
+        interactionRuntimeSource(),
+        cutRuntimeSource(),
+        cameraRuntimeSource(),
+        componentRuntimeSource(),
+        timeRampRuntimeSource(),
+      ].map((source) => createHash("sha256").update(source).digest("hex")),
+      audits: [
+        loadBrowserAudit("layout-audit.browser.js"),
+        loadBrowserAudit("contrast-audit.browser.js"),
+      ].map((source) => createHash("sha256").update(source).digest("hex")),
+      interactionQaMode: process.env.SLACK_SEQUENCES_INTERACTION_QA?.trim().toLowerCase() ?? "",
+    }))
+    .digest("hex");
+  return cachedStaticFingerprint;
+}
+
+function qaCacheEnabled(): boolean {
+  return process.env.SLACK_SEQUENCES_QA_CACHE !== "0";
+}
+
+function qaCacheKey(draft: DirectCompositionDraft): string {
+  return createHash("sha256")
+    .update(qaStaticFingerprint())
+    .update(" ")
+    .update(draft.html)
+    .update(" ")
+    .update(JSON.stringify(draft.storyboard))
+    .digest("hex");
+}
+
+function qaCacheFile(projectDir: string, key: string): string {
+  return path.join(path.resolve(projectDir), "qa-cache", `${key.slice(0, 32)}.json`);
+}
+
+function readQaCache(projectDir: string, key: string): DirectBrowserQaResult | undefined {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(qaCacheFile(projectDir, key), "utf8")) as {
+      version?: number;
+      key?: string;
+      result?: DirectBrowserQaResult;
+    };
+    if (parsed.version === QA_CACHE_VERSION && parsed.key === key && parsed.result?.ok) {
+      return parsed.result;
+    }
+  } catch {
+    // Missing/partial cache entries are simply a miss.
+  }
+  return undefined;
+}
+
+function writeQaCache(projectDir: string, key: string, result: DirectBrowserQaResult): void {
+  // Cache only clean, fully measured passes: a failing draft is always
+  // re-measured live, and an infra fault is not evidence about the draft.
+  if (!result.ok || result.infraError) return;
+  try {
+    const file = qaCacheFile(projectDir, key);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temporary = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(
+      temporary,
+      JSON.stringify({ version: QA_CACHE_VERSION, key, result }) + "\n",
+      "utf8",
+    );
+    fs.renameSync(temporary, file);
+  } catch {
+    // Cache bookkeeping must never disturb a build.
+  }
 }
 
 function prepareScratch(projectDir: string, draft: DirectCompositionDraft): string {
@@ -1428,8 +1520,21 @@ function formatIssue(value: DirectLayoutIssue): string {
 export async function inspectDirectComposition(
   projectDir: string,
   draft: DirectCompositionDraft,
-  options: { captureGuide?: boolean } = {},
+  // captureGuide is retained for call-site compatibility but no longer skips
+  // the guide: every pass with interactions captures it (one extra screenshot)
+  // so a cached result is a superset any later caller can reuse verbatim.
+  _options: { captureGuide?: boolean } = {},
 ): Promise<DirectBrowserQaResult> {
+  const cacheKey = qaCacheEnabled() ? qaCacheKey(draft) : undefined;
+  if (cacheKey) {
+    const cached = readQaCache(projectDir, cacheKey);
+    if (cached) {
+      process.stderr.write(
+        `[layout-qa] reusing cached browser QA evidence (${cacheKey.slice(0, 8)})\n`,
+      );
+      return cached;
+    }
+  }
   const browserPath = findBrowserExecutable();
   if (!browserPath) {
     const message = "browser validate/layout inspect could not run because Chromium/Chrome/Edge was not found";
@@ -1814,11 +1919,11 @@ export async function inspectDirectComposition(
       )
     );
     let guidePngBase64: string | undefined;
-    if (interactionIntents.length && options.captureGuide !== false) {
+    if (interactionIntents.length) {
       await seekContent(interactionIntents[0]!.arriveSec);
       guidePngBase64 = await renderSpatialGuide(page, interactionIntents);
     }
-    return {
+    const result: DirectBrowserQaResult = {
       // The hard browser boundary is objective runtime health. Visual audit
       // findings may trigger bounded polish, but a runnable draft is always
       // publishable if those repairs fail or regress it.
@@ -1837,6 +1942,8 @@ export async function inspectDirectComposition(
       warnings: [...new Set(warnings)],
       ...(guidePngBase64 ? { guidePngBase64 } : {}),
     };
+    if (cacheKey) writeQaCache(projectDir, cacheKey, result);
+    return result;
   } catch (error) {
     const message = `browser validate/layout inspect failed: ${
       error instanceof Error ? error.message : String(error)

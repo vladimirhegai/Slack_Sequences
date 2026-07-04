@@ -79,6 +79,7 @@ import {
   normalizeStoryboardMoments,
   plannedMomentFloor,
   resolveMomentContract,
+  topUpStoryboardMoments,
   validatePlannedMoments,
 } from "./storyboardMoments.ts";
 import { analyzeMotionDensity } from "./motionDensity.ts";
@@ -87,6 +88,7 @@ import {
   creativeModel,
   creativeThinkingMode,
   productionModel,
+  storyboardRescueModel,
   thinkingOverride,
 } from "./modelPolicy.ts";
 
@@ -502,6 +504,16 @@ function storyboardThinkingMode(
   // expansion is a large strict artifact; medium preserves deliberation while
   // reserving budget/time for the JSON that the source author needs.
   return creative === "high" ? "medium" : creative;
+}
+
+/**
+ * The rescue rung's reasoning effort. The benched rescue model passed the full
+ * contract at medium (2026-07-03 matrix), and a rescue pass exists precisely
+ * because the strict artifact needs deliberation — never inherit the primary
+ * model's mode.
+ */
+function storyboardRescueThinkingMode(): CompleteOptions["thinkingMode"] {
+  return thinkingOverride("SLACK_SEQUENCES_STORYBOARD_RESCUE_THINKING") ?? "medium";
 }
 
 /**
@@ -1741,6 +1753,192 @@ function isTransientProviderError(error: unknown): boolean {
   );
 }
 
+/* -------------------------------------- latency defense: hedge + watchdog */
+
+/**
+ * Wall-clock, not quality, is the enemy on OpenRouter: the same request to the
+ * same model can take 60s or 360s depending on which upstream route it lands
+ * on, and a stalled route silently burns the entire stage timeout before the
+ * serial retry fires. Two complementary defenses, both quality-neutral because
+ * the deterministic validation/QA gates remain the only arbiter of what ships:
+ *
+ * 1. Idle watchdog (streaming calls): if the stream produces no delta for
+ *    STREAM_IDLE_TIMEOUT_MS, abort and surface a transient "idle timeout" so
+ *    the bounded retry replaces a ~6-minute stall with a ~90-second one. A
+ *    healthy reasoning stream emits deltas continuously, so this can only
+ *    trigger on a genuinely stuck route.
+ * 2. Hedged requests: after HEDGE_DELAY_MS a duplicate of the same request is
+ *    launched and the first completion wins (the loser is aborted). Both draws
+ *    come from the identical model/prompt/params distribution; selection by
+ *    arrival time does not change what the QA gates accept. Costs up to 2×
+ *    tokens on slow calls — accepted policy is quality > price, and speed is
+ *    the judged demo constraint. Kill switch: SLACK_SEQUENCES_HEDGED_REQUESTS=0.
+ */
+const STREAM_IDLE_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.SLACK_SEQUENCES_STREAM_IDLE_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw >= 10_000 ? raw : 90_000;
+})();
+
+const HEDGE_DELAY_MS = (() => {
+  const raw = Number(process.env.SLACK_SEQUENCES_HEDGE_DELAY_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 25_000;
+})();
+
+export function hedgingEnabled(provider: AgentProvider): boolean {
+  return provider.id === "openrouter-api" &&
+    process.env.SLACK_SEQUENCES_HEDGED_REQUESTS !== "0";
+}
+
+/** Abort `controller` when `outer` aborts; returns an unlink cleanup. */
+function linkAbort(
+  outer: AbortSignal | undefined,
+  controller: AbortController,
+): () => void {
+  if (!outer) return () => {};
+  if (outer.aborted) {
+    controller.abort(outer.reason);
+    return () => {};
+  }
+  const onAbort = (): void => controller.abort(outer.reason);
+  outer.addEventListener("abort", onAbort, { once: true });
+  return () => outer.removeEventListener("abort", onAbort);
+}
+
+/**
+ * Race one primary and one delayed duplicate of the same completion. The
+ * duplicate launches only when the primary is still running after the delay —
+ * a hedge against a slow route, never a replacement for the serial retry loop
+ * (a fast failure rejects immediately so the caller's recovery logic keeps its
+ * exact contract). First fulfilled value wins and the loser is aborted
+ * mid-stream. A non-transient rejection (truncation, content error) settles
+ * the race immediately — it is a property of the request, not the route.
+ * `run` must respect its AbortSignal.
+ */
+export async function hedgedCompletion(
+  provider: AgentProvider,
+  label: string,
+  run: (signal: AbortSignal) => Promise<string>,
+  hedgeDelayMs = HEDGE_DELAY_MS,
+): Promise<string> {
+  if (!hedgingEnabled(provider)) {
+    return run(new AbortController().signal);
+  }
+  return new Promise<string>((resolve, reject) => {
+    const controllers = {
+      primary: new AbortController(),
+      backup: new AbortController(),
+    };
+    const inFlight = { primary: true, backup: false };
+    let settled = false;
+    let backupStarted = false;
+    const errors: unknown[] = [];
+    let timer: NodeJS.Timeout | undefined;
+
+    const settle = (act: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      act();
+    };
+    const launch = (kind: "primary" | "backup"): void => {
+      inFlight[kind] = true;
+      const other = kind === "primary" ? "backup" : "primary";
+      run(controllers[kind].signal).then(
+        (value) => {
+          inFlight[kind] = false;
+          settle(() => {
+            controllers[other].abort();
+            if (kind === "backup") {
+              process.stderr.write(`[${label}] hedged duplicate finished first; using it\n`);
+            }
+            resolve(value);
+          });
+        },
+        (error: unknown) => {
+          inFlight[kind] = false;
+          if (settled) return;
+          errors.push(error);
+          if (!backupStarted) {
+            // Fast primary failure: reject now and let the caller's bounded
+            // retry loop (with its backoff/recovery semantics) own recovery.
+            settle(() => reject(error));
+            return;
+          }
+          if (!isTransientProviderError(error)) {
+            // Truncation/content errors reproduce on the duplicate too; waiting
+            // for it only delays the caller's real recovery path.
+            settle(() => {
+              controllers[other].abort();
+              reject(error);
+            });
+            return;
+          }
+          if (!inFlight[other]) {
+            settle(() => reject(errors.find(isOutputTruncation) ?? errors[0]));
+          }
+        },
+      );
+    };
+    const startBackup = (): void => {
+      if (settled || backupStarted || !inFlight.primary) return;
+      backupStarted = true;
+      process.stderr.write(
+        `[${label}] slow response — hedging with a parallel duplicate request\n`,
+      );
+      launch("backup");
+    };
+    launch("primary");
+    timer = setTimeout(startBackup, hedgeDelayMs);
+  });
+}
+
+/**
+ * One streaming call guarded by the no-progress watchdog. Converts an idle
+ * abort into a transient-classified error message so the retry loops treat a
+ * stalled route exactly like a provider timeout.
+ */
+async function streamOnceWithWatchdog(
+  provider: AgentProvider,
+  prompt: string,
+  options: CompleteOptions,
+  label: string,
+  raceSignal?: AbortSignal,
+): Promise<string> {
+  const controller = new AbortController();
+  const unlinkOuter = linkAbort(options.signal, controller);
+  const unlinkRace = linkAbort(raceSignal, controller);
+  let idleTimer: NodeJS.Timeout | undefined;
+  let idleAborted = false;
+  const armIdle = (): void => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      idleAborted = true;
+      controller.abort();
+    }, STREAM_IDLE_TIMEOUT_MS);
+  };
+  armIdle();
+  try {
+    return await provider.streamComplete!(
+      prompt,
+      { ...options, signal: controller.signal },
+      () => armIdle(),
+      () => armIdle(),
+    );
+  } catch (error) {
+    if (idleAborted) {
+      throw new Error(
+        `[${label}] stream produced no tokens for ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)}s ` +
+          `— aborted as a stalled route idle timeout`,
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(idleTimer);
+    unlinkOuter();
+    unlinkRace();
+  }
+}
+
 /**
  * Bounded retry for single-shot provider calls that otherwise have no recovery
  * path. Retries only transient transport faults (never a genuine model/content
@@ -1758,7 +1956,17 @@ async function completeWithRetry(
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await provider.complete(prompt, options);
+      return await hedgedCompletion(provider, label, async (raceSignal) => {
+        const controller = new AbortController();
+        const unlinkOuter = linkAbort(options.signal, controller);
+        const unlinkRace = linkAbort(raceSignal, controller);
+        try {
+          return await provider.complete(prompt, { ...options, signal: controller.signal });
+        } finally {
+          unlinkOuter();
+          unlinkRace();
+        }
+      });
     } catch (error) {
       lastError = error;
       if (attempt >= attempts || isOutputTruncation(error) || !isTransientProviderError(error)) {
@@ -1795,7 +2003,8 @@ async function completeReasoningWithRetry(
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await provider.streamComplete(prompt, options, () => {}, () => {});
+      return await hedgedCompletion(provider, label, (raceSignal) =>
+        streamOnceWithWatchdog(provider, prompt, options, label, raceSignal));
     } catch (error) {
       lastError = error;
       if (attempt >= attempts || isOutputTruncation(error) || !isTransientProviderError(error)) {
@@ -2286,6 +2495,17 @@ export function parseStoryboardResponse(
   if (!requirements.requireTimeRamp) {
     storyboard = dropUnusableVolunteeredTimeRamps(storyboard);
   }
+  // Moment paperwork the plan already proves is filled in by the host, not
+  // retried: a marginal dead interval that has a typed beat/camera/cut in it
+  // was the dominant live storyboard-stage veto (2026-07-04 incident).
+  const topped = topUpStoryboardMoments(storyboard, CAMERA_FULL_MOVES);
+  if (topped.added.length) {
+    storyboard = topped.storyboard;
+    process.stderr.write(
+      `[storyboard] topped up ${topped.added.length} moment(s) from typed evidence: ` +
+        `${topped.added.map((moment) => `${moment.id}@${moment.atSec.toFixed(1)}s`).join(", ")}\n`,
+    );
+  }
   const errors = validateStoryboardPlan(storyboard, requirements);
   if (errors.length) throw new Error(`invalid storyboard plan: ${errors.join("; ")}`);
   return storyboard;
@@ -2426,7 +2646,9 @@ export async function requestConceptDirection(
     "Return only a JSON object with exactly those six string fields. No prose.",
   ].filter(Boolean).join("\n");
   try {
-    const raw = await completeWithRetry(provider, prompt, {
+    // Streaming transport: the concept pass thinks for tens of seconds on GLM,
+    // exactly the profile the idle watchdog + hedging exist for.
+    const raw = await completeReasoningWithRetry(provider, prompt, {
       ...args.options,
       timeoutMs: 120_000,
       maxTokens: thinkingMode === "none" ? 1_024 : 8_192,
@@ -2537,8 +2759,6 @@ export async function requestStoryboardPlan(
   const structuredOutput = supportsStructuredOutputs(provider);
   const model = storyboardModel(provider);
   const thinkingMode = storyboardThinkingMode(provider, model);
-  const maxTokens =
-    thinkingMode === "none" ? STORYBOARD_MAX_TOKENS : REASONING_STORYBOARD_MAX_TOKENS;
   const requirements = inferStoryboardPlanRequirements(
     args.brief,
     args.targetDurationSec,
@@ -2827,109 +3047,166 @@ export async function requestStoryboardPlan(
   // The storyboard is a bounded artifact: when the model returns a plan that
   // deterministic validation rejects, retry only this stage with the
   // exact findings — never fall through to the safe fallback on a first
-  // creative miss, and never replay the concept pass.
+  // creative miss, and never replay the concept pass. When the primary model
+  // exhausts its attempts — validation rejections OR transient route
+  // exhaustion — one independent rescue model gets the same brief plus the
+  // accumulated findings before the caller may ship the deterministic
+  // fallback: a fresh draw from a different model recovers far more often
+  // than a fourth try of a model that is systematically missing the contract.
+  const rescue = storyboardRescueModel(provider, model);
+  const rungs: Array<{
+    label: string;
+    model?: string;
+    thinkingMode: CompleteOptions["thinkingMode"];
+    maxAttempts: number;
+  }> = [
+    { label: "primary", ...(model ? { model } : {}), thinkingMode, maxAttempts: 3 },
+    ...(rescue
+      ? [{
+          label: "rescue",
+          model: rescue,
+          thinkingMode: storyboardRescueThinkingMode(),
+          maxAttempts: 2,
+        }]
+      : []),
+  ];
+  let totalAttempts = 0;
   let lastValidationError: Error | undefined;
-  let recoveringFromTruncation = false;
-  let reasoningFloor: CompleteOptions["thinkingMode"] | undefined;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    if (args.attempts) args.attempts.count = attempt;
-    const prompt = attempt === 1 || !lastValidationError
-      ? basePrompt
-      : [
-          basePrompt,
-          "",
-          "## Previous attempt rejected",
-          "Deterministic validation rejected the previous storyboard. Fix every",
-          "finding below and return a corrected, complete storyboard:",
-          ...lastValidationError.message
-            .replace(/^invalid storyboard plan:\s*/i, "")
-            .split("; ")
-            .slice(0, 16)
-            .map((finding) => `- ${finding}`),
-        ].join("\n");
-    let raw: string;
-    try {
-      // Only TRUNCATION recovery strips reasoning to protect the completion
-      // budget. Validation-rejection retries keep the configured reasoning:
-      // the 2026-07-03 experiment matrix showed reasoning-stripped GLM retries
-      // failing the moment grid in 3 of 4 runs, while every passing storyboard
-      // landed on a full-reasoning attempt.
-      const recoveryPass = recoveringFromTruncation;
-      const downgraded: CompleteOptions["thinkingMode"] =
-        recoveryPass && thinkingMode !== "none"
-          ? "none"
-          : thinkingMode;
-      const attemptThinkingMode =
-        reasoningFloor && downgraded === "none" ? reasoningFloor : downgraded;
-      const attemptMaxTokens = recoveryPass && thinkingMode !== "none"
-        ? Math.min(maxTokens, 8_192)
-        : maxTokens;
-      process.stderr.write(
-        `[storyboard] attempt ${attempt}/3 · ${model ? `model ${model}` : "provider primary model"} · ` +
-          `reasoning ${attemptThinkingMode} · max ${attemptMaxTokens} tokens\n`,
+  let lastError: unknown;
+  for (const rung of rungs) {
+    let recoveringFromTruncation = false;
+    let reasoningFloor: CompleteOptions["thinkingMode"] | undefined;
+    const rungMaxTokens =
+      rung.thinkingMode === "none" ? STORYBOARD_MAX_TOKENS : REASONING_STORYBOARD_MAX_TOKENS;
+    attempts: for (let attempt = 1; attempt <= rung.maxAttempts; attempt += 1) {
+      totalAttempts += 1;
+      if (args.attempts) args.attempts.count = totalAttempts;
+      const prompt = !lastValidationError
+        ? basePrompt
+        : [
+            basePrompt,
+            "",
+            "## Previous attempt rejected",
+            "Deterministic validation rejected the previous storyboard. Fix every",
+            "finding below and return a corrected, complete storyboard:",
+            ...lastValidationError.message
+              .replace(/^invalid storyboard plan:\s*/i, "")
+              .split("; ")
+              .slice(0, 16)
+              .map((finding) => `- ${finding}`),
+          ].join("\n");
+      let raw: string;
+      try {
+        // Only TRUNCATION recovery strips reasoning to protect the completion
+        // budget. Validation-rejection retries keep the configured reasoning:
+        // the 2026-07-03 experiment matrix showed reasoning-stripped GLM retries
+        // failing the moment grid in 3 of 4 runs, while every passing storyboard
+        // landed on a full-reasoning attempt.
+        const recoveryPass = recoveringFromTruncation;
+        const downgraded: CompleteOptions["thinkingMode"] =
+          recoveryPass && rung.thinkingMode !== "none"
+            ? "none"
+            : rung.thinkingMode;
+        const attemptThinkingMode =
+          reasoningFloor && downgraded === "none" ? reasoningFloor : downgraded;
+        const attemptMaxTokens = recoveryPass && rung.thinkingMode !== "none"
+          ? Math.min(rungMaxTokens, 8_192)
+          : rungMaxTokens;
+        process.stderr.write(
+          `[storyboard] attempt ${totalAttempts} (${rung.label} ${attempt}/${rung.maxAttempts}) · ` +
+            `${rung.model ? `model ${rung.model}` : "provider primary model"} · ` +
+            `reasoning ${attemptThinkingMode} · max ${attemptMaxTokens} tokens\n`,
+        );
+        raw = await completeReasoningWithRetry(provider, prompt, {
+          ...args.options,
+          // A reasoning storyboard pass on a loaded provider can run long; give it more
+          // wall-clock headroom than a plain chat call, and let completeWithRetry absorb
+          // a transient stall instead of failing the whole build on the first abort.
+          timeoutMs: recoveryPass ? 120_000 : 360_000,
+          maxTokens: attemptMaxTokens,
+          // GLM's budget includes reasoning plus the compact JSON artifact; use
+          // nearly the full route ceiling while keeping the artifact bounded.
+          thinkingMode: attemptThinkingMode,
+          ...(structuredOutput ? { responseFormat: storyboardResponseFormat() } : {}),
+          ...(rung.model ? { model: rung.model } : {}),
+        }, "storyboard");
+      } catch (error) {
+        if (attempt < rung.maxAttempts && isOutputTruncation(error)) {
+          recoveringFromTruncation = true;
+          process.stderr.write(
+            `[storyboard] ${rung.label} attempt ${attempt} exhausted its completion budget; ` +
+              `retrying the bounded artifact with lower reasoning effort\n`,
+          );
+          continue;
+        }
+        if (attempt < rung.maxAttempts && isReasoningMandatoryError(error)) {
+          reasoningFloor = "minimal";
+          process.stderr.write(
+            `[storyboard] ${rung.label} attempt ${attempt}: this endpoint mandates reasoning; ` +
+              `retrying with a minimal reasoning floor\n`,
+          );
+          continue;
+        }
+        // Provider-level failure (transient exhaustion, endpoint 4xx, final
+        // truncation): move to the next rung — a different model usually
+        // lands on a different upstream route and a different failure mode.
+        lastError = error;
+        process.stderr.write(
+          `[storyboard] ${rung.label} model unavailable: ` +
+            `${error instanceof Error ? error.message.slice(0, 300) : String(error)}\n`,
+        );
+        break attempts;
+      }
+      let storyboard: DirectScene[];
+      try {
+        storyboard = parseStoryboardResponse(raw, requirements);
+      } catch (error) {
+        if (error instanceof Error && isOutputTruncation(error)) {
+          // A truncated artifact detected at parse time (opened-but-unclosed
+          // wrapper) is the same failure as a provider-reported truncation.
+          if (attempt < rung.maxAttempts) {
+            recoveringFromTruncation = true;
+            process.stderr.write(
+              `[storyboard] ${rung.label} attempt ${attempt} returned a truncated artifact; ` +
+                `retrying with lower reasoning effort\n`,
+            );
+            continue;
+          }
+          lastError = error;
+          break attempts;
+        }
+        if (error instanceof Error) {
+          lastValidationError = error;
+          process.stderr.write(
+            `[storyboard] ${rung.label} attempt ${attempt} rejected: ` +
+              `${error.message.slice(0, 600)} — ${
+                attempt < rung.maxAttempts ? "retrying with findings" : "carrying findings forward"
+              }\n`,
+          );
+          continue;
+        }
+        lastError = error;
+        break attempts;
+      }
+      fs.mkdirSync(planningDir, { recursive: true });
+      const temporary = `${cacheFile}.${process.pid}.tmp`;
+      fs.writeFileSync(
+        temporary,
+        JSON.stringify({ version: 1, key: cacheKey, storyboard }, null, 2) + "\n",
+        "utf8",
       );
-      raw = await completeReasoningWithRetry(provider, prompt, {
-        ...args.options,
-        // A reasoning storyboard pass on a loaded provider can run long; give it more
-        // wall-clock headroom than a plain chat call, and let completeWithRetry absorb
-        // a transient stall instead of failing the whole build on the first abort.
-        timeoutMs: recoveryPass ? 120_000 : 360_000,
-        maxTokens: attemptMaxTokens,
-        // GLM's budget includes reasoning plus the compact JSON artifact; use
-        // nearly the full route ceiling while keeping the artifact bounded.
-        thinkingMode: attemptThinkingMode,
-        ...(structuredOutput ? { responseFormat: storyboardResponseFormat() } : {}),
-        ...(model ? { model } : {}),
-      }, "storyboard");
-    } catch (error) {
-      if (attempt < 3 && isOutputTruncation(error)) {
-        recoveringFromTruncation = true;
-        process.stderr.write(
-          `[storyboard] attempt ${attempt}/3 exhausted its completion budget; ` +
-            `retrying the bounded artifact with lower reasoning effort\n`,
-        );
-        continue;
-      }
-      if (attempt < 3 && isReasoningMandatoryError(error)) {
-        reasoningFloor = "minimal";
-        process.stderr.write(
-          `[storyboard] attempt ${attempt}/3: this endpoint mandates reasoning; ` +
-            `retrying with a minimal reasoning floor\n`,
-        );
-        continue;
-      }
-      if (isTransientProviderError(error)) {
-        throw new Error(
-          "the planning model kept timing out while drafting the storyboard — this is usually a " +
-            "transient provider slowdown, not your brief. Run /sequences again in a moment.",
-        );
-      }
-      throw error;
+      fs.renameSync(temporary, cacheFile);
+      return storyboard;
     }
-    let storyboard: DirectScene[];
-    try {
-      storyboard = parseStoryboardResponse(raw, requirements);
-    } catch (error) {
-      if (attempt < 3 && error instanceof Error && !isOutputTruncation(error)) {
-        process.stderr.write(
-          `[storyboard] attempt ${attempt}/3 rejected: ${error.message.slice(0, 600)} — retrying with findings\n`,
-        );
-        lastValidationError = error;
-        continue;
-      }
-      throw error;
-    }
-    fs.mkdirSync(planningDir, { recursive: true });
-    const temporary = `${cacheFile}.${process.pid}.tmp`;
-    fs.writeFileSync(
-      temporary,
-      JSON.stringify({ version: 1, key: cacheKey, storyboard }, null, 2) + "\n",
-      "utf8",
-    );
-    fs.renameSync(temporary, cacheFile);
-    return storyboard;
   }
-  throw lastValidationError ?? new Error("storyboard planning failed");
+  if (!lastValidationError && isTransientProviderError(lastError)) {
+    throw new Error(
+      "the planning model kept timing out while drafting the storyboard — this is usually a " +
+        "transient provider slowdown, not your brief. Run /sequences again in a moment.",
+    );
+  }
+  throw lastValidationError ??
+    (lastError instanceof Error ? lastError : new Error("storyboard planning failed"));
 }
 
 interface CompositionPatch {

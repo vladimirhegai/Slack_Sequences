@@ -683,6 +683,96 @@ describe("direct HyperFrames composition", () => {
     expect(parseStoryboardResponse(JSON.stringify({ storyboard: plan }))).toEqual(plan);
   });
 
+  it("accepts a plan whose moment gaps are provable from its own typed evidence", () => {
+    // The 2026-07-04 live fallback root cause: GLM plans with rich typed
+    // beats/camera kept getting vetoed on marginal moment-spacing gaps the
+    // plan itself could prove. The host now fills that paperwork instead of
+    // burning retries on it.
+    const moment = (sceneId: string, id: string, atSec: number) => ({
+      version: 1 as const,
+      id,
+      sceneId,
+      atSec,
+      title: `Moment ${id}`,
+      visualState: `state ${id}`,
+      change: `change ${id}`,
+      motionIntent: "reveal",
+      importance: "supporting" as const,
+    });
+    const plan = [
+      {
+        id: "signal",
+        title: "Signal",
+        purpose: "Expose the problem",
+        incomingIdea: "Noise arrives",
+        foreground: "Split headline over a trace rail",
+        background: "Dark grid",
+        cameraIntent: "Locked wide",
+        continuityAnchor: "The trace exits right",
+        outgoingCut: "Zoom through the trace into the product",
+        startSec: 0,
+        durationSec: 5,
+        cut: { version: 1, style: "zoom-through" },
+        components: [{ version: 1, id: "sig-stat", kind: "stat-card" }],
+        beats: [{
+          version: 1,
+          id: "sig-count",
+          sceneId: "signal",
+          component: "sig-stat",
+          kind: "count",
+          atSec: 4,
+        }],
+        moments: [moment("signal", "signal-m1", 0.3), moment("signal", "signal-m2", 2.0)],
+      },
+      {
+        id: "proof",
+        title: "Proof",
+        purpose: "Show the product",
+        incomingIdea: "The trace becomes a route",
+        foreground: "Product window",
+        background: "Technical grid",
+        cameraIntent: "Pan across the metric wall",
+        continuityAnchor: "The route lands in the window",
+        outgoingCut: "Hard cut to the close",
+        startSec: 5,
+        durationSec: 5,
+        cut: { version: 1, style: "hard" },
+        camera: {
+          version: 1,
+          path: [{
+            version: 1,
+            move: "pan",
+            toRegion: "metric-wall",
+            startSec: 7.8,
+            durationSec: 1.2,
+          }],
+        },
+        moments: [moment("proof", "proof-m1", 5.3), moment("proof", "proof-m2", 7.0)],
+      },
+      {
+        id: "close",
+        title: "Close",
+        purpose: "Resolve the promise",
+        incomingIdea: "The route becomes the brand",
+        foreground: "Logo lockup",
+        background: "Quiet field",
+        cameraIntent: "Settle into a held wide",
+        continuityAnchor: "The lockup holds",
+        outgoingCut: "End on a held frame",
+        startSec: 10,
+        durationSec: 5,
+        moments: [moment("close", "close-m1", 10.3), moment("close", "close-m2", 12.0)],
+      },
+    ];
+    const parsed = parseStoryboardResponse(JSON.stringify({ storyboard: plan }));
+    const moments = parsed.flatMap((scene) => scene.moments ?? []);
+    // Declared moments alone leave two >2.6s dead intervals; the typed beat
+    // (4.0s) and camera arrival (9.0s) fill them deterministically.
+    expect(moments.map((entry) => entry.id)).toContain("signal-auto-1");
+    expect(moments.map((entry) => entry.id)).toContain("proof-auto-1");
+    expect(moments).toHaveLength(8);
+  });
+
   it("drops unknown optional capability citations instead of aborting the film", () => {
     const plan = storyboard();
     plan[0]!.capabilityIds = ["dashboard"];
@@ -1013,10 +1103,49 @@ describe("direct HyperFrames composition", () => {
     await expect(
       requestStoryboardPlan(provider, { brief: "Launch Relay", projectDir: dir, skills: skills() }),
     ).rejects.toThrow(/planning model kept timing out/i);
-    expect(complete).toHaveBeenCalledTimes(3);
-  }, 15_000);
+    // 3 transport retries on the primary rung, then 3 on the rescue rung —
+    // a transient slowdown gets one shot at an independent upstream route
+    // before the stage surfaces the actionable timeout message.
+    expect(complete).toHaveBeenCalledTimes(6);
+    expect(complete.mock.calls[3]?.[1]).toMatchObject({
+      model: "tencent/hy3-preview",
+    });
+  }, 25_000);
 
-  it("retries a rejected storyboard once with findings, then surfaces the content error", async () => {
+  it("hands a systematically rejected storyboard to the rescue model with findings", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
+    const dir = projectDir();
+    const complete = vi.fn(async (_prompt: string, options?: { model?: string }) =>
+      options?.model === "tencent/hy3-preview"
+        ? `<storyboard_json>${JSON.stringify(storyboard())}</storyboard_json>`
+        : "no array anywhere in this prose");
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const attempts = { count: 0 };
+    const plan = await requestStoryboardPlan(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      attempts,
+    });
+    expect(plan).toEqual(storyboard());
+    // 3 primary attempts with findings, then the rescue rung recovers.
+    expect(complete).toHaveBeenCalledTimes(4);
+    expect(attempts.count).toBe(4);
+    const rescueCall = complete.mock.calls[3] as [string, { model?: string; thinkingMode?: string }];
+    expect(rescueCall[1]).toMatchObject({
+      model: "tencent/hy3-preview",
+      thinkingMode: "medium",
+    });
+    expect(rescueCall[0]).toContain("Previous attempt rejected");
+  });
+
+  it("retries a rejected storyboard with findings, then surfaces the content error", async () => {
     vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
     const dir = projectDir();
     const complete = vi.fn().mockResolvedValue("no array anywhere in this prose");
@@ -1030,10 +1159,30 @@ describe("direct HyperFrames composition", () => {
     await expect(
       requestStoryboardPlan(provider, { brief: "Launch Relay", projectDir: dir, skills: skills() }),
     ).rejects.toThrow(/missing <storyboard_json>/);
-    // The bounded artifact gets two retries with findings appended;
-    // transport-level retries never fire for content errors.
-    expect(complete).toHaveBeenCalledTimes(3);
+    // The bounded artifact gets findings-driven retries on the primary rung
+    // (3) and the rescue rung (2); transport-level retries never fire for
+    // content errors.
+    expect(complete).toHaveBeenCalledTimes(5);
     expect(complete.mock.calls[1]?.[0]).toContain("Previous attempt rejected");
+    expect(complete.mock.calls[3]?.[1]).toMatchObject({ model: "tencent/hy3-preview" });
+  });
+
+  it("keeps the rescue rung off when the operator disables it", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
+    vi.stubEnv("SLACK_SEQUENCES_STORYBOARD_RESCUE_MODEL", "none");
+    const dir = projectDir();
+    const complete = vi.fn().mockResolvedValue("no array anywhere in this prose");
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    await expect(
+      requestStoryboardPlan(provider, { brief: "Launch Relay", projectDir: dir, skills: skills() }),
+    ).rejects.toThrow(/missing <storyboard_json>/);
+    expect(complete).toHaveBeenCalledTimes(3);
   });
 
   it("applies bounded exact repair patches without regenerating the composition", () => {

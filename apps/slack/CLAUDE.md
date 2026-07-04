@@ -189,6 +189,16 @@ per-stage EMA, `stageTimings.ts`) instead of a stopwatch, and
 `/sequences debug on|off` appends a model-stage receipt trail
 (stage/status/attempts/duration) to results — details in ROADMAP's 2026-07-03
 polish-pass section.
+Wall-clock is defended without touching quality (2026-07-04 performance
+pass): every streaming model call carries a 90s no-token idle watchdog; slow
+OpenRouter calls hedge with one delayed duplicate request whose first
+completion wins (`SLACK_SEQUENCES_HEDGED_REQUESTS=0` /
+`SLACK_SEQUENCES_HEDGE_DELAY_MS` to tune); clean browser-QA passes are cached
+by content hash in `<projectDir>/qa-cache/` so the publication commit never
+re-measures identical bytes (`SLACK_SEQUENCES_QA_CACHE=0` opts out); and the
+Sequences MCP client pools one server per job across
+submit/preview/render (`withPooledMcpClient`). Details in ROADMAP's
+2026-07-04 performance-pass section.
 A host-owned **cinematography kit** (`engine/cinemaKit.ts` +
 `templates/sequences-cinema.v1.css`) is injected inline into every direct
 composition: automatic film grain + vignette, key-light fields, hero blooms,
@@ -264,7 +274,15 @@ evidence *settles* and before the outgoing cut window — never mid-animation),
 one risk — `requestConceptDirection`, kill-switch
 `SLACK_SEQUENCES_CONCEPT_PASS=0`), the **beat-expansion storyboard pass**
 (consumes the concept artifact; up to two bounded retries with deterministic
-findings on a rejected/truncated plan), DeepSeek source authoring against the locked storyboard,
+findings on a rejected/truncated plan, then a **rescue rung** on an
+independent model — default `tencent/hy3-preview`, medium reasoning,
+`SLACK_SEQUENCES_STORYBOARD_RESCUE_MODEL`/`none` to override/disable — before
+the deterministic fallback is allowed; validation itself first runs a
+**deterministic moment top-up** (`topUpStoryboardMoments`) that fills dead
+intervals / floor misses with moments anchored on the plan's own typed
+beats/camera arrivals/cut landings, so a plan is never vetoed for moment
+paperwork it already proves — the 2026-07-04 live fallback root cause;
+`npm run storyboard:probe` measures this stage live), DeepSeek source authoring against the locked storyboard,
 then a **continuity critic** pass (GLM reviews the implemented film's moment
 evidence + motion-density contact sheet and returns ≤5 bounded repair
 directives; DeepSeek applies them as patches; deterministic QA accepts or

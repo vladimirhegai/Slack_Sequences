@@ -119,11 +119,94 @@ export class McpClient {
     return result.tools ?? [];
   }
 
+  get closed(): boolean {
+    return this.#closed;
+  }
+
+  /**
+   * Detach this client's child process and pipes from the parent's event-loop
+   * ref count so an IDLE pooled connection can never hold a script open.
+   * CAUTION: an unref'd client must never be awaited on — with no other live
+   * handles node exits mid-call. The pool re-refs before every use.
+   */
+  unref(): void {
+    // Piped child stdio are net.Sockets at runtime; the stream types just
+    // don't declare unref/ref.
+    for (const stream of [this.#child.stdin, this.#child.stdout, this.#child.stderr]) {
+      (stream as unknown as { unref?: () => void }).unref?.();
+    }
+    this.#child.unref();
+  }
+
+  /** Re-attach to the event loop for the duration of an in-flight call. */
+  ref(): void {
+    for (const stream of [this.#child.stdin, this.#child.stdout, this.#child.stderr]) {
+      (stream as unknown as { ref?: () => void }).ref?.();
+    }
+    this.#child.ref();
+  }
+
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
     this.#rl.close();
     this.#child.stdin.end();
     this.#child.kill();
+  }
+}
+
+/* ---------------------------------------------------------- connection pool */
+
+/**
+ * One live create walks submit_composition → render_preview → render as three
+ * separate tool calls; spawning a fresh tsx server (a multi-second cold start,
+ * per call, per job) was pure overhead. The pool keeps one connected server per
+ * project directory for a short idle window and hands out the same client. A
+ * dead subprocess is dropped and replaced transparently; callers keep their
+ * existing per-call fallback semantics. The child is unref'd so an idle pooled
+ * connection never keeps a CLI script's process alive.
+ */
+const POOL_IDLE_MS = 45_000;
+const pool = new Map<string, { client: McpClient; idleTimer?: NodeJS.Timeout }>();
+
+function dropFromPool(key: string, client: McpClient): void {
+  const entry = pool.get(key);
+  if (entry?.client === client) {
+    if (entry.idleTimer) clearTimeout(entry.idleTimer);
+    pool.delete(key);
+  }
+  client.close();
+}
+
+export async function withPooledMcpClient<T>(
+  projectDir: string,
+  use: (client: McpClient) => Promise<T>,
+): Promise<T> {
+  const key = path.resolve(projectDir);
+  let entry = pool.get(key);
+  if (entry?.idleTimer) clearTimeout(entry.idleTimer);
+  if (!entry || entry.client.closed) {
+    if (entry) pool.delete(key);
+    const client = await McpClient.connect(key);
+    entry = { client };
+    pool.set(key, entry);
+  }
+  const { client } = entry;
+  // Ref'd while a call is in flight; unref'd while parked so an idle pooled
+  // connection never keeps a CLI script's process alive.
+  client.ref();
+  try {
+    return await use(client);
+  } catch (error) {
+    // A tool-level error keeps the transport; a dead transport leaves the pool.
+    if (client.closed) dropFromPool(key, client);
+    throw error;
+  } finally {
+    const current = pool.get(key);
+    if (current?.client === client && !client.closed) {
+      client.unref();
+      current.idleTimer = setTimeout(() => dropFromPool(key, client), POOL_IDLE_MS);
+      current.idleTimer.unref();
+    }
   }
 }

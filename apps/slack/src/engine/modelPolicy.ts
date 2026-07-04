@@ -76,6 +76,32 @@ export function thinkingOverride(
     : undefined;
 }
 
+/**
+ * Second-opinion storyboard model. When the primary storyboard model exhausts
+ * its bounded attempts (validation rejections OR transient route exhaustion),
+ * one rescue pass runs on a *different* model before the deterministic
+ * fallback film is allowed to ship: a fresh draw from an independent model
+ * recovers far more often than a fourth try of a model that is systematically
+ * missing the contract, and an unrelated upstream route sidesteps a provider
+ * slowdown. Default is the benched 2026-07-03 alternative (tencent/hy3-preview:
+ * 16/16 moments bound, all requested component kinds, ~1/10 GLM price).
+ * Override with SLACK_SEQUENCES_STORYBOARD_RESCUE_MODEL; "0"/"none"/"off"
+ * disables the rung.
+ */
+export const OPENROUTER_STORYBOARD_RESCUE_MODEL = "tencent/hy3-preview";
+
+export function storyboardRescueModel(
+  provider: AgentProvider,
+  primaryModel: string | undefined,
+): string | undefined {
+  const raw = process.env.SLACK_SEQUENCES_STORYBOARD_RESCUE_MODEL?.trim();
+  if (raw && ["0", "none", "off"].includes(raw.toLowerCase())) return undefined;
+  const chosen = raw ||
+    (provider.id === "openrouter-api" ? OPENROUTER_STORYBOARD_RESCUE_MODEL : undefined);
+  if (!chosen || chosen === primaryModel) return undefined;
+  return chosen;
+}
+
 /** Full source and structural repairs stay on the configured production brain. */
 export function productionModel(provider: AgentProvider): string | undefined {
   if (provider.id !== "openrouter-api") return undefined;

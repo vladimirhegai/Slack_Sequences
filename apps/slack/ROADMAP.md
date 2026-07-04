@@ -311,8 +311,9 @@ point an agent at the listed file.
 
 ### Shape-match cuts + camera depth (2026-07-03, second pass)
 
-Implements `BREAKTHROUGH_match_cut.md` (v1) and `BREAKTHROUGH_camera_depth.md`
-(level 1 + rack focus):
+Implements the match-cut breakthrough plan (v1) and the camera-depth plan
+(level 1 + rack focus; the unbuilt level-2 follow-up now lives in
+`PLAN_camera_depth_level2.md`):
 
 - **`shape-match` cut style** (`cutContract.ts` + `bindShapeMatch` in
   `sequences-cuts.v1.js`): two *different* rhyming-silhouette elements swap
@@ -392,8 +393,9 @@ the engineering team rather than bolt onto the static gate casually.
 
 ### Speed ramping + shape-match discovery (2026-07-04)
 
-Implements `BREAKTHROUGH_speed_ramping.md` (Goal A) and the match-cut v2
-discovery pass (Goal B) from the 2026-07-03 HANDOFF:
+Implements the speed-ramping breakthrough plan (Goal A) and the match-cut v2
+discovery pass (Goal B) from the 2026-07-03 HANDOFF (both breakthrough docs
+are retired; the shipped design is documented here and in CLAUDE.md):
 
 - **`timeRamp` — the fifth host-owned contract** (`engine/timeRamp.ts` +
   `templates/sequences-time.v1.js`). A shot may declare ONE slow-motion dip
@@ -507,6 +509,88 @@ discovery pass (Goal B) from the 2026-07-03 HANDOFF:
   does not `requireTimeRamp`; brief-demanded ramps keep the blocking
   findings (the retry loop is the delivery mechanism there, proven by
   `timeramp-live-1`).
+
+### Performance pass — latency defense, QA cache, MCP pool (2026-07-04)
+
+A profiled paid create (15s brief, healthy 1-attempt storyboard) spent 527s
+wall-clock: storyboard+concept 148s, author+repairs+critic 277s, commit re-QA
+12s, thumbnails 2.5s, draft render 81s — ~80% serial model time, and one
+stalled stream or storyboard retry pushes a run to ~15 minutes. Three
+quality-neutral defenses (the deterministic gates remain the only arbiter of
+what ships; none of them change prompts, models, reasoning effort, or QA
+thresholds):
+
+- **Stream idle watchdog** (`compositionRunner.ts`): every streaming model
+  call (`storyboard`, `author source`, `critic`, now `concept` too) aborts
+  after 90s with no delta and surfaces a transient idle-timeout, so the
+  bounded retry replaces a silent 360s stall with a ~90s one. Tune with
+  `SLACK_SEQUENCES_STREAM_IDLE_TIMEOUT_MS`.
+- **Hedged requests** (`hedgedCompletion`): on OpenRouter, a duplicate of the
+  same request launches after 25s (`SLACK_SEQUENCES_HEDGE_DELAY_MS`) and the
+  first completion wins; the loser is aborted mid-stream. A duplicate never
+  replaces the serial retry loop (fast failures reject immediately;
+  non-transient errors settle the race). Costs up to 2× tokens on slow calls
+  — accepted, policy is quality > price. Kill switch:
+  `SLACK_SEQUENCES_HEDGED_REQUESTS=0`. First live probe: the storyboard
+  duplicate finished first and was used.
+- **Browser-QA evidence cache** (`layoutInspector.ts`): a clean inspection is
+  cached on disk under `<projectDir>/qa-cache/` keyed by
+  html+storyboard+runtime+audit content hash; identical bytes are never
+  re-measured — most importantly `submit_composition`'s commit re-inspection
+  (which runs in the MCP subprocess) becomes a file read. Failing or
+  infra-degraded passes are never cached. The spatial guide is now captured
+  on every pass with interactions so a cached result is a reusable superset.
+  Kill switch: `SLACK_SEQUENCES_QA_CACHE=0`.
+- **MCP connection pool** (`mcpClient.ts` `withPooledMcpClient`):
+  submit/preview/render within a job reuse one MCP server instead of paying a
+  tsx cold start per tool call; idle connections unref + close after 45s so
+  CLI scripts still exit. (Lesson: a pooled child must be re-`ref()`ed while
+  a call is in flight — an unref'd await lets node exit silently mid-build.)
+- Verified: full suite green (310 tests, incl. new `test/perfPipeline.test.ts`
+  hedge/cache contracts), `mcp:demo`, `direct:demo`, `film:demo`,
+  `sequence:check --demo` through the pooled MCP path, plus paid live probes
+  before/after.
+
+### Storyboard-stage reliability pass — moment top-up + rescue ladder (2026-07-04)
+
+Live `/sequences` runs kept shipping the labeled deterministic fallback with
+`fallback:{stage:"storyboard-plan"}`. Railway logs showed the exact mechanism:
+every GLM attempt produced a *rich* storyboard (typed beats, camera paths,
+cuts) that deterministic validation vetoed on **marginal moment-spacing
+findings** — `no planned moment between 1.5s and 4.5s (3.0s)` — and each
+findings-retry fixed one gap while opening another until all three attempts
+burned. The film had reviewable development in those windows; the *paperwork*
+(declared moments) didn't. Two fixes, both keeping the strict contract:
+
+- **Deterministic moment top-up** (`storyboardMoments.ts`
+  `topUpStoryboardMoments`, run inside `parseStoryboardResponse` after the
+  volunteered-ramp drop): dead intervals, a missed moment floor, and
+  entrance-clustering are filled by *host-declared* moments anchored on the
+  plan's own typed evidence — cut landings, full camera-move arrivals,
+  component beats, cursor arrivals — all of which are host-compiled from the
+  locked storyboard, so every added moment is guaranteed to bind to
+  executable evidence at publication. Additive and idempotent: a compliant
+  plan returns unchanged, declared moments are never moved, and genuine dead
+  air (a gap with no typed evidence at all) still goes to the findings retry.
+  Same philosophy as `dropUnusableVolunteeredTimeRamps`: degrade paperwork,
+  never quality.
+- **Cross-model rescue ladder** (`requestStoryboardPlan` +
+  `modelPolicy.storyboardRescueModel`): when the primary storyboard model
+  exhausts its 3 attempts — validation rejections OR transient route
+  exhaustion OR endpoint 4xx — one rescue rung (2 attempts) runs on
+  `tencent/hy3-preview` (the benched 2026-07-03 alternative; medium
+  reasoning) with the accumulated findings, before the caller may ship the
+  deterministic fallback. A fresh draw from an independent model recovers far
+  more often than a fourth try of a model systematically missing the
+  contract, and a different model rides a different upstream route during
+  provider slowdowns. Override with `SLACK_SEQUENCES_STORYBOARD_RESCUE_MODEL`
+  (+ `SLACK_SEQUENCES_STORYBOARD_RESCUE_THINKING`); `none`/`0` disables.
+  Truncation detected at *parse time* (opened-but-unclosed wrapper) now also
+  triggers the lower-reasoning truncation retry instead of failing the stage.
+- **Stage probe** (`npm run storyboard:probe --workspace @sequences/slack --
+  [runs] ["brief"]`): paid, Slack-free probe of concept + storyboard ladder +
+  validation only — the cheap way to measure live storyboard reliability
+  without authoring source or rendering.
 
 ---
 
