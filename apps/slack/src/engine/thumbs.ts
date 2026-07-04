@@ -131,6 +131,8 @@ export async function generateSceneThumbnails(
       const seconds = (scene.startFrame + scene.durationFrames / 2) / fps;
       // Seek the GSAP timeline and apply HF clip visibility ourselves (the
       // runtime is stripped for capture; data-start/duration is OUR contract).
+      // Legacy Plan path (/sequences demo) only: plans can never declare a
+      // timeRamp, so this seek needs no output-time conversion.
       await page.evaluate(
         (t: number, id: string) => {
           const w = window as unknown as {

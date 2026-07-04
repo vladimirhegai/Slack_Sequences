@@ -20,6 +20,7 @@ import fs from "node:fs";
 import { initializeProject, projectDirFor } from "../src/engine/projectTemplates.ts";
 import { McpClient } from "../src/engine/mcpClient.ts";
 import { resolveCutPlan } from "../src/engine/cutContract.ts";
+import { resolveTimeRampPlan } from "../src/engine/timeRamp.ts";
 import { cinemaKitStyleTag } from "../src/engine/cinemaKit.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
 import { reportTemporalEvidence } from "../src/engine/temporalInspector.ts";
@@ -104,6 +105,9 @@ const storyboard: DirectScene[] = [
     rules: ["stat-bars-and-fills"],
     outgoingCut: "Pull back and arrive at the closing lockup",
     cut: { version: 1, style: "inverse-zoom" },
+    // Deterministic speed-ramp proof: slow motion as the payoff title and
+    // filmstrip land (17.1s), repaid at speed before the inverse-zoom exit.
+    timeRamp: { version: 1, atSec: 17.1, slowTo: 0.4, holdSec: 0.5, recoverSec: 0.9 },
     continuityAnchor: "The gold accent resolves into the lockup",
     spatialIntent: {
       version: 1,
@@ -129,6 +133,7 @@ const storyboard: DirectScene[] = [
 ];
 
 const cutPlan = JSON.stringify(resolveCutPlan(storyboard));
+const timePlan = JSON.stringify(resolveTimeRampPlan(storyboard));
 
 const html = `<!doctype html>
 <html lang="en">
@@ -138,6 +143,7 @@ const html = `<!doctype html>
   <title>Sequences for Slack</title>
   <script src="gsap.min.js"></script>
   <script src="sequences-cuts.v1.js"></script>
+  <script src="sequences-time.v1.js"></script>
   __CINEMA_KIT__
   <style>
     * { box-sizing: border-box; margin: 0; }
@@ -487,6 +493,7 @@ const html = `<!doctype html>
   </main>
 
   <script type="application/json" id="sequences-cuts">__CUT_PLAN__</script>
+  <script type="application/json" id="sequences-time">__TIME_PLAN__</script>
   <script>
     window.__timelines = window.__timelines || {};
     var tl = gsap.timeline({ paused: true });
@@ -586,12 +593,13 @@ const html = `<!doctype html>
     tl.fromTo("#lk-promise", { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power3.out" }, 21.55);
 
     SequencesCuts.compile(tl, document.getElementById("root"));
-    window.__timelines["slack-ad"] = tl;
+    var __seqWarped = SequencesTime.wrap(tl); window.__timelines["slack-ad"] = __seqWarped;
     tl.seek(0);
   </script>
 </body>
 </html>`
   .replace("__CUT_PLAN__", cutPlan)
+  .replace("__TIME_PLAN__", timePlan)
   .replace("__CINEMA_KIT__", () => cinemaKitStyleTag());
 
 const client = await McpClient.connect(dir);

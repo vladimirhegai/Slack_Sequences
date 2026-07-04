@@ -21,6 +21,7 @@ import path from "node:path";
 import { findBrowserExecutable } from "./render.ts";
 import { loadDirectComposition } from "./directComposition.ts";
 import { resolveCutPlan, type CutIntentV1 } from "./cutContract.ts";
+import { parseTimeRampPlan, warpInverseOf } from "./timeRamp.ts";
 
 const FRAME_WIDTH = 320;
 const LABEL_HEIGHT = 26;
@@ -207,6 +208,18 @@ export async function reportTemporalEvidence(
     ...curveTimes,
   ])].sort((a, b) => a - b);
 
+  // Evidence times are content (timeline) time; the registered timeline is
+  // the warped master (output time) when the film ramps, so the physical
+  // seek converts. Strip labels carry both bases when they differ.
+  const timeRampPlan = parseTimeRampPlan(current.html).plan;
+  const toOutputTime = warpInverseOf(timeRampPlan);
+  const frameLabel = (time: number): string => {
+    const viewer = toOutputTime(time);
+    return Math.abs(viewer - time) > 0.01
+      ? `${time.toFixed(2)}s→${viewer.toFixed(2)}v`
+      : `${time.toFixed(2)}s`;
+  };
+
   const server = await serveDir(path.join(projectDir, "composition"));
   const puppeteer = (await import("puppeteer-core")).default;
   let browser: import("puppeteer-core").Browser | undefined;
@@ -250,13 +263,13 @@ export async function reportTemporalEvidence(
         : cut.style === "flash-white"
           ? '[data-sequences-runtime-cut="flash"]'
           : fromSelector;
-      await seekTo(page, Math.max(0, cut.atSec - cut.exitSec + 0.02));
+      await seekTo(page, toOutputTime(Math.max(0, cut.atSec - cut.exitSec + 0.02)));
       const outgoingBefore = await wrapperState(page, outgoingSelector);
-      await seekTo(page, cut.atSec - 0.02);
+      await seekTo(page, toOutputTime(cut.atSec - 0.02));
       const outgoingAfter = await wrapperState(page, outgoingSelector);
-      await seekTo(page, cut.atSec + 0.02);
+      await seekTo(page, toOutputTime(cut.atSec + 0.02));
       const incomingBefore = await wrapperState(page, toSelector);
-      await seekTo(page, Math.min(manifest.durationSec, cut.atSec + cut.entrySec - 0.02));
+      await seekTo(page, toOutputTime(Math.min(manifest.durationSec, cut.atSec + cut.entrySec - 0.02)));
       const incomingAfter = await wrapperState(page, toSelector);
       cutObservations.push({
         cut,
@@ -267,7 +280,7 @@ export async function reportTemporalEvidence(
 
     const frames = new Map<number, string>();
     for (const time of allTimes) {
-      await seekTo(page, time);
+      await seekTo(page, toOutputTime(time));
       const shot = await page.screenshot({ encoding: "base64", type: "png" });
       frames.set(time, `data:image/png;base64,${shot}`);
     }
@@ -362,7 +375,7 @@ export async function reportTemporalEvidence(
     const stripPath = await composeSheet(
       shotFrames.map(({ scene, times }) => ({
         title: `${scene.id} (${scene.startSec}–${roundTime(scene.startSec + scene.durationSec)}s)`,
-        frames: times.map((time) => ({ label: `${time.toFixed(2)}s`, dataUrl: frames.get(time)! })),
+        frames: times.map((time) => ({ label: frameLabel(time), dataUrl: frames.get(time)! })),
       })),
       "strip.png",
     );

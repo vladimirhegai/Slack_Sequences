@@ -1,6 +1,7 @@
 import { resolveCutPlan } from "./cutContract.ts";
 import { CAMERA_FULL_MOVES, resolveCameraPlan } from "./cameraContract.ts";
 import { resolveComponentPlan } from "./componentContract.ts";
+import { resolveTimeRampPlan, warpInverseOf } from "./timeRamp.ts";
 import type { DirectScene } from "./directComposition.ts";
 
 export type MotionActivityKind = "major" | "medium" | "small";
@@ -430,7 +431,18 @@ export function analyzeMotionDensity(
     ...component,
     ...authored.activities,
   ].sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
-  const quietGaps = applies ? mergedGaps(activities, durationSec) : [];
+  // Quiet-gap math judges the VIEWER's experience, so it runs in output time:
+  // a 1.0s content gap inside a 0.3× speed-ramp dip is 3.3s of dead air.
+  // `activities` on the report stays content time (moment binding compares
+  // declared atSec against timeline evidence); only the gap math converts.
+  // Scene boundaries are warp fixed points, so scene windows need no change.
+  const viewerTimeOf = warpInverseOf(resolveTimeRampPlan(scenes));
+  const viewerActivities = activities.map((activity) => ({
+    ...activity,
+    startSec: round(viewerTimeOf(activity.startSec)),
+    endSec: round(viewerTimeOf(activity.endSec)),
+  }));
+  const quietGaps = applies ? mergedGaps(viewerActivities, durationSec) : [];
   const errors: string[] = [];
   const warnings: string[] = [];
   if (applies) {
@@ -488,7 +500,7 @@ export function analyzeMotionDensity(
         );
         continue;
       }
-      const longestQuietGap = longestSceneQuietGap(scene, activities);
+      const longestQuietGap = longestSceneQuietGap(scene, viewerActivities);
       const frontLoadedQuietThreshold = Math.min(
         MAX_QUIET_GAP_SEC,
         Math.max(1.8, scene.durationSec * 0.45),
@@ -542,7 +554,7 @@ export function analyzeMotionDensity(
       backHalfBeatCount: beats.filter((activity) =>
         activity.startSec >= scene.startSec + scene.durationSec * 0.45
       ).length,
-      longestQuietGapSec: longestSceneQuietGap(scene, activities),
+      longestQuietGapSec: longestSceneQuietGap(scene, viewerActivities),
     };
   });
   const maxQuietGapSec = quietGaps.reduce(

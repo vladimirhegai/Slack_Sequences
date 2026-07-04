@@ -136,6 +136,23 @@ degrades the boundary to zoom-through with a typed reason that browser QA
 surfaces as a `cut_degraded:` warning, and the static gate warns when a bridge
 lands outside the incoming scene's entry framing
 (`test/cutShapeMatch.browser.test.ts` proves both paths).
+Shape-match v2 (2026-07-04) adds **deterministic cut discovery**: browser QA
+measures every boundary's visible `data-part` geometry, `cutDiscovery.ts`
+scores silhouette rhymes (aspect cap 2.0×, radius-weighted, max ONE per film,
+only `hard`/directional boundaries), and the host upgrades the one provable
+rhyme to shape-match before the critic — mutating the locked storyboard
+everywhere downstream, keeping the pre-upgrade draft on any QA regression
+(`SLACK_SEQUENCES_CUT_DISCOVERY=0` opts out).
+Scenes may also declare a typed **`timeRamp`** — the fifth host-owned contract
+(2026-07-04, `timeRamp.ts` + `sequences-time.v1.js`): ONE motivated
+slow-motion dip per scene (max 2 per film, never scene 1) compiled into
+net-zero piecewise-linear warp knots; a nested paused master timeline wraps
+the registered timeline at the registration seam (the LAST deterministic
+injection) and seeks the content timeline at `warp(masterTime)` — seek-safe
+by construction, byte-identical for non-ramped films. QA converts time bases
+only at physical-seek choke points; motion-density quiet gaps and moment
+spacing are judged in viewer (output) time. The fallback film and `film:demo`
+both ship a deterministic ramp as the proof path.
 Scenes may also declare a typed **camera path** over a continuous spatial world:
 `data-camera-world` is a plane larger than the viewport with named
 `data-region` stations, and `cameraContract.ts` +

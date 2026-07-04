@@ -390,6 +390,106 @@ do not punish intentional holds, rendered-text legibility checks, caching, and
 careful false-positive evaluation. This is the one high-leverage task to hand to
 the engineering team rather than bolt onto the static gate casually.
 
+### Speed ramping + shape-match discovery (2026-07-04)
+
+Implements `BREAKTHROUGH_speed_ramping.md` (Goal A) and the match-cut v2
+discovery pass (Goal B) from the 2026-07-03 HANDOFF:
+
+- **`timeRamp` — the fifth host-owned contract** (`engine/timeRamp.ts` +
+  `templates/sequences-time.v1.js`). A shot may declare ONE slow-motion dip
+  (`{atSec, slowTo 0.2–0.6, holdSec 0.3–0.9, recoverSec 0.3–1.2}`); the solver
+  compiles it into strictly monotonic piecewise-linear warp knots that are
+  **net-zero per scene** (`warp(t) = t` at boundaries and exactly on
+  `[sceneStart, rampStart]`/`[rampEnd, sceneEnd]` — cut windows are pure
+  identity regions, so `cutContract.ts` needed no change). Catch-up slope is
+  capped at 2.5× (recovery stretches first, then the ramp drops);
+  max 2 dips per film, never shot 1; the plan gate additionally requires a
+  declared moment inside the slow-motion hold (a dip must be *motivated*).
+- **Nested master timeline at the registration seam**: the LAST deterministic
+  injection rewrites `window.__timelines[id] = tl` to
+  `var __seqWarped = SequencesTime.wrap(tl); window.__timelines[id] = __seqWarped;`.
+  The runtime builds a paused equal-duration master whose single `ease:"none"`
+  proxy tween seeks the content timeline at `warp(masterTime)` in `onUpdate` —
+  child time is a pure function of master position, so frames render
+  identically regardless of seek order. No island → `wrap` returns the
+  timeline unchanged (non-ramped films byte-identical). The child is never
+  registered and exposed as `__seqChild` for QA tween-boundary introspection.
+  All four compile-call injection anchors now also match the wrapped
+  registration (guarded by an all-five-contracts injection regression test).
+- **QA time-base conversions at the seek choke points only**: browser QA,
+  thumbnails, and the temporal inspector keep thinking in content time and
+  convert via `warpInverse` at the physical seek (`layoutInspector`
+  `seekContent`, `generateDirectThumbnails`, `temporalInspector`).
+  Genuine output-time math lives in exactly two places: `motionDensity`
+  quiet-gap math runs on viewer-time activity windows (a content-quiet dip is
+  flagged as the dead air the viewer actually experiences — proven by test),
+  and `storyboardMoments` spacing/dead-interval floors judge viewer time while
+  evidence *binding* stays content time.
+- **Static gate**: `validateTimeRampContract` requires island byte-equality
+  with the resolved plan, the runtime file, `SequencesTime.wrap`, and the
+  wrapped registration. Runtime file wired through all copy/allowlist/
+  checkpoint/sidecar seams; resolved ramps + runtime hash persist in
+  `motion-plan.json`. Storyboard cache contract bumped to v6;
+  `requireTimeRamp` fires on "speed ramp / time remap / slow motion" briefs.
+- **Deterministic proof paths**: the fallback film dips 0.45× on its
+  proof-reveal moment (12s+ films), and `film:demo` dips 0.4× as the payoff
+  title lands (17.1s) — both prove the contract through validation, browser
+  QA, thumbnails, temporal evidence, and the `VERIFY_RENDER=1` MP4 gate.
+- **Shape-match v2 — measure-then-upgrade** (`engine/cutDiscovery.ts`):
+  browser QA now measures every boundary's visible `data-part` geometry
+  (viewport rect, %-resolved border-radius, subtree node count, on-frame
+  ratio — the same idioms as the runtime audit) just before the cut and after
+  entry settles (`DirectBrowserQaResult.boundaries`). A pure scorer upgrades
+  at most ONE `hard`/directional boundary per film to `shape-match` when the
+  measured pair *provably* rhymes (aspect cap 2.0× — tighter than the
+  runtime's 2.5× degrade; ≤60 nodes; ≥65% on-frame; radius-weighted score
+  with a component-id/continuity-anchor bonus; floor 0.55). The upgrade is
+  host-side and deterministic (no model in the loop): mutate the locked
+  storyboard, re-run `applyDeterministicSourceRepairs` + static validation +
+  browser QA, reject if anything regresses or the bind-time audit degrades
+  the new boundary, then flow the mutated storyboard to the critic and
+  everything downstream (manifest, moments, `motion-plan.json`,
+  `STORYBOARD.md`, and the persisted `planning/storyboard.json` — no stale
+  artifact can desync from the shipped island). Kill-switch:
+  `SLACK_SEQUENCES_CUT_DISCOVERY=0`.
+- **Enhancement passes mutate the SHIPPED storyboard** (found by the first
+  paid live run of this pass): authoring can quarantine an optional
+  interaction out of the locked plan, and both post-authoring enhancement
+  passes (cut discovery, continuity critic) used to re-inject from the stale
+  locked storyboard — resurrecting the proven-broken binding and getting
+  their healthy work rejected by their own QA re-run. Both now re-inject from
+  `result.draft.storyboard`.
+- **Proof**: 301 tests green — `test/timeRamp.test.ts` (net-zero,
+  monotonicity, inverse round-trip, degrade rules, plan gates, injection
+  regression incl. wrapped-anchor re-entry, runtime hygiene),
+  `test/timeRamp.browser.test.ts` (the master genuinely warps: rendered state
+  at output t equals the child sought at warp(t); byte-identical transforms
+  under shuffled seeks), `test/cutDiscovery.test.ts` (scoring policy: rhyme
+  upgrades, premium styles protected, one-per-film, semantic preference,
+  mismatch refusal), `test/cutDiscovery.browser.test.ts` (real measured
+  inventory → exactly one upgrade → re-injected boundary flies without
+  degrade). Full source gate + `VERIFY_RENDER=1 npm run film:demo` green.
+- **Paid live create** (`timeramp-live-1`, GLM 5.2 + DeepSeek): the plan gate
+  rejected two storyboards with actionable findings (a moment-grid gap, then
+  a `timeRamp` that could not solve inside its shot) and attempt 3 passed
+  with exactly ONE ramp on the p99-resolve scene (`atSec 9.5, slowTo 0.35`)
+  with declared moments inside the hold — plus an object-match and a planner
+  shape-match. The film published `hyperframes-direct`, no fallback, 18/18
+  moments bound, `[author] injected 3 deterministic time-warp binding(s)`.
+  Cut discovery fired live (score 1.07, `p99-trace-line → rollback-window`)
+  and its rejection by the stale-storyboard mismatch above is what exposed
+  the fix. A second run (`timeramp-live-2`) planned an equally sane ramp on
+  attempt 1, but DeepSeek authored a terminal with no rows for its `stream`
+  beat and burned all three bounded repairs on it (pre-existing failure
+  class, unrelated to this pass) — the labeled deterministic fallback
+  shipped and thereby proved the RAMPED fallback through the real live
+  pipeline (11/11 moments bound, `sequences-time` island + wrap committed,
+  browser QA clean with the warp active). A third run exhausted the
+  storyboard stage on moment-grid findings (GLM variance) and shipped the
+  same labeled ramped fallback. Post-fix enhancement-pass mechanics remain
+  proven by `test/cutDiscovery.browser.test.ts` and the injection re-entry
+  regression.
+
 ---
 
 ## Current Architecture

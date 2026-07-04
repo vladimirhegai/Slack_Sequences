@@ -38,6 +38,12 @@ import {
   componentRuntimeSource,
   parseComponentPlan,
 } from "./componentContract.ts";
+import {
+  TIME_RUNTIME_FILE,
+  parseTimeRampPlan,
+  timeRampRuntimeSource,
+  warpInverseOf,
+} from "./timeRamp.ts";
 import { findBrowserExecutable } from "./render.ts";
 
 export type LayoutSeverity = "error" | "warning" | "info";
@@ -69,9 +75,40 @@ export interface DirectBrowserQaResult {
   samples: number[];
   issues: DirectLayoutIssue[];
   interactions?: DirectInteractionEvidence[];
+  /** Measured per-boundary focal-part geometry (feeds cut discovery). */
+  boundaries?: DirectBoundaryInventory[];
   errors: string[];
   warnings: string[];
   guidePngBase64?: string;
+}
+
+/** One visible data-part measured near a scene boundary (viewport space). */
+export interface BoundaryPartMeasurement {
+  part: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  /** Border radius resolved to px (percentages resolved against the box). */
+  radiusPx: number;
+  /** Subtree size including the element itself — bridge-clone paint cost. */
+  nodeCount: number;
+  /** Fraction of the part's area inside the frame, 0..1. */
+  onFrameRatio: number;
+}
+
+/**
+ * Measured geometry on both sides of one scene boundary: the outgoing scene
+ * sampled just before the cut, the incoming scene sampled after its entry
+ * settles. Strictly better data than the runtime's bind-time audit, which
+ * only sees load state.
+ */
+export interface DirectBoundaryInventory {
+  fromScene: string;
+  toScene: string;
+  atSec: number;
+  outgoing: BoundaryPartMeasurement[];
+  incoming: BoundaryPartMeasurement[];
 }
 
 export interface DirectInteractionEvidence {
@@ -205,6 +242,11 @@ function prepareScratch(projectDir: string, draft: DirectCompositionDraft): stri
     componentRuntimeSource(),
     "utf8",
   );
+  fs.writeFileSync(
+    path.join(scratch, TIME_RUNTIME_FILE),
+    timeRampRuntimeSource(),
+    "utf8",
+  );
   const assets = path.join(projectDir, "assets");
   if (fs.existsSync(assets)) fs.cpSync(assets, path.join(scratch, "assets"), { recursive: true });
   return scratch;
@@ -283,18 +325,23 @@ async function collectTweenBoundaries(page: import("puppeteer-core").Page): Prom
       return time;
     };
     const timelines = (window as unknown as {
-      __timelines?: Record<string, AnimationLike>;
+      __timelines?: Record<string, AnimationLike & { __seqChild?: AnimationLike }>;
     }).__timelines ?? {};
-    return Object.values(timelines).flatMap((timeline) => {
-      try {
-        return (timeline.getChildren?.(true, true, false) ?? []).flatMap((tween) => [
-          toRootTime(timeline, tween, 0),
-          toRootTime(timeline, tween, read(tween.duration, tween, 0)),
-        ]);
-      } catch {
-        return [];
-      }
-    }).filter(Number.isFinite);
+    // A time-ramped film registers the warped master, whose only child is the
+    // warp proxy; the authored tween boundaries live on the wrapped content
+    // timeline it exposes as __seqChild (boundaries stay content time).
+    return Object.values(timelines)
+      .map((timeline) => timeline.__seqChild ?? timeline)
+      .flatMap((timeline) => {
+        try {
+          return (timeline.getChildren?.(true, true, false) ?? []).flatMap((tween) => [
+            toRootTime(timeline, tween, 0),
+            toRootTime(timeline, tween, read(tween.duration, tween, 0)),
+          ]);
+        } catch {
+          return [];
+        }
+      }).filter(Number.isFinite);
   });
 }
 
@@ -1221,6 +1268,81 @@ async function measureContentCoverage(
   });
 }
 
+/** Parts smaller than this on either axis cannot carry a readable bridge. */
+const BOUNDARY_PART_MIN_PX = 24;
+/** Cap measured parts per boundary side to bound QA cost on dense scenes. */
+const BOUNDARY_PART_CAP = 16;
+
+/**
+ * Measure every visible `data-part` of one scene at the current seek time:
+ * viewport rect, resolved border-radius, and subtree node count — the same
+ * idioms the cut runtime's `shapeMatchAudit`/`radiusPx` use, so a
+ * discovery-time score and the bind-time audit agree about geometry.
+ */
+async function measureBoundaryParts(
+  page: import("puppeteer-core").Page,
+  sceneId: string,
+): Promise<BoundaryPartMeasurement[]> {
+  return page.evaluate((payload: { sceneId: string; minPx: number; cap: number }) => {
+    const root = document.querySelector<HTMLElement>(
+      "[data-composition-id][data-width][data-height]",
+    );
+    const scene = root?.querySelector<HTMLElement>(
+      `[data-scene="${CSS.escape(payload.sceneId)}"]`,
+    );
+    if (!root || !scene) return [];
+    const rootRect = root.getBoundingClientRect();
+    const measurements: BoundaryPartMeasurement[] = [];
+    for (const element of Array.from(scene.querySelectorAll<HTMLElement>("[data-part]"))) {
+      if (measurements.length >= payload.cap) break;
+      const part = element.getAttribute("data-part") ?? "";
+      if (!part) continue;
+      const rect = element.getBoundingClientRect();
+      if (rect.width < payload.minPx || rect.height < payload.minPx) continue;
+      let opacity = 1;
+      let node: Element | null = element;
+      while (node) {
+        const style = getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden") {
+          opacity = 0;
+          break;
+        }
+        opacity *= Number.parseFloat(style.opacity) || 0;
+        node = node.parentElement;
+      }
+      if (opacity < 0.15) continue;
+      // Radius resolved to px against the element's own layout box, so a
+      // "50%" circle and an "18px" card compare in one unit (offset sizes
+      // are transform-immune).
+      const raw = getComputedStyle(element).borderTopLeftRadius || "0px";
+      let radiusPx = Number.parseFloat(raw) || 0;
+      if (raw.includes("%")) {
+        radiusPx = (radiusPx / 100) *
+          Math.min(element.offsetWidth || 1, element.offsetHeight || 1);
+      }
+      const onWidth = Math.max(
+        0,
+        Math.min(rect.right, rootRect.right) - Math.max(rect.left, rootRect.left),
+      );
+      const onHeight = Math.max(
+        0,
+        Math.min(rect.bottom, rootRect.bottom) - Math.max(rect.top, rootRect.top),
+      );
+      measurements.push({
+        part,
+        left: rect.left - rootRect.left,
+        top: rect.top - rootRect.top,
+        width: rect.width,
+        height: rect.height,
+        radiusPx,
+        nodeCount: element.querySelectorAll("*").length + 1,
+        onFrameRatio: (onWidth * onHeight) / (rect.width * rect.height),
+      });
+    }
+    return measurements;
+  }, { sceneId, minPx: BOUNDARY_PART_MIN_PX, cap: BOUNDARY_PART_CAP });
+}
+
 /** Below this content-coverage fraction a sampled frame reads as blank. */
 const NEAR_BLANK_COVERAGE = 0.005;
 /** Scenes shorter than this are micro-beats (flashes, stings) — never judged. */
@@ -1416,13 +1538,19 @@ export async function inspectDirectComposition(
     const samples = buildDirectLayoutSampleTimes(draft.storyboard, tweenBoundaries, duration);
     const interactionPlan = parseInteractionPlan(draft.html).plan;
     const interactionIntents = interactionPlan?.interactions ?? [];
+    // QA thinks in content (timeline) time everywhere — sample times, issue
+    // times, and suppression windows. When the film ramps, the registered
+    // timeline is the warped master (output time), so every PHYSICAL seek
+    // converts through warpInverse here and nowhere else.
+    const toOutputTime = warpInverseOf(parseTimeRampPlan(draft.html).plan);
+    const seekContent = (time: number): Promise<void> => seekTo(page, toOutputTime(time));
     await page.addScriptTag({ content: loadBrowserAudit("layout-audit.browser.js") });
 
     const rawIssues: DirectLayoutIssue[] = [];
     const interactionEvidence: DirectInteractionEvidence[] = [];
     const coverageSamples: Array<{ time: number; coverage: number }> = [];
     for (const time of samples) {
-      await seekTo(page, time);
+      await seekContent(time);
       coverageSamples.push({ time, coverage: await measureContentCoverage(page) });
       const hyperframes = await page.evaluate(
         (options: { time: number; tolerance: number }) => {
@@ -1482,7 +1610,7 @@ export async function inspectDirectComposition(
       duration,
     ).slice(0, 5);
     for (const time of contrastTimes) {
-      await seekTo(page, time);
+      await seekContent(time);
       const screenshot = await page.screenshot({ encoding: "base64", type: "png" });
       const contrast = await page.evaluate(
         (payload: { image: string; time: number }) => {
@@ -1522,9 +1650,9 @@ export async function inspectDirectComposition(
         entry.id === intent.id && entry.phase === "arrival"
       );
       if (!baseline) continue;
-      await seekTo(page, intent.releaseSec ?? intent.arriveSec);
-      await seekTo(page, intent.startSec + (intent.arriveSec - intent.startSec) / 2);
-      await seekTo(page, intent.arriveSec);
+      await seekContent(intent.releaseSec ?? intent.arriveSec);
+      await seekContent(intent.startSec + (intent.arriveSec - intent.startSec) / 2);
+      await seekContent(intent.arriveSec);
       const replay = await auditInteractions(page, [intent], intent.arriveSec);
       const endpoint = replay.evidence.find((entry) => entry.phase === "arrival");
       if (
@@ -1543,6 +1671,35 @@ export async function inspectDirectComposition(
           fixHint: "Derive cursor position only from timeline time and measured anchors.",
           source: "sequences",
         });
+      }
+    }
+
+    // Boundary geometry inventory (feeds deterministic cut discovery): the
+    // outgoing scene measured just before each boundary, the incoming scene
+    // after its entry settles. Content time; seekContent converts.
+    const cutEntryByBoundary = new Map(
+      (parseCutPlan(draft.html).plan?.cuts ?? []).map((cut) => [
+        `${cut.fromScene}->${cut.toScene}`,
+        cut.entrySec,
+      ]),
+    );
+    const boundaryInventories: DirectBoundaryInventory[] = [];
+    for (let index = 0; index < draft.storyboard.length - 1; index += 1) {
+      const from = draft.storyboard[index]!;
+      const to = draft.storyboard[index + 1]!;
+      const atSec = from.startSec + from.durationSec;
+      const outgoingAt = atSec - 0.15;
+      const incomingAt = Math.min(
+        atSec + (cutEntryByBoundary.get(`${from.id}->${to.id}`) ?? 0.5),
+        to.startSec + Math.max(0.1, to.durationSec - 0.05),
+      );
+      if (outgoingAt <= from.startSec) continue;
+      await seekContent(outgoingAt);
+      const outgoing = await measureBoundaryParts(page, from.id);
+      await seekContent(incomingAt);
+      const incoming = await measureBoundaryParts(page, to.id);
+      if (outgoing.length || incoming.length) {
+        boundaryInventories.push({ fromScene: from.id, toScene: to.id, atSec, outgoing, incoming });
       }
     }
 
@@ -1658,7 +1815,7 @@ export async function inspectDirectComposition(
     );
     let guidePngBase64: string | undefined;
     if (interactionIntents.length && options.captureGuide !== false) {
-      await seekTo(page, interactionIntents[0]!.arriveSec);
+      await seekContent(interactionIntents[0]!.arriveSec);
       guidePngBase64 = await renderSpatialGuide(page, interactionIntents);
     }
     return {
@@ -1675,6 +1832,7 @@ export async function inspectDirectComposition(
       samples,
       issues,
       interactions: interactionEvidence,
+      ...(boundaryInventories.length ? { boundaries: boundaryInventories } : {}),
       errors: [...new Set(errors)],
       warnings: [...new Set(warnings)],
       ...(guidePngBase64 ? { guidePngBase64 } : {}),

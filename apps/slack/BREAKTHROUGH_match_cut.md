@@ -1,17 +1,28 @@
 # BREAKTHROUGH — General match cuts (shape-match + discovery)
 
-Status: **v1 BUILT 2026-07-03.** `shape-match` is a live `CutStyle`: dual-bridge
-crossfade with border-radius interpolation in `sequences-cuts.v1.js`
-(`bindShapeMatch`), bind-time geometry audit (>2.5× aspect, >60-node subtree,
-off-frame static parts) that degrades to `zoom-through` with a typed
-`{degraded, reason}` on `__sequencesCutBindings`, surfaced by browser QA as a
-`cut_degraded:` warning. Planner side: prompt vocabulary + `shapeOut/shapeIn`
-hints + `requireShapeMatch` brief requirement; the static gate warns when a
-bridge lands outside the incoming scene's entry framing. Proven by
-`test/cutShapeMatch.browser.test.ts` (matched pair flies, mismatched pair
-degrades) plus a paid live create. The v2 discovery pass below remains open.
-Originally re-scoped 2026-07-03 after a code audit and a live GLM 5.2 probe
-(see "Evidence" at the bottom).
+Status: **v1 BUILT 2026-07-03 · v2 BUILT 2026-07-04.** `shape-match` is a live
+`CutStyle`: dual-bridge crossfade with border-radius interpolation in
+`sequences-cuts.v1.js` (`bindShapeMatch`), bind-time geometry audit (>2.5×
+aspect, >60-node subtree, off-frame static parts) that degrades to
+`zoom-through` with a typed `{degraded, reason}` on `__sequencesCutBindings`,
+surfaced by browser QA as a `cut_degraded:` warning. Planner side: prompt
+vocabulary + `shapeOut/shapeIn` hints + `requireShapeMatch` brief requirement;
+the static gate warns when a bridge lands outside the incoming scene's entry
+framing. Proven by `test/cutShapeMatch.browser.test.ts` plus a paid live
+create.
+
+v2 discovery is **measure-then-upgrade** (not the advisory-findings critic
+loop sketched below — critic directives cannot re-declare a cut without
+desyncing the locked island): browser QA measures per-boundary `data-part`
+geometry (`DirectBrowserQaResult.boundaries`), `engine/cutDiscovery.ts`
+scores silhouette rhymes deterministically (aspect cap 2.0×, ≤60 nodes,
+mostly on-frame, radius-weighted score, max ONE upgrade per film, only
+`hard`/directional boundaries), and `applyShapeMatchUpgrade` in
+`compositionRunner.ts` mutates the locked storyboard host-side before the
+critic, re-runs the full deterministic gate, and flows the mutated storyboard
+everywhere downstream. Proven by `test/cutDiscovery.test.ts` +
+`test/cutDiscovery.browser.test.ts`. See ROADMAP "Speed ramping + shape-match
+discovery (2026-07-04)".
 
 ## Corrected premise — what exists today (verified against code)
 

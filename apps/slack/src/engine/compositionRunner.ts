@@ -52,6 +52,14 @@ import {
   injectCinemaKit,
 } from "./cinemaKit.ts";
 import {
+  MAX_RAMPS_PER_FILM,
+  TIME_RUNTIME_FILE,
+  normalizeStoryboardTimeRamp,
+  resolveTimeRampPlan,
+  timeRampHoldWindow,
+} from "./timeRamp.ts";
+import { discoverShapeMatchUpgrade } from "./cutDiscovery.ts";
+import {
   COMPONENT_BEAT_KINDS,
   COMPONENT_KINDS,
   COMPONENT_KIT_FILE,
@@ -92,6 +100,8 @@ export interface CompositionRunResult {
   draft: DirectCompositionDraft;
   raw: string;
   attempts: number;
+  /** Browser QA of the returned draft when a pass ran (feeds cut discovery). */
+  browserQa?: DirectBrowserQaResult;
 }
 
 const COMPOSITION_SOURCE_BUDGET_CHARS = 38_000;
@@ -156,6 +166,18 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
                     shapeIn: { type: "string", enum: [...CUT_SHAPE_HINTS] },
                   },
                   required: ["version", "style"],
+                  additionalProperties: false,
+                },
+                timeRamp: {
+                  type: "object",
+                  properties: {
+                    version: { type: "number", enum: [1] },
+                    atSec: { type: "number" },
+                    slowTo: { type: "number" },
+                    holdSec: { type: "number" },
+                    recoverSec: { type: "number" },
+                  },
+                  required: ["version"],
                   additionalProperties: false,
                 },
                 camera: {
@@ -374,8 +396,8 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
               required: [
                 "id", "title", "purpose", "incomingIdea", "foreground", "background",
                 "cameraIntent", "startSec", "durationSec", "blueprint", "rules",
-                "capabilityIds", "continuityAnchor", "outgoingCut", "cut", "camera",
-                "components", "beats", "spatialIntent", "moments", "interactions",
+                "capabilityIds", "continuityAnchor", "outgoingCut", "cut", "timeRamp",
+                "camera", "components", "beats", "spatialIntent", "moments", "interactions",
               ],
               additionalProperties: false,
             },
@@ -1205,7 +1227,23 @@ function reconcileComponentBindings(
   return { html, repairs };
 }
 
-function applyDeterministicSourceRepairs(
+/**
+ * The `window.__timelines[...] = <timeline>;` line every compile-call
+ * injection anchors on. When the film ramps, the time-wrap step (the LAST
+ * injection) rewrites that line to register the wrapped master, so on
+ * re-entry (critic patches, cut-discovery upgrades) the anchor must also
+ * match the wrapped form — the compile call is then inserted before the
+ * whole wrap statement.
+ */
+function timelineRegistrationAnchor(timelineName: string): RegExp {
+  const escaped = regexpEscape(timelineName);
+  return new RegExp(
+    `((?:var\\s+__seqWarped\\s*=\\s*SequencesTime\\.wrap\\(${escaped}\\);\\s*)?` +
+      `window\\.__timelines\\s*\\[[^\\]]+\\]\\s*=\\s*(?:${escaped}|__seqWarped)\\s*;)`,
+  );
+}
+
+export function applyDeterministicSourceRepairs(
   draft: DirectCompositionDraft,
   projectDir: string,
   lockedStoryboard?: DirectScene[],
@@ -1378,12 +1416,7 @@ function applyDeterministicSourceRepairs(
     }
     if (!/\bSequencesInteractions\.compile\s*\(/.test(html)) {
       if (timelineName) {
-        const registration = new RegExp(
-          `(window\\.__timelines\\s*\\[[^\\]]+\\]\\s*=\\s*${timelineName.replace(
-            /[.*+?^${}()|[\]\\]/g,
-            "\\$&",
-          )}\\s*;)`,
-        );
+        const registration = timelineRegistrationAnchor(timelineName);
         if (registration.test(html)) {
           html = html.replace(
             registration,
@@ -1442,9 +1475,7 @@ function applyDeterministicSourceRepairs(
         /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*gsap\.timeline\s*\(/,
       )?.[1];
       if (timelineName) {
-        const registration = new RegExp(
-          `(window\\.__timelines\\s*\\[[^\\]]+\\]\\s*=\\s*${regexpEscape(timelineName)}\\s*;)`,
-        );
+        const registration = timelineRegistrationAnchor(timelineName);
         if (registration.test(html)) {
           html = html.replace(
             registration,
@@ -1505,9 +1536,7 @@ function applyDeterministicSourceRepairs(
         /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*gsap\.timeline\s*\(/,
       )?.[1];
       if (timelineName) {
-        const registration = new RegExp(
-          `(window\\.__timelines\\s*\\[[^\\]]+\\]\\s*=\\s*${regexpEscape(timelineName)}\\s*;)`,
-        );
+        const registration = timelineRegistrationAnchor(timelineName);
         if (registration.test(html)) {
           html = html.replace(
             registration,
@@ -1572,9 +1601,7 @@ function applyDeterministicSourceRepairs(
         /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*gsap\.timeline\s*\(/,
       )?.[1];
       if (timelineName) {
-        const registration = new RegExp(
-          `(window\\.__timelines\\s*\\[[^\\]]+\\]\\s*=\\s*${regexpEscape(timelineName)}\\s*;)`,
-        );
+        const registration = timelineRegistrationAnchor(timelineName);
         if (registration.test(html)) {
           html = html.replace(
             registration,
@@ -1628,6 +1655,67 @@ function applyDeterministicSourceRepairs(
           html.slice(rootTag.index + tag.length);
         process.stderr.write("[author] applied light-basis cinematography overrides\n");
       }
+    }
+  }
+  // Speed ramping wraps the registered timeline in a host-owned master that
+  // warps time (sequences-time). ⚠️ The registration rewrite MUST stay the
+  // LAST injection step in this function: every compile-call injection above
+  // anchors on the `window.__timelines[...] = <timeline>;` line, which this
+  // step rewrites to register the wrapped master instead.
+  const timePlan = resolveTimeRampPlan(lockedStoryboard ?? draft.storyboard);
+  if (timePlan.ramps.length) {
+    let repairedTime = 0;
+    if (
+      !html.includes(`src="${TIME_RUNTIME_FILE}"`) &&
+      !html.includes(`src='${TIME_RUNTIME_FILE}'`)
+    ) {
+      const withRuntime = html.replace(
+        /(<script\b[^>]*\bsrc\s*=\s*(["'])gsap\.min\.js\2[^>]*>\s*<\/script>)/i,
+        `$1\n<script src="${TIME_RUNTIME_FILE}"></script>`,
+      );
+      if (withRuntime !== html) {
+        html = withRuntime;
+        repairedTime += 1;
+      }
+    }
+    const payload = JSON.stringify(timePlan);
+    const timeIslandPattern =
+      /(<script\b[^>]*\bid\s*=\s*(["'])sequences-time\2[^>]*>)([\s\S]*?)(<\/script>)/i;
+    if (timeIslandPattern.test(html)) {
+      const updated = html.replace(timeIslandPattern, `$1${payload}$4`);
+      if (updated !== html) {
+        html = updated;
+        repairedTime += 1;
+      }
+    } else {
+      const timelineScript =
+        /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
+      if (timelineScript?.index !== undefined) {
+        html = html.slice(0, timelineScript.index) +
+          `<script type="application/json" id="sequences-time">${payload}</script>\n` +
+          html.slice(timelineScript.index);
+        repairedTime += 1;
+      }
+    }
+    if (!/\bSequencesTime\.wrap\s*\(/.test(html)) {
+      // The RHS stays a bare identifier (the producer's registration lint
+      // matches `window.__timelines[...] = <identifier>`); the child content
+      // timeline is never registered.
+      const registration = /window\.__timelines\s*\[([^\]]+)\]\s*=\s*([A-Za-z_$][\w$]*)\s*;/;
+      const match = registration.exec(html);
+      if (match) {
+        html = html.slice(0, match.index) +
+          `var __seqWarped = SequencesTime.wrap(${match[2]}); ` +
+          `window.__timelines[${match[1]}] = __seqWarped;` +
+          html.slice(match.index + match[0].length);
+        repairedTime += 1;
+      }
+    }
+    if (repairedTime) {
+      process.stderr.write(
+        `[author] injected ${repairedTime} deterministic time-warp binding(s) for ` +
+          `${timePlan.ramps.length} speed ramp(s)\n`,
+      );
     }
   }
   return html === draft.html ? draft : { ...draft, html };
@@ -1791,6 +1879,7 @@ function parseStoryboard(raw: string): DirectScene[] {
     }
     const spatialIntent = normalizeStoryboardSpatialIntent(scene.spatialIntent);
     const cut = normalizeStoryboardCutIntent(scene.cut);
+    const timeRamp = normalizeStoryboardTimeRamp(scene.timeRamp, { startSec, durationSec });
     const camera = normalizeStoryboardCameraIntent(scene.camera, { startSec, durationSec });
     const worldLayout = normalizeWorldLayout(scene.worldLayout, Boolean(camera?.path.length));
     const components = normalizeStoryboardComponents(scene.components);
@@ -1844,6 +1933,7 @@ function parseStoryboard(raw: string): DirectScene[] {
         : {}),
       ...(typeof scene.outgoingCut === "string" ? { outgoingCut: scene.outgoingCut } : {}),
       ...(cut ? { cut } : {}),
+      ...(timeRamp ? { timeRamp } : {}),
       ...(camera ? { camera } : {}),
       ...(worldLayout.length ? { worldLayout } : {}),
       ...(components.length ? { components } : {}),
@@ -1883,6 +1973,7 @@ export interface StoryboardPlanRequirements {
   requireObjectMatch?: boolean;
   requireShapeMatch?: boolean;
   requireRackFocus?: boolean;
+  requireTimeRamp?: boolean;
 }
 
 export function validateStoryboardPlan(
@@ -2033,6 +2124,54 @@ export function validateStoryboardPlan(
     errors.push(
       "the brief explicitly requests a rack-focus pull, but no camera move carries a " +
         '"focus" modifier — attach focus:{part|depth, blurMaxPx} to the move that lands on the payoff',
+    );
+  }
+  // Speed-ramp discipline: dips are rhythm, not chaos. Never shot 1, max 2 per
+  // film, every declared dip must solve inside its shot's identity margins,
+  // and the slow-motion hold must be *motivated* by a declared moment.
+  const rampScenes = storyboard.filter((scene) => scene.timeRamp);
+  if (storyboard[0]?.timeRamp) {
+    errors.push("shot 1 must open at native speed — move the timeRamp dip to a later shot");
+  }
+  if (rampScenes.length > MAX_RAMPS_PER_FILM) {
+    errors.push(
+      `at most ${MAX_RAMPS_PER_FILM} timeRamp dips per film — keep the one or two most ` +
+        `important resolves and drop the rest`,
+    );
+  }
+  const rampPlan = resolveTimeRampPlan(storyboard);
+  for (const [rampIndex, scene] of rampScenes.entries()) {
+    if (scene === storyboard[0]) continue;
+    const resolved = rampPlan.ramps.find((ramp) => ramp.sceneId === scene.id);
+    if (!resolved) {
+      // Ramps past the per-film cap are unresolved by design; the cap error
+      // above already names the real problem.
+      if (rampIndex >= MAX_RAMPS_PER_FILM) continue;
+      errors.push(
+        `shot "${scene.id}" declares a timeRamp that cannot be solved inside the shot: the dip ` +
+          `plus recovery must fit between ${(scene.startSec + 0.3).toFixed(1)}s and the shot's ` +
+          `cut window with a 0.6s identity margin, and the catch-up must stay under 2.5× — ` +
+          `move atSec earlier, shorten holdSec, or lengthen the shot`,
+      );
+      continue;
+    }
+    const hold = timeRampHoldWindow(resolved);
+    const motivated = (scene.moments ?? []).some((moment) =>
+      moment.atSec >= hold.contentStartSec - 0.35 &&
+      moment.atSec <= hold.contentEndSec + 0.35
+    );
+    if (!motivated) {
+      errors.push(
+        `shot "${scene.id}" timeRamp dip must be motivated: declare a storyboard moment whose ` +
+          `atSec falls inside the slow-motion hold (${hold.contentStartSec.toFixed(2)}–` +
+          `${hold.contentEndSec.toFixed(2)}s) — slow motion without a subject reads as a stall`,
+      );
+    }
+  }
+  if (requirements.requireTimeRamp && !rampScenes.length) {
+    errors.push(
+      "the brief explicitly requests a speed ramp / slow-motion dip, but no shot declares a " +
+        "timeRamp — add one on the film's most important resolve (never shot 1)",
     );
   }
   const presentComponentKinds = new Set(
@@ -2323,6 +2462,10 @@ export function inferStoryboardPlanRequirements(
     ...(/\brack[\s-]?focus\b|\bfocus pull\b|\bdepth of field\b/i.test(brief)
       ? { requireRackFocus: true }
       : {}),
+    ...(/\bspeed[\s-]?ramp(?:ing)?\b|\btime[\s-]?remap(?:ping)?\b|\bslow[\s-]?motion\b|\bslow[\s-]?mo\b/i
+      .test(brief)
+      ? { requireTimeRamp: true }
+      : {}),
   };
 }
 
@@ -2359,8 +2502,9 @@ export async function requestStoryboardPlan(
   const cacheKey = createHash("sha256").update(JSON.stringify({
     // Bump when the storyboard contract changes shape (v2: StoryboardMomentV1,
     // v3: typed components + beats; v4: brief-derived coverage requirements;
-    // v5: shape-match cuts + orbit/rack-focus camera vocabulary).
-    contract: 5,
+    // v5: shape-match cuts + orbit/rack-focus camera vocabulary; v6: timeRamp
+    // speed-ramping dips).
+    contract: 6,
     provider: provider.id,
     model: model ?? null,
     brief: args.brief,
@@ -2470,6 +2614,16 @@ export async function requestStoryboardPlan(
     "genuinely rhyme; a >2.5x aspect mismatch degrades to zoom-through at bind",
     "time). The host compiles the cut deterministically;",
     "the prose outgoingCut must describe the same editorial idea as cut.style.",
+    "SPEED RAMP — time itself may bend for emphasis. A shot may declare ONE",
+    '"timeRamp": the film decelerates to slowTo (0.2-0.6) for holdSec seconds',
+    "of slow motion at the shot's most important resolve, then snaps back",
+    "above speed to repay the borrowed time before the shot ends (net-zero:",
+    "scene boundaries and total duration never move). The dip must be",
+    "MOTIVATED: a declared storyboard moment's atSec must fall inside the",
+    "slow-motion hold. Keep the dip inside the shot with ~0.3s native-speed",
+    "margins (it can never overlap the outgoing cut window), never place one",
+    "in shot 1, and use at most 2 dips per film — one is usually right, on the",
+    "metric landing or hero resolve. Most shots have no ramp.",
     "Name one frame.md flow scaffold in spatialIntent.composition for every shot:",
     "layout-center-stack, layout-split, layout-editorial-left, layout-meta-top,",
     "layout-corner-chrome, or layout-hero-band. Describe foreground groups as",
@@ -2506,6 +2660,13 @@ export async function requestStoryboardPlan(
           "The brief explicitly asks for a shape-match transition; plan at least one",
           "typed shape-match boundary with both focal part names and shapeOut/shapeIn",
           "silhouette hints, at the story beat where the two elements' meanings connect.",
+        ]
+      : []),
+    ...(requirements.requireTimeRamp
+      ? [
+          "The brief explicitly asks for a speed ramp / slow-motion beat; declare one",
+          "timeRamp dip on the shot with the film's most important resolve (never shot",
+          "1) and place a declared moment inside its slow-motion hold.",
         ]
       : []),
     "",
@@ -2563,6 +2724,9 @@ export async function requestStoryboardPlan(
     '"cut":{"version":1,"style":"cut-left|cut-right|cut-up|cut-down|zoom-through|inverse-zoom|flash-white|object-match|shape-match|hard",',
     '"focalPartOut":"for object-match/shape-match","focalPartIn":"for object-match/shape-match",',
     '"shapeOut":"optional shape-match hint: pill|bar|card|circle|window","shapeIn":"same"},',
+    '"timeRamp":{"version":1,"atSec":17.2,"slowTo":0.35,"holdSec":0.6,"recoverSec":0.9} for the',
+    'one motivated slow-motion dip; use "timeRamp":{"version":1} for no ramp (the default).',
+    "timeRamp atSec is absolute composition seconds where the dip begins.",
     '"camera":{"version":1,"path":[{"version":1,"move":"hold|drift|pan|whip|push-in|pull-back|track-to-anchor|parallax-pass|orbit-lite|orbit",',
     '"toRegion":"region name (or toPart for track-to-anchor)","zoom":1,"startSec":0,"durationSec":1.2,',
     '"arcDeg":28,"focus":{"part":"data-part to pull focus onto","depth":0.35,"blurMaxPx":6},',
@@ -2993,6 +3157,7 @@ async function recoverByQuarantiningInteractions(
       draft: quarantined.draft,
       raw: candidate.raw,
       attempts: 3,
+      browserQa,
     },
     browserQa,
   };
@@ -3441,7 +3606,7 @@ async function authorComposition(
           `[author] browser QA infrastructure unavailable; publishing statically valid draft: ` +
             `${browserQa.infraError}\n`,
         );
-        return { draft, raw, attempts: attempt };
+        return { draft, raw, attempts: attempt, browserQa };
       }
       if (
         !browserQa.ok &&
@@ -3460,7 +3625,7 @@ async function authorComposition(
         ];
         const qualityPenalty = browserQualityPenalty(browserQa, staticRepairWarnings);
         if (!lastBrowserValid || qualityPenalty < lastBrowserValid.qualityPenalty) {
-          lastBrowserValid = { draft, raw, attempts: attempt, qualityPenalty };
+          lastBrowserValid = { draft, raw, attempts: attempt, browserQa, qualityPenalty };
         }
       }
       // Visual findings receive a repair opportunity, but they are heuristic:
@@ -3472,7 +3637,7 @@ async function authorComposition(
         validation.frameWarnings.length === 0 &&
         validation.motionWarnings.length === 0
       ) {
-        return { draft, raw, attempts: attempt };
+        return { draft, raw, attempts: attempt, browserQa };
       }
       if (attempt === 3 && browserQa.ok && lastBrowserValid) {
         const { qualityPenalty: _qualityPenalty, ...best } = lastBrowserValid;
@@ -3742,7 +3907,11 @@ async function applyContinuityCritique(
       ...(productionTier ? { model: productionTier } : {}),
     }, "critique patch");
     let draft = applyCompositionRepair(raw, result.draft);
-    draft = applyDeterministicSourceRepairs(draft, args.projectDir, lockedStoryboard);
+    // Re-inject from the storyboard that actually SHIPPED, not the original
+    // locked plan: authoring may have quarantined an optional interaction,
+    // and re-injecting the stale plan resurrects the proven-broken binding
+    // (this exact mismatch rejected a healthy critic patch on 2026-07-04).
+    draft = applyDeterministicSourceRepairs(draft, args.projectDir, result.draft.storyboard);
     const graphError = lockedSceneGraphError(draft.html, lockedStoryboard);
     if (graphError) throw new Error(`critique patch changed the locked storyboard (${graphError})`);
     const validation = await validateDirectComposition(args.projectDir, draft);
@@ -3756,7 +3925,7 @@ async function applyContinuityCritique(
       throw new Error(`critique patch failed browser QA: ${browserQa.errors[0] ?? ""}`);
     }
     process.stderr.write("[critic] repair directives applied and validated\n");
-    return { ...result, draft };
+    return { ...result, draft, browserQa };
   } catch (error) {
     process.stderr.write(
       `[critic] patch rejected (${error instanceof Error ? error.message : String(error)}); keeping pre-critique draft\n`,
@@ -3765,10 +3934,122 @@ async function applyContinuityCritique(
   }
 }
 
+/* -------------------------------------- cut discovery: measure-then-upgrade */
+
+/**
+ * Rewrite the cached storyboard artifact so no persisted plan disagrees with
+ * the shipped cut island — a stale `planning/storyboard.json` is the island
+ * desync bug wearing a new hat. The cache key is preserved: a retried create
+ * then plans with the upgraded cut from the start.
+ */
+function persistUpgradedStoryboard(projectDir: string, storyboard: DirectScene[]): void {
+  const cacheFile = path.join(projectDir, "planning", "storyboard.json");
+  try {
+    const cached = JSON.parse(fs.readFileSync(cacheFile, "utf8")) as Record<string, unknown>;
+    if (!cached || typeof cached !== "object" || !Array.isArray(cached.storyboard)) return;
+    const temporary = `${cacheFile}.${process.pid}.tmp`;
+    fs.writeFileSync(
+      temporary,
+      JSON.stringify({ ...cached, storyboard }, null, 2) + "\n",
+      "utf8",
+    );
+    fs.renameSync(temporary, cacheFile);
+  } catch {
+    // No cached plan (fallback/demo paths) — nothing to reconcile.
+  }
+}
+
+/**
+ * Deterministic host-side shape-match upgrade (no model in the loop). Browser
+ * QA measured every boundary's focal-part geometry; if exactly one
+ * `hard`/directional boundary *provably* rhymes, mutate that scene's cut to
+ * shape-match, re-run the deterministic injections + full validation with the
+ * mutated storyboard, and ship it only when QA stays healthy — the mutated
+ * storyboard then flows to everything downstream (critic, moments,
+ * motion-plan.json, STORYBOARD.md, the persisted plan). Any regression keeps
+ * the pre-upgrade draft: enhancement-never-veto, same as every contract.
+ */
+async function applyShapeMatchUpgrade(
+  args: DirectCompositionArgs,
+  result: CompositionRunResult,
+): Promise<{ result: CompositionRunResult; storyboard: DirectScene[] } | undefined> {
+  if (process.env.SLACK_SEQUENCES_CUT_DISCOVERY === "0") return undefined;
+  if (!args.lockedStoryboard?.length || args.revisionInstruction) return undefined;
+  const boundaries = result.browserQa?.boundaries;
+  if (!boundaries?.length) return undefined;
+  // Mutate the storyboard that actually SHIPPED (authoring may have
+  // quarantined optional interactions out of the locked plan); re-injecting
+  // from the stale locked storyboard would resurrect exactly what the
+  // authoring loop proved broken (2026-07-04 live run).
+  const shipped = result.draft.storyboard;
+  const upgrade = discoverShapeMatchUpgrade(shipped, boundaries);
+  if (!upgrade) return undefined;
+  const cut = normalizeStoryboardCutIntent({
+    version: 1,
+    style: "shape-match",
+    focalPartOut: upgrade.focalPartOut,
+    focalPartIn: upgrade.focalPartIn,
+  });
+  if (!cut) return undefined;
+  const storyboard = shipped.map((scene) =>
+    scene.id === upgrade.fromScene ? { ...scene, cut } : scene
+  );
+  process.stderr.write(
+    `[cut-discovery] upgrading ${upgrade.fromScene}->${upgrade.toScene} to shape-match ` +
+      `(${upgrade.focalPartOut} → ${upgrade.focalPartIn}, score ${upgrade.score.toFixed(2)})\n`,
+  );
+  try {
+    const draft = applyDeterministicSourceRepairs(
+      { storyboard, html: result.draft.html },
+      args.projectDir,
+      storyboard,
+    );
+    const validation = await validateDirectComposition(args.projectDir, draft);
+    if (!validation.ok) {
+      throw new Error(`static validation rejected the upgrade: ${validation.errors[0] ?? ""}`);
+    }
+    const browserQa = await inspectDirectComposition(args.projectDir, draft, {
+      captureGuide: false,
+    });
+    if (!browserQa.ok && !browserQa.infraError) {
+      throw new Error(`browser QA rejected the upgrade: ${browserQa.errors[0] ?? ""}`);
+    }
+    // The runtime's bind-time audit stays the final safety net; if it chose
+    // to degrade our upgraded boundary, the measured rhyme was not real —
+    // keep the honest directional cut instead of shipping a zoom-through.
+    const degraded = browserQa.warnings.some((warning) =>
+      warning.startsWith("cut_degraded:") &&
+      warning.includes(`${upgrade.fromScene}->${upgrade.toScene}`)
+    );
+    if (degraded) {
+      throw new Error("the runtime bind-time audit degraded the upgraded boundary");
+    }
+    persistUpgradedStoryboard(args.projectDir, storyboard);
+    process.stderr.write("[cut-discovery] upgrade validated; shipping the shape-match boundary\n");
+    return { result: { ...result, draft, browserQa }, storyboard };
+  } catch (error) {
+    process.stderr.write(
+      `[cut-discovery] upgrade rejected (${
+        error instanceof Error ? error.message : String(error)
+      }); keeping the pre-upgrade draft\n`,
+    );
+    return undefined;
+  }
+}
+
 export async function requestDirectComposition(
   provider: AgentProvider,
   args: DirectCompositionArgs,
 ): Promise<CompositionRunResult> {
-  const result = await authorComposition(provider, args);
-  return applyContinuityCritique(provider, args, result);
+  let result = await authorComposition(provider, args);
+  // Upgrade BEFORE the critic, so the critic reviews the film that will
+  // actually ship; the mutated storyboard flows into its evidence pack and
+  // its repair re-injections.
+  let critiqueArgs = args;
+  const upgraded = await applyShapeMatchUpgrade(args, result);
+  if (upgraded) {
+    result = upgraded.result;
+    critiqueArgs = { ...args, lockedStoryboard: upgraded.storyboard };
+  }
+  return applyContinuityCritique(provider, critiqueArgs, result);
 }

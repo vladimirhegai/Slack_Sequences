@@ -44,6 +44,17 @@ import {
   type SceneCameraIntentV1,
 } from "./cameraContract.ts";
 import {
+  TIME_RUNTIME_FILE,
+  TIME_RUNTIME_VERSION,
+  parseTimeRampPlan,
+  resolveTimeRampPlan,
+  timeRampRuntimeHash,
+  timeRampRuntimeSource,
+  validateTimeRampContract,
+  warpInverseOf,
+  type SceneTimeRampIntentV1,
+} from "./timeRamp.ts";
+import {
   COMPONENT_RUNTIME_FILE,
   COMPONENT_RUNTIME_VERSION,
   componentRuntimeHash,
@@ -99,6 +110,8 @@ export interface DirectScene {
   cut?: SceneCutIntentV1;
   /** Typed camera path over this scene's data-camera-world plane. */
   camera?: SceneCameraIntentV1;
+  /** Typed net-zero speed-ramp dip inside this scene (time remapping). */
+  timeRamp?: SceneTimeRampIntentV1;
   /** Optional station map: which data-region sits in which world grid cell. */
   worldLayout?: WorldLayoutCellV1[];
   /** Declared motion-native components (each authored as one data-part element). */
@@ -310,6 +323,7 @@ function normalizeStoryboard(
       ...(proposed?.outgoingCut ? { outgoingCut: proposed.outgoingCut } : {}),
       ...(proposed?.cut ? { cut: proposed.cut } : {}),
       ...(proposed?.camera ? { camera: proposed.camera } : {}),
+      ...(proposed?.timeRamp ? { timeRamp: proposed.timeRamp } : {}),
       ...(proposed?.components?.length ? { components: proposed.components } : {}),
       ...(proposed?.beats?.length ? { beats: proposed.beats } : {}),
       ...(proposed?.spatialIntent ? { spatialIntent: proposed.spatialIntent } : {}),
@@ -450,6 +464,8 @@ export async function validateDirectComposition(
   errors.push(...cutValidation.errors);
   const cameraValidation = validateCameraContract(html, normalized.scenes);
   errors.push(...cameraValidation.errors);
+  const timeRampValidation = validateTimeRampContract(html, normalized.scenes);
+  errors.push(...timeRampValidation.errors);
   const componentValidation = validateComponentContract(html, normalized.scenes);
   errors.push(...componentValidation.errors);
   const motionValidation = validateMotionDensity(
@@ -486,6 +502,7 @@ export async function validateDirectComposition(
       ref !== CUT_RUNTIME_FILE &&
       ref !== CAMERA_RUNTIME_FILE &&
       ref !== COMPONENT_RUNTIME_FILE &&
+      ref !== TIME_RUNTIME_FILE &&
       !fs.existsSync(resolved)
     ) {
       const staged = path.resolve(projectDir, ref);
@@ -527,6 +544,7 @@ export async function validateDirectComposition(
       ...frameValidation.warnings,
       ...cutValidation.warnings,
       ...cameraValidation.warnings,
+      ...timeRampValidation.warnings,
       ...componentValidation.warnings,
       ...motionValidation.warnings,
       ...momentContract.warnings,
@@ -569,6 +587,11 @@ function copyRuntimeAndAssets(projectDir: string, targetDir: string): void {
   fs.writeFileSync(
     path.join(targetDir, COMPONENT_RUNTIME_FILE),
     componentRuntimeSource(),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(targetDir, TIME_RUNTIME_FILE),
+    timeRampRuntimeSource(),
     "utf8",
   );
   const sourceAssets = path.join(projectDir, "assets");
@@ -616,6 +639,10 @@ function storyboardMarkdown(title: string, scenes: DirectScene[]): string {
         ? `- Camera path: ${scene.camera.path
           .map((move) => `${move.move}${move.toPart ? `→${move.toPart}` : move.toRegion ? `→${move.toRegion}` : ""}`)
           .join(", ")}`
+        : "",
+      scene.timeRamp
+        ? `- Speed ramp: dip to ${scene.timeRamp.slowTo}× at ${scene.timeRamp.atSec.toFixed(2)}s` +
+          ` (net-zero inside the shot)`
         : "",
       scene.components?.length
         ? `- Components: ${scene.components
@@ -761,6 +788,11 @@ export async function commitDirectComposition(
         version: CAMERA_RUNTIME_VERSION,
         sha256: cameraRuntimeHash(),
       },
+      timeRamps: resolveTimeRampPlan(normalized.scenes).ramps,
+      timeRuntime: {
+        version: TIME_RUNTIME_VERSION,
+        sha256: timeRampRuntimeHash(),
+      },
       components: normalized.scenes.flatMap((scene) => scene.components ?? []),
       componentBeats: resolveComponentPlan(normalized.scenes).scenes,
       componentRuntime: {
@@ -838,6 +870,10 @@ export async function commitDirectComposition(
     path.join(target, COMPONENT_RUNTIME_FILE),
     path.join(checkpoint, COMPONENT_RUNTIME_FILE),
   );
+  fs.copyFileSync(
+    path.join(target, TIME_RUNTIME_FILE),
+    path.join(checkpoint, TIME_RUNTIME_FILE),
+  );
   fs.cpSync(path.join(target, "qa"), path.join(checkpoint, "qa"), { recursive: true });
   return { manifest, validation };
 }
@@ -860,6 +896,7 @@ export function undoDirectComposition(projectDir: string): boolean {
     CUT_RUNTIME_FILE,
     CAMERA_RUNTIME_FILE,
     COMPONENT_RUNTIME_FILE,
+    TIME_RUNTIME_FILE,
   ]) {
     const source = path.join(checkpoint, sidecar);
     const destination = path.join(target, sidecar);
@@ -1060,9 +1097,15 @@ export async function generateDirectThumbnails(
     );
     if (consoleErrors.length) throw new Error(`composition runtime error: ${consoleErrors.join("; ")}`);
 
+    // Captured moment times are content (timeline) time; the registered
+    // timeline is the warped master (output time) when the film ramps, so
+    // convert before the physical seek. The scene-visibility toggle below is
+    // safe with the converted time: the warp maps each scene window onto
+    // itself monotonically, so the output time stays inside the same scene.
+    const toOutputTime = warpInverseOf(parseTimeRampPlan(current.html).plan);
     const files: Record<string, string> = {};
     for (const capture of thumbnailCaptures(current.manifest)) {
-      const at = capture.atSec;
+      const at = toOutputTime(capture.atSec);
       await page.evaluate(
         (time: number, id: string) => {
           const win = window as unknown as {

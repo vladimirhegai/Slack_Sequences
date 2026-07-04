@@ -15,6 +15,7 @@
  * follow motion-density applicability (3+ scenes, 10s+ films).
  */
 import { analyzeMotionDensity, type MotionActivity, type MotionDensityReport } from "./motionDensity.ts";
+import { resolveTimeRampPlan, warpInverseOf } from "./timeRamp.ts";
 import type { DirectScene } from "./directComposition.ts";
 
 export type MomentImportance = "primary" | "supporting";
@@ -205,8 +206,13 @@ export function validatePlannedMoments(
     }
   }
   if (applies && moments.length >= 2) {
+    // Spacing and dead-interval floors judge the VIEWER's experience, so
+    // they run in output time: a speed-ramp dip stretches the seconds around
+    // a moment. Moment atSec itself stays content time everywhere else
+    // (evidence binding compares it against timeline activities).
+    const viewerTimeOf = warpInverseOf(resolveTimeRampPlan(scenes));
     errors.push(...intervalErrors(
-      moments.map((moment) => moment.atSec).sort((a, b) => a - b),
+      moments.map((moment) => viewerTimeOf(moment.atSec)).sort((a, b) => a - b),
       durationSec,
       "planned",
     ));
@@ -403,10 +409,13 @@ export function resolveMomentContract(
       scene.moments?.some((moment) => moment.origin !== "synthesized")
     );
     if (allDeclared && bound.length >= 2) {
+      // Viewer-time conversion, matching validatePlannedMoments: the dead-
+      // interval contract is about watched seconds, not timeline seconds.
+      const viewerTimeOf = warpInverseOf(resolveTimeRampPlan(scenes));
       errors.push(...intervalErrors(
         bound
           .filter((moment) => moment.origin !== "synthesized")
-          .map((moment) => moment.atSec)
+          .map((moment) => viewerTimeOf(moment.atSec))
           .sort((a, b) => a - b),
         durationSec,
         "evidence-bound",

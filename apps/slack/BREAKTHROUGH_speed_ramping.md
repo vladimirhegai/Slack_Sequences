@@ -1,10 +1,22 @@
 # BREAKTHROUGH — Speed ramping / time remapping
 
-Status: **planned, not built.** Handoff plan for a future agent. Re-designed
-2026-07-03 after a code + renderer audit and a live GLM 5.2 probe (see
-"Evidence"). Two design decisions — **net-zero-per-scene warp** and a
-**nested master timeline** — collapse the original "breaks all consumers'
-arithmetic at once" blast radius to a short, enumerable list.
+Status: **BUILT 2026-07-04.** `timeRamp` is the fifth host-owned contract:
+`engine/timeRamp.ts` (net-zero knot solver, warp/warpInverse, static gate) +
+`templates/sequences-time.v1.js` (island-driven master wrapper at the
+registration seam, injected LAST in `applyDeterministicSourceRepairs`). QA
+converts time bases only at the physical-seek choke points; motionDensity and
+storyboardMoments judge viewer time. Proven by `test/timeRamp.test.ts`,
+`test/timeRamp.browser.test.ts` (seek-order determinism + genuine warp), a
+deterministic ramp in both the fallback film and `film:demo` through the
+`VERIFY_RENDER=1` MP4 gate, and a paid live create. See ROADMAP
+"Speed ramping + shape-match discovery (2026-07-04)". The design below is the
+plan it was built from; where details differ, the code and ROADMAP win.
+
+Original plan (2026-07-03): re-designed after a code + renderer audit and a
+live GLM 5.2 probe (see "Evidence"). Two design decisions —
+**net-zero-per-scene warp** and a **nested master timeline** — collapse the
+original "breaks all consumers' arithmetic at once" blast radius to a short,
+enumerable list.
 
 ## Problem (unchanged)
 

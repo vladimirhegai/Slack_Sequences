@@ -5,6 +5,7 @@ import {
   componentKitStyleTag,
   resolveComponentPlan,
 } from "./componentContract.ts";
+import { TIME_RUNTIME_FILE, resolveTimeRampPlan } from "./timeRamp.ts";
 import type { StoryboardMomentV1 } from "./storyboardMoments.ts";
 import type { DirectCompositionDraft, DirectScene } from "./directComposition.ts";
 
@@ -184,6 +185,21 @@ export function buildFallbackComposition(
           },
         ],
       },
+      // Deterministic speed-ramp proof: a short slow-motion dip as the shipped
+      // value reads on the proof panel (the "proof-reveal" moment sits inside
+      // the hold), repaid before the scene ends. Short films skip it — the
+      // dip needs room to breathe and repay.
+      ...(duration >= 12
+        ? {
+            timeRamp: {
+              version: 1 as const,
+              atSec: r2(proofPanel + 0.05),
+              slowTo: 0.45,
+              holdSec: 0.45,
+              recoverSec: 0.8,
+            },
+          }
+        : {}),
       components: [
         {
           version: 1,
@@ -307,11 +323,13 @@ export function buildFallbackComposition(
   const cut = (value: number): string => Math.max(0, value - 0.01).toFixed(2);
   const cameraIsland = JSON.stringify(resolveCameraPlan(storyboard));
   const componentIsland = JSON.stringify(resolveComponentPlan(storyboard));
+  const timeIsland = JSON.stringify(resolveTimeRampPlan(storyboard));
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=1920, height=1080">
 <title>${product} launch</title><script src="gsap.min.js"></script>
 <script src="${CAMERA_RUNTIME_FILE}"></script>
-<script src="${COMPONENT_RUNTIME_FILE}"></script>${componentKitStyleTag()}${cinemaKitStyleTag()}<style>
+<script src="${COMPONENT_RUNTIME_FILE}"></script>
+<script src="${TIME_RUNTIME_FILE}"></script>${componentKitStyleTag()}${cinemaKitStyleTag()}<style>
 *{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:${bg}}
 body{color:${foreground};font-family:${body},Arial,sans-serif}
 #root{--space-safe:72px;--space-region:64px;--space-element:28px;--surface:${surface};--accent:${accent};--accent-text:${accentText};--text:${foreground};--muted:${muted};position:relative;width:1920px;height:1080px;overflow:hidden;background:radial-gradient(circle at 80% 12%,${surface},${bg} 52%)}
@@ -356,6 +374,7 @@ h1{max-width:11ch;font-size:150px;line-height:.88}h2{max-width:15ch;font-size:92
 </section></main>
 <script type="application/json" id="sequences-camera">${cameraIsland}</script>
 <script type="application/json" id="sequences-components">${componentIsland}</script>
+<script type="application/json" id="sequences-time">${timeIsland}</script>
 <script>
 window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
 tl.set("#fallback-hook",{opacity:1},0).set("#fallback-hook",{opacity:0},${cut(starts[1]!)});
@@ -376,7 +395,7 @@ tl.fromTo("#fallback-close .cta",{y:44,opacity:0},{y:0,opacity:1,duration:.6,eas
 tl.fromTo("#close-promise",{y:18,opacity:0},{y:0,opacity:1,duration:.5,ease:"power3.out"},${closePromise});
 SequencesCamera.compile(tl,document.querySelector("[data-composition-id]"));
 SequencesComponents.compile(tl,document.querySelector("[data-composition-id]"));
-window.__timelines["${compositionId}"]=tl;tl.seek(0);
+var __seqWarped = SequencesTime.wrap(tl); window.__timelines["${compositionId}"]=__seqWarped;tl.seek(0);
 </script></body></html>`;
   return { storyboard, html };
 }
