@@ -68,11 +68,18 @@ export interface MomentContractResult {
 /** Internal beats must land at least this often (plus a short final resolve). */
 export const MAX_MOMENT_INTERVAL_SEC = 2.6;
 export const FINAL_RESOLVE_ALLOWANCE_SEC = 3.25;
+/** Marginal interval overage that never vetoes (see intervalErrors). */
+export const INTERVAL_GRACE_SEC = 0.35;
 /** Evidence search window around a declared moment's atSec. */
 const EVIDENCE_BEFORE_SEC = 0.45;
 const EVIDENCE_AFTER_SEC = 0.75;
 /** Synthesized moments closer than this merge into one reviewable state. */
 const SYNTH_DEDUPE_SEC = 0.35;
+/**
+ * How far an unbound SUPPORTING moment may re-anchor onto same-scene
+ * evidence before its claim stops being honest and it drops instead.
+ */
+const SUPPORTING_REANCHOR_MAX_SEC = 1.5;
 const MAX_MOMENTS = 32;
 
 function round(value: number): number {
@@ -228,7 +235,12 @@ function intervalErrors(
   const errors: string[] = [];
   let cursor = 0;
   for (const time of times) {
-    if (time - cursor > MAX_MOMENT_INTERVAL_SEC) {
+    // Grace below which a marginal interval overage stays silent: two live
+    // probe runs (2026-07-05) burned attempts SOLELY on 2.8-3.0s gaps with no
+    // typed anchor for the top-up to fill — a paid plan must never die over a
+    // rounding-scale miss (the finding text still demands the full grid; the
+    // pacing gate's PACING_TOLERANCE_SEC is the same policy).
+    if (time - cursor > MAX_MOMENT_INTERVAL_SEC + INTERVAL_GRACE_SEC) {
       errors.push(
         `storyboard/moments: no ${label} moment between ${cursor.toFixed(1)}s and ` +
           `${time.toFixed(1)}s (${(time - cursor).toFixed(1)}s) — the viewer gets no ` +
@@ -237,7 +249,7 @@ function intervalErrors(
     }
     cursor = Math.max(cursor, time);
   }
-  if (durationSec - cursor > FINAL_RESOLVE_ALLOWANCE_SEC) {
+  if (durationSec - cursor > FINAL_RESOLVE_ALLOWANCE_SEC + INTERVAL_GRACE_SEC) {
     errors.push(
       `storyboard/moments: the final ${(durationSec - cursor).toFixed(1)}s after the last ` +
         `moment exceeds the short-resolve allowance (${FINAL_RESOLVE_ALLOWANCE_SEC}s); ` +
@@ -368,9 +380,45 @@ export function resolveMomentContract(
   const moments: StoryboardMomentV1[] = [];
   for (const scene of scenes) {
     if (scene.moments?.length) {
+      const sceneEnd = scene.startSec + scene.durationSec;
       for (const moment of scene.moments) {
         const evidence = bindEvidence(moment, activities);
         if (!evidence) {
+          // Degrade-never-veto for author-side paperwork the viewer never
+          // sees: a SUPPORTING moment whose promised second has no evidence
+          // re-anchors onto the nearest activity in its own scene (the
+          // plan-time top-up philosophy applied against the AUTHORED
+          // timeline), or drops with a warning when the scene offers nothing
+          // close enough for its claim to stay honest. Primary moments — and
+          // the floor / dead-interval contracts below — keep their blocking
+          // teeth, so the review contract still bites.
+          if (moment.importance !== "primary") {
+            const nearest = activities
+              .filter((activity) =>
+                activity.startSec >= scene.startSec - 0.05 &&
+                activity.startSec < sceneEnd - 0.02 &&
+                Math.abs(activity.startSec - moment.atSec) <= SUPPORTING_REANCHOR_MAX_SEC
+              )
+              .sort((a, b) =>
+                Math.abs(a.startSec - moment.atSec) - Math.abs(b.startSec - moment.atSec)
+              )[0];
+            if (nearest) {
+              const atSec = round(Math.max(scene.startSec, nearest.startSec));
+              warnings.push(
+                `storyboard/moments: supporting moment "${moment.id}" re-anchored from ` +
+                  `${moment.atSec.toFixed(2)}s to ${atSec.toFixed(2)}s onto authored evidence ` +
+                  `(nothing executable at its promised second)`,
+              );
+              moments.push({ ...moment, atSec, evidence: evidenceOf(nearest) });
+            } else {
+              warnings.push(
+                `storyboard/moments: supporting moment "${moment.id}" ` +
+                  `(${moment.atSec.toFixed(2)}s, "${moment.title}") dropped — scene ` +
+                  `"${scene.id}" has no executable evidence near its promised second`,
+              );
+            }
+            continue;
+          }
           errors.push(
             `storyboard/moments: moment "${moment.id}" (${moment.atSec.toFixed(2)}s, ` +
               `"${moment.title}") has no executable timeline evidence within ` +

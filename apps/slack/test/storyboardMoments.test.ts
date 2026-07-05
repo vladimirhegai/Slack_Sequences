@@ -112,6 +112,28 @@ describe("validatePlannedMoments", () => {
     expect(errors.join("\n")).toContain("no planned moment between");
   });
 
+  it("never vetoes a marginal interval overage (live probes died on 2.8-3.0s gaps)", () => {
+    const grid = (secondAt: number) => [
+      { scene: "signal", times: [0.3, secondAt] },
+      { scene: "proof", times: [5.3, 7.4, 9.5] },
+      { scene: "close", times: [11.6, 13.4] },
+    ].flatMap(({ scene: sceneId, times }, index) =>
+      times.map((atSec, m) => ({ sceneId, atSec, id: `${sceneId}-m${m + 1}`, index }))
+    );
+    const planned = (secondAt: number) => scenes.map((scene) => ({
+      ...scene,
+      moments: grid(secondAt)
+        .filter((entry) => entry.sceneId === scene.id)
+        .map((entry) => moment(scene.id, entry.id, entry.atSec)),
+    }));
+    // 0.3 → 3.2 is a 2.9s gap: 0.3s over the 2.6s cap — inside the grace.
+    expect(validatePlannedMoments(planned(3.2), 15)
+      .filter((error) => error.includes("no planned moment"))).toEqual([]);
+    // 0.3 → 3.5 is a 3.2s gap: past the grace — still blocking.
+    expect(validatePlannedMoments(planned(3.5), 15)
+      .filter((error) => error.includes("no planned moment"))).toHaveLength(1);
+  });
+
   it("accepts a well-spread 15s plan", () => {
     const planned = scenes.map((scene) => ({
       ...scene,
@@ -149,27 +171,78 @@ describe("resolveMomentContract", () => {
     expect(contract.errors).toEqual([]);
   });
 
-  it("reports an unbound moment as a blocking error", () => {
-    // No beat anywhere near 3.9s: the nearest signal activity ends at 2.85s
-    // and the next major (the 5s boundary) starts outside the window.
-    const sparse = `
+  // No beat anywhere near 3.5-4.0s: the nearest signal activity ends at 2.85s
+  // and the next major (the 5s boundary) starts outside the window.
+  const SPARSE_SCRIPT = `
 tl.fromTo("#signal-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .7 }, .2);
 tl.fromTo("#signal-copy", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: .45 }, 2.4);
 tl.fromTo("#proof-title", { x: 80, opacity: 0 }, { x: 0, opacity: 1, duration: .7 }, 5.2);
 tl.fromTo("#close-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .7 }, 10.2);
 `;
-    const declared = scenes.map((scene, index) => ({
-      ...scene,
-      moments: index === 0
-        ? [
-            moment(scene.id, "signal-m1", 0.3),
-            moment(scene.id, "signal-ghost", 3.9),
-          ]
-        : [moment(scene.id, `${scene.id}-m1`, scene.startSec + 0.3)],
-    }));
-    const contract = resolveMomentContract(html(sparse), declared, 15);
+  const sparseDeclared = (ghost: StoryboardMomentV1) => scenes.map((scene, index) => ({
+    ...scene,
+    moments: index === 0
+      ? [moment(scene.id, "signal-m1", 0.3), ghost]
+      : [moment(scene.id, `${scene.id}-m1`, scene.startSec + 0.3)],
+  }));
+
+  it("reports an unbound PRIMARY moment as a blocking error", () => {
+    const contract = resolveMomentContract(
+      html(SPARSE_SCRIPT),
+      sparseDeclared(moment("signal", "signal-ghost", 3.9, { importance: "primary" })),
+      15,
+    );
     expect(contract.errors.join("\n")).toContain('"signal-ghost"');
     expect(contract.errors.join("\n")).toContain("no executable timeline evidence");
+  });
+
+  it("re-anchors an unbound supporting moment onto nearby authored evidence", () => {
+    // 3.5s is outside the bind window of the 2.4s beat but within the
+    // re-anchor reach — the paperwork degrades instead of costing an attempt.
+    const contract = resolveMomentContract(
+      html(SPARSE_SCRIPT),
+      sparseDeclared(moment("signal", "signal-ghost", 3.5)),
+      15,
+    );
+    expect(contract.errors.join("\n")).not.toContain('"signal-ghost"');
+    expect(contract.warnings.join("\n")).toContain('supporting moment "signal-ghost" re-anchored');
+    const ghost = contract.moments.find((entry) => entry.id === "signal-ghost")!;
+    expect(ghost.atSec).toBeCloseTo(2.4, 2);
+    expect(ghost.evidence).toBeDefined();
+  });
+
+  it("drops an unbound supporting moment when its scene offers nothing near it", () => {
+    // A long opening scene whose only activity sits at its entrance (plus the
+    // boundary cut at its far end): 4.0s is a genuine evidence desert — more
+    // than the re-anchor reach from everything.
+    const longScenes: DirectScene[] = [
+      { id: "signal", title: "Signal", purpose: "Open", startSec: 0, durationSec: 8 },
+      { id: "proof", title: "Proof", purpose: "Show", startSec: 8, durationSec: 4 },
+      { id: "close", title: "Close", purpose: "Resolve", startSec: 12, durationSec: 3 },
+    ];
+    const longHtml = `<!doctype html><html><body>
+<main data-composition-id="moments" data-duration="15">
+  <section id="signal" data-scene="signal" data-start="0" data-duration="8"><h1 id="signal-title">A</h1></section>
+  <section id="proof" data-scene="proof" data-start="8" data-duration="4"><h1 id="proof-title">C</h1></section>
+  <section id="close" data-scene="close" data-start="12" data-duration="3"><h1 id="close-title">E</h1></section>
+</main>
+<script>const tl = gsap.timeline({ paused: true });
+tl.fromTo("#signal-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .7 }, .2);
+tl.fromTo("#proof-title", { x: 80, opacity: 0 }, { x: 0, opacity: 1, duration: .7 }, 8.2);
+tl.fromTo("#close-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .7 }, 12.2);
+</script>
+</body></html>`;
+    const declared = longScenes.map((scene, index) => ({
+      ...scene,
+      moments: index === 0
+        ? [moment(scene.id, "signal-m1", 0.3), moment(scene.id, "signal-ghost", 4.0)]
+        : [moment(scene.id, `${scene.id}-m1`, scene.startSec + 0.3)],
+    }));
+    const contract = resolveMomentContract(longHtml, declared, 15);
+    expect(contract.errors.join("\n")).not.toContain('"signal-ghost"');
+    expect(contract.warnings.join("\n")).toContain('supporting moment "signal-ghost"');
+    expect(contract.warnings.join("\n")).toContain("dropped");
+    expect(contract.moments.some((entry) => entry.id === "signal-ghost")).toBe(false);
   });
 
   it("synthesizes moments for legacy storyboards without declared ones", () => {

@@ -9,9 +9,14 @@
  * introducing many assets … not built for the eyes"):
  *
  * 1. Introduced surfaces need development time — a scene that keeps
- *    introducing until its cut gives the viewer nothing to read.
+ *    introducing until its cut gives the viewer nothing to read. This holds
+ *    from ONE introduction up (a lone dense window opened at 90% of the scene
+ *    is unreadable too); the only exemption is a short final resolve card.
  * 2. Text must stay readable for its length before the frame cuts or whips
- *    away.
+ *    away — typed AND swapped-in copy get the word-count floor, and a primary
+ *    moment promising headline copy without a typed beat gets the minimum
+ *    floor. A camera move already in flight when the copy lands counts as an
+ *    immediate framing change (hold = 0), not a free pass.
  * 3. Hold on outcomes longer than actions — the result of a press matters
  *    more than the press.
  * 4. Camera density has a ceiling as well as a floor: today only
@@ -29,6 +34,7 @@
  */
 import { CAMERA_FULL_MOVES } from "./cameraContract.ts";
 import { resolveComponentPlan, type ResolvedComponentBeatV1 } from "./componentContract.ts";
+import { FINAL_RESOLVE_ALLOWANCE_SEC } from "./storyboardMoments.ts";
 import { resolveTimeRampPlan, warpInverseOf } from "./timeRamp.ts";
 import type { DirectScene } from "./directComposition.ts";
 
@@ -125,21 +131,37 @@ export function auditPacing(storyboard: DirectScene[]): string[] {
       );
     }
 
-    // 1. Introduction → development ratio.
+    // 1. Introduction → development ratio. The contract is per scene, not
+    // only multi-surface scenes: ONE dense window opened at 90% of the scene
+    // still needs time to be read. The single narrow exemption is a short
+    // final resolve (a logo/CTA card inside the moment contract's
+    // final-resolve allowance introducing one surface) — that landing late is
+    // the genre's signature, not a defect.
     const introductions = sceneIntroductionTimes(scene);
-    if (introductions.length >= 2) {
+    const isShortFinalResolve =
+      scene === storyboard[storyboard.length - 1] &&
+      scene.durationSec <= FINAL_RESOLVE_ALLOWANCE_SEC &&
+      introductions.length === 1;
+    if (introductions.length >= 1 && !isShortFinalResolve) {
       const lastIntro = introductions[introductions.length - 1]!;
-      const lateCap = scene.startSec + scene.durationSec * LAST_INTRODUCTION_MAX_FRACTION;
+      // The 65% deadline is a viewer-time promise: under a slow-motion ramp
+      // 65% of content time is not 65% of what the viewer experiences, so
+      // both sides of the comparison convert through the warp.
+      const viewerStart = toViewer(scene.startSec);
+      const viewerLength = viewerSpan(scene.startSec, sceneEnd);
+      const viewerIntro = toViewer(lastIntro);
+      const lateCap = viewerStart + viewerLength * LAST_INTRODUCTION_MAX_FRACTION;
+      const introFraction = viewerLength > 0 ? (viewerIntro - viewerStart) / viewerLength : 0;
       const development = viewerSpan(lastIntro, sceneEnd);
       const needed = DEVELOPMENT_SEC_PER_INTRODUCTION * introductions.length;
       if (
-        lastIntro > lateCap + PACING_TOLERANCE_SEC ||
+        viewerIntro > lateCap + PACING_TOLERANCE_SEC ||
         development + PACING_TOLERANCE_SEC < needed
       ) {
         findings.push(
-          `pacing/holds: scene "${scene.id}" introduces ${introductions.length} surfaces with ` +
+          `pacing/holds: scene "${scene.id}" introduces ${introductions.length} surface(s) with ` +
             `the last landing at ${lastIntro.toFixed(1)}s ` +
-            `(${Math.round(((lastIntro - scene.startSec) / scene.durationSec) * 100)}% into the ` +
+            `(${Math.round(introFraction * 100)}% into the ` +
             `scene) and only ${development.toFixed(1)}s of development after it — a viewer ` +
             `needs ~${needed.toFixed(1)}s to read them. Extend the scene, move an ` +
             `introduction earlier (or out), or drop a surface. A hold is not a freeze: ` +
@@ -154,18 +176,24 @@ export function auditPacing(storyboard: DirectScene[]): string[] {
       (scene.components ?? []).map((component) => [component.id, component.kind]),
     );
     // The next framing change after a content beat: the scene's own cut, or
-    // the first full camera move that starts after the beat settles.
+    // the first full camera move that starts after the beat settles. A move
+    // already IN FLIGHT when the beat settles is an immediate framing
+    // conflict (available hold = 0) — the frame is moving through the payoff
+    // even though no later move starts.
     const nextFramingChange = (afterSec: number): number => {
-      const nextMove = fullMoves
-        .map((move) => move.startSec)
-        .filter((startSec) => startSec > afterSec - 0.05)
-        .sort((a, b) => a - b)[0];
-      return nextMove === undefined ? sceneEnd : Math.min(sceneEnd, nextMove);
+      let next = sceneEnd;
+      for (const move of fullMoves) {
+        if (move.startSec + move.durationSec <= afterSec - 0.05) continue;
+        next = Math.min(next, Math.max(afterSec, move.startSec));
+      }
+      return Math.min(sceneEnd, next);
     };
 
     for (const beat of beats) {
-      // 2. Reading-time floor for typed copy.
-      if (beat.kind === "type" && beat.text) {
+      // 2. Reading-time floor for typed/swapped copy — swap re-fills a live
+      // surface with new text the viewer must re-read, so it gets the same
+      // floor as type.
+      if ((beat.kind === "type" || beat.kind === "swap") && beat.text) {
         const wordCount = words(beat.text);
         const needed = Math.min(
           READING_MAX_SEC,
@@ -175,7 +203,8 @@ export function auditPacing(storyboard: DirectScene[]): string[] {
         const available = viewerSpan(beat.endSec, visibleUntil);
         if (available + PACING_TOLERANCE_SEC < needed) {
           findings.push(
-            `pacing/reading: scene "${scene.id}" beat "${beat.id}" finishes typing ` +
+            `pacing/reading: scene "${scene.id}" beat "${beat.id}" ` +
+              `${beat.kind === "swap" ? "swaps in" : "finishes typing"} ` +
               `${wordCount} word(s) at ${beat.endSec.toFixed(1)}s but the framing changes ` +
               `${available.toFixed(1)}s later — that line needs ~${needed.toFixed(1)}s of ` +
               `reading time. Type it earlier, shorten the copy, or push the next ` +
@@ -184,7 +213,7 @@ export function auditPacing(storyboard: DirectScene[]): string[] {
           );
         }
       }
-      // 3. Outcome holds.
+      // 3. Outcome holds (headline-class moments get their own floor below).
       const isToastOpen = beat.kind === "open" && componentKinds.get(beat.component) === "toast";
       if (PAYOFF_BEAT_KINDS.has(beat.kind) || isToastOpen) {
         const holdUntil = nextFramingChange(beat.endSec);
@@ -199,6 +228,37 @@ export function auditPacing(storyboard: DirectScene[]): string[] {
               `settle`,
           );
         }
+      }
+    }
+
+    // 2b. Headline-class moments: a primary moment that PROMISES on-screen
+    // copy (type-on / headline motion intent) but has no typed/swap beat
+    // carrying it — a statically-authored headline — still needs the minimum
+    // reading window before the frame reframes or cuts. Word count is
+    // unknowable at plan time (the copy lives in the authored HTML), so the
+    // floor is READING_MIN_SEC, judged in viewer time like everything else.
+    const copyBeatWindows = beats
+      .filter((beat) => (beat.kind === "type" || beat.kind === "swap") && beat.text)
+      .map((beat) => ({ from: beat.startSec - 0.3, to: beat.endSec + 0.3 }));
+    for (const moment of scene.moments ?? []) {
+      if (moment.importance !== "primary") continue;
+      const intent = moment.motionIntent.toLowerCase();
+      if (!intent.includes("type") && !intent.includes("headline")) continue;
+      // A moment riding a typed beat already got the word-count floor above.
+      if (copyBeatWindows.some((window) => moment.atSec >= window.from && moment.atSec <= window.to)) {
+        continue;
+      }
+      const visibleUntil = nextFramingChange(moment.atSec);
+      const available = viewerSpan(moment.atSec, visibleUntil);
+      if (available + PACING_TOLERANCE_SEC < READING_MIN_SEC) {
+        findings.push(
+          `pacing/reading: scene "${scene.id}" moment "${moment.id}" promises headline copy ` +
+            `("${moment.title}") at ${moment.atSec.toFixed(1)}s but the framing changes ` +
+            `${available.toFixed(1)}s later — a headline needs >=${READING_MIN_SEC.toFixed(1)}s ` +
+            `on screen. Land it earlier or push the next cut/camera move later (hold ≠ ` +
+            `freeze: a count/progress beat may develop the frame while the copy stays ` +
+            `readable)`,
+        );
       }
     }
   }

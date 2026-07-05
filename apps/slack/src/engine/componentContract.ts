@@ -1170,6 +1170,10 @@ export function componentAuthoringReference(kinds?: Iterable<ComponentKind>): st
     "final numbers, final bar heights); the runtime animates toward it. States",
     "are data-state/data-active attributes the runtime flips. A morph target",
     "starts hidden by the runtime; do not author an entrance for it.",
+    "A `rows` or `stream` beat reveals EXISTING children: author at least 3",
+    ".cmp-row / .cmp-item / .cmp-card / .cmp-msg children inside that target",
+    "yourself — a rows beat on a childless container has nothing to reveal and",
+    "aborts the compile.",
     "",
     ...specs.map((spec) => `**${spec.kind}** \`${spec.markup}\``),
   ].join("\n");

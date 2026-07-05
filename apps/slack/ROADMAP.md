@@ -1012,6 +1012,104 @@ moment) belong to WS4/WS6/WS7, not this pass. `eye_trace_jump` therefore
 ships **blocking by default** with `SLACK_SEQUENCES_EYE_TRACE=audit` as the
 observation lever.
 
+### WS audit fixes + fallback-elimination levers (2026-07-05)
+
+The WS_Improvements.md follow-ups and the LESS_FALLBACKS.md levers landed in
+one pass (both docs carry a STATUS block naming what shipped and the small
+deliberate deltas from their specs).
+
+**Pacing/eye-trace bug fixes (WS3/WS2 hardening).** `auditPacing` now judges
+single-surface scenes (one dense window opened at 90% of a scene was
+invisible to the hold gate; the only exemption is a short final resolve card
+inside the moment contract's allowance), treats a camera move already IN
+FLIGHT at a payoff/typed-copy settle as an immediate framing conflict
+(hold = 0), gives swapped-in copy the same word-count reading floor as typed
+copy, floors primary `type-on`/headline moments without a typed beat at
+READING_MIN_SEC, and converts the 65% introduction deadline through viewer
+time (a ramp test proves a content-time-legal/viewer-time-late plan now
+fires). Storyboard cache contract v8→v9. Eye-trace measurement bugs:
+`measureBoundaryParts` measures declared attention/focal targets FIRST so
+the 16-part cap can never drop the gaze target in a dense scene; the
+boundary inventory samples the outgoing side before the declared cut exit
+begins (`atSec − max(0.15, exitSec + 0.1)`); ping-pong samples each target
+just after ITS OWN beat (two cached seeks per pair, same six-pair budget)
+and judges/report its window in viewer time. WS5: final-scene camera
+landings get a compact-resolve tier (`SPARSE_COVERAGE_MIN_FINAL` 8% — the
+2% improve-ws15-1 disaster still fails, a deliberate badge+CTA resolve
+passes) and the landing path skips zero-coverage frames like the static
+path (near-blank owns fully-empty). New: framed-content containment is
+re-checked at each PRIMARY moment's capture time against the framing that
+holds there (the m08-m4-land "stat card cropped at its own moment" class),
+double-sampled, deduped against landing findings. `QA_CACHE_VERSION` 5→6.
+WS1: the hint-mismatch degrade fires only on the last attempt of the LAST
+rung (the rescue model now gets its shot at saving a premium morph), and the
+plan-time degrade preserves authored travelPx/exitSec/entrySec like the
+QA-time rewrite. All repair feedback (static + browser) is deduped by
+`findingSignature` before the 20-item slice, keeping the most detailed
+encoding per signature; `browserQualityPenalty` weights
+`camera_framed_clipped` 10 and `camera_framed_sparse`/`cut_degraded`/
+`eye_trace_jump` 6 so the least-bad-draft pick prefers films without the
+operator-visible "messy" classes (the WS6 shipping-policy slice).
+
+**Fallback-elimination levers (LESS_FALLBACKS 1–10).** The #1 paid-attempt
+waster is now a free repair: `topUpRowsMarkup` (inside
+`applyDeterministicSourceRepairs`) injects three neutral kind-appropriate
+kit children into a `rows` target that exists but has nothing revealable
+(exactly-one-root + zero-revealable-children only; ambiguity stays a
+finding), and the component authoring reference demands ≥3 authored
+children. The author ladder never ends on a blind compact patch: the final
+attempt forces a full-context re-author when no browser-valid draft is
+banked, and when the primary model exhausts all attempts one full-context
+rescue attempt runs on an independent model
+(`SLACK_SEQUENCES_SOURCE_RESCUE_MODEL`, default `tencent/hy3-preview`,
+`none` disables; publishes on the objective browser-ok boundary) before any
+fallback. The patch applier validates inline-script syntax per patch
+(mirroring the vendored lint's `new Function` check) and reverts only the
+breaking edit instead of losing the attempt. Models never spend attempts on
+mechanics the host owns: storyboard parse re-bases every `startSec`
+sequentially from accumulated durations and clamps durations into 1.5–15s,
+the locked-storyboard author prompt hands over the exact
+`<section data-scene …>` skeleton to copy verbatim, and support-map beat
+violations (`type` on a list, `rows` on a stat-card) degrade at parse to
+the nearest supported analog (text→universal `swap`, rows→`count` where the
+kind counts, else `highlight`) unless a declared moment anchors inside the
+beat window — load-bearing beats keep the blocking finding. Storyboard
+truncation recovery keeps the configured reasoning (reasoning-stripped GLM
+recovery produced structurally broken plans 3/4) and instead demands a
+smaller artifact in the prompt. Planning artifacts (concept/shape/
+storyboard) mirror into a shared `.data/planning-cache/` keyed by
+brief+contract so a fresh job id after a source failure never re-pays the
+plan (`SLACK_SEQUENCES_SHARED_PLANNING_CACHE=0` opts out). Author-side
+moment paperwork is degrade-never-veto: an unbound SUPPORTING moment
+re-anchors onto same-scene evidence within 1.5s or drops with a warning;
+primaries, the floor, and dead-interval contracts keep their teeth. (Lever
+7 — the on-brand fallback film — was already implemented: `frameColor`/
+`frameFont` have fed it the per-job palette and fonts since the frame
+system landed.)
+
+**Live-probe lesson → plan-stage convergence (same day).** Two paid probes
+(fix-ws-probe-1b morph brief, fix-ws-probe-2 dense component brief, fallback
+disabled) both died at `storyboard-plan` after 3 primary + 2 rescue
+attempts, and the artifacts showed the same two killers across 10 attempts:
+marginal dead intervals (2.8–3.0s gaps vetoing against the 2.6s cap with no
+typed anchor for the top-up) and pacing whack-a-mole (each retry REDESIGNS
+the storyboard, fixing old findings and minting new marginal ones — both
+models). Per the plan's own rule ("a repair loop failing 3× on one finding
+means suspect the finding"): the interval veto now carries the same 0.35s
+grace as the pacing gate (`INTERVAL_GRACE_SEC`; finding text still demands
+the full grid), and `pacing/*` findings stay fully blocking for the primary
+rung's first two attempts, then degrade to logged advisories from its final
+attempt onward (including rescue attempts) — a plan clean except for
+pacing ships instead of triggering the far-worse deterministic fallback
+(`degradePacingFindings` in `parseStoryboardResponse`). Browser-side gates
+still own visual quality. Proof: `pacingAudit.test.ts`, `eyeTrace.test.ts`,
+`authorReliability.test.ts` (rows top-up, feedback dedupe, timing-preserving
+degrade), `directComposition.test.ts` (rescue rung, final-attempt policy,
+per-patch revert, beat degrade, timing re-base via parse, shared cache,
+pacing degrade-not-veto), `storyboardMoments.test.ts` (re-anchor/drop vs
+primary blocking, interval grace); full suite 435 tests green, `film:demo`
++ demo `sequence:check` clean.
+
 ---
 
 ## Current Architecture

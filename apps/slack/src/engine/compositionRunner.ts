@@ -77,6 +77,7 @@ import {
   normalizeStoryboardComponentBeats,
   normalizeStoryboardComponents,
   resolveComponentPlan,
+  type ComponentBeatKind,
   type ComponentKind,
 } from "./componentContract.ts";
 import {
@@ -94,6 +95,8 @@ import {
   creativeThinkingMode,
   lightModel,
   productionModel,
+  sourceRescueModel,
+  sourceRescueThinkingMode,
   storyboardRescueModel,
   thinkingOverride,
 } from "./modelPolicy.ts";
@@ -1275,6 +1278,80 @@ function normalizeGsapDisplayVisibilityTweens(source: string): { html: string; r
   return { html: html + source.slice(cursor), repairs };
 }
 
+/** Kit child classes the component runtime's childItems() reveals. */
+const REVEALABLE_CHILD_CLASS =
+  /\bclass\s*=\s*(["'])[^"']*\bcmp-(?:row|item|card|msg)\b[^"']*\1/i;
+
+/** The kind-appropriate revealable child class for a rows-markup top-up. */
+function rowsChildMarkup(kind: string | undefined, index: number): string {
+  if (kind === "kanban") return `<div class="cmp-card material">Card ${index}</div>`;
+  if (kind === "chat") return `<div class="cmp-msg">Message ${index}</div>`;
+  if (kind === "table") {
+    return `<div class="cmp-row"><span>Row ${index}</span><span class="cmp-chip">ok</span></div>`;
+  }
+  return `<div class="cmp-item">Item ${index}</div>`;
+}
+
+/**
+ * Deterministic rows-markup top-up (fallback-elimination lever): a `rows`
+ * beat whose target root exists but has NO revealable children was the
+ * single biggest waster of paid author attempts (3 of 5 recorded live runs)
+ * — the runtime's childItems() finds nothing, the bind aborts the compile,
+ * and a whole model retry is spent on paperwork the kit owns. Inject three
+ * neutral kind-appropriate children host-side instead; the beat reveals
+ * them, the author already styled the container. Only the mechanically
+ * certain case is repaired: exactly one candidate root, zero revealable
+ * children anywhere inside it. `kitMarkupAudit` keeps the same check for
+ * whatever this pass cannot prove.
+ */
+export function topUpRowsMarkup(
+  html: string,
+  scenes: DirectScene[],
+): { html: string; repaired: string[] } {
+  const repaired: string[] = [];
+  const targets = new Map<string, string | undefined>();
+  for (const scene of scenes) {
+    const kinds = new Map((scene.components ?? []).map((entry) => [entry.id, entry.kind]));
+    for (const beat of scene.beats ?? []) {
+      if (beat.kind === "rows") targets.set(beat.component, kinds.get(beat.component));
+    }
+  }
+  for (const [component, kind] of targets) {
+    const openPattern = new RegExp(
+      `<([a-z][\\w-]*)\\b[^>]*\\bdata-part\\s*=\\s*(["'])${regexpEscape(component)}\\2[^>]*>`,
+      "gi",
+    );
+    const opens = [...html.matchAll(openPattern)];
+    if (opens.length !== 1) continue;
+    const open = opens[0]!;
+    const tag = open[1]!.toLowerCase();
+    const contentStart = (open.index ?? 0) + open[0].length;
+    // Depth-scan for the matching close tag of the root element.
+    const walker = new RegExp(`<${tag}\\b[^>]*>|</${tag}\\s*>`, "gi");
+    walker.lastIndex = contentStart;
+    let depth = 1;
+    let contentEnd = -1;
+    for (let step = walker.exec(html); step; step = walker.exec(html)) {
+      if (step[0].startsWith("</")) {
+        depth -= 1;
+        if (depth === 0) {
+          contentEnd = step.index;
+          break;
+        }
+      } else if (!/\/>$/.test(step[0])) {
+        depth += 1;
+      }
+    }
+    if (contentEnd < 0) continue;
+    const content = html.slice(contentStart, contentEnd);
+    if (REVEALABLE_CHILD_CLASS.test(content)) continue;
+    const rows = [1, 2, 3].map((index) => rowsChildMarkup(kind, index)).join("\n");
+    html = `${html.slice(0, contentEnd)}\n${rows}\n${html.slice(contentEnd)}`;
+    repaired.push(component);
+  }
+  return { html, repaired };
+}
+
 function normalizeJsonIsland(
   source: string,
   id: string,
@@ -1584,6 +1661,19 @@ export function applyDeterministicSourceRepairs(
       html = contractBindings.html;
       process.stderr.write(
         `[author] reconciled ${contractBindings.repairs} cut/camera contract binding(s)\n`,
+      );
+    }
+  }
+  // A rows beat with nothing to reveal is mechanically recoverable paperwork:
+  // the kit owns component structure, so childless rows targets get neutral
+  // kit children injected instead of consuming a paid repair attempt.
+  {
+    const rowsTopUp = topUpRowsMarkup(html, lockedStoryboard ?? draft.storyboard);
+    if (rowsTopUp.repaired.length) {
+      html = rowsTopUp.html;
+      process.stderr.write(
+        `[author] injected neutral revealable children for childless rows target(s): ` +
+          `${rowsTopUp.repaired.join(", ")}\n`,
       );
     }
   }
@@ -2218,16 +2308,36 @@ function parseStoryboard(raw: string): DirectScene[] {
     throw new Error(`storyboard_json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!Array.isArray(value)) throw new Error("storyboard_json must be an array");
+  // Host-owned scene-timing arithmetic: shots are contiguous BY CONSTRUCTION.
+  // Models routinely fumble the startSec addition (a live rescue attempt died
+  // solely on "shot must start at 2.70s" findings), so every startSec is
+  // re-based sequentially from the accumulated durations and each duration is
+  // clamped into the contract range — a model never spends a paid attempt on
+  // addition the host can do.
+  let rebasedCursor = 0;
   const scenes = value.map((item, index) => {
     if (!item || typeof item !== "object") throw new Error(`storyboard_json[${index}] must be an object`);
     const scene = item as Record<string, unknown>;
     const id = typeof scene.id === "string" ? scene.id.trim() : "";
     const title = typeof scene.title === "string" ? scene.title.trim() : "";
     const purpose = typeof scene.purpose === "string" ? scene.purpose.trim() : "";
-    const startSec = Number(scene.startSec);
-    const durationSec = Number(scene.durationSec);
-    if (!id || !title || !purpose || !Number.isFinite(startSec) || !Number.isFinite(durationSec)) {
+    const authoredStart = Number(scene.startSec);
+    const authoredDuration = Number(scene.durationSec);
+    if (!id || !title || !purpose || !Number.isFinite(authoredStart) || !Number.isFinite(authoredDuration)) {
       throw new Error(`storyboard_json[${index}] is missing id/title/purpose/finite timing`);
+    }
+    const durationSec = Math.round(Math.min(15, Math.max(1.5, authoredDuration)) * 100) / 100;
+    const startSec = rebasedCursor;
+    rebasedCursor = Math.round((rebasedCursor + durationSec) * 100) / 100;
+    if (
+      Math.abs(authoredStart - startSec) > 0.05 ||
+      Math.abs(authoredDuration - durationSec) > 0.001
+    ) {
+      process.stderr.write(
+        `[storyboard] re-based shot "${id}" timing: ` +
+          `${authoredStart.toFixed(2)}s/${authoredDuration.toFixed(2)}s -> ` +
+          `${startSec.toFixed(2)}s/${durationSec.toFixed(2)}s (host-owned arithmetic)\n`,
+      );
     }
     const spatialIntent = normalizeStoryboardSpatialIntent(scene.spatialIntent);
     const cut = normalizeStoryboardCutIntent(scene.cut);
@@ -2633,11 +2743,66 @@ export function degradeMismatchedShapeHintCuts(
     degraded.push(`${scene.id}->${next.id} (${cut.shapeOut}->${cut.shapeIn})`);
     return {
       ...scene,
-      cut: { version: 1 as const, style: "zoom-through" as const },
+      // Keep any authored boundary timing so the executed window stays put —
+      // the same policy as the QA-time rewrite (rewriteDegradedCutStoryboard);
+      // only the style and its focal/hint paperwork change.
+      cut: {
+        version: 1 as const,
+        style: "zoom-through" as const,
+        ...(cut.travelPx !== undefined ? { travelPx: cut.travelPx } : {}),
+        ...(cut.exitSec !== undefined ? { exitSec: cut.exitSec } : {}),
+        ...(cut.entrySec !== undefined ? { entrySec: cut.entrySec } : {}),
+      },
       outgoingCut:
         `Zoom-through into the next shot (a declared shape-match with non-rhyming ` +
         `silhouette hints ${cut.shapeOut}->${cut.shapeIn} was degraded at plan time).`,
     };
+  });
+  return { scenes, degraded };
+}
+
+/**
+ * Degrade support-map beat violations at parse instead of vetoing the plan
+ * (fallback-elimination lever): the planner keeps reaching for a reasonable
+ * beat on the wrong component kind (`type` on a list, `rows` on a stat-card)
+ * and two live attempts burned SOLELY on those findings. Convert the beat to
+ * the nearest supported analog — text arrivals become a universal `swap`,
+ * `rows` becomes `count` where the kind counts, anything else becomes a
+ * universal `highlight` pulse — mechanically recoverable paperwork never
+ * consumes a paid retry. A LOAD-BEARING beat (a declared moment anchors
+ * inside its window) keeps the blocking finding instead: silently changing
+ * evidence a moment binds to would corrupt the review contract.
+ */
+export function degradeUnsupportedComponentBeats(
+  storyboard: DirectScene[],
+): { scenes: DirectScene[]; degraded: string[] } {
+  const degraded: string[] = [];
+  const scenes = storyboard.map((scene) => {
+    const kinds = new Map((scene.components ?? []).map((entry) => [entry.id, entry.kind]));
+    if (!scene.beats?.length || !kinds.size) return scene;
+    const beats = scene.beats.map((beat) => {
+      const kind = kinds.get(beat.component);
+      if (!kind || componentSupportsBeat(kind, beat.kind)) return beat;
+      const windowEnd = beat.atSec + (beat.durationSec ?? 1.2) + 0.35;
+      const loadBearing = (scene.moments ?? []).some((moment) =>
+        moment.atSec >= beat.atSec - 0.35 && moment.atSec <= windowEnd
+      );
+      if (loadBearing) return beat;
+      const analog: ComponentBeatKind =
+        (beat.kind === "type" || beat.kind === "stream") && beat.text
+          ? "swap"
+          : beat.kind === "rows" &&
+              typeof beat.value === "number" &&
+              componentSupportsBeat(kind, "count")
+            ? "count"
+            : "highlight";
+      degraded.push(
+        `scene "${scene.id}" beat "${beat.id}": "${beat.kind}" is unsupported on a ` +
+          `${kind} component — degraded to "${analog}"`,
+      );
+      return { ...beat, kind: analog };
+    });
+    return { ...scene, beats };
   });
   return { scenes, degraded };
 }
@@ -2692,7 +2857,11 @@ export function dropUnusableVolunteeredTimeRamps(storyboard: DirectScene[]): Dir
 export function parseStoryboardResponse(
   raw: string,
   requirements: StoryboardPlanRequirements = {},
-  options: { degradeShapeHintMismatches?: boolean } = {},
+  options: {
+    degradeShapeHintMismatches?: boolean;
+    /** Accept pacing/* findings as advisories instead of vetoes (late attempts). */
+    degradePacingFindings?: boolean;
+  } = {},
 ): DirectScene[] {
   const knownCapabilities = new Set(
     loadCapabilityIndex().capabilities.map((capability) => capability.id),
@@ -2707,6 +2876,16 @@ export function parseStoryboardResponse(
   // vetoing the plan. Brief-demanded ramps keep their blocking findings.
   if (!requirements.requireTimeRamp) {
     storyboard = dropUnusableVolunteeredTimeRamps(storyboard);
+  }
+  // Support-map beat violations degrade to the nearest supported analog
+  // (load-bearing beats keep their blocking finding) — see
+  // degradeUnsupportedComponentBeats.
+  const beatDegradation = degradeUnsupportedComponentBeats(storyboard);
+  if (beatDegradation.degraded.length) {
+    storyboard = beatDegradation.scenes;
+    for (const line of beatDegradation.degraded) {
+      process.stderr.write(`[storyboard] ${line}\n`);
+    }
   }
   // Early attempts keep the hint-mismatch finding blocking so a cheap
   // findings-retry fixes the pair; the FINAL attempt degrades a volunteered
@@ -2744,7 +2923,28 @@ export function parseStoryboardResponse(
         `${topped.added.map((moment) => `${moment.id}@${moment.atSec.toFixed(1)}s`).join(", ")}\n`,
     );
   }
-  const errors = validateStoryboardPlan(storyboard, requirements);
+  let errors = validateStoryboardPlan(storyboard, requirements);
+  // Degrade-never-veto for pacing on LATE attempts: pacing findings are
+  // polish-grade (they never abort a compile or ship a dead film), and two
+  // live probes (2026-07-05) showed both planner models playing whack-a-mole
+  // with marginal holds across every retry — each attempt redesigns the
+  // storyboard, fixes the old findings, and mints new marginal ones, until
+  // the run dies at plan time over a rushed toast while triggering the far
+  // worse deterministic fallback. Attempts 1-2 keep full blocking pressure
+  // (the findings-retry is still the delivery mechanism); from the primary
+  // rung's final attempt onward a plan that is clean EXCEPT for pacing ships
+  // with the findings logged as advisories.
+  if (options.degradePacingFindings) {
+    const pacing = errors.filter((finding) => finding.startsWith("pacing/"));
+    if (pacing.length) {
+      errors = errors.filter((finding) => !finding.startsWith("pacing/"));
+      for (const line of pacing) {
+        process.stderr.write(
+          `[storyboard] pacing finding accepted as advisory on a final attempt: ${line}\n`,
+        );
+      }
+    }
+  }
   if (errors.length) throw new Error(`invalid storyboard plan: ${errors.join("; ")}`);
   return storyboard;
 }
@@ -2830,6 +3030,65 @@ export async function requestConceptDirection(
   // Operator kill-switch: the concept pass is a taste enhancement, and some
   // deployments (or deterministic tests) run the storyboard pass directly.
   if (process.env.SLACK_SEQUENCES_CONCEPT_PASS === "0") return undefined;
+  return requestConceptDirectionUncached(provider, args);
+}
+
+/**
+ * Planning artifacts (concept / shape hint / storyboard) are already cached
+ * per job dir, but job dirs are immutable — a fresh --job-id retry after a
+ * SOURCE failure re-paid frame+concept+shape+storyboard for nothing. The keys
+ * derive from brief + contract version (never the job id), so a sibling
+ * shared cache dir lets a retry (or a user immediately re-running a failed
+ * create) reuse the already-paid, already-validated plan.
+ * SLACK_SEQUENCES_SHARED_PLANNING_CACHE=0 opts out.
+ */
+function sharedPlanningCacheFile(
+  projectDir: string,
+  artifact: string,
+  key: string,
+): string | undefined {
+  if (process.env.SLACK_SEQUENCES_SHARED_PLANNING_CACHE === "0") return undefined;
+  const root = path.join(path.dirname(path.dirname(path.resolve(projectDir))), "planning-cache");
+  return path.join(root, `${artifact}-${key.slice(0, 32)}.json`);
+}
+
+/** Read one {version:1, key, …payload} planning artifact; undefined on any mismatch. */
+function readPlanningArtifact(
+  file: string | undefined,
+  key: string,
+): Record<string, unknown> | undefined {
+  if (!file || !fs.existsSync(file)) return undefined;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    if (parsed.version === 1 && parsed.key === key) return parsed;
+  } catch {
+    // A partial cache from an interrupted write is simply a miss.
+  }
+  return undefined;
+}
+
+/** Best-effort atomic planning-artifact write; cache bookkeeping never breaks a build. */
+function writePlanningArtifact(file: string | undefined, payload: object): void {
+  if (!file) return;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temporary = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(payload, null, 2) + "\n", "utf8");
+    fs.renameSync(temporary, file);
+  } catch {
+    // Diagnostics only.
+  }
+}
+
+async function requestConceptDirectionUncached(
+  provider: AgentProvider,
+  args: {
+    brief: string;
+    projectDir: string;
+    frameMd?: string;
+    options?: CompleteOptions;
+  },
+): Promise<ConceptDirection | undefined> {
   const model = storyboardModel(provider);
   const thinkingMode = creativeThinkingMode(provider, model);
   const cacheKey = createHash("sha256").update(JSON.stringify({
@@ -2841,18 +3100,17 @@ export async function requestConceptDirection(
   })).digest("hex");
   const planningDir = path.join(args.projectDir, "planning");
   const cacheFile = path.join(planningDir, "concept.json");
-  if (fs.existsSync(cacheFile)) {
-    try {
-      const cached = JSON.parse(fs.readFileSync(cacheFile, "utf8")) as {
-        version?: number;
-        key?: string;
-        concept?: ConceptDirection;
-      };
-      if (cached.version === 1 && cached.key === cacheKey && cached.concept) {
-        return cached.concept;
+  const sharedFile = sharedPlanningCacheFile(args.projectDir, "concept", cacheKey);
+  for (const candidate of [cacheFile, sharedFile]) {
+    const cached = readPlanningArtifact(candidate, cacheKey) as
+      | { concept?: ConceptDirection }
+      | undefined;
+    if (cached?.concept) {
+      if (candidate === sharedFile) {
+        process.stderr.write("[concept] reusing already-paid concept from the shared planning cache\n");
+        writePlanningArtifact(cacheFile, { version: 1, key: cacheKey, concept: cached.concept });
       }
-    } catch {
-      // A partial cache from an interrupted write is ignored and replaced.
+      return cached.concept;
     }
   }
   const structuredOutput = supportsStructuredOutputs(provider);
@@ -2899,14 +3157,8 @@ export async function requestConceptDirection(
       process.stderr.write("[concept] response was not a valid concept artifact; continuing without one\n");
       return undefined;
     }
-    fs.mkdirSync(planningDir, { recursive: true });
-    const temporary = `${cacheFile}.${process.pid}.tmp`;
-    fs.writeFileSync(
-      temporary,
-      JSON.stringify({ version: 1, key: cacheKey, concept }, null, 2) + "\n",
-      "utf8",
-    );
-    fs.renameSync(temporary, cacheFile);
+    writePlanningArtifact(cacheFile, { version: 1, key: cacheKey, concept });
+    writePlanningArtifact(sharedFile, { version: 1, key: cacheKey, concept });
     return concept;
   } catch (error) {
     process.stderr.write(
@@ -3022,19 +3274,19 @@ export async function requestStoryboardShape(
   })).digest("hex");
   const planningDir = path.join(args.projectDir, "planning");
   const cacheFile = path.join(planningDir, "shape.json");
-  if (fs.existsSync(cacheFile)) {
-    try {
-      const cached = JSON.parse(fs.readFileSync(cacheFile, "utf8")) as {
-        version?: number;
-        key?: string;
-        hint?: { shape?: string; why?: string };
-      };
-      if (cached.version === 1 && cached.key === cacheKey && cached.hint?.shape) {
-        const shape = STORYBOARD_SHAPES.find((entry) => entry.id === cached.hint!.shape);
-        if (shape) return { shape, why: cached.hint.why ?? "" };
+  const sharedFile = sharedPlanningCacheFile(args.projectDir, "shape", cacheKey);
+  for (const candidate of [cacheFile, sharedFile]) {
+    const cached = readPlanningArtifact(candidate, cacheKey) as
+      | { hint?: { shape?: string; why?: string } }
+      | undefined;
+    if (cached?.hint?.shape) {
+      const shape = STORYBOARD_SHAPES.find((entry) => entry.id === cached.hint!.shape);
+      if (shape) {
+        if (candidate === sharedFile) {
+          writePlanningArtifact(cacheFile, { version: 1, key: cacheKey, hint: cached.hint });
+        }
+        return { shape, why: cached.hint.why ?? "" };
       }
-    } catch {
-      // A partial cache from an interrupted write is ignored and replaced.
     }
   }
   const prompt = [
@@ -3063,18 +3315,9 @@ export async function requestStoryboardShape(
       process.stderr.write("[shape] selector response was not a valid template pick; continuing without a shape hint\n");
       return undefined;
     }
-    fs.mkdirSync(planningDir, { recursive: true });
-    const temporary = `${cacheFile}.${process.pid}.tmp`;
-    fs.writeFileSync(
-      temporary,
-      JSON.stringify(
-        { version: 1, key: cacheKey, hint: { shape: hint.shape.id, why: hint.why } },
-        null,
-        2,
-      ) + "\n",
-      "utf8",
-    );
-    fs.renameSync(temporary, cacheFile);
+    const payload = { version: 1, key: cacheKey, hint: { shape: hint.shape.id, why: hint.why } };
+    writePlanningArtifact(cacheFile, payload);
+    writePlanningArtifact(sharedFile, payload);
     process.stderr.write(`[shape] selected "${hint.shape.id}"${hint.why ? ` — ${hint.why}` : ""}\n`);
     return hint;
   } catch (error) {
@@ -3193,8 +3436,11 @@ export async function requestStoryboardPlan(
     // v5: shape-match cuts + orbit/rack-focus camera vocabulary; v6: timeRamp
     // speed-ramping dips; v7: depth3d level-2 camera depth; v8:
     // hold-what-matters pacing audits — reading floors, outcome holds,
-    // introduction development, camera budget).
-    contract: 8,
+    // introduction development, camera budget; v9: pacing bugfixes — single-
+    // introduction holds, in-flight camera conflicts, headline/swap reading
+    // floors, viewer-time deadline — plus host-owned timing re-base and
+    // unsupported-beat degrade at parse).
+    contract: 9,
     provider: provider.id,
     model: model ?? null,
     brief: args.brief,
@@ -3207,19 +3453,26 @@ export async function requestStoryboardPlan(
   })).digest("hex");
   const planningDir = path.join(args.projectDir, "planning");
   const cacheFile = path.join(planningDir, "storyboard.json");
-  if (fs.existsSync(cacheFile)) {
-    try {
-      const cached = JSON.parse(fs.readFileSync(cacheFile, "utf8")) as {
-        version?: number;
-        key?: string;
-        storyboard?: DirectScene[];
-      };
-      if (cached.version === 1 && cached.key === cacheKey && cached.storyboard) {
-        const errors = validateStoryboardPlan(cached.storyboard, requirements);
-        if (!errors.length) return cached.storyboard;
+  const sharedFile = sharedPlanningCacheFile(args.projectDir, "storyboard", cacheKey);
+  for (const candidate of [cacheFile, sharedFile]) {
+    const cached = readPlanningArtifact(candidate, cacheKey) as
+      | { storyboard?: DirectScene[] }
+      | undefined;
+    if (cached?.storyboard) {
+      const errors = validateStoryboardPlan(cached.storyboard, requirements);
+      if (!errors.length) {
+        if (candidate === sharedFile) {
+          process.stderr.write(
+            "[storyboard] reusing already-paid storyboard from the shared planning cache\n",
+          );
+          writePlanningArtifact(cacheFile, {
+            version: 1,
+            key: cacheKey,
+            storyboard: cached.storyboard,
+          });
+        }
+        return cached.storyboard;
       }
-    } catch {
-      // A partial cache from an interrupted write is ignored and replaced.
     }
   }
   const basePrompt = [
@@ -3554,49 +3807,59 @@ export async function requestStoryboardPlan(
     attempts: for (let attempt = 1; attempt <= rung.maxAttempts; attempt += 1) {
       totalAttempts += 1;
       if (args.attempts) args.attempts.count = totalAttempts;
-      const prompt = !lastValidationError
-        ? basePrompt
-        : [
-            basePrompt,
-            "",
-            "## Previous attempt rejected",
-            "Deterministic validation rejected the previous storyboard. Fix every",
-            "finding below and return a corrected, complete storyboard:",
-            ...lastValidationError.message
-              .replace(/^invalid storyboard plan:\s*/i, "")
-              .split("; ")
-              .slice(0, 16)
-              .map((finding) => `- ${finding}`),
-          ].join("\n");
+      const prompt = [
+        basePrompt,
+        ...(lastValidationError
+          ? [
+              "",
+              "## Previous attempt rejected",
+              "Deterministic validation rejected the previous storyboard. Fix every",
+              "finding below and return a corrected, complete storyboard:",
+              ...lastValidationError.message
+                .replace(/^invalid storyboard plan:\s*/i, "")
+                .split("; ")
+                .slice(0, 16)
+                .map((finding) => `- ${finding}`),
+            ]
+          : []),
+        ...(recoveringFromTruncation
+          ? [
+              "",
+              "## Previous attempt exhausted its output budget",
+              "The last response was truncated at the completion limit. Keep your",
+              "reasoning, but return a SMALLER artifact: plan fewer shots (stay near",
+              "the storyboard minimum), keep every title/purpose/idea string terse,",
+              "declare only the moments/beats the contract requires, and emit the",
+              "storyboard as compact single-line JSON with no prose around it.",
+            ]
+          : []),
+      ].join("\n");
       let raw: string;
       try {
-        // Only TRUNCATION recovery strips reasoning to protect the completion
-        // budget. Validation-rejection retries keep the configured reasoning:
-        // the 2026-07-03 experiment matrix showed reasoning-stripped GLM retries
-        // failing the moment grid in 3 of 4 runs, while every passing storyboard
-        // landed on a full-reasoning attempt.
-        const recoveryPass = recoveringFromTruncation;
-        const downgraded: CompleteOptions["thinkingMode"] =
-          recoveryPass && rung.thinkingMode !== "none"
-            ? "none"
-            : rung.thinkingMode;
+        // Truncation recovery NEVER strips reasoning: the 2026-07-03
+        // experiment matrix showed reasoning-stripped GLM retries failing the
+        // moment grid in 3 of 4 runs, and the improve-ws32-1 probe burned two
+        // attempts on structurally broken reasoning-stripped recovery plans.
+        // The budget is protected by demanding a smaller ARTIFACT (prompt
+        // section above); a rung that keeps truncating hands over to the
+        // independent rescue rung instead of degrading its own planning.
         const attemptThinkingMode =
-          reasoningFloor && downgraded === "none" ? reasoningFloor : downgraded;
-        const attemptMaxTokens = recoveryPass && rung.thinkingMode !== "none"
-          ? Math.min(rungMaxTokens, 8_192)
-          : rungMaxTokens;
+          reasoningFloor && rung.thinkingMode === "none"
+            ? reasoningFloor
+            : rung.thinkingMode;
         process.stderr.write(
           `[storyboard] attempt ${totalAttempts} (${rung.label} ${attempt}/${rung.maxAttempts}) · ` +
             `${rung.model ? `model ${rung.model}` : "provider primary model"} · ` +
-            `reasoning ${attemptThinkingMode} · max ${attemptMaxTokens} tokens\n`,
+            `reasoning ${attemptThinkingMode} · max ${rungMaxTokens} tokens` +
+            `${recoveringFromTruncation ? " · compact-artifact recovery" : ""}\n`,
         );
         raw = await completeReasoningWithRetry(provider, prompt, {
           ...args.options,
           // A reasoning storyboard pass on a loaded provider can run long; give it more
           // wall-clock headroom than a plain chat call, and let completeWithRetry absorb
           // a transient stall instead of failing the whole build on the first abort.
-          timeoutMs: recoveryPass ? 120_000 : 360_000,
-          maxTokens: attemptMaxTokens,
+          timeoutMs: 360_000,
+          maxTokens: rungMaxTokens,
           // GLM's budget includes reasoning plus the compact JSON artifact; use
           // nearly the full route ceiling while keeping the artifact bounded.
           thinkingMode: attemptThinkingMode,
@@ -3633,7 +3896,19 @@ export async function requestStoryboardPlan(
       let storyboard: DirectScene[];
       try {
         storyboard = parseStoryboardResponse(raw, requirements, {
-          degradeShapeHintMismatches: attempt === rung.maxAttempts,
+          // Degrade only on the FINAL storyboard attempt of the FINAL rung: a
+          // hopeless volunteered pair degraded on the primary rung's last
+          // attempt would return immediately and the independent rescue model
+          // (which might re-point the cut at rhyming endpoints and save the
+          // premium morph) would never be consulted.
+          degradeShapeHintMismatches:
+            rung === rungs[rungs.length - 1] && attempt === rung.maxAttempts,
+          // Pacing pressure stays blocking for the first two primary
+          // attempts, then degrades to advisory: from the primary rung's
+          // final attempt onward (including every rescue attempt), a plan
+          // clean except for pacing ships instead of falling back.
+          degradePacingFindings:
+            rung !== rungs[0] || attempt === rung.maxAttempts,
         });
       } catch (error) {
         if (error instanceof Error && isOutputTruncation(error)) {
@@ -3663,14 +3938,8 @@ export async function requestStoryboardPlan(
         lastError = error;
         break attempts;
       }
-      fs.mkdirSync(planningDir, { recursive: true });
-      const temporary = `${cacheFile}.${process.pid}.tmp`;
-      fs.writeFileSync(
-        temporary,
-        JSON.stringify({ version: 1, key: cacheKey, storyboard }, null, 2) + "\n",
-        "utf8",
-      );
-      fs.renameSync(temporary, cacheFile);
+      writePlanningArtifact(cacheFile, { version: 1, key: cacheKey, storyboard });
+      writePlanningArtifact(sharedFile, { version: 1, key: cacheKey, storyboard });
       return storyboard;
     }
   }
@@ -3726,6 +3995,34 @@ function locatePatch(html: string, search: string): PatchLocation {
   return { kind: "ok", start: match.index!, end: match.index! + match[0].length };
 }
 
+/**
+ * First inline-script syntax error in a document, mirroring the vendored
+ * lint's `invalid_inline_script_syntax` rule (same script filter, same
+ * `new Function` parse) so the per-patch gate below never disagrees with the
+ * gate that would later reject the whole attempt.
+ */
+function inlineScriptSyntaxError(html: string): string | undefined {
+  for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+    const attrs = match[1] ?? "";
+    if (/\bsrc\s*=/.test(attrs)) continue;
+    if (
+      /\btype\s*=\s*["'](?:application\/json|application\/hyperframes-slideshow\+json|importmap|module)["']/
+        .test(attrs)
+    ) {
+      continue;
+    }
+    const content = match[2] ?? "";
+    if (!content.trim()) continue;
+    try {
+      // eslint-disable-next-line no-new-func — parse-only, never executed.
+      new Function(content);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+  return undefined;
+}
+
 export function applyCompositionRepair(
   raw: string,
   scratch: DirectCompositionDraft,
@@ -3758,6 +4055,12 @@ export function applyCompositionRepair(
   let html = scratch.html;
   let applied = 0;
   const rejected: string[] = [];
+  // Per-patch syntax gate: a single edit that breaks an inline script's parse
+  // reverts THAT edit instead of costing the whole attempt atomically (a
+  // partial repair that fixes 3 findings is strictly better than a lost
+  // attempt — the verify-ws1ws5-2 fallback ended exactly on this class). A
+  // scratch that already fails the parse cannot be gated against itself.
+  const gateScriptSyntax = inlineScriptSyntaxError(html) === undefined;
   for (const [index, patch] of patches.entries()) {
     if (
       !patch ||
@@ -3779,7 +4082,18 @@ export function applyCompositionRepair(
       rejected.push(`patches_json[${index}].search is not unique in scratch HTML`);
       continue;
     }
-    html = html.slice(0, located.start) + patch.replace + html.slice(located.end);
+    const candidate = html.slice(0, located.start) + patch.replace + html.slice(located.end);
+    if (gateScriptSyntax) {
+      const syntaxError = inlineScriptSyntaxError(candidate);
+      if (syntaxError) {
+        rejected.push(
+          `patches_json[${index}] would break an inline script's syntax ` +
+            `(${syntaxError.slice(0, 120)}) — reverted`,
+        );
+        continue;
+      }
+    }
+    html = candidate;
     applied += 1;
   }
   if (applied === 0) {
@@ -3967,6 +4281,20 @@ async function recoverByQuarantiningInteractions(
   };
 }
 
+/**
+ * Codes the operator reads as "messy" on the shipped film (WS6 shipping
+ * policy): a clipped or near-empty camera landing, a degraded declared morph,
+ * or an eye-trace jump. They outweigh a handful of minor warnings so the
+ * least-bad-draft pick at attempt 3 strongly prefers a film without them —
+ * never unpublishable (fallback pressure is worse), just heavily dispreferred.
+ */
+const HIGH_VISIBILITY_ISSUE_WEIGHTS: Record<string, number> = {
+  camera_framed_clipped: 10,
+  camera_framed_sparse: 6,
+  cut_degraded: 6,
+  eye_trace_jump: 6,
+};
+
 function browserQualityPenalty(
   browserQa: DirectBrowserQaResult,
   staticRepairWarnings: string[] = [],
@@ -3977,7 +4305,10 @@ function browserQualityPenalty(
   return staticRepairWarnings.length * 2 + runtimeWarnings * 2 +
     browserQa.issues.reduce(
       (total, issue) =>
-        total + (issue.severity === "error" ? 4 : issue.severity === "warning" ? 1 : 0),
+        total + (
+          HIGH_VISIBILITY_ISSUE_WEIGHTS[issue.code] ??
+          (issue.severity === "error" ? 4 : issue.severity === "warning" ? 1 : 0)
+        ),
       0,
     );
 }
@@ -4289,6 +4620,21 @@ function creationPrompt(args: {
         "<locked_storyboard_json>",
         JSON.stringify(args.lockedStoryboard, null, 2),
         "</locked_storyboard_json>",
+        "",
+        // The host already knows the exact scene shells; handing them over
+        // verbatim removes the whole authored-N-scenes-against-an-M-scene-plan
+        // failure class (a live run burned a full paid attempt on 10 scenes
+        // vs a 5-scene plan). The author spends budget on interiors only.
+        "## Mandatory scene skeleton (copy verbatim)",
+        "Your <body> must contain EXACTLY these scene shells, in this order, with",
+        "these exact id/data-scene/data-start/data-duration values — copy each tag",
+        "verbatim (you may add layout classes and fill the interior), and never",
+        "add, remove, split, merge, or retime a scene:",
+        ...args.lockedStoryboard.map((scene) =>
+          `<section id="${scene.id}" class="scene clip" data-scene="${scene.id}" ` +
+          `data-start="${scene.startSec}" data-duration="${scene.durationSec}" ` +
+          `data-track-index="1">…your scene content…</section>`
+        ),
         ...[worldLayoutGuidance(args.lockedStoryboard)].filter(Boolean),
         lockedLayoutGuidance(args.lockedStoryboard),
       ].join("\n")
@@ -4381,7 +4727,7 @@ function persistAuthorAttempt(
   attempt: number,
   outcome: "static-rejected" | "browser-rejected" | "exception",
   details: {
-    mode: "full" | "patch";
+    mode: "full" | "patch" | "rescue";
     findings?: string[];
     html?: string;
     raw?: string;
@@ -4500,6 +4846,26 @@ export function findingSignature(finding: string): string {
   return `other:${text.slice(0, 120)}`;
 }
 
+/**
+ * Dedupe merged repair feedback by finding signature BEFORE the 20-item
+ * slice: one defect often carries two encodings (a degraded boundary's raw
+ * runtime warning + its measured polish finding; an interaction miss repeated
+ * across samples), and duplicates crowd geometry findings out of the compact
+ * repair prompt. Keeps the longest (most detailed) encoding per signature in
+ * first-seen order.
+ */
+export function dedupeFeedbackBySignature(findings: string[]): string[] {
+  const bySignature = new Map<string, string>();
+  for (const finding of findings) {
+    const signature = findingSignature(finding);
+    const existing = bySignature.get(signature);
+    if (existing === undefined || finding.length > existing.length) {
+      bySignature.set(signature, finding);
+    }
+  }
+  return [...bySignature.values()];
+}
+
 /** Boundary key ("from->to") when a signature names a bridged-cut endpoint. */
 function cutSignatureBoundary(signature: string): string | undefined {
   return signature.match(
@@ -4609,7 +4975,7 @@ export function degradeVolunteeredBridgedCuts(args: {
 /** Per-attempt entry of the persisted author-run diagnostic summary. */
 interface AuthorRunAttempt {
   number: number;
-  mode: "full" | "patch";
+  mode: "full" | "patch" | "rescue";
   outcome: "static-rejected" | "browser-rejected" | "exception";
   findingSignatures: string[];
 }
@@ -4706,6 +5072,22 @@ async function authorCompositionLoop(
   // One initial authoring pass plus at most two bounded repairs.
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     if (args.attempts) args.attempts.count = attempt;
+    // Never spend the FINAL attempt on a compact patch when nothing
+    // publishable is banked: a patch that misapplies or breaks syntax there
+    // guarantees the deterministic fallback (both recorded 2026-07-04
+    // fallbacks died exactly this way), while a full-context re-author at
+    // least rolls new dice with the complete findings list. When an earlier
+    // attempt already produced a browser-valid draft, a final patch stays
+    // cheap and safe — its failure still publishes the banked draft.
+    if (attempt === 3 && scratch && !lastBrowserValid) {
+      process.stderr.write(
+        `[author] final attempt with no browser-valid draft banked; ` +
+          `forcing a full-context re-author instead of a compact patch\n`,
+      );
+      summary.strategyChanges.push("full-reauthor-final-attempt");
+      scratch = undefined;
+      compact = true;
+    }
     const patchMode = Boolean(scratch);
     // Never downgrade a full-document recovery because of its attempt number.
     // A separately configured repair model is eligible only when a valid
@@ -4841,9 +5223,9 @@ async function authorCompositionLoop(
           ? [
               ...previousFeedback,
               "The proposed patch was rejected atomically because it made the last valid scratch fail static validation:",
-              ...validation.errors,
+              ...dedupeFeedbackBySignature(validation.errors),
             ].slice(0, 20)
-          : validation.errors.slice(0, 20);
+          : dedupeFeedbackBySignature(validation.errors).slice(0, 20);
         // Never compound a malformed patch. Retry from the last statically
         // valid scratch; a malformed initial document becomes the scratch
         // because there is no earlier authored candidate to preserve —
@@ -4935,12 +5317,12 @@ async function authorCompositionLoop(
         const { qualityPenalty: _qualityPenalty, ...best } = lastBrowserValid;
         return { ...best, attempts: attempt };
       }
-      validationFeedback = [
+      validationFeedback = dedupeFeedbackBySignature([
         ...validation.frameWarnings,
         ...validation.motionWarnings,
         ...browserQa.errors,
         ...browserQa.warnings,
-      ].slice(0, 20);
+      ]).slice(0, 20);
       process.stderr.write(
         `[author] attempt ${attempt}/3 browser QA requested repair: ` +
           `${validationFeedback.slice(0, 8).join(" | ").slice(0, 1_500)}\n`,
@@ -5055,10 +5437,99 @@ async function authorCompositionLoop(
     }
   }
   if (bestQuarantined) return bestQuarantined.result;
+  // Source rescue rung (storyboard-stage parity): the primary author model
+  // exhausted its attempts and nothing publishable exists — the exact path
+  // that otherwise wastes every model call in the run on a deterministic
+  // fallback. Spend ONE full-context attempt on an independent model with the
+  // accumulated findings before the fallback is allowed.
+  const rescueTier = sourceRescueModel(provider, productionTier);
+  if (rescueTier) {
+    process.stderr.write(
+      `[author] primary model exhausted its attempts; rescue attempt on ${rescueTier}\n`,
+    );
+    summary.strategyChanges.push(`source-rescue:${rescueTier}`);
+    if (args.attempts) args.attempts.count = 4;
+    try {
+      const prompt = creationPrompt({
+        ...args,
+        validationFeedback,
+        compact: true,
+        structuredPatches,
+      });
+      const raw = await completeSourceWithContinuation(provider, prompt, {
+        ...args.options,
+        timeoutMs: 360_000,
+        maxTokens: authorMaxTokens(),
+        thinkingMode: sourceRescueThinkingMode(),
+        model: rescueTier,
+      });
+      const parsed = args.lockedStoryboard
+        ? { storyboard: args.lockedStoryboard, html: extractIndexHtmlSource(raw) }
+        : parseCompositionResponse(raw);
+      let draft = applyDeterministicSourceRepairs(parsed, args.projectDir, args.lockedStoryboard);
+      let validation = await validateDirectComposition(args.projectDir, draft);
+      if (!validation.ok) {
+        const recovered = quarantineStaticInteractionErrors(draft, validation.errors);
+        if (recovered?.removedIds.length) {
+          draft = recovered.draft;
+          validation = await validateDirectComposition(args.projectDir, draft);
+        }
+      }
+      if (!validation.ok) {
+        persistAuthorAttempt(args.projectDir, 4, "static-rejected", {
+          mode: "rescue",
+          findings: validation.errors,
+          html: draft.html,
+        });
+        summary.attempts.push({
+          number: 4,
+          mode: "rescue",
+          outcome: "static-rejected",
+          findingSignatures: validation.errors.map(findingSignature).slice(0, 24),
+        });
+      } else {
+        const browserQa = await inspectDirectComposition(args.projectDir, draft, {
+          captureGuide: false,
+        });
+        // The rescue publishes on the objective runtime boundary (browser
+        // ok), exactly like the least-bad pick at attempt 3 — polish
+        // findings must not sink the run's only working draft.
+        if (browserQa.ok || browserQa.infraError) {
+          return { draft, raw, attempts: 4, browserQa };
+        }
+        persistAuthorAttempt(args.projectDir, 4, "browser-rejected", {
+          mode: "rescue",
+          findings: [...browserQa.errors, ...browserQa.warnings].slice(0, 20),
+          html: draft.html,
+        });
+        summary.attempts.push({
+          number: 4,
+          mode: "rescue",
+          outcome: "browser-rejected",
+          findingSignatures: [...browserQa.errors, ...browserQa.warnings]
+            .map(findingSignature)
+            .slice(0, 24),
+        });
+      }
+    } catch (rescueError) {
+      const message = rescueError instanceof Error ? rescueError.message : String(rescueError);
+      process.stderr.write(`[author] rescue attempt failed: ${message.slice(0, 300)}\n`);
+      persistAuthorAttempt(args.projectDir, 4, "exception", {
+        mode: "rescue",
+        findings: [message],
+      });
+      summary.attempts.push({
+        number: 4,
+        mode: "rescue",
+        outcome: "exception",
+        findingSignatures: [findingSignature(message)],
+      });
+    }
+  }
   throw new Error(
-    `direct HyperFrames authoring failed after two bounded repairs: ${
-      lastError instanceof Error ? lastError.message : String(lastError)
-    }`,
+    `direct HyperFrames authoring failed after two bounded repairs${
+      rescueTier ? " and an independent-model rescue attempt" : ""
+    }: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
   );
 }
 

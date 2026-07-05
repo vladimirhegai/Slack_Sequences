@@ -49,6 +49,7 @@ import {
 import { resolveMomentContract } from "./storyboardMoments.ts";
 import {
   pingPongCandidates,
+  resolveBoundaryAttention,
   scoreEyeTraceBoundaries,
   scorePingPongPair,
 } from "./eyeTrace.ts";
@@ -266,7 +267,11 @@ function loadBrowserAudit(name: "layout-audit.browser.js" | "contrast-audit.brow
 //     coverage audit joined the arrival pass.
 // v5: eye-trace continuity audit (eye_trace_jump boundary findings +
 //     advisory eye_trace_pingpong within-scene findings).
-const QA_CACHE_VERSION = 5;
+// v6: boundary inventory prioritizes declared attention targets and samples
+//     the outgoing side before the cut's exit window; ping-pong measures each
+//     target at its own beat in viewer time; camera_framed_sparse gets a
+//     final-scene landing tier + zero-coverage parity with the static path.
+const QA_CACHE_VERSION = 6;
 
 /** Everything environment-side that can change the verdict for the same draft. */
 let cachedStaticFingerprint: string | undefined;
@@ -314,9 +319,9 @@ function qaCacheEnabled(): boolean {
 function qaCacheKey(draft: DirectCompositionDraft): string {
   return createHash("sha256")
     .update(qaStaticFingerprint())
-    .update(" ")
+    .update("\0")
     .update(draft.html)
-    .update(" ")
+    .update("\0")
     .update(JSON.stringify(draft.storyboard))
     .digest("hex");
 }
@@ -1421,12 +1426,24 @@ const BOUNDARY_PART_CAP = 16;
  * viewport rect, resolved border-radius, and subtree node count — the same
  * idioms the cut runtime's `shapeMatchAudit`/`radiusPx` use, so a
  * discovery-time score and the bind-time audit agree about geometry.
+ *
+ * `priorityParts` are measured FIRST regardless of DOM order: the declared
+ * attention/focal targets must never be silently dropped by the measurement
+ * cap in a dense scene (a real probe lost `spatialIntent.focalPart` as the
+ * 17th part and the eye-trace audit went blind); arbitrary parts fill the
+ * remaining budget.
  */
 async function measureBoundaryParts(
   page: import("puppeteer-core").Page,
   sceneId: string,
+  priorityParts: string[] = [],
 ): Promise<BoundaryPartMeasurement[]> {
-  return page.evaluate((payload: { sceneId: string; minPx: number; cap: number }) => {
+  return page.evaluate((payload: {
+    sceneId: string;
+    minPx: number;
+    cap: number;
+    priorityParts: string[];
+  }) => {
     const root = document.querySelector<HTMLElement>(
       "[data-composition-id][data-width][data-height]",
     );
@@ -1436,7 +1453,13 @@ async function measureBoundaryParts(
     if (!root || !scene) return [];
     const rootRect = root.getBoundingClientRect();
     const measurements: BoundaryPartMeasurement[] = [];
-    for (const element of Array.from(scene.querySelectorAll<HTMLElement>("[data-part]"))) {
+    const all = Array.from(scene.querySelectorAll<HTMLElement>("[data-part]"));
+    const prioritized = new Set(payload.priorityParts);
+    const ordered = [
+      ...all.filter((element) => prioritized.has(element.getAttribute("data-part") ?? "")),
+      ...all.filter((element) => !prioritized.has(element.getAttribute("data-part") ?? "")),
+    ];
+    for (const element of ordered) {
       if (measurements.length >= payload.cap) break;
       const part = element.getAttribute("data-part") ?? "";
       if (!part) continue;
@@ -1483,7 +1506,7 @@ async function measureBoundaryParts(
       });
     }
     return measurements;
-  }, { sceneId, minPx: BOUNDARY_PART_MIN_PX, cap: BOUNDARY_PART_CAP });
+  }, { sceneId, minPx: BOUNDARY_PART_MIN_PX, cap: BOUNDARY_PART_CAP, priorityParts });
 }
 
 /**
@@ -1493,6 +1516,15 @@ async function measureBoundaryParts(
  * measure well above it.
  */
 const SPARSE_COVERAGE_MIN = 0.18;
+/**
+ * Lower floor for camera landings in the film's FINAL scene: a deliberate
+ * compact resolve (badge + CTA pair ~10-15%) reached by a pull-back is the
+ * genre's signature and must pass, while a true disaster (a 2% lone CTA — the
+ * improve-ws15-1 finding, confirmed by eye) still fails. Camera-less final
+ * scenes are fully exempt below; landings keep this reduced tier instead so
+ * an end card the camera itself frames still cannot ship near-empty.
+ */
+const SPARSE_COVERAGE_MIN_FINAL = 0.08;
 /** Content spanning this much of one frame axis is a deliberate composition. */
 const SPARSE_AXIS_ESCAPE = 0.6;
 /** Scenes shorter than this are stings/flashes — never judged for coverage. */
@@ -2037,10 +2069,10 @@ export async function inspectDirectComposition(
     // Boundary geometry inventory (feeds deterministic cut discovery): the
     // outgoing scene measured just before each boundary, the incoming scene
     // after its entry settles. Content time; seekContent converts.
-    const cutEntryByBoundary = new Map(
+    const cutTimingByBoundary = new Map(
       (parseCutPlan(draft.html).plan?.cuts ?? []).map((cut) => [
         `${cut.fromScene}->${cut.toScene}`,
-        cut.entrySec,
+        { entrySec: cut.entrySec, exitSec: cut.exitSec ?? 0 },
       ]),
     );
     const boundaryInventories: DirectBoundaryInventory[] = [];
@@ -2048,16 +2080,37 @@ export async function inspectDirectComposition(
       const from = draft.storyboard[index]!;
       const to = draft.storyboard[index + 1]!;
       const atSec = from.startSec + from.durationSec;
-      const outgoingAt = atSec - 0.15;
+      const timing = cutTimingByBoundary.get(`${from.id}->${to.id}`);
+      // Sample the outgoing side BEFORE the declared exit begins: a typed cut
+      // with exitSec > 0.15 is already translating/fading the outgoing scene
+      // at atSec - 0.15, so "where the eye is before the cut" would record
+      // transition geometry, not the held frame.
+      const outgoingAt = atSec - Math.max(0.15, (timing?.exitSec ?? 0) + 0.1);
       const incomingAt = Math.min(
-        atSec + (cutEntryByBoundary.get(`${from.id}->${to.id}`) ?? 0.5),
+        atSec + (timing?.entrySec ?? 0.5),
         to.startSec + Math.max(0.1, to.durationSec - 0.05),
       );
       if (outgoingAt <= from.startSec) continue;
+      // The declared attention/focal endpoints must survive the measurement
+      // cap: they are what cut degradation diagnostics and the eye-trace
+      // audit are ABOUT.
+      const attention = resolveBoundaryAttention(from, to);
       await seekContent(outgoingAt);
-      const outgoing = await measureBoundaryParts(page, from.id);
+      const outgoing = await measureBoundaryParts(page, from.id, [
+        ...new Set([
+          ...(from.cut?.focalPartOut ? [from.cut.focalPartOut] : []),
+          ...(attention.outPart ? [attention.outPart] : []),
+          ...(from.spatialIntent?.focalPart ? [from.spatialIntent.focalPart] : []),
+        ]),
+      ]);
       await seekContent(incomingAt);
-      const incoming = await measureBoundaryParts(page, to.id);
+      const incoming = await measureBoundaryParts(page, to.id, [
+        ...new Set([
+          ...(from.cut?.focalPartIn ? [from.cut.focalPartIn] : []),
+          ...(attention.inPart ? [attention.inPart] : []),
+          ...(to.spatialIntent?.focalPart ? [to.spatialIntent.focalPart] : []),
+        ]),
+      ]);
       if (outgoing.length || incoming.length) {
         boundaryInventories.push({ fromScene: from.id, toScene: to.id, atSec, outgoing, incoming });
       }
@@ -2159,61 +2212,84 @@ export async function inspectDirectComposition(
           source: "sequences",
         });
       }
-      // One extra seek per candidate pair (capped), measured with both
-      // surfaces live just after the second beat fires.
-      for (const candidate of pingPongCandidates(draft.storyboard)) {
-        await seekContent(candidate.measureAtSec);
-        const centers = await page.evaluate(
-          (payload: { sceneId: string; firstPart: string; secondPart: string }) => {
+      // Two seeks per candidate pair (capped): each target is sampled just
+      // after ITS OWN beat — camera motion, swaps, or component motion
+      // between the beats can relocate or hide the first target by the time
+      // the second fires, so a single shared sample lies in both directions.
+      // Samples are cached by scene/part/time so chained pairs (a->b->c)
+      // reuse the shared middle sample instead of re-seeking.
+      const measurePartCenter = async (
+        sceneId: string,
+        part: string,
+      ): Promise<{ x: number; y: number } | undefined> =>
+        page.evaluate(
+          (payload: { sceneId: string; part: string }) => {
             const root = document.querySelector<HTMLElement>(
               "[data-composition-id][data-width][data-height]",
             );
             const scene = root?.querySelector<HTMLElement>(
               `[data-scene="${CSS.escape(payload.sceneId)}"]`,
             );
-            if (!root || !scene) return {};
+            if (!root || !scene) return undefined;
             const rootRect = root.getBoundingClientRect();
-            const center = (part: string): { x: number; y: number } | undefined => {
-              const element = scene.querySelector<HTMLElement>(
-                `[data-part="${CSS.escape(part)}"]`,
-              );
-              if (!element) return undefined;
-              const rect = element.getBoundingClientRect();
-              if (rect.width < 8 || rect.height < 8) return undefined;
-              let opacity = 1;
-              let node: Element | null = element;
-              while (node) {
-                const style = getComputedStyle(node);
-                if (style.display === "none" || style.visibility === "hidden") return undefined;
-                opacity *= Number.parseFloat(style.opacity) || 0;
-                node = node.parentElement;
-              }
-              if (opacity < 0.15) return undefined;
-              return {
-                x: Math.min(
-                  rootRect.width,
-                  Math.max(0, rect.left - rootRect.left + rect.width / 2),
-                ),
-                y: Math.min(
-                  rootRect.height,
-                  Math.max(0, rect.top - rootRect.top + rect.height / 2),
-                ),
-              };
-            };
-            const first = center(payload.firstPart);
-            const second = center(payload.secondPart);
+            const element = scene.querySelector<HTMLElement>(
+              `[data-part="${CSS.escape(payload.part)}"]`,
+            );
+            if (!element) return undefined;
+            const rect = element.getBoundingClientRect();
+            if (rect.width < 8 || rect.height < 8) return undefined;
+            let opacity = 1;
+            let node: Element | null = element;
+            while (node) {
+              const style = getComputedStyle(node);
+              if (style.display === "none" || style.visibility === "hidden") return undefined;
+              opacity *= Number.parseFloat(style.opacity) || 0;
+              node = node.parentElement;
+            }
+            if (opacity < 0.15) return undefined;
             return {
-              ...(first ? { first } : {}),
-              ...(second ? { second } : {}),
+              x: Math.min(
+                rootRect.width,
+                Math.max(0, rect.left - rootRect.left + rect.width / 2),
+              ),
+              y: Math.min(
+                rootRect.height,
+                Math.max(0, rect.top - rootRect.top + rect.height / 2),
+              ),
             };
           },
-          {
-            sceneId: candidate.sceneId,
-            firstPart: candidate.firstPart,
-            secondPart: candidate.secondPart,
-          },
+          { sceneId, part },
         );
-        const pingPong = scorePingPongPair(candidate, centers, width, height);
+      const pingPongSamples = new Map<string, { x: number; y: number } | undefined>();
+      const samplePartCenter = async (
+        sceneId: string,
+        part: string,
+        atSec: number,
+      ): Promise<{ x: number; y: number } | undefined> => {
+        const key = `${sceneId}|${part}|${atSec.toFixed(3)}`;
+        if (pingPongSamples.has(key)) return pingPongSamples.get(key);
+        await seekContent(atSec);
+        const center = await measurePartCenter(sceneId, part);
+        pingPongSamples.set(key, center);
+        return center;
+      };
+      for (const candidate of pingPongCandidates(draft.storyboard)) {
+        const first = await samplePartCenter(
+          candidate.sceneId,
+          candidate.firstPart,
+          candidate.firstMeasureAtSec,
+        );
+        const second = await samplePartCenter(
+          candidate.sceneId,
+          candidate.secondPart,
+          candidate.secondMeasureAtSec,
+        );
+        const pingPong = scorePingPongPair(
+          candidate,
+          { ...(first ? { first } : {}), ...(second ? { second } : {}) },
+          width,
+          height,
+        );
         if (!pingPong) continue;
         rawIssues.push({
           code: "eye_trace_pingpong",
@@ -2224,7 +2300,7 @@ export async function inspectDirectComposition(
             `Consecutive beats "${pingPong.firstBeatId}" -> "${pingPong.secondBeatId}" in ` +
             `scene "${pingPong.sceneId}" move the eye ` +
             `${Math.round(pingPong.displacementFraction * 100)}% of the frame diagonal in ` +
-            `${(pingPong.secondAtSec - pingPong.firstAtSec).toFixed(2)}s ` +
+            `${pingPong.viewerGapSec.toFixed(2)}s ` +
             `("${pingPong.firstPart}" -> "${pingPong.secondPart}") — ping-pong choreography ` +
             `reads as noise.`,
           fixHint:
@@ -2429,19 +2505,29 @@ export async function inspectDirectComposition(
     };
     const isSparseCoverage = (
       coverage: { fraction: number; widthFraction: number; heightFraction: number } | undefined,
+      minFraction: number = SPARSE_COVERAGE_MIN,
     ): coverage is { fraction: number; widthFraction: number; heightFraction: number } =>
       Boolean(
         coverage &&
-        coverage.fraction < SPARSE_COVERAGE_MIN &&
+        coverage.fraction < minFraction &&
         // A composition that spans most of one frame axis (a full-width
         // headline band, a tall rail) is a deliberate shape, not sparseness.
         coverage.widthFraction < SPARSE_AXIS_ESCAPE &&
         coverage.heightFraction < SPARSE_AXIS_ESCAPE,
       );
+    const finalSceneId = draft.storyboard[draft.storyboard.length - 1]?.id;
     for (const scenePlan of parseCameraPlan(draft.html).plan?.scenes ?? []) {
       const scene = draft.storyboard.find((entry) => entry.id === scenePlan.sceneId);
       if (!scene) continue;
       const sceneEnd = scene.startSec + scene.durationSec;
+      // Two-tier floor: final-scene landings judge against the compact-resolve
+      // tier, mirroring (not duplicating) the static path's final exemption.
+      const sparseFloor = scene.id === finalSceneId
+        ? SPARSE_COVERAGE_MIN_FINAL
+        : SPARSE_COVERAGE_MIN;
+      // Selectors already reported for this scene — the moment-time re-check
+      // below must not duplicate a landing finding.
+      const flaggedClips = new Set<string>();
       for (const segment of scenePlan.segments) {
         if (!CAMERA_FULL_MOVES.has(segment.move) || segment.blend < 1) continue;
         if (!segment.toRegion && !segment.toPart) continue;
@@ -2473,6 +2559,7 @@ export async function inspectDirectComposition(
           for (
             const clip of found.filter((entry) => confirmedSelectors.has(entry.selector)).slice(0, 4)
           ) {
+            flaggedClips.add(clip.selector);
             rawIssues.push({
               code: "camera_framed_clipped",
               severity: "error",
@@ -2493,13 +2580,16 @@ export async function inspectDirectComposition(
           }
         }
         const coverage = await measureFramedCoverage(settleAt, scenePlan.sceneId);
-        if (isSparseCoverage(coverage)) {
+        // A fully-empty landing is the near-blank audit's finding; sparse is
+        // strictly the "content exists but is tiny" class (same skip as the
+        // static mid-window path).
+        if (isSparseCoverage(coverage, sparseFloor) && coverage.fraction > 0) {
           // Double-sample like the clipping audit: an entrance still tweening
           // at the settle sample must not masquerade as a sparse framing.
           const confirmedCoverage = canConfirm
             ? await measureFramedCoverage(confirmAt, scenePlan.sceneId)
             : coverage;
-          if (isSparseCoverage(confirmedCoverage)) {
+          if (isSparseCoverage(confirmedCoverage, sparseFloor) && confirmedCoverage.fraction > 0) {
             rawIssues.push({
               code: "camera_framed_sparse",
               severity: "warning",
@@ -2520,6 +2610,89 @@ export async function inspectDirectComposition(
               source: "sequences",
             });
           }
+        }
+      }
+
+      // Landing-only geometry cannot catch a subject that drifts or clips
+      // LATER in the held segment (live probe m08-m4-land: a stat card
+      // visibly cropped at its own moment's capture time while every landing
+      // sample passed). Re-check framed-content containment at each PRIMARY
+      // moment's capture time against the framing that holds there,
+      // double-sampled so a transient never fires.
+      const fullSegments = scenePlan.segments.filter((segment) =>
+        CAMERA_FULL_MOVES.has(segment.move) &&
+        segment.blend >= 1 &&
+        (segment.toRegion || segment.toPart) &&
+        segment.zoom <= 1.05
+      );
+      const settledFramingAt = (atSec: number) =>
+        fullSegments
+          .filter((segment) => segment.endSec <= atSec)
+          .sort((a, b) => b.endSec - a.endSec)[0];
+      const cameraInFlightAt = (atSec: number): boolean =>
+        scenePlan.segments.some((segment) =>
+          CAMERA_FULL_MOVES.has(segment.move) &&
+          segment.startSec <= atSec && segment.endSec > atSec
+        );
+      for (
+        const moment of (scene.moments ?? []).filter((entry) => entry.importance === "primary")
+      ) {
+        const captureAt = Math.min(
+          Math.max(moment.atSec + 0.15, scene.startSec),
+          sceneEnd - 0.1,
+        );
+        if (captureAt <= scene.startSec || insideCutWindow(captureAt)) continue;
+        if (cameraInFlightAt(captureAt)) continue;
+        const framing = settledFramingAt(captureAt);
+        if (!framing) continue;
+        // The landing's own settle+confirm samples already cover the first
+        // ~1.2s after the move; only later holds need the re-check.
+        if (captureAt <= framing.endSec + 1.2) continue;
+        const found = await measureArrivalClipping(
+          captureAt,
+          scenePlan.sceneId,
+          framing.toPart,
+          framing.toRegion,
+        );
+        if (!found.length) continue;
+        const confirmAt = Math.min(captureAt + 0.5, sceneEnd - 0.05);
+        const canConfirmMoment = confirmAt > captureAt + 0.05 &&
+          !insideCutWindow(confirmAt) && !cameraInFlightAt(confirmAt);
+        const confirmed = canConfirmMoment
+          ? await measureArrivalClipping(
+              confirmAt,
+              scenePlan.sceneId,
+              framing.toPart,
+              framing.toRegion,
+            )
+          : found;
+        const confirmedSelectors = new Set(confirmed.map((entry) => entry.selector));
+        for (
+          const clip of found
+            .filter((entry) =>
+              confirmedSelectors.has(entry.selector) && !flaggedClips.has(entry.selector)
+            )
+            .slice(0, 2)
+        ) {
+          flaggedClips.add(clip.selector);
+          rawIssues.push({
+            code: "camera_framed_clipped",
+            severity: "error",
+            time: captureAt,
+            selector: clip.selector,
+            ...(clip.text ? { text: clip.text } : {}),
+            message:
+              `At primary moment "${moment.id}" (${moment.atSec.toFixed(1)}s) the camera holds ` +
+              `${framing.toPart ? `part "${framing.toPart}"` : `region "${framing.toRegion}"`} in ` +
+              `scene "${scenePlan.sceneId}", but ${clip.selector} is only ` +
+              `${Math.round(clip.fraction * 100)}% inside the frame — the audience studies this ` +
+              `exact frame and sees it clipped.`,
+            fixHint:
+              "Content at a camera station must stay inside that station's box for the WHOLE " +
+              "held segment: move the element fully inside its data-region rect (with an ~8% " +
+              "inner margin), shrink it, or remove the authored drift that carries it off frame.",
+            source: "sequences",
+          });
         }
       }
     }

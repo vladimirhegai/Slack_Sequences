@@ -22,6 +22,7 @@
  * Everything here is a pure function of measured rects + the storyboard, so
  * thresholds are unit-testable without a browser.
  */
+import { resolveTimeRampPlan, warpInverseOf } from "./timeRamp.ts";
 import type { DirectScene } from "./directComposition.ts";
 import type {
   BoundaryPartMeasurement,
@@ -193,26 +194,36 @@ export interface PingPongCandidate {
   secondPart: string;
   firstAtSec: number;
   secondAtSec: number;
-  /** Content time at which the inspector measures both targets (one seek). */
-  measureAtSec: number;
+  /** Beat gap as the viewer experiences it (content gap warped through any time ramp). */
+  viewerGapSec: number;
+  /** Content time at which the inspector measures the FIRST target (just after its beat). */
+  firstMeasureAtSec: number;
+  /** Content time at which the inspector measures the SECOND target (just after its beat). */
+  secondMeasureAtSec: number;
 }
 
 /**
  * Consecutive-beat pairs whose targets differ and whose spacing lands in the
- * ping-pong window. The inspector measures each pair with ONE extra seek at
- * `measureAtSec` (just after the second beat fires — both surfaces are live),
+ * ping-pong window — judged in VIEWER time, since a slow-motion ramp can
+ * stretch a 1.0s content gap well past the window the eye actually
+ * experiences. The inspector measures each target just after ITS OWN beat
+ * (two seeks per pair — camera motion, swaps, or component motion between the
+ * beats can relocate or hide the first target by the time the second fires),
  * capped at PING_PONG_MAX_PAIRS per film.
  */
 export function pingPongCandidates(scenes: DirectScene[]): PingPongCandidate[] {
   const candidates: PingPongCandidate[] = [];
+  const toViewer = warpInverseOf(resolveTimeRampPlan(scenes));
   for (const scene of scenes) {
     const beats = [...(scene.beats ?? [])].sort((a, b) => a.atSec - b.atSec);
     const sceneEnd = scene.startSec + scene.durationSec;
+    const clampIntoScene = (time: number): number =>
+      Math.min(time, Math.max(scene.startSec, sceneEnd - 0.05));
     for (let index = 1; index < beats.length; index += 1) {
       const first = beats[index - 1]!;
       const second = beats[index]!;
       if (first.component === second.component) continue;
-      const gap = second.atSec - first.atSec;
+      const gap = toViewer(second.atSec) - toViewer(first.atSec);
       if (gap < PING_PONG_MIN_GAP_SEC || gap > PING_PONG_WINDOW_SEC) continue;
       candidates.push({
         sceneId: scene.id,
@@ -222,7 +233,12 @@ export function pingPongCandidates(scenes: DirectScene[]): PingPongCandidate[] {
         secondPart: second.component,
         firstAtSec: first.atSec,
         secondAtSec: second.atSec,
-        measureAtSec: Math.min(second.atSec + 0.15, Math.max(scene.startSec, sceneEnd - 0.05)),
+        viewerGapSec: Math.round(gap * 100) / 100,
+        // Sample each target while its own beat is fresh, never past the
+        // other beat's landing (the first sample must not slide into the
+        // second beat's window).
+        firstMeasureAtSec: clampIntoScene(Math.min(first.atSec + 0.15, second.atSec)),
+        secondMeasureAtSec: clampIntoScene(second.atSec + 0.15),
       });
       if (candidates.length >= PING_PONG_MAX_PAIRS) return candidates;
     }

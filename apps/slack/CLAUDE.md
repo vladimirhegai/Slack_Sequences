@@ -179,6 +179,36 @@ consecutive beats 0.25–1.2s apart whose targets sit >50% of the diagonal
 apart raise an always-advisory `eye_trace_pingpong` (≤6 extra seeks;
 `QA_CACHE_VERSION` 4→5). Proof: `test/pacingAudit.test.ts`,
 `test/eyeTrace.test.ts`, `test/eyeTrace.browser.test.ts`.
+**WS hardening + fallback elimination (2026-07-05):** the pacing gate now
+covers single-surface scenes (short-final-resolve exemption only), in-flight
+camera moves (hold = 0 through a payoff), swapped-in copy and headline-class
+primary moments (reading floors), and judges the 65% introduction deadline
+in viewer time (storyboard cache contract v9); eye-trace measurement
+prioritizes declared attention targets under the 16-part cap, samples the
+outgoing side before the declared cut exit, and measures each ping-pong beat
+at its own time in viewer time; final-scene camera landings get a
+compact-resolve sparse tier (8%), zero-coverage landings defer to
+near-blank, and containment is re-checked at primary moment capture times
+(`QA_CACHE_VERSION` 6). The author ladder never ends on a blind compact
+patch (full re-author when nothing browser-valid is banked) and gets a
+source rescue rung on an independent model
+(`SLACK_SEQUENCES_SOURCE_RESCUE_MODEL`, default `tencent/hy3-preview`)
+before any deterministic fallback; the patch applier reverts only the
+individual edit that breaks an inline script's parse; childless `rows`
+targets get neutral kit children injected host-side; storyboard parse
+re-bases shot timing sequentially and degrades support-map beat violations
+to supported analogs (load-bearing beats stay blocking); truncation recovery
+keeps reasoning and demands a smaller artifact; planning artifacts mirror
+into a shared `.data/planning-cache/` so a fresh job id never re-pays a
+validated plan (`SLACK_SEQUENCES_SHARED_PLANNING_CACHE=0` opts out); and an
+unbound SUPPORTING moment re-anchors/drops with a warning instead of
+rejecting the attempt. Live-probe lesson (two runs died at storyboard-plan
+on marginal misses): the moment-interval veto carries a 0.35s grace
+(`INTERVAL_GRACE_SEC`), and `pacing/*` findings block only the primary
+rung's first two attempts — from its final attempt onward a plan clean
+except for pacing ships with the findings logged as advisories
+(degrade-never-veto). Details in ROADMAP's 2026-07-05 section;
+WS_Improvements.md and LESS_FALLBACKS.md carry per-item STATUS blocks.
 Scenes may also declare a typed **`timeRamp`** — the fifth host-owned contract
 (2026-07-04, `timeRamp.ts` + `sequences-time.v1.js`): ONE motivated
 slow-motion dip per scene (max 2 per film, never scene 1) compiled into

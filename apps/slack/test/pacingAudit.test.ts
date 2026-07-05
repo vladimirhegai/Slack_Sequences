@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   auditPacing,
   sceneIntroductionTimes,
+  LAST_INTRODUCTION_MAX_FRACTION,
+  PACING_TOLERANCE_SEC,
 } from "../src/engine/pacingAudit.ts";
 import { buildFallbackComposition } from "../src/engine/fallbackComposition.ts";
+import { resolveTimeRampPlan, warpInverseOf } from "../src/engine/timeRamp.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
 import type { ComponentBeatIntentV1 } from "../src/engine/componentContract.ts";
 import type { CameraMoveIntentV1 } from "../src/engine/cameraContract.ts";
@@ -140,7 +143,7 @@ describe("auditPacing introduction development", () => {
     })]);
     const holds = findings.filter((finding) => finding.startsWith("pacing/holds:"));
     expect(holds).toHaveLength(1);
-    expect(holds[0]).toContain('"cram" introduces 3 surfaces');
+    expect(holds[0]).toContain('"cram" introduces 3 surface(s)');
     expect(holds[0]).toContain("hold is not a freeze");
   });
 
@@ -159,15 +162,55 @@ describe("auditPacing introduction development", () => {
     expect(findings.filter((finding) => finding.startsWith("pacing/holds:"))).toEqual([]);
   });
 
-  it("never judges a single-surface scene", () => {
-    const findings = auditPacing([scene({
-      id: "solo",
-      startSec: 0,
-      durationSec: 3,
-      components: [components[0]!],
-      beats: [beat("solo", { id: "b1", component: "search-box", kind: "open", atSec: 2.6 })],
-    })]);
+  it("flags a late single-surface introduction (WS_Improvements item 9)", () => {
+    // One dense window opened at 3.7s of a 4s scene still needs to be read;
+    // the hold gate is per scene, not only multi-surface scenes.
+    const findings = auditPacing([
+      scene({
+        id: "solo-late",
+        startSec: 0,
+        durationSec: 4,
+        components: [{ version: 1 as const, id: "dense-window", kind: "app-window" as const }],
+        beats: [beat("solo-late", {
+          id: "b1", component: "dense-window", kind: "open", atSec: 3.7,
+        })],
+      }),
+      scene({ id: "closer", startSec: 4, durationSec: 4 }),
+    ]);
+    const holds = findings.filter((finding) => finding.startsWith("pacing/holds:"));
+    expect(holds).toHaveLength(1);
+    expect(holds[0]).toContain('"solo-late" introduces 1 surface(s)');
+  });
+
+  it("exempts a short final resolve introducing one surface", () => {
+    const findings = auditPacing([
+      scene({ id: "body", startSec: 0, durationSec: 5 }),
+      scene({
+        id: "cta-card",
+        startSec: 5,
+        durationSec: 2.8,
+        components: [{ version: 1 as const, id: "cta", kind: "button" as const }],
+        beats: [beat("cta-card", { id: "b1", component: "cta", kind: "open", atSec: 7.4 })],
+      }),
+    ]);
     expect(findings.filter((finding) => finding.startsWith("pacing/holds:"))).toEqual([]);
+  });
+
+  it("still judges a short final scene that introduces several surfaces", () => {
+    const findings = auditPacing([
+      scene({ id: "body", startSec: 0, durationSec: 5 }),
+      scene({
+        id: "crowded-card",
+        startSec: 5,
+        durationSec: 3,
+        components,
+        beats: [
+          beat("crowded-card", { id: "b1", component: "alert-toast", kind: "open", atSec: 7 }),
+          beat("crowded-card", { id: "b2", component: "detail-modal", kind: "open", atSec: 7.6 }),
+        ],
+      }),
+    ]);
+    expect(findings.filter((finding) => finding.startsWith("pacing/holds:"))).toHaveLength(1);
   });
 });
 
@@ -282,6 +325,199 @@ describe("auditPacing outcome holds", () => {
     expect(findings.some((finding) =>
       finding.startsWith("pacing/outcome:") && finding.includes('"pop"')
     )).toBe(true);
+  });
+});
+
+describe("auditPacing in-flight camera moves (WS_Improvements item 10)", () => {
+  it("treats a move still in flight at the payoff as an immediate framing conflict", () => {
+    // The pan starts at 2.0s and runs to 3.5s; the press settles ~2.5s — the
+    // frame is moving THROUGH the payoff even though no later move starts.
+    const findings = auditPacing([scene({
+      id: "inflight",
+      startSec: 0,
+      durationSec: 5,
+      components: [{ version: 1 as const, id: "cta", kind: "button" as const }],
+      beats: [beat("inflight", { id: "the-press", component: "cta", kind: "press", atSec: 2.2 })],
+      camera: {
+        version: 1,
+        path: [move({ move: "pan", startSec: 2.0, durationSec: 1.5 })],
+      },
+    })]);
+    expect(findings.filter((finding) => finding.startsWith("pacing/outcome:"))).toHaveLength(1);
+  });
+
+  it("ignores a move that finished before the payoff settles", () => {
+    const findings = auditPacing([scene({
+      id: "settled",
+      startSec: 0,
+      durationSec: 5,
+      components: [{ version: 1 as const, id: "cta", kind: "button" as const }],
+      beats: [beat("settled", { id: "the-press", component: "cta", kind: "press", atSec: 3 })],
+      camera: {
+        version: 1,
+        path: [move({ move: "pan", startSec: 0.3, durationSec: 1.2 })],
+      },
+    })]);
+    expect(findings.filter((finding) => finding.startsWith("pacing/outcome:"))).toEqual([]);
+  });
+
+  it("counts an in-flight move against the reading floor too", () => {
+    const findings = auditPacing([scene({
+      id: "read-moving",
+      startSec: 0,
+      durationSec: 6,
+      components: [{ version: 1 as const, id: "query", kind: "search" as const }],
+      beats: [beat("read-moving", {
+        id: "the-type",
+        component: "query",
+        kind: "type",
+        atSec: 1.4,
+        text: "one two three four five six seven eight",
+      })],
+      camera: {
+        version: 1,
+        // In flight through the type settle and long enough that the
+        // remaining still window cannot cover the reading floor.
+        path: [move({ move: "pan", startSec: 1.2, durationSec: 3.6 })],
+      },
+    })]);
+    expect(findings.filter((finding) => finding.startsWith("pacing/reading:"))).toHaveLength(1);
+  });
+});
+
+describe("auditPacing swapped and headline copy (WS_Improvements item 11)", () => {
+  it("gives swapped-in copy the same reading floor as typed copy", () => {
+    const findings = auditPacing([scene({
+      id: "swappy",
+      startSec: 0,
+      durationSec: 5,
+      components: [{ version: 1 as const, id: "hero-line", kind: "stat-card" as const }],
+      beats: [beat("swappy", {
+        id: "the-swap",
+        component: "hero-line",
+        kind: "swap",
+        atSec: 4.2,
+        text: "one two three four five six seven eight",
+      })],
+    })]);
+    const reading = findings.filter((finding) => finding.startsWith("pacing/reading:"));
+    expect(reading).toHaveLength(1);
+    expect(reading[0]).toContain("swaps in");
+  });
+
+  it("floors a primary headline moment that has no typed beat", () => {
+    const headline = (atSec: number): DirectScene[] => [scene({
+      id: "headline-scene",
+      startSec: 0,
+      durationSec: 5,
+      moments: [{
+        version: 1,
+        id: "m-headline",
+        sceneId: "headline-scene",
+        atSec,
+        title: "Headline lands",
+        visualState: "hero copy on screen",
+        change: "headline appears",
+        motionIntent: "type-on",
+        importance: "primary",
+      }],
+      camera: {
+        version: 1,
+        path: [move({ move: "push-in", startSec: 4.6, durationSec: 0.4 })],
+      },
+    })];
+    const late = auditPacing(headline(4.5));
+    expect(late.filter((finding) => finding.startsWith("pacing/reading:"))).toHaveLength(1);
+    expect(late[0]).toContain("m-headline");
+    expect(auditPacing(headline(2)).filter((finding) =>
+      finding.startsWith("pacing/reading:")
+    )).toEqual([]);
+  });
+
+  it("skips the moment floor when a typed beat already carries the copy", () => {
+    const findings = auditPacing([scene({
+      id: "typed-headline",
+      startSec: 0,
+      durationSec: 6,
+      components: [{ version: 1 as const, id: "hero", kind: "stat-card" as const }],
+      beats: [beat("typed-headline", {
+        id: "hero-type",
+        component: "hero",
+        kind: "type",
+        atSec: 1,
+        text: "ship it",
+      })],
+      moments: [{
+        version: 1,
+        id: "m-typed",
+        sceneId: "typed-headline",
+        atSec: 1.2,
+        title: "Headline types on",
+        visualState: "hero copy typing",
+        change: "headline appears",
+        motionIntent: "type-on",
+        importance: "primary",
+      }],
+    })]);
+    // Only the beat rule may speak here (and this beat passes it) — the
+    // moment floor must not double-report.
+    expect(findings.filter((finding) => finding.includes("m-typed"))).toEqual([]);
+  });
+});
+
+describe("auditPacing viewer-time introduction deadline (WS_Improvements item 12)", () => {
+  it("judges the 65% deadline in viewer time under a slow-motion ramp", () => {
+    const build = (withRamp: boolean): DirectScene[] => {
+      const body = scene({
+        id: "ramped",
+        startSec: 5,
+        durationSec: 8,
+        ...(withRamp
+          ? {
+              timeRamp: {
+                version: 1 as const,
+                atSec: 9.4,
+                slowTo: 0.2,
+                holdSec: 0.9,
+                recoverSec: 1.2,
+              },
+            }
+          : {}),
+        components: [{ version: 1 as const, id: "panel", kind: "app-window" as const }],
+        beats: [beat("ramped", { id: "b1", component: "panel", kind: "open", atSec: 10.05 })],
+      });
+      return [scene({ id: "opener", startSec: 0, durationSec: 5 }), body];
+    };
+
+    // Precondition: the ramp resolves, and the introduction is inside the 65%
+    // cap in CONTENT time but past it in VIEWER time — the exact class the
+    // fix targets. If the ramp solver's geometry changes these asserts fail
+    // loudly instead of the test silently proving nothing.
+    const ramped = build(true);
+    const plan = resolveTimeRampPlan(ramped);
+    expect(plan.ramps).toHaveLength(1);
+    const toViewer = warpInverseOf(plan);
+    const sceneStart = 5;
+    const sceneLen = 8;
+    const introAt = 10.05;
+    const contentFraction = (introAt - sceneStart) / sceneLen;
+    expect(contentFraction).toBeLessThan(LAST_INTRODUCTION_MAX_FRACTION);
+    expect(introAt).toBeLessThanOrEqual(
+      sceneStart + sceneLen * LAST_INTRODUCTION_MAX_FRACTION + PACING_TOLERANCE_SEC,
+    );
+    const viewerIntro = toViewer(introAt);
+    const viewerCap =
+      toViewer(sceneStart) +
+      (toViewer(sceneStart + sceneLen) - toViewer(sceneStart)) * LAST_INTRODUCTION_MAX_FRACTION;
+    expect(viewerIntro).toBeGreaterThan(viewerCap + PACING_TOLERANCE_SEC);
+
+    // Without the ramp the same plan is silent; with it the deadline fires.
+    expect(auditPacing(build(false)).filter((finding) =>
+      finding.startsWith("pacing/holds:")
+    )).toEqual([]);
+    expect(auditPacing(ramped).filter((finding) =>
+      finding.startsWith("pacing/holds:")
+    )).toHaveLength(1);
   });
 });
 

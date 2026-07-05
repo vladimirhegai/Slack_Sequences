@@ -102,6 +102,38 @@ export function storyboardRescueModel(
   return chosen;
 }
 
+/**
+ * Second-opinion SOURCE model — storyboard-rescue parity for the author
+ * stage. Both recorded whole-film fallbacks (2026-07-04) died at
+ * source-author after the primary model failed every bounded attempt, so one
+ * full-context pass on an independent model runs before the deterministic
+ * fallback is allowed: it costs one extra call ONLY on the path that
+ * currently wastes the entire run. Override with
+ * SLACK_SEQUENCES_SOURCE_RESCUE_MODEL; "0"/"none"/"off" disables the rung.
+ */
+export const OPENROUTER_SOURCE_RESCUE_MODEL = "tencent/hy3-preview";
+
+export function sourceRescueModel(
+  provider: AgentProvider,
+  primaryModel: string | undefined,
+): string | undefined {
+  const raw = process.env.SLACK_SEQUENCES_SOURCE_RESCUE_MODEL?.trim();
+  if (raw && ["0", "none", "off"].includes(raw.toLowerCase())) return undefined;
+  const chosen = raw ||
+    (provider.id === "openrouter-api" ? OPENROUTER_SOURCE_RESCUE_MODEL : undefined);
+  if (!chosen || chosen === primaryModel) return undefined;
+  return chosen;
+}
+
+/**
+ * The source-rescue rung's reasoning effort. Full-document emission keeps the
+ * author default (reasoning off — the budget belongs to source, not
+ * deliberation); the override exists for model experiments.
+ */
+export function sourceRescueThinkingMode(): CompleteOptions["thinkingMode"] {
+  return thinkingOverride("SLACK_SEQUENCES_SOURCE_RESCUE_THINKING") ?? "none";
+}
+
 /** Full source and structural repairs stay on the configured production brain. */
 export function productionModel(provider: AgentProvider): string | undefined {
   if (provider.id !== "openrouter-api") return undefined;

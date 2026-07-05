@@ -56,6 +56,12 @@ beforeEach(() => {
   // The small-agent shape hint rides in parallel with the concept pass and
   // would shift these call-count-sensitive specs; it has its own test file.
   vi.stubEnv("SLACK_SEQUENCES_SHAPE_HINT", "0");
+  // The source rescue rung adds a provider call on exhausted-author paths and
+  // would shift call-count-sensitive specs; its own spec re-enables it.
+  vi.stubEnv("SLACK_SEQUENCES_SOURCE_RESCUE_MODEL", "none");
+  // The shared planning cache would bleed identical-brief plans across specs
+  // (and test runs); its own spec re-enables it inside a private base dir.
+  vi.stubEnv("SLACK_SEQUENCES_SHARED_PLANNING_CACHE", "0");
 });
 
 afterEach(() => {
@@ -330,6 +336,141 @@ function storyboard(): DirectCompositionDraft["storyboard"] {
   ];
 }
 
+describe("unsupported component beats degrade at parse (fallback-elimination)", () => {
+  function planWith(beats: object[], moments: object[] = []) {
+    const scenes = storyboard();
+    const raw = scenes.map((scene, index) =>
+      index === 1
+        ? {
+            ...scene,
+            components: [
+              { version: 1, id: "alerts-table", kind: "table" },
+              { version: 1, id: "latency-stat", kind: "stat-card" },
+            ],
+            beats,
+            moments,
+          }
+        : scene
+    );
+    return parseStoryboardResponse(`<storyboard_json>${JSON.stringify(raw)}</storyboard_json>`);
+  }
+
+  it("converts a text arrival on the wrong kind to a universal swap", () => {
+    const parsed = planWith([{
+      version: 1,
+      id: "bad-type",
+      sceneId: "product-proof",
+      component: "alerts-table",
+      kind: "type",
+      atSec: 3.5,
+      text: "rollback checkout",
+    }]);
+    const beat = parsed[1]!.beats!.find((entry) => entry.id === "bad-type")!;
+    expect(beat.kind).toBe("swap");
+    expect(beat.text).toBe("rollback checkout");
+  });
+
+  it("converts rows on a stat-card to count when a value exists, else highlight", () => {
+    const withValue = planWith([{
+      version: 1,
+      id: "bad-rows",
+      sceneId: "product-proof",
+      component: "latency-stat",
+      kind: "rows",
+      atSec: 3.5,
+      value: 98,
+    }]);
+    expect(withValue[1]!.beats!.find((entry) => entry.id === "bad-rows")!.kind).toBe("count");
+    const withoutValue = planWith([{
+      version: 1,
+      id: "bad-rows-2",
+      sceneId: "product-proof",
+      component: "latency-stat",
+      kind: "rows",
+      atSec: 3.5,
+    }]);
+    expect(withoutValue[1]!.beats!.find((entry) => entry.id === "bad-rows-2")!.kind)
+      .toBe("highlight");
+  });
+
+  it("keeps a load-bearing unsupported beat blocking (a moment anchors on it)", () => {
+    // The beat is NOT silently degraded, so storyboard validation rejects the
+    // plan with the support-map finding — the findings-retry stays the
+    // delivery mechanism for evidence a declared moment binds to.
+    expect(() =>
+      planWith(
+        [{
+          version: 1,
+          id: "bad-type",
+          sceneId: "product-proof",
+          component: "alerts-table",
+          kind: "type",
+          atSec: 3.5,
+          text: "rollback checkout",
+        }],
+        [{
+          version: 1,
+          id: "m-typed-query",
+          sceneId: "product-proof",
+          atSec: 3.8,
+          title: "Query lands",
+          visualState: "typed query visible",
+          change: "the query arrives",
+          motionIntent: "type-on",
+          importance: "primary",
+        }],
+      )
+    ).toThrow(/uses "type" on a table component/);
+  });
+
+  it("accepts a plan clean except for pacing on late attempts (degrade-never-veto)", () => {
+    const scenes = storyboard();
+    const raw = scenes.map((scene, index) =>
+      index === 1
+        ? {
+            ...scene,
+            components: [{ version: 1, id: "ops-window", kind: "app-window" }],
+            // One dense window introduced at 90% of the scene: a pure
+            // pacing/holds violation on an otherwise valid plan.
+            beats: [{
+              version: 1,
+              id: "late-rows",
+              sceneId: "product-proof",
+              component: "ops-window",
+              kind: "rows",
+              atSec: 5.7,
+            }],
+          }
+        : scene
+    );
+    const response = `<storyboard_json>${JSON.stringify(raw)}</storyboard_json>`;
+    expect(() => parseStoryboardResponse(response)).toThrow(/pacing\/holds/);
+    const accepted = parseStoryboardResponse(response, {}, { degradePacingFindings: true });
+    expect(accepted).toHaveLength(3);
+    // Non-pacing findings keep their teeth under the same option.
+    const broken = raw.map((scene, index) => (index === 2 ? { ...scene, id: raw[0]!.id } : scene));
+    expect(() =>
+      parseStoryboardResponse(
+        `<storyboard_json>${JSON.stringify(broken)}</storyboard_json>`,
+        {},
+        { degradePacingFindings: true },
+      )
+    ).toThrow(/duplicated/);
+  });
+
+  it("never touches supported beats", () => {
+    const parsed = planWith([{
+      version: 1,
+      id: "good-rows",
+      sceneId: "product-proof",
+      component: "alerts-table",
+      kind: "rows",
+      atSec: 3.5,
+    }]);
+    expect(parsed[1]!.beats!.find((entry) => entry.id === "good-rows")!.kind).toBe("rows");
+  });
+});
+
 describe("direct HyperFrames composition", () => {
   it("parses the bounded author response contract", () => {
     const value = draft();
@@ -439,6 +580,87 @@ describe("direct HyperFrames composition", () => {
     expect(scene).toContain('data-part="error-chart-card-aux-2"');
     expect(scene).toContain('data-region="chart-zone"');
     expect(result.attempts).toBe(1);
+  });
+
+  it("spends one rescue attempt on an independent model before failing the run", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_SOURCE_RESCUE_MODEL", "tencent/hy3-preview");
+    const dir = projectDir();
+    const value = draft();
+    const garbage =
+      "<index_html><!DOCTYPE html><html><body><div>not a composition</div></body></html></index_html>";
+    const complete = vi.fn()
+      .mockResolvedValueOnce(garbage)
+      .mockResolvedValueOnce(garbage)
+      .mockResolvedValueOnce(garbage)
+      .mockResolvedValueOnce(response(value));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: value.storyboard,
+    });
+
+    expect(result.attempts).toBe(4);
+    expect(complete).toHaveBeenCalledTimes(4);
+    expect(complete.mock.calls[3]![1]?.model).toBe("tencent/hy3-preview");
+    const summary = JSON.parse(
+      fs.readFileSync(path.join(dir, "planning", "author-run.json"), "utf8"),
+    );
+    expect(summary.strategyChanges).toContain("source-rescue:tencent/hy3-preview");
+    expect(summary.outcome).toBe("published");
+  });
+
+  it("never spends the final attempt on a compact patch without a banked draft", async () => {
+    const dir = projectDir();
+    const value = draft();
+    const rejectedQa = {
+      ok: false,
+      strictOk: false,
+      samples: [0, 2, 4],
+      issues: [],
+      errors: ["layout_error: promised content never framed"],
+      warnings: [],
+    };
+    vi.mocked(inspectDirectComposition)
+      .mockResolvedValueOnce(rejectedQa as never)
+      .mockResolvedValueOnce(rejectedQa as never);
+    const complete = vi.fn()
+      .mockResolvedValueOnce(response(value))
+      .mockResolvedValueOnce(patchResponse("Ship with nerve.", "Ship with verve."))
+      .mockResolvedValueOnce(response(value));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+      lockedStoryboard: value.storyboard,
+    });
+
+    expect(result.attempts).toBe(3);
+    expect(complete).toHaveBeenCalledTimes(3);
+    // Attempt 2 was the mid-ladder patch; the final attempt must be a
+    // full-context re-author because no browser-valid draft was banked.
+    expect(complete.mock.calls[1]![0]).toContain("patches");
+    expect(complete.mock.calls[2]![0]).not.toContain("patches_json");
+    const summary = JSON.parse(
+      fs.readFileSync(path.join(dir, "planning", "author-run.json"), "utf8"),
+    );
+    expect(summary.strategyChanges).toContain("full-reauthor-final-attempt");
   });
 
   it("reports a truncated response as a token-limit problem, not a missing tag", () => {
@@ -1009,7 +1231,7 @@ describe("direct HyperFrames composition", () => {
     expect(plan).toEqual(storyboard());
   });
 
-  it("recovers a truncated reasoning storyboard with lower effort", async () => {
+  it("recovers a truncated reasoning storyboard by shrinking the ARTIFACT, not the reasoning", async () => {
     vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
     const dir = projectDir();
     const complete = vi.fn()
@@ -1035,10 +1257,54 @@ describe("direct HyperFrames composition", () => {
       maxTokens: 30_720,
       thinkingMode: "medium",
     });
+    // Reasoning-stripped recovery produced structurally broken plans in 3 of
+    // 4 benched runs (improve-ws32-1 died on it live): the retry keeps the
+    // configured reasoning and full budget, and the prompt demands a smaller
+    // artifact instead.
     expect(complete.mock.calls[1]?.[1]).toMatchObject({
-      maxTokens: 8_192,
-      thinkingMode: "none",
+      maxTokens: 30_720,
+      thinkingMode: "medium",
     });
+    expect(complete.mock.calls[1]?.[0]).toContain("exhausted its output budget");
+    expect(complete.mock.calls[1]?.[0]).toContain("compact single-line JSON");
+  });
+
+  it("reuses an already-paid storyboard across job ids via the shared planning cache", async () => {
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
+    vi.stubEnv("SLACK_SEQUENCES_SHARED_PLANNING_CACHE", "1");
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-shared-cache-"));
+    roots.push(base);
+    const jobDir = (id: string) => {
+      const dir = path.join(base, "projects", id);
+      fs.mkdirSync(dir, { recursive: true });
+      initializeProject(dir, { name: "Relay", brandName: "Relay", seedScreenshot: true });
+      return dir;
+    };
+    const complete = vi.fn().mockResolvedValue(JSON.stringify({ storyboard: storyboard() }));
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    const first = await requestStoryboardPlan(provider, {
+      brief: "Launch Relay",
+      projectDir: jobDir("job-1"),
+      skills: skills(),
+    });
+    // A fresh job id after a source-author failure must not re-pay the plan.
+    const second = await requestStoryboardPlan(provider, {
+      brief: "Launch Relay",
+      projectDir: jobDir("job-2"),
+      skills: skills(),
+    });
+    expect(second).toEqual(first);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(path.join(base, "planning-cache"))).toBe(true);
+    // The retry's own job dir still documents the plan it built against.
+    expect(fs.existsSync(path.join(base, "projects", "job-2", "planning", "storyboard.json")))
+      .toBe(true);
   });
 
   it("retries an upstream idle timeout inside the same source attempt", async () => {
@@ -1290,6 +1556,32 @@ describe("direct HyperFrames composition", () => {
     expect(repaired.html).toContain('class="scene clip"');
   });
 
+  it("reverts only the individual patch that breaks an inline script's parse", () => {
+    const value = draft();
+    const repaired = applyCompositionRepair(
+      `<patches_json>${JSON.stringify([
+        {
+          search: "border: 1px solid #8b5cf6",
+          replace: "border: 1px solid #22d3ee",
+        },
+        { search: "const tl =", replace: "const tl = = =" },
+      ])}</patches_json>`,
+      value,
+    );
+    expect(repaired.html).toContain("#22d3ee");
+    expect(repaired.html).toContain("const tl =");
+    expect(repaired.html).not.toContain("= = =");
+  });
+
+  it("rejects the attempt when every patch breaks the script parse", () => {
+    expect(() =>
+      applyCompositionRepair(
+        patchResponse("const tl =", "const tl = = ="),
+        draft(),
+      ),
+    ).toThrow(/inline script/);
+  });
+
   it("quarantines only the browser-proven broken optional interaction", () => {
     const value = draft();
     const interactions = [
@@ -1482,7 +1774,9 @@ describe("direct HyperFrames composition", () => {
     const complete = vi.fn()
       .mockResolvedValueOnce(response(invalid))
       .mockResolvedValueOnce(patchResponse("setTimeout(() => {}, 1)", "Date.now()"))
-      .mockResolvedValueOnce(patchResponse("setTimeout(() => {}, 1)", "0"));
+      // The final attempt is a full-context re-author (no browser-valid
+      // draft is banked), never a third compact patch.
+      .mockResolvedValueOnce(response(draft()));
     const provider: AgentProvider = {
       id: "openrouter-api",
       label: "test author",

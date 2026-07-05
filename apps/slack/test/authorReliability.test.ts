@@ -4,12 +4,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   auditShapeMatchHints,
+  dedupeFeedbackBySignature,
   degradeMismatchedShapeHintCuts,
   degradeVolunteeredBridgedCuts,
   findingSignature,
   reconcileContractBindings,
   repairStrategyAfterStaticRejection,
   rewriteDegradedCutStoryboard,
+  topUpRowsMarkup,
   volunteeredCutBoundaries,
 } from "../src/engine/compositionRunner.ts";
 import { resolveCutPlan, validateCutContract } from "../src/engine/cutContract.ts";
@@ -330,6 +332,108 @@ describe("plan-time silhouette-hint sanity (WS1)", () => {
     const { scenes, degraded } = degradeMismatchedShapeHintCuts(storyboard);
     expect(degraded).toEqual([]);
     expect(scenes).toEqual(storyboard);
+  });
+
+  it("keeps authored boundary timing when degrading, like the QA-time rewrite", () => {
+    const storyboard = hintedStoryboard("pill", "card");
+    storyboard[0]!.cut = {
+      ...storyboard[0]!.cut!,
+      travelPx: 240,
+      exitSec: 0.3,
+      entrySec: 0.6,
+    };
+    const { scenes } = degradeMismatchedShapeHintCuts(storyboard);
+    expect(scenes[0]!.cut).toEqual({
+      version: 1,
+      style: "zoom-through",
+      travelPx: 240,
+      exitSec: 0.3,
+      entrySec: 0.6,
+    });
+  });
+});
+
+describe("deterministic rows-markup top-up (fallback-elimination lever 1)", () => {
+  const rowsScene = (kind: "table" | "kanban" | "chat" | "list"): DirectScene[] => [
+    scene("triage", 0, {
+      components: [{ version: 1, id: "sev-board", kind }],
+      beats: [{
+        version: 1,
+        id: "reveal-rows",
+        sceneId: "triage",
+        component: "sev-board",
+        kind: "rows",
+        atSec: 1.2,
+      }],
+    }),
+  ];
+
+  it("injects three neutral kit children into a childless rows target", () => {
+    const html =
+      '<section data-scene="triage"><div data-part="sev-board" data-component="table" ' +
+      'class="cmp cmp-table material"><div class="cmp-table-head">Alerts</div></div></section>';
+    const result = topUpRowsMarkup(html, rowsScene("table"));
+    expect(result.repaired).toEqual(["sev-board"]);
+    expect(result.html.match(/class="cmp-row"/g)).toHaveLength(3);
+    // Injected before the root's close tag, inside the component.
+    expect(result.html.indexOf('class="cmp-row"')).toBeGreaterThan(
+      result.html.indexOf("cmp-table-head"),
+    );
+    // Idempotent: a second pass sees revealable children and stays out.
+    expect(topUpRowsMarkup(result.html, rowsScene("table")).repaired).toEqual([]);
+  });
+
+  it("chooses the kind-appropriate child class", () => {
+    const html =
+      '<div data-part="sev-board" data-component="kanban" class="cmp cmp-kanban"></div>';
+    const result = topUpRowsMarkup(html, rowsScene("kanban"));
+    expect(result.repaired).toEqual(["sev-board"]);
+    expect(result.html).toContain('class="cmp-card material"');
+  });
+
+  it("leaves targets with revealable children and ambiguous roots alone", () => {
+    const populated =
+      '<div data-part="sev-board" class="cmp cmp-table">' +
+      '<div class="cmp-row"><span>#1</span></div></div>';
+    expect(topUpRowsMarkup(populated, rowsScene("table")).repaired).toEqual([]);
+    const ambiguous =
+      '<div data-part="sev-board" class="cmp"></div><div data-part="sev-board" class="cmp"></div>';
+    expect(topUpRowsMarkup(ambiguous, rowsScene("table")).repaired).toEqual([]);
+  });
+
+  it("survives nested same-tag children when locating the root close tag", () => {
+    const html =
+      '<div data-part="sev-board" data-component="chat" class="cmp cmp-chat">' +
+      "<div><div>header</div></div></div><div>after</div>";
+    const result = topUpRowsMarkup(html, rowsScene("chat"));
+    expect(result.repaired).toEqual(["sev-board"]);
+    const afterIndex = result.html.indexOf("<div>after</div>");
+    expect(result.html.lastIndexOf('class="cmp-msg"')).toBeLessThan(afterIndex);
+  });
+});
+
+describe("repair-feedback dedupe by finding signature", () => {
+  it("collapses both encodings of one degraded boundary, keeping the detailed one", () => {
+    const raw =
+      "cut_degraded: shape-match a->b compiled as zoom-through: focal silhouettes differ " +
+      "7.9x in aspect ratio (cap 2.5x)";
+    const measured =
+      'cut_degraded [data-part="pill"] (t=4.0s): The storyboard declares a shape-match cut ' +
+      "a->b, but the runtime degraded it to zoom-through at bind time: focal silhouettes " +
+      'differ 7.9x in aspect ratio (cap 2.5x). Measured at the boundary: outgoing "pill" ' +
+      '720x56px vs incoming "card" 520x380px.';
+    const other = "pacing/reading: scene \"s\" beat \"b\" finishes typing 8 word(s) late";
+    expect(dedupeFeedbackBySignature([raw, other, measured])).toEqual([measured, other]);
+  });
+
+  it("keeps distinct findings in first-seen order", () => {
+    const findings = [
+      'interaction_target_miss [data-cursor-id="c1"] misses its target',
+      'interaction_not_visible [data-cursor-id="c2"] target hidden',
+      'interaction_target_miss [data-cursor-id="c1"] misses its target',
+    ];
+    const deduped = dedupeFeedbackBySignature(findings);
+    expect(deduped).toEqual([findings[0], findings[1]]);
   });
 });
 

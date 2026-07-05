@@ -1,5 +1,13 @@
 # WS_Improvements — follow-ups from the WS1/WS5 verification (2026-07-04)
 
+> **STATUS (2026-07-05): implemented.** Items 1–5, 8 (penalty-weight slice),
+> 9–16, 18, and 19 are fixed in code with regression tests; the full
+> deterministic ladder is green. Item 6 stays parked pending live evidence of
+> hint-less declarations, item 7 is the documented v2 idea, item 17 is
+> evidence for WS6 (its actionable slice — penalty weights for
+> `camera_framed_sparse`/`cut_degraded`/`eye_trace_jump` — landed with item 8).
+> `QA_CACHE_VERSION` is now 6; the storyboard cache contract is now v9.
+
 Verification verdict: **WS1 and WS5 are correct and shippable as-is.** The
 deterministic ladder is green (typecheck, 48 tests, `film:demo`,
 `sequence:check --demo`), the golden film and the deterministic fallback stay

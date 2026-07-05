@@ -1,5 +1,23 @@
 # LESS_FALLBACKS — why runs fall back, what it costs, and how to stop it (2026-07-04)
 
+> **STATUS (2026-07-05): implemented.** Levers 1–5, 8, 9, 10 and the
+> author-side moment degrade (lever 6) are in code with regression tests.
+> Lever 7 was already implemented when this doc was written — the fallback
+> film has consumed the per-job `frame.md` palette + display/body fonts and
+> the brief's product/value-prop since the frame system landed
+> (`fallbackComposition.ts` `frameColor`/`frameFont`); no change was needed.
+> Notable deltas from the spec as written: the final author attempt forces a
+> full-context re-author only when NO browser-valid draft is banked (a final
+> patch on a banked draft is safe — its failure still publishes the bank);
+> the source rescue rung is `SLACK_SEQUENCES_SOURCE_RESCUE_MODEL` (default
+> `tencent/hy3-preview`, reasoning off, override with
+> `SLACK_SEQUENCES_SOURCE_RESCUE_THINKING`); truncation recovery now keeps
+> reasoning and demands a smaller artifact in the prompt instead of
+> shrinking the token budget; the shared planning cache lives in
+> `.data/planning-cache/` (`SLACK_SEQUENCES_SHARED_PLANNING_CACHE=0` opts
+> out); unsupported beats degrade only when NOT load-bearing (a declared
+> moment inside the beat window keeps the blocking finding).
+
 A deterministic fallback is the **most expensive possible outcome**: you pay
 for every model call in the run (frame + concept + shape + storyboard + up to
 3 author attempts + hedged duplicates), then throw all of it away and spend

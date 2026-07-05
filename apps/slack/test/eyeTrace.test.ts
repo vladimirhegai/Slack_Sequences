@@ -226,8 +226,41 @@ describe("ping-pong candidates and scoring", () => {
       sceneId: "s",
       firstPart: "left",
       secondPart: "right",
-      measureAtSec: 1.75,
+      viewerGapSec: 0.6,
+      // Each target sampled just after ITS OWN beat — never one shared seek.
+      firstMeasureAtSec: 1.15,
+      secondMeasureAtSec: 1.75,
     });
+  });
+
+  it("judges the ping-pong window in viewer time under a slow-motion ramp", () => {
+    // 1.0s content gap — inside the window raw, but the dip between the two
+    // beats stretches it well past 1.2s for the viewer → not a candidate.
+    const build = (withRamp: boolean) => [
+      scene({ id: "opener", startSec: 0, durationSec: 4 }),
+      scene({
+        id: "s",
+        startSec: 4,
+        durationSec: 8,
+        ...(withRamp
+          ? {
+              timeRamp: {
+                version: 1 as const,
+                atSec: 5.1,
+                slowTo: 0.2,
+                holdSec: 0.9,
+                recoverSec: 1.2,
+              },
+            }
+          : {}),
+        beats: [
+          { version: 1 as const, id: "b1", sceneId: "s", component: "left", kind: "highlight" as const, atSec: 5 },
+          { version: 1 as const, id: "b2", sceneId: "s", component: "right", kind: "highlight" as const, atSec: 6 },
+        ],
+      }),
+    ];
+    expect(pingPongCandidates(build(false))).toHaveLength(1);
+    expect(pingPongCandidates(build(true))).toEqual([]);
   });
 
   it("caps the measurement budget per film", () => {
