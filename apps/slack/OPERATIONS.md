@@ -223,7 +223,11 @@ OPENROUTER_API_KEY=sk-or-v1-...
 # SLACK_SEQUENCES_INTERACTION_QA=enforce
 # When storyboard/source authoring is exhausted, the labeled model-free proof
 # film ships by DEFAULT (VideoResult.fallback + the Slack fallback banner +
-# `/sequences debug on` receipts keep it honest). Opt out to fail visibly:
+# `/sequences debug on` receipts keep it honest). Set to 0 to FAIL LOUD instead:
+# no video/storyboard, Slack shows the full diagnostic log + a FAILURE.md is
+# written to the project dir (see FALLBACKS.md). ⚠️ Prep-mode is currently 0
+# (fail-loud) so failures are visible — SET IT BACK TO 1 (or unset) ON RAILWAY
+# BEFORE JUDGES TEST so a stray failure degrades to the labeled film, not a raw log:
 # SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0
 
 # B — reuse OpenAI temporarily

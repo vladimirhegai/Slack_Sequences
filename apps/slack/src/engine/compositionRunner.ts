@@ -1393,7 +1393,80 @@ function ensureTagAttr(tag: string, name: string, value: string): string {
   return tag.replace(/>$/, ` ${name}="${value}">`);
 }
 
-function reconcileComponentBindings(
+/**
+ * Bind a declared component whose `data-part` element is entirely missing from
+ * the scene to the one unambiguous, still-unlabeled candidate the author left
+ * behind — an element carrying this component's kind, an exact id match, or a
+ * unique semantic-name match. This mirrors the cut/camera/interaction target
+ * reconciler (exact / unique-candidate, ambiguity stays blocking): a dense
+ * component brief where the model built the surface but forgot or mis-named its
+ * `data-part` no longer sinks the whole run at `source-author`. Only elements
+ * that carry no `data-part` yet are eligible, so a correctly-bound sibling is
+ * never hijacked; absent any safe candidate the component stays unbound and the
+ * author re-authors honestly.
+ */
+function bindMissingComponentElement(
+  scope: string,
+  component: NonNullable<DirectScene["components"]>[number],
+  sceneComponents: NonNullable<DirectScene["components"]>,
+): { html: string; repairs: number } {
+  const claimed = new Set(
+    sceneComponents.filter((entry) => entry.id !== component.id).map((entry) => entry.id),
+  );
+  const tags = [...scope.matchAll(/<[a-z][\w:-]*\b[^>]*>/gi)]
+    .map((match) => ({
+      tag: match[0],
+      id: htmlAttr(match[0], "id"),
+      part: htmlAttr(match[0], "data-part"),
+      kind: htmlAttr(match[0], "data-component"),
+      index: match.index,
+    }))
+    .filter((entry) =>
+      !entry.tag.includes("data-sequences-runtime-") &&
+      !htmlAttr(entry.tag, "data-scene") &&
+      // Only ever claim an element that has no data-part of its own — never
+      // rename a sibling component's correctly-labeled element.
+      !entry.part &&
+      !(entry.id && claimed.has(entry.id))
+    );
+  const pickUnique = <T,>(list: T[]): T | undefined => (list.length === 1 ? list[0] : undefined);
+  // 1) the author put the intended name on `id` instead of data-part;
+  // 2) a lone element already declaring this component's kind;
+  // 3) a unique high-confidence semantic name match.
+  let candidate = pickUnique(tags.filter((entry) => entry.id === component.id));
+  if (!candidate) candidate = pickUnique(tags.filter((entry) => entry.kind === component.kind));
+  if (!candidate) {
+    const scored = tags
+      .filter((entry) => entry.id || entry.kind)
+      .map((entry) => ({
+        entry,
+        score: Math.max(
+          entry.id ? semanticPartScore(component.id, entry.id) : 0,
+          entry.kind === component.kind ? 1 : 0,
+        ),
+      }))
+      .filter((entry) => entry.score >= 0.8)
+      .sort((a, b) => b.score - a.score);
+    if (scored.length === 1 || (scored[0] && scored[0].score > (scored[1]?.score ?? 0))) {
+      candidate = scored[0]?.entry;
+    }
+  }
+  if (!candidate) return { html: scope, repairs: 0 };
+  let replacement = candidate.tag.replace(/>$/, ` data-part="${component.id}">`);
+  replacement = ensureTagAttr(replacement, "data-component", component.kind);
+  if (
+    component.region &&
+    !new RegExp(`\\bdata-region\\s*=\\s*(["'])${regexpEscape(component.region)}\\1`, "i").test(scope)
+  ) {
+    replacement = ensureTagAttr(replacement, "data-region", component.region);
+  }
+  if (replacement === candidate.tag) return { html: scope, repairs: 0 };
+  const html = scope.slice(0, candidate.index) + replacement +
+    scope.slice(candidate.index + candidate.tag.length);
+  return { html, repairs: 1 };
+}
+
+export function reconcileComponentBindings(
   source: string,
   scenes: DirectScene[],
 ): { html: string; repairs: number } {
@@ -1415,7 +1488,16 @@ function reconcileComponentBindings(
       const tags = [...scope.matchAll(/<[a-z][\w:-]*\b[^>]*>/gi)]
         .map((match) => match[0])
         .filter((tag) => htmlAttr(tag, "data-part") === component.id);
-      if (!tags.length) continue;
+      if (!tags.length) {
+        // The declared element is absent: try to bind an unambiguous
+        // candidate the author left unlabeled instead of losing the attempt.
+        const bound = bindMissingComponentElement(scope, component, scene.components);
+        if (bound.repairs) {
+          scope = bound.html;
+          repairs += bound.repairs;
+        }
+        continue;
+      }
       const canonicalOccurrence = Math.max(
         0,
         tags.findIndex((tag) => htmlAttr(tag, "data-component") === component.kind),
@@ -1465,6 +1547,130 @@ function timelineRegistrationAnchor(timelineName: string): RegExp {
     `((?:var\\s+__seqWarped\\s*=\\s*SequencesTime\\.wrap\\(${escaped}\\);\\s*)?` +
       `window\\.__timelines\\s*\\[[^\\]]+\\]\\s*=\\s*(?:${escaped}|__seqWarped)\\s*;)`,
   );
+}
+
+/**
+ * The five runtime `.js` files the host stages next to the composition and
+ * references with a real `<script src>`; every other `sequences-*.vN.(js|css)`
+ * is a kit the host injects INLINE (`sequences-cinema.v1.css`,
+ * `sequences-components.v1.css`) or does not exist at all.
+ */
+const HOST_STAGED_RUNTIME_FILES = new Set<string>([
+  INTERACTION_RUNTIME_FILE,
+  CUT_RUNTIME_FILE,
+  CAMERA_RUNTIME_FILE,
+  COMPONENT_RUNTIME_FILE,
+  TIME_RUNTIME_FILE,
+]);
+
+/**
+ * Strip author `<script src>`/`<link href>` references to host-owned kit assets
+ * the host injects inline (the CSS kits) or that never exist (the recurring
+ * `sequences-cinema.v1.js` hallucination — the cinema kit is CSS-only, so the
+ * model invents a `.v1.js` sibling of the real component/camera runtimes). Such
+ * a reference resolves to a missing staged file and fails the whole build with
+ * `referenced local asset does not exist`; it is never valid, so removing it is
+ * mechanical paperwork recovery, not a content change. The five genuinely
+ * staged runtime `.js` files are preserved.
+ */
+export function stripHostKitAssetReferences(source: string): { html: string; removed: string[] } {
+  const removed: string[] = [];
+  const isSpuriousKitRef = (ref: string): boolean => {
+    const base = ref.replace(/^\\+|\\+$/g, "").split(/[?#]/, 1)[0]!.split(/[\\/]/).pop() ?? "";
+    if (!/^sequences-[\w.-]+\.v\d+\.(?:js|css)$/i.test(base)) return false;
+    return !HOST_STAGED_RUNTIME_FILES.has(base);
+  };
+  const html = source
+    .replace(
+      /<script\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1[^>]*>\s*<\/script>/gi,
+      (tag, _quote, ref: string) => {
+        if (!isSpuriousKitRef(ref)) return tag;
+        removed.push(ref);
+        return "";
+      },
+    )
+    .replace(
+      /<link\b[^>]*\bhref\s*=\s*(["'])(.*?)\1[^>]*>/gi,
+      (tag, _quote, ref: string) => {
+        if (!isSpuriousKitRef(ref)) return tag;
+        removed.push(ref);
+        return "";
+      },
+    );
+  return { html, removed };
+}
+
+/** Each host runtime `.js` file paired with the global its `<script src>` defines. */
+const RUNTIME_SCRIPT_GLOBALS: ReadonlyArray<{ file: string; global: string }> = [
+  { file: INTERACTION_RUNTIME_FILE, global: "SequencesInteractions" },
+  { file: CUT_RUNTIME_FILE, global: "SequencesCuts" },
+  { file: CAMERA_RUNTIME_FILE, global: "SequencesCamera" },
+  { file: COMPONENT_RUNTIME_FILE, global: "SequencesComponents" },
+  { file: TIME_RUNTIME_FILE, global: "SequencesTime" },
+];
+
+/** Match a runtime `<script src="…vN.js">` tag plus one leading newline/indent (so
+ * removal-then-reinsert is byte-idempotent). */
+function runtimeScriptTagSource(file: string): string {
+  return (
+    `\\n?[ \\t]*<script\\b[^>]*\\bsrc\\s*=\\s*(["'])${regexpEscape(file)}\\1[^>]*>\\s*<\\/script>`
+  );
+}
+
+/**
+ * Guarantee that every host runtime whose global an inline script uses is loaded
+ * by a real `<script src>` that runs BEFORE that inline script.
+ *
+ * The five per-runtime injectors above each anchor their `<script src>` on the
+ * host GSAP tag and are individually *idempotent* (`if the tag is already
+ * present, skip`). That means a runtime tag the AUTHOR wrote in the wrong place —
+ * after the inline timeline `<script>`, or before GSAP — is left mis-ordered, and
+ * the compile call (injected on a *different* anchor, the timeline registration)
+ * then executes against an undefined global: `SequencesInteractions is not
+ * defined`, an opaque browser bind failure that burns a paid repair attempt and
+ * can end in the deterministic fallback. This normalizes all five deterministically:
+ * any present-or-referenced runtime `<script src>` is collapsed to a single tag,
+ * in canonical order, in one contiguous block immediately after the GSAP tag
+ * (runtimes load after GSAP — which they may depend on — and before the
+ * composition's inline timeline). A referenced-but-missing runtime is injected.
+ *
+ * No-op and byte-idempotent for an already-correct composition. If the GSAP tag
+ * is absent there is no safe anchor and static validation already rejects the
+ * draft, so we leave it untouched.
+ */
+export function ensureRuntimeScriptOrdering(source: string): { html: string; changed: boolean } {
+  const gsapPattern = /<script\b[^>]*\bsrc\s*=\s*(["'])gsap\.min\.js\1[^>]*>\s*<\/script>/i;
+  if (!gsapPattern.test(source)) return { html: source, changed: false };
+
+  // Inline (executed) script bodies only — exclude `src` scripts and JSON islands,
+  // whose plan payloads never contain a runtime global name.
+  const inlineBlob = [
+    ...source.matchAll(
+      /<script\b(?![^>]*\bsrc\s*=)(?![^>]*\btype\s*=\s*(["'])application\/json\1)[^>]*>([\s\S]*?)<\/script>/gi,
+    ),
+  ]
+    .map((match) => match[2] ?? "")
+    .join("\n");
+
+  const needed = RUNTIME_SCRIPT_GLOBALS.filter(
+    ({ file, global }) =>
+      new RegExp(runtimeScriptTagSource(file), "i").test(source) ||
+      new RegExp(`\\b${regexpEscape(global)}\\b`).test(inlineBlob),
+  ).map((entry) => entry.file);
+  if (!needed.length) return { html: source, changed: false };
+
+  // Strip every existing runtime tag (any count, any position) …
+  let html = source;
+  for (const { file } of RUNTIME_SCRIPT_GLOBALS) {
+    html = html.replace(new RegExp(runtimeScriptTagSource(file), "gi"), "");
+  }
+  // … then re-insert exactly one tag per needed runtime, canonical order, after GSAP.
+  const anchor = gsapPattern.exec(html);
+  if (!anchor) return { html: source, changed: false };
+  const insertAt = anchor.index + anchor[0].length;
+  const block = needed.map((file) => `\n<script src="${file}"></script>`).join("");
+  const rebuilt = html.slice(0, insertAt) + block + html.slice(insertAt);
+  return { html: rebuilt, changed: rebuilt !== source };
 }
 
 export function applyDeterministicSourceRepairs(
@@ -1534,6 +1740,15 @@ export function applyDeterministicSourceRepairs(
   if (removedFontFaces) {
     process.stderr.write(
       `[author] removed ${removedFontFaces} unavailable or empty @font-face declaration(s)\n`,
+    );
+  }
+  const strippedKitRefs = stripHostKitAssetReferences(html);
+  if (strippedKitRefs.removed.length) {
+    html = strippedKitRefs.html;
+    process.stderr.write(
+      `[author] stripped ${strippedKitRefs.removed.length} spurious host-kit asset ` +
+        `reference(s) — the host injects these inline: ` +
+        `${[...new Set(strippedKitRefs.removed)].join(", ")}\n`,
     );
   }
   if (/\bMath\.random\s*\(\s*\)/.test(html)) {
@@ -1970,6 +2185,19 @@ export function applyDeterministicSourceRepairs(
           `${timePlan.ramps.length} speed ramp(s)\n`,
       );
     }
+  }
+  // Final ordering guard: with every runtime `<script src>` and compile call now
+  // injected, ensure each referenced runtime global is defined before the inline
+  // script that uses it — a mis-ordered/absent runtime tag is otherwise an opaque
+  // `SequencesX is not defined` browser failure that burns a paid repair attempt.
+  // Only re-orders `<script src>` head tags, never the timeline registration line,
+  // so it is safe to run after the time-warp rewrite above.
+  const orderedRuntimes = ensureRuntimeScriptOrdering(html);
+  if (orderedRuntimes.changed) {
+    html = orderedRuntimes.html;
+    process.stderr.write(
+      "[author] normalized host runtime <script> ordering (runtimes load after GSAP, before the inline timeline)\n",
+    );
   }
   return html === draft.html ? draft : { ...draft, html };
 }

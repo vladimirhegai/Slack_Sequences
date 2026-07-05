@@ -22,7 +22,15 @@ changes need a publish but not a redeploy. Full runbook: [OPERATIONS.md](OPERATI
 [ARCHITECTURE.md](ARCHITECTURE.md) (target design) ·
 [ROADMAP.md](ROADMAP.md) (current state / task list / TODOs) ·
 [OPERATIONS.md](OPERATIONS.md) (local setup + Railway deploy + recovery) ·
+[FALLBACKS.md](FALLBACKS.md) (fallback classes, recoverable-paperwork catalog, the
+prep-mode fail-loud flag, how to diagnose a fallback) ·
 [HACKATHON_RULES.md](HACKATHON_RULES.md) (challenge constraints).
+
+> ⚠️ **Prep-mode:** the bot currently runs **fail-loud**
+> (`SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0`) so authoring failures surface
+> the full log instead of a generic film. **Set it back to `1` on Railway before
+> judges test the bot** — see [FALLBACKS.md](FALLBACKS.md). Read FALLBACKS.md
+> before changing the authoring pipeline.
 
 ## The two bots
 

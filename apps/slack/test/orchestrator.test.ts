@@ -50,18 +50,26 @@ describe("Slack create orchestration", () => {
     };
     PROVIDERS["openrouter-api"] = provider;
 
-    await expect(createVideo({
+    // Fail-loud: surface the full diagnostic (stage + reason + artifact paths),
+    // never a generic film. The message is the consolidated failure report.
+    const error = (await createVideo({
       jobId: "relay-failed-provider",
       product: "Relay",
       whatShipped: "Release Command Center",
       provider: "openrouter-api",
       render: false,
       preferMcp: false,
-    })).rejects.toThrow(
-      /Creative authoring failed during storyboard-plan\. No generic video was published/i,
-    );
+    }).catch((thrown) => thrown)) as Error;
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toMatch(/no video or storyboard was published/i);
+    expect(error.message).toMatch(/Failed stage: storyboard-plan/i);
+    // No generic video was published …
     expect(
       fs.existsSync(path.join(root, "projects", "relay-failed-provider", "composition")),
     ).toBe(false);
+    // … and the full diagnostic was persisted for a fixing agent to read.
+    expect(
+      fs.existsSync(path.join(root, "projects", "relay-failed-provider", "FAILURE.md")),
+    ).toBe(true);
   });
 });

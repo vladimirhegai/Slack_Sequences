@@ -1332,6 +1332,82 @@ the top candidate for the next quality pass.
   and never touch prompts/reasoning/QA thresholds as a cost lever (sanctioned
   seams: hedging, watchdogs, QA cache, MCP pooling).
 
+### Dense-UI source-author fallback — two recovered hard-error classes (2026-07-05, Cursorflow incident)
+
+A live `/sequences` create (Cursorflow: command-palette-runs-deploy, the
+`ws467-probe-2`-shaped dense-UI brief) fell back at **source-author** — the
+storyboard passed on attempt 3, then all 3 author attempts + the independent
+rescue died on hard **static** errors before browser QA. The Railway trace
+named two mechanically-recoverable classes the repair layer wasn't catching
+(both now fixed in `compositionRunner.ts` `applyDeterministicSourceRepairs`):
+
+- **Hallucinated host-kit asset reference.** The cinema kit is CSS-only and
+  injected inline, but the author invents a `<script src="sequences-cinema.v1.js">`
+  sibling of the real `sequences-components/camera.v1.js` runtimes — a
+  nonexistent file that fails the build with `referenced local asset does not
+  exist` (a *terminal* cause of the original fallback, and seen in
+  `audit-final-a2`/`codexfix-probe-1`). `stripHostKitAssetReferences` removes
+  any `<script src>`/`<link href>` to a `sequences-*.vN.(js|css)` asset that is
+  NOT one of the five genuinely-staged runtime `.js` files (host re-injects
+  everything it owns inline). Pure paperwork recovery.
+- **Missing component `data-part`.** A declared component whose `data-part`
+  element the author forgot/mis-tagged (`dashboard-frame` app-window,
+  `dashboard-search-pill` search-morph) used to make `reconcileComponentBindings`
+  bail (`if (!tags.length) continue`), unlike the cut/camera/interaction
+  reconcilers. `bindMissingComponentElement` now binds the ONE unambiguous
+  unlabeled candidate — exact-id, a lone element of the declared kind, or a
+  unique ≥0.8 semantic match — and forces `data-component` to the declared kind
+  (fixing the morph-destination confusion where a `search` element was authored
+  as `command-palette`). Only elements with no `data-part` yet are eligible, so
+  a correctly-bound sibling is never hijacked; ambiguity stays blocking.
+- **Proof:** `test/authorReliability.test.ts` (7 new cases: strip keeps the five
+  staged runtimes / removes the phantom + inline CSS kits; missing-part bind by
+  kind / by id; ambiguity stays blocking; sibling never hijacked; morph kind
+  forced). Live re-run of the exact brief with
+  `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0` published
+  `hyperframes-direct` (`fallbackStage: null`, lint clean, browser QA ok, 17
+  moments / 5 scenes / 24s) — the strip fired on the rescue attempt
+  (`stripped 1 spurious host-kit asset reference … sequences-cinema.v1.js`).
+- **Parked (observed) → now FIXED below:** attempt 3 of the re-run threw
+  `runtime_bind_exception: SequencesInteractions is not defined` — the
+  interactions runtime `<script>` can be absent/mis-ordered when a scene has
+  cursor interactions.
+
+### Runtime-script ordering guard + fail-loud diagnostics + FALLBACKS.md (2026-07-05, audit pass)
+
+Follow-up audit — closed the parked seam and made every authoring failure legible:
+
+- **`runtime_bind_exception: SequencesInteractions is not defined` — FIXED.**
+  Root cause: all five runtime injectors anchor their `<script src>` on the GSAP
+  tag and are individually *idempotent*, but the `SequencesX.compile(…)` call is
+  injected on a **different** anchor (the timeline registration). An author-written
+  runtime tag placed after the inline timeline `<script>` (or before GSAP) is
+  skipped and left mis-ordered → the compile call runs against an undefined
+  global. `ensureRuntimeScriptOrdering` (`compositionRunner.ts`, runs last in
+  `applyDeterministicSourceRepairs`) collapses all five runtime `<script src>`
+  tags into one canonical block immediately after GSAP (after GSAP, before the
+  inline timeline), injecting any referenced-but-missing runtime. Deterministic,
+  idempotent, no-op for a correct composition. Proof: 8 new cases in
+  `test/authorReliability.test.ts`.
+- **Fail-loud diagnostics.** With `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0`
+  (now the prep-mode default in `.env`), `createVideo` no longer throws a
+  300-char reason — `engine/failureReport.ts` consolidates the failed stage, the
+  terminal reason, per-attempt finding signatures (`planning/author-run.json`),
+  stage receipts, and every persisted artifact path into one report that is thrown
+  to Slack (code-block), written to `<projectDir>/FAILURE.md`, and logged to
+  stderr. The same report is persisted even when the safe fallback IS shipped, so
+  the operator always has the full log without disabling the safety net.
+  `frame-design` failures use it too (they always fail loud).
+- **`FALLBACKS.md`** — new canonical doc: the five fallback classes, the
+  recoverable-paperwork catalog (class C) with the "add a new recovery" recipe,
+  the `gsap.timeline` nested-brace regex as a known open risk (class C2), and the
+  diagnose-a-fallback runbook. Linked from `CLAUDE.md` (with the ⚠️ prep-mode flag
+  reminder) and the `slack-map` skill.
+
+> ⚠️ **Prep-mode flag:** `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0` is live
+> for prep so failures are visible. **Set it back to `1` on Railway before judging**
+> so a stray failure degrades to the labeled safe film, not a raw log.
+
 ---
 
 ## Current Architecture

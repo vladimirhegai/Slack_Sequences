@@ -32,6 +32,7 @@ import {
   requestStoryboardPlan,
 } from "./engine/compositionRunner.ts";
 import { buildFallbackComposition } from "./engine/fallbackComposition.ts";
+import { buildAuthoringFailureReport, writeFailureReport } from "./engine/failureReport.ts";
 import {
   buildJobFrame,
   frameFilePath,
@@ -743,10 +744,16 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
         brandName: options.brandName ?? options.product,
       }));
     if (!framed.value) {
-      throw new Error(
-        `Creative authoring failed during frame-design. No generic video was published. ` +
-          `${stageReason(framed.error)}`,
-      );
+      // frame-design has no safe fallback (brand direction can't be faked), so it
+      // always fails loud — surface the same consolidated diagnostic.
+      const report = buildAuthoringFailureReport({
+        projectDir: dir,
+        stage: "frame-design",
+        reason: framed.error instanceof Error ? framed.error.message : String(framed.error),
+        stages,
+      });
+      writeFailureReport(dir, report);
+      throw new Error(report);
     }
     const frame = framed.value;
     let authoredDraft: DirectCompositionDraft | undefined;
@@ -782,19 +789,35 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     }
     if (!authoredDraft) {
       const failedStage: AuthoringStage = planned.value ? "source-author" : "storyboard-plan";
-      const reason = stageReason(planned.error ?? authoredError);
+      const failError = planned.error ?? authoredError;
+      const reason = stageReason(failError);
+      const fullReason = failError instanceof Error ? failError.message : String(failError);
       const allowFallback =
         options.allowDeterministicFallback ??
         process.env.SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK !== "0";
+      // Always assemble + persist the full diagnostic — whether we fail loud or
+      // ship the labeled safe film, the operator can retrieve the complete log
+      // (stage, per-attempt findings, artifact paths) from FAILURE.md / Railway.
+      const report = buildAuthoringFailureReport({
+        projectDir: dir,
+        stage: failedStage,
+        reason: fullReason,
+        stages,
+      });
+      const reportPath = writeFailureReport(dir, report);
       if (!allowFallback) {
-        throw new Error(
-          `Creative authoring failed during ${failedStage}. No generic video was published. ` +
-            `${reason}`,
+        process.stderr.write(
+          `[orchestrator] fail-loud: authoring failed at "${failedStage}"; ` +
+            `no video published — full diagnostic at ${reportPath ?? `${dir}/FAILURE.md`}\n`,
         );
+        // The whole report becomes the surfaced error so Slack (code-block) and
+        // sequence:check show the log directly; FAILURE.md carries the untruncated copy.
+        throw new Error(report);
       }
       process.stderr.write(
         `[orchestrator] model authoring unavailable at stage "${failedStage}"; ` +
-          `publishing the explicitly enabled deterministic safe fallback\n`,
+          `publishing the explicitly enabled deterministic safe fallback — ` +
+          `full diagnostic at ${reportPath ?? `${dir}/FAILURE.md`}\n`,
       );
       fallbackInfo = { stage: failedStage, reason };
       authoredDraft = buildFallbackComposition({

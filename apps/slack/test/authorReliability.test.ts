@@ -7,10 +7,13 @@ import {
   dedupeFeedbackBySignature,
   degradeMismatchedShapeHintCuts,
   degradeVolunteeredBridgedCuts,
+  ensureRuntimeScriptOrdering,
   findingSignature,
+  reconcileComponentBindings,
   reconcileContractBindings,
   repairStrategyAfterStaticRejection,
   rewriteDegradedCutStoryboard,
+  stripHostKitAssetReferences,
   topUpRowsMarkup,
   volunteeredCutBoundaries,
 } from "../src/engine/compositionRunner.ts";
@@ -550,5 +553,207 @@ describe("repair strategy after a static rejection", () => {
       previousSignatures: new Set([otherSignature]),
       degradableBoundaries: new Set(),
     })).toBe("compact-repair");
+  });
+});
+
+// The Cursorflow dense-UI live fallback (2026-07-05): source-author exhausted
+// every attempt on two mechanically recoverable hard errors — a hallucinated
+// host-kit asset reference and a declared component whose data-part element the
+// author left unlabeled — that the deterministic repair layer now recovers.
+describe("stripHostKitAssetReferences", () => {
+  it("removes the hallucinated sequences-cinema.v1.js and inline CSS kits, keeps staged runtimes", () => {
+    const html = [
+      '<script src="gsap.min.js"></script>',
+      '<script src="sequences-components.v1.js"></script>',
+      '<script src="sequences-camera.v1.js"></script>',
+      '<script src="sequences-cinema.v1.js"></script>',
+      '<link rel="stylesheet" href="sequences-cinema.v1.css">',
+      '<link rel="stylesheet" href="sequences-components.v1.css">',
+    ].join("\n");
+    const { html: out, removed } = stripHostKitAssetReferences(html);
+    expect(removed).toContain("sequences-cinema.v1.js");
+    expect(removed).toContain("sequences-cinema.v1.css");
+    expect(removed).toContain("sequences-components.v1.css");
+    expect(out).not.toContain("sequences-cinema.v1.js");
+    expect(out).not.toContain("sequences-cinema.v1.css");
+    expect(out).not.toContain("sequences-components.v1.css");
+    expect(out).toContain('src="gsap.min.js"');
+    expect(out).toContain('src="sequences-components.v1.js"');
+    expect(out).toContain('src="sequences-camera.v1.js"');
+  });
+
+  it("leaves a document with only staged runtime references byte-identical", () => {
+    const html =
+      '<script src="gsap.min.js"></script>\n<script src="sequences-cuts.v1.js"></script>\n' +
+      '<script src="sequences-time.v1.js"></script>';
+    const { html: out, removed } = stripHostKitAssetReferences(html);
+    expect(removed).toHaveLength(0);
+    expect(out).toBe(html);
+  });
+});
+
+describe("reconcileComponentBindings — missing data-part recovery", () => {
+  const wrap = (inner: string): string =>
+    `<section data-scene="dashboard-overload" id="dashboard-overload" ` +
+    `data-start="0" data-duration="6">${inner}</section>`;
+  const component = (id: string, kind: string, region?: string) =>
+    ({ version: 1 as const, id, kind, ...(region ? { region } : {}) }) as NonNullable<
+      DirectScene["components"]
+    >[number];
+
+  it("binds a lone unlabeled element of the declared kind (the dashboard-frame class)", () => {
+    const html = wrap('<div class="cmp-app-window" data-component="app-window"><h1>Deploys</h1></div>');
+    const { html: out, repairs } = reconcileComponentBindings(html, [
+      scene("dashboard-overload", 0, { components: [component("dashboard-frame", "app-window")] }),
+    ]);
+    expect(repairs).toBe(1);
+    expect(out).toContain('data-part="dashboard-frame"');
+    expect(out).toContain('data-component="app-window"');
+  });
+
+  it("binds an element the author named on id instead of data-part", () => {
+    const html = wrap('<div id="dashboard-frame" class="cmp-app-window"></div>');
+    const { html: out, repairs } = reconcileComponentBindings(html, [
+      scene("dashboard-overload", 0, { components: [component("dashboard-frame", "app-window")] }),
+    ]);
+    expect(repairs).toBe(1);
+    expect(out).toContain('data-part="dashboard-frame"');
+    expect(out).toContain('data-component="app-window"');
+  });
+
+  it("stays blocking when the candidate is ambiguous (two bare app-windows)", () => {
+    const html = wrap(
+      '<div data-component="app-window"></div><div data-component="app-window"></div>',
+    );
+    const { html: out, repairs } = reconcileComponentBindings(html, [
+      scene("dashboard-overload", 0, { components: [component("dashboard-frame", "app-window")] }),
+    ]);
+    expect(repairs).toBe(0);
+    expect(out).not.toContain("dashboard-frame");
+  });
+
+  it("never hijacks a sibling component's correctly-labeled element", () => {
+    const html = wrap(
+      '<div class="cmp-app-window" data-component="app-window"></div>' +
+        '<div data-part="side-search" data-component="search"></div>',
+    );
+    const { html: out, repairs } = reconcileComponentBindings(html, [
+      scene("dashboard-overload", 0, {
+        components: [
+          component("dashboard-frame", "app-window"),
+          component("side-search", "search"),
+        ],
+      }),
+    ]);
+    expect(repairs).toBe(1);
+    expect(out).toContain('data-part="dashboard-frame"');
+    expect(out.match(/data-part="side-search"/g)).toHaveLength(1);
+  });
+
+  it("forces the declared kind onto an existing element (the search->palette morph confusion)", () => {
+    const html = wrap('<div data-part="dashboard-search-pill" data-component="command-palette"></div>');
+    const { html: out, repairs } = reconcileComponentBindings(html, [
+      scene("dashboard-overload", 0, {
+        components: [component("dashboard-search-pill", "search")],
+      }),
+    ]);
+    expect(repairs).toBeGreaterThanOrEqual(1);
+    expect(out).toContain('data-component="search"');
+    expect(out).not.toContain('data-component="command-palette"');
+  });
+});
+
+// The parked re-run defect (2026-07-05): attempt 3 threw
+// `runtime_bind_exception: SequencesInteractions is not defined`. The runtime
+// <script src> is idempotently injected on the GSAP anchor, but a compile call
+// injected on a different anchor executes against an undefined global when the
+// runtime tag is absent or ordered after the inline timeline script.
+describe("ensureRuntimeScriptOrdering — the SequencesInteractions is not defined class", () => {
+  const gsap = '<script src="gsap.min.js"></script>';
+  const inline =
+    "<script>var tl = gsap.timeline({ paused: true });\n" +
+    'SequencesInteractions.compile(tl, document.querySelector("[data-composition-id]"));\n' +
+    'window.__timelines["c"] = tl;</script>';
+  const runtime = '<script src="sequences-interactions.v1.js"></script>';
+
+  const srcIndex = (html: string, file: string): number =>
+    html.indexOf(`src="${file}"`);
+  const inlineIndex = (html: string): number => html.indexOf("gsap.timeline");
+
+  it("moves an author runtime tag written AFTER the inline timeline to before it", () => {
+    const html = `${gsap}\n${inline}\n${runtime}`;
+    const { html: out, changed } = ensureRuntimeScriptOrdering(html);
+    expect(changed).toBe(true);
+    // Runtime now loads after GSAP but before the inline compile call.
+    expect(srcIndex(out, "gsap.min.js")).toBeLessThan(srcIndex(out, "sequences-interactions.v1.js"));
+    expect(srcIndex(out, "sequences-interactions.v1.js")).toBeLessThan(inlineIndex(out));
+    // Exactly one runtime tag — no duplication.
+    expect(out.match(/sequences-interactions\.v1\.js/g)).toHaveLength(1);
+  });
+
+  it("injects a referenced-but-absent runtime the author never loaded", () => {
+    const html = `${gsap}\n${inline}`;
+    const { html: out, changed } = ensureRuntimeScriptOrdering(html);
+    expect(changed).toBe(true);
+    expect(out).toContain('src="sequences-interactions.v1.js"');
+    expect(srcIndex(out, "sequences-interactions.v1.js")).toBeLessThan(inlineIndex(out));
+  });
+
+  it("moves a runtime tag written BEFORE GSAP to after it", () => {
+    const html = `${runtime}\n${gsap}\n${inline}`;
+    const { html: out } = ensureRuntimeScriptOrdering(html);
+    expect(srcIndex(out, "gsap.min.js")).toBeLessThan(srcIndex(out, "sequences-interactions.v1.js"));
+    expect(out.match(/sequences-interactions\.v1\.js/g)).toHaveLength(1);
+  });
+
+  it("orders every referenced runtime canonically in one block after GSAP", () => {
+    const multi =
+      "<script>var tl = gsap.timeline({ paused: true });\n" +
+      "SequencesCuts.compile(tl, root); SequencesCamera.compile(tl, root);\n" +
+      "SequencesComponents.compile(tl, root); SequencesInteractions.compile(tl, root);\n" +
+      'window.__timelines["c"] = tl;</script>';
+    const { html: out } = ensureRuntimeScriptOrdering(`${gsap}\n${multi}`);
+    const order = [
+      "sequences-interactions.v1.js",
+      "sequences-cuts.v1.js",
+      "sequences-camera.v1.js",
+      "sequences-components.v1.js",
+    ].map((file) => srcIndex(out, file));
+    expect(order.every((idx) => idx > 0)).toBe(true);
+    expect([...order]).toEqual([...order].sort((a, b) => a - b));
+    expect(Math.max(...order)).toBeLessThan(inlineIndex(out));
+  });
+
+  it("is a no-op and byte-idempotent for a correctly-ordered composition", () => {
+    const correct = `${gsap}\n${runtime}\n${inline}`;
+    const first = ensureRuntimeScriptOrdering(correct);
+    expect(first.changed).toBe(false);
+    expect(first.html).toBe(correct);
+    // Running the guard on its own output never drifts.
+    const reordered = ensureRuntimeScriptOrdering(`${gsap}\n${inline}\n${runtime}`);
+    expect(ensureRuntimeScriptOrdering(reordered.html).changed).toBe(false);
+  });
+
+  it("leaves a composition that references no runtime globals untouched", () => {
+    const plain = `${gsap}\n<script>var tl = gsap.timeline({ paused: true });\nwindow.__timelines["c"] = tl;</script>`;
+    const { html: out, changed } = ensureRuntimeScriptOrdering(plain);
+    expect(changed).toBe(false);
+    expect(out).toBe(plain);
+  });
+
+  it("does not treat a JSON island's payload as a runtime reference", () => {
+    const withIsland =
+      `${gsap}\n` +
+      '<script type="application/json" id="sequences-cuts">{"version":1,"cuts":[]}</script>\n' +
+      '<script>var tl = gsap.timeline({ paused: true });\nwindow.__timelines["c"] = tl;</script>';
+    // No executed script names a runtime global, so nothing is injected.
+    expect(ensureRuntimeScriptOrdering(withIsland).changed).toBe(false);
+  });
+
+  it("returns the source unchanged when there is no GSAP anchor", () => {
+    const noGsap = `${inline}\n${runtime}`;
+    const { html: out, changed } = ensureRuntimeScriptOrdering(noGsap);
+    expect(changed).toBe(false);
+    expect(out).toBe(noGsap);
   });
 });
