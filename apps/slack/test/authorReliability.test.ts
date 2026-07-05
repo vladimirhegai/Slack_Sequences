@@ -410,6 +410,33 @@ describe("deterministic rows-markup top-up (fallback-elimination lever 1)", () =
     const afterIndex = result.html.indexOf("<div>after</div>");
     expect(result.html.lastIndexOf('class="cmp-msg"')).toBeLessThan(afterIndex);
   });
+
+  it("tops up a childless select target the same way (codexfix-probe-1 class)", () => {
+    // The live probe burned 3 author attempts + the rescue rung on a
+    // command-palette with no .cmp-item children for its select beat; the
+    // runtime clamps beat.item into range, so injected children always bind.
+    const selectScene: DirectScene[] = [
+      scene("palette", 0, {
+        components: [{ version: 1, id: "trace-palette", kind: "command-palette" }],
+        beats: [{
+          version: 1,
+          id: "select-trace",
+          sceneId: "palette",
+          component: "trace-palette",
+          kind: "select",
+          atSec: 1.4,
+          item: 2,
+        }],
+      }),
+    ];
+    const html =
+      '<div data-part="trace-palette" data-component="command-palette" ' +
+      'class="cmp cmp-palette material"><input class="cmp-input"/></div>';
+    const result = topUpRowsMarkup(html, selectScene);
+    expect(result.repaired).toEqual(["trace-palette"]);
+    expect(result.html.match(/class="cmp-item"/g)).toHaveLength(3);
+    expect(topUpRowsMarkup(result.html, selectScene).repaired).toEqual([]);
+  });
 });
 
 describe("repair-feedback dedupe by finding signature", () => {

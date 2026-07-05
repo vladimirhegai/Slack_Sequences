@@ -4,6 +4,7 @@ import {
   COMPONENT_KIT_STYLE_ID,
   COMPONENT_RUNTIME_FILE,
   auditComponentComplexity,
+  auditSurfaceExits,
   componentAuthoringReference,
   dedupeRedundantBeats,
   componentKitSource,
@@ -573,6 +574,88 @@ describe("auditComponentComplexity", () => {
         startSec: 7,
         durationSec: 5,
         components: declared(["metric", "stat-card"], ["chart", "chart-line"]),
+      }),
+    ])).toEqual([]);
+  });
+});
+
+describe("auditSurfaceExits", () => {
+  const beat = (
+    id: string,
+    component: string,
+    kind: ComponentBeatIntentV1["kind"],
+    atSec: number,
+    extra: Partial<ComponentBeatIntentV1> = {},
+  ): ComponentBeatIntentV1 => ({ version: 1, id, sceneId: "s1", component, kind, atSec, ...extra });
+
+  it("flags a second overlay opening over a still-open one in the same station", () => {
+    const findings = auditSurfaceExits([
+      scene({
+        id: "s1",
+        startSec: 0,
+        durationSec: 8,
+        components: declared(["palette", "command-palette"], ["dialog", "modal"]),
+        beats: [beat("p-open", "palette", "open", 1), beat("m-open", "dialog", "open", 3.5)],
+      }),
+    ]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toContain('opens "dialog"');
+    expect(findings[0]).toContain('"palette"');
+  });
+
+  it("accepts an overlay opening over base content (⌘K over a window is the designed pattern)", () => {
+    expect(auditSurfaceExits([
+      scene({
+        id: "s1",
+        startSec: 0,
+        durationSec: 8,
+        components: declared(["app", "app-window"], ["palette", "command-palette"]),
+        beats: [beat("p-open", "palette", "open", 2)],
+      }),
+    ])).toEqual([]);
+  });
+
+  it("accepts a stack where the first overlay is closed before the second opens", () => {
+    expect(auditSurfaceExits([
+      scene({
+        id: "s1",
+        startSec: 0,
+        durationSec: 9,
+        components: declared(["palette", "command-palette"], ["dialog", "modal"]),
+        beats: [
+          beat("p-open", "palette", "open", 1),
+          beat("p-close", "palette", "close", 3),
+          beat("m-open", "dialog", "open", 3.5),
+        ],
+      }),
+    ])).toEqual([]);
+  });
+
+  it("accepts two overlays that open into distinct stations", () => {
+    expect(auditSurfaceExits([
+      scene({
+        id: "s1",
+        startSec: 0,
+        durationSec: 8,
+        components: [
+          { version: 1, id: "menu-a", kind: "dropdown", region: "left" },
+          { version: 1, id: "menu-b", kind: "context-menu", region: "right" },
+        ],
+        beats: [beat("a-open", "menu-a", "open", 1), beat("b-open", "menu-b", "open", 3)],
+      }),
+    ])).toEqual([]);
+  });
+
+  it("accepts a statically composed overlay under a later open (no clashing open window)", () => {
+    // Only a real open beat stacks — a statically entranced surface is the QA
+    // stage's rendered-overlap job, not this plan gate.
+    expect(auditSurfaceExits([
+      scene({
+        id: "s1",
+        startSec: 0,
+        durationSec: 8,
+        components: declared(["palette", "command-palette"], ["dialog", "modal"]),
+        beats: [beat("m-open", "dialog", "open", 3)],
       }),
     ])).toEqual([]);
   });

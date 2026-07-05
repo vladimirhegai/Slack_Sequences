@@ -92,6 +92,42 @@ export function shapeHintsRhyme(shapeOut: CutShapeHint, shapeIn: CutShapeHint): 
   return SHAPE_HINT_FAMILY[shapeOut] === SHAPE_HINT_FAMILY[shapeIn];
 }
 
+/**
+ * Transition-language coherence (WS6), plan stage. A launch film has one or
+ * two signature transitions repeated — premium cuts read premium because they
+ * are RARE and consistent. probe-cutfix-3 read "messy" in part because every
+ * seam spoke a different language. This flags a style ZOO — more distinct
+ * non-`hard` cut styles than a film that length can motivate — as a cheap
+ * storyboard findings-retry (it degrades to advisory on late attempts, never a
+ * veto), so the planner reuses a language instead of inventing a novelty per
+ * seam. The `hard` cut is the neutral default and never counts.
+ *
+ * The floor is FIVE distinct styles, not four: the golden film runs four
+ * premium cuts (cut-left, flash-white, object-match, inverse-zoom) across four
+ * boundaries and reads clean, so four signatures is the ceiling of "good", not
+ * a defect (verification law: an audit that fires on the golden film is
+ * wrong). Longer films earn proportionally more variety before it is a zoo.
+ */
+export function auditCutCoherence(scenes: Array<Pick<DirectScene, "cut">>): string[] {
+  // Only inter-scene boundaries carry a cut; the final scene declares none.
+  const styles = scenes
+    .map((scene) => scene.cut?.style)
+    .filter((style): style is CutStyle => Boolean(style));
+  const distinctNonHard = new Set(styles.filter((style) => style !== "hard"));
+  // Signature budget: four is always fine (the golden film's own count);
+  // beyond that, ~0.6 distinct styles per boundary, so a 6-boundary film may
+  // reach four before the fifth reads as a zoo and a long film earns more.
+  const cap = Math.max(4, Math.round(styles.length * 0.6));
+  if (distinctNonHard.size <= cap) return [];
+  return [
+    `cuts/coherence: the film uses ${distinctNonHard.size} distinct non-hard cut styles ` +
+      `(${[...distinctNonHard].join(", ")}) across ${styles.length} boundaries — pick a ` +
+      `transition language. A launch film has 1-2 signature transitions repeated: reuse one ` +
+      `directional axis and one zoom register instead of a different style per seam, and spend ` +
+      `a premium object-match/shape-match once so it reads premium.`,
+  ];
+}
+
 /** A scene's declaration of its own outgoing boundary. */
 export interface SceneCutIntentV1 {
   version: 1;

@@ -271,7 +271,9 @@ function loadBrowserAudit(name: "layout-audit.browser.js" | "contrast-audit.brow
 //     the outgoing side before the cut's exit window; ping-pong measures each
 //     target at its own beat in viewer time; camera_framed_sparse gets a
 //     final-scene landing tier + zero-coverage parity with the static path.
-const QA_CACHE_VERSION = 6;
+// v7: camera_framed_sparse mid-window sample covers full-move-less camera scenes.
+// v8: exit discipline — advisory stale_asset_lingers overlap audit (WS4).
+const QA_CACHE_VERSION = 8;
 
 /** Everything environment-side that can change the verdict for the same draft. */
 let cachedStaticFingerprint: string | undefined;
@@ -1509,6 +1511,185 @@ async function measureBoundaryParts(
   }, { sceneId, minPx: BOUNDARY_PART_MIN_PX, cap: BOUNDARY_PART_CAP, priorityParts });
 }
 
+/* --------------------------------------- exit discipline (WS4, QA stage) */
+
+/** A done surface must have finished its last beat this long ago to linger. */
+const STALE_MIN_ELAPSED_SEC = 0.5;
+/** Opacity at/above which a done surface is still fully present (not fading). */
+const STALE_MIN_OPACITY = 0.9;
+/** Intersection over the smaller rect above which two surfaces visibly overlap. */
+const STALE_MIN_OVERLAP = 0.25;
+/** On-frame size (px) below which a surface is a leftover accent, not a stack. */
+const STALE_MIN_SIZE_PX = 80;
+/** Hard cap on the extra seeks this advisory pass may add across the film. */
+const STALE_MAX_SAMPLES = 8;
+
+interface FrameRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  opacity: number;
+}
+
+/** Intersection area over the smaller of two frame rects (0..1). */
+function intersectionOverMin(a: FrameRect, b: FrameRect): number {
+  const ix = Math.max(0, Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left));
+  const iy = Math.max(0, Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top));
+  const minArea = Math.min(a.width * a.height, b.width * b.height);
+  return minArea > 0 ? (ix * iy) / minArea : 0;
+}
+
+/**
+ * Measure named `data-part` surfaces of one scene at the current seek: rect
+ * clamped to the visible frame (a surface parked off-camera reads as size 0
+ * and is never "lingering") and chained opacity. Scoped to the scene subtree
+ * so a cut bridge clone in its own overlay layer is never sampled (gotcha #7);
+ * the pass only runs OUTSIDE cut windows anyway.
+ */
+async function measureComponentRects(
+  page: import("puppeteer-core").Page,
+  sceneId: string,
+  partIds: string[],
+): Promise<Map<string, FrameRect>> {
+  const raw = await page.evaluate((payload: { sceneId: string; partIds: string[] }) => {
+    const root = document.querySelector<HTMLElement>(
+      "[data-composition-id][data-width][data-height]",
+    );
+    const scene = root?.querySelector<HTMLElement>(
+      `[data-scene="${CSS.escape(payload.sceneId)}"]`,
+    );
+    if (!root || !scene) return [];
+    const rootRect = root.getBoundingClientRect();
+    const out: Array<{ part: string } & FrameRect> = [];
+    for (const part of payload.partIds) {
+      const element = scene.querySelector<HTMLElement>(`[data-part="${CSS.escape(part)}"]`);
+      if (!element) continue;
+      const rect = element.getBoundingClientRect();
+      let opacity = 1;
+      let node: Element | null = element;
+      while (node) {
+        const style = getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden") {
+          opacity = 0;
+          break;
+        }
+        opacity *= Number.parseFloat(style.opacity) || 0;
+        node = node.parentElement;
+      }
+      const left = Math.max(rect.left, rootRect.left);
+      const top = Math.max(rect.top, rootRect.top);
+      const right = Math.min(rect.right, rootRect.right);
+      const bottom = Math.min(rect.bottom, rootRect.bottom);
+      out.push({
+        part,
+        left: left - rootRect.left,
+        top: top - rootRect.top,
+        width: Math.max(0, right - left),
+        height: Math.max(0, bottom - top),
+        opacity,
+      });
+    }
+    return out;
+  }, { sceneId, partIds });
+  return new Map(raw.map(({ part, ...rect }) => [part, rect]));
+}
+
+/**
+ * Exit discipline (WS4), QA stage. The plan-stage `auditSurfaceExits` catches
+ * a stacked OPEN before the film compiles; this catches what the plan cannot
+ * see — a surface whose last beat has passed still sitting at full opacity,
+ * overlapping the element the viewer is now watching (operator verdict on
+ * probe-cutfix-3: "assets don't disappear when necessary and overlap"). It is
+ * ALWAYS advisory (never blocks publication, never a strictOk pressure) and
+ * bounded to a handful of extra seeks: false positives are the whole game, so
+ * it constrains to real overlap with the focal element — not mere presence —
+ * and exempts `role:"hero"` chrome that legitimately stays. Findings feed the
+ * repair prompt as guidance only.
+ */
+async function auditStaleAssets(
+  page: import("puppeteer-core").Page,
+  draft: DirectCompositionDraft,
+  seekContent: (time: number) => Promise<void>,
+  insideCutWindow: (time: number) => boolean,
+): Promise<DirectLayoutIssue[]> {
+  const plan = parseComponentPlan(draft.html).plan;
+  if (!plan) return [];
+  const beatsByScene = new Map(plan.scenes.map((scene) => [scene.sceneId, scene.beats]));
+  const issues: DirectLayoutIssue[] = [];
+  const flagged = new Set<string>();
+  let samples = 0;
+  for (const scene of draft.storyboard) {
+    if (samples >= STALE_MAX_SAMPLES) break;
+    const components = scene.components ?? [];
+    const beats = beatsByScene.get(scene.id) ?? [];
+    if (components.length < 2 || !beats.length) continue;
+    const kindById = new Map(components.map((component) => [component.id, component.kind]));
+    const roleById = new Map(components.map((component) => [component.id, component.role]));
+    const lastBeatEnd = new Map<string, number>();
+    for (const beat of beats) {
+      lastBeatEnd.set(
+        beat.component,
+        Math.max(lastBeatEnd.get(beat.component) ?? 0, beat.endSec),
+      );
+    }
+    const sceneEnd = scene.startSec + scene.durationSec;
+    const seen = new Set<number>();
+    let perScene = 0;
+    for (const beat of [...beats].sort((a, b) => a.startSec - b.startSec)) {
+      if (perScene >= 2 || samples >= STALE_MAX_SAMPLES) break;
+      const t = Math.min(beat.endSec + 0.15, sceneEnd - 0.1);
+      if (t <= scene.startSec || insideCutWindow(t)) continue;
+      const rounded = Math.round(t * 20) / 20;
+      if (seen.has(rounded)) continue;
+      // A surface is a candidate only if another surface's last beat is
+      // already done — its story job ended while this focal beat plays.
+      const stale = components.filter((component) =>
+        component.id !== beat.component &&
+        roleById.get(component.id) !== "hero" &&
+        (lastBeatEnd.get(component.id) ?? Infinity) < t - STALE_MIN_ELAPSED_SEC &&
+        !flagged.has(`${scene.id}:${component.id}`)
+      );
+      if (!stale.length) continue;
+      seen.add(rounded);
+      perScene += 1;
+      samples += 1;
+      await seekContent(t);
+      const rects = await measureComponentRects(page, scene.id, [
+        beat.component,
+        ...stale.map((component) => component.id),
+      ]);
+      const focal = rects.get(beat.component);
+      if (!focal || focal.width < STALE_MIN_SIZE_PX || focal.height < STALE_MIN_SIZE_PX) continue;
+      for (const component of stale) {
+        const rect = rects.get(component.id);
+        if (!rect || rect.opacity < STALE_MIN_OPACITY) continue;
+        if (rect.width < STALE_MIN_SIZE_PX || rect.height < STALE_MIN_SIZE_PX) continue;
+        const overlap = intersectionOverMin(focal, rect);
+        if (overlap < STALE_MIN_OVERLAP) continue;
+        flagged.add(`${scene.id}:${component.id}`);
+        const doneAt = lastBeatEnd.get(component.id) ?? 0;
+        issues.push({
+          code: "stale_asset_lingers",
+          severity: "warning",
+          time: t,
+          selector: `[data-part="${component.id}"]`,
+          message:
+            `In scene "${scene.id}", "${component.id}" ` +
+            `(${kindById.get(component.id) ?? "surface"}) finished its last beat at ` +
+            `${doneAt.toFixed(1)}s but is still fully visible at ${t.toFixed(1)}s, overlapping ` +
+            `${Math.round(overlap * 100)}% of the focal "${beat.component}" the viewer is watching.`,
+          fixHint:
+            "Retire a surface when its job ends: close/swap/morph it out, dim or scale it to " +
+            "recede (≤40%), or move it to its own station so it stops crowding the focal element.",
+          source: "sequences",
+        });
+      }
+    }
+  }
+  return issues;
+}
+
 /**
  * Below this union-bbox fraction of the frame area, a framed landing reads as
  * a tiny subject adrift in a void (probe-cutfix-3 m06 measured ~6-8% and the
@@ -2697,19 +2878,24 @@ export async function inspectDirectComposition(
       }
     }
 
-    // Camera-less scenes get the same coverage discipline once at mid-window:
-    // a static framing whose content fills a sliver of the frame is the same
-    // "tiny content in the void" defect without a camera to blame. The film's
-    // FINAL scene is exempt — a closing resolve legitimately compresses to one
-    // small focal point (logo sting, lone CTA); the deterministic fallback
-    // film's end card is the proof case.
-    const cameraScenes = new Set(
+    // Scenes without a full-move landing get the same coverage discipline
+    // once at mid-window: a held framing whose content fills a sliver of the
+    // frame is the same "tiny content in the void" defect whether the scene
+    // has no camera at all or only drift/hold micro-moves that never land
+    // anywhere (live probe fix-ws-probe-3: a toast at ~3% coverage drifted
+    // for 3.5s and was never sampled, because the landing pass has nothing to
+    // sample and the old camera-less check skipped any scene with a camera).
+    // The film's FINAL scene is exempt — a closing resolve legitimately
+    // compresses to one small focal point (logo sting, lone CTA); the
+    // deterministic fallback film's end card is the proof case.
+    const landingSampledScenes = new Set(
       (parseCameraPlan(draft.html).plan?.scenes ?? [])
-        .filter((scene) => scene.segments.length > 0)
+        .filter((scene) =>
+          scene.segments.some((segment) => CAMERA_FULL_MOVES.has(segment.move)))
         .map((scene) => scene.sceneId),
     );
     for (const scene of draft.storyboard.slice(0, -1)) {
-      if (cameraScenes.has(scene.id)) continue;
+      if (landingSampledScenes.has(scene.id)) continue;
       if (scene.durationSec < SPARSE_MIN_SCENE_SEC) continue;
       const sceneEnd = scene.startSec + scene.durationSec;
       const sampleAt = scene.startSec + scene.durationSec * 0.6;
@@ -2730,7 +2916,7 @@ export async function inspectDirectComposition(
         time: sampleAt,
         selector: `[data-scene="${scene.id}"]`,
         message:
-          `Scene "${scene.id}" holds a static framing whose visible content fills only ` +
+          `Scene "${scene.id}" holds one framing whose visible content fills only ` +
           `${Math.round(confirmedCoverage.fraction * 100)}% of the frame — a small subject ` +
           `adrift in empty space.`,
         fixHint:
@@ -2740,6 +2926,11 @@ export async function inspectDirectComposition(
         source: "sequences",
       });
     }
+
+    // Exit discipline (WS4): a surface whose last beat has passed still sitting
+    // at full opacity over the focal element is the "assets don't disappear and
+    // overlap" mess. Always advisory, bounded seeks.
+    rawIssues.push(...await auditStaleAssets(page, draft, seekContent, insideCutWindow));
 
     // Blank-frame guard (2026-07-03 incident: a live film published with the
     // promised content never on frame). A scene is near-blank when EVERY
@@ -2834,6 +3025,10 @@ export async function inspectDirectComposition(
       // Ping-pong is always advisory; the boundary jump is advisory only in
       // audit mode — both stay in `warnings` so repair prompts still see them.
       issue.code !== "eye_trace_pingpong" &&
+      // Stale-asset lingering (WS4) is always advisory: overlap heuristics
+      // must never block a runnable film — the plan-stage exit audit carries
+      // the blocking pressure.
+      issue.code !== "stale_asset_lingers" &&
       (issue.code !== "eye_trace_jump" || eyeTrace === "block") &&
       (
         issue.source === "sequences" ||

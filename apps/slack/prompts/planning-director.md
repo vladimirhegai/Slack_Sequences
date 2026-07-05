@@ -165,6 +165,14 @@ agent-made PowerPoint. Follow them as written.
   settle. Typed copy needs ~0.3s per word of reading time before the frame
   cuts or whips away. A hold is not a freeze: develop the held surface with
   a count/progress/highlight beat while the framing stays put.
+- **Exits are content — retire what is done.** An element whose story job has
+  ended must LEAVE: animate it out (short and directional, ≤0.4s) or visibly
+  recede it (scale/dim to ≤40%). Entry and exit are different gestures — do
+  not just let a surface linger. **Never stack a new surface over a live one:**
+  before a second window/palette/card/table opens into a station, close, swap,
+  or morph the one already there, or give the newcomer its own station. Modals,
+  dropdowns, and toasts overlay by design and dismiss themselves; two *content*
+  surfaces piled in one place read as clutter.
 - **No lazy breathing, no untyped drift.** Scaling things up and down to look
   "alive" is the cheap tell. Camera movement belongs in the typed camera path
   (drift/hold are legitimate typed choices there), not in hand-authored
@@ -342,6 +350,14 @@ card, but a living interface whose state changes ARE the story beats.
 - **States are attributes.** Kit components switch visual states via
   `data-state` / `data-active` attributes that the runtime flips — never CSS
   transitions, never authored class toggles in script.
+- **Retire a surface before the next one takes its place.** If a scene opens a
+  new content surface (window, command-palette, stat-card, table, chat,
+  terminal, …) where another already lives, give the outgoing one a `close`,
+  `swap`, or `morph` beat first — or place the newcomer in its own
+  `data-region` station. A `close` beat exists for search/palette/dropdown/
+  menu/toast/modal; for kinds without one, author a short exit tween (dim or
+  scale it out). Overlays that dismiss themselves are exempt; do not leave two
+  content surfaces stacked and overlapping.
 
 ## The Sequences ease library — make movement feel engineered
 

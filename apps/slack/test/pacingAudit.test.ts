@@ -196,6 +196,22 @@ describe("auditPacing introduction development", () => {
     expect(findings.filter((finding) => finding.startsWith("pacing/holds:"))).toEqual([]);
   });
 
+  it("never exempts a dense surface in the final-resolve slot", () => {
+    // Same shape as the exempt CTA card, but the one late introduction is an
+    // app-window — a surface the viewer must actually read, not glance at.
+    const findings = auditPacing([
+      scene({ id: "body", startSec: 0, durationSec: 5 }),
+      scene({
+        id: "dense-final",
+        startSec: 5,
+        durationSec: 2.8,
+        components: [{ version: 1 as const, id: "ops", kind: "app-window" as const }],
+        beats: [beat("dense-final", { id: "b1", component: "ops", kind: "rows", atSec: 7.4 })],
+      }),
+    ]);
+    expect(findings.filter((finding) => finding.startsWith("pacing/holds:"))).toHaveLength(1);
+  });
+
   it("still judges a short final scene that introduces several surfaces", () => {
     const findings = auditPacing([
       scene({ id: "body", startSec: 0, durationSec: 5 }),
@@ -432,6 +448,32 @@ describe("auditPacing swapped and headline copy (WS_Improvements item 11)", () =
     expect(auditPacing(headline(2)).filter((finding) =>
       finding.startsWith("pacing/reading:")
     )).toEqual([]);
+  });
+
+  it("does not read a 'prototype' intent as a copy promise", () => {
+    // Same late-landing shape as the headline test, but the intent word only
+    // CONTAINS "type" — no copy is promised, so no reading floor applies.
+    const findings = auditPacing([scene({
+      id: "proto-scene",
+      startSec: 0,
+      durationSec: 5,
+      moments: [{
+        version: 1,
+        id: "m-proto",
+        sceneId: "proto-scene",
+        atSec: 4.5,
+        title: "Prototype lands",
+        visualState: "prototype on screen",
+        change: "the prototype appears",
+        motionIntent: "prototype reveal",
+        importance: "primary",
+      }],
+      camera: {
+        version: 1,
+        path: [move({ move: "push-in", startSec: 4.6, durationSec: 0.4 })],
+      },
+    })]);
+    expect(findings.filter((finding) => finding.startsWith("pacing/reading:"))).toEqual([]);
   });
 
   it("skips the moment floor when a typed beat already carries the copy", () => {

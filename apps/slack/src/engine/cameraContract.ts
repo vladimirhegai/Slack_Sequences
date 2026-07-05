@@ -761,6 +761,15 @@ export function validateCameraContract(
 
 /** Zoom at or above which a push-in counts as a high-energy commitment. */
 const HIGH_ENERGY_PUSH_ZOOM = 1.3;
+/**
+ * Verbs that are intrinsically a peak (WS6): repeating one of these on every
+ * reframe is noise. A repeated push-in is NOT here — its energy depends on the
+ * zoom, and a consistent gentle push reads as coherence, not churn.
+ */
+const HIGH_ENERGY_REPEAT_VERBS: ReadonlySet<CameraMoveStyle> = new Set<CameraMoveStyle>([
+  "whip",
+  "orbit",
+]);
 const ENERGETIC_CUT_STYLES = new Set([
   "zoom-through",
   "inverse-zoom",
@@ -805,12 +814,16 @@ export function auditCameraEnergy(storyboard: DirectScene[]): string[] {
   }
   if (fullMoves.length >= 4) {
     const verbs = new Set(fullMoves.map((move) => move.move));
-    if (verbs.size === 1) {
+    // WS6: repeating a QUIET verb (pan/drift/track/pull-back) is coherence,
+    // not a defect — a film that pans consistently reads calm and intentional.
+    // Only a repeated HIGH-ENERGY verb is noise: four whips (or four orbits)
+    // in a row spend the peak on every seam, so nothing reads as the peak.
+    if (verbs.size === 1 && HIGH_ENERGY_REPEAT_VERBS.has(fullMoves[0]!.move)) {
       findings.push(
-        `camera/energy: all ${fullMoves.length} full camera moves use the same verb ` +
-          `"${fullMoves[0]!.move}" — vary the vocabulary (pan for lateral reframes, whip or ` +
-          `push-in at peaks, pull-back for reveals, track-to-anchor for detail landings) so ` +
-          `peaks and valleys read differently`,
+        `camera/energy: all ${fullMoves.length} full camera moves are "${fullMoves[0]!.move}" — ` +
+          `a high-energy verb repeated every reframe reads as noise, not energy, because nothing ` +
+          `stands out as the peak. Keep the ${fullMoves[0]!.move} for one or two real peaks and let ` +
+          `pan/drift/track-to-anchor/pull-back carry the connective reframes`,
       );
     }
   }

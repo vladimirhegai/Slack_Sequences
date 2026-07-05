@@ -753,6 +753,31 @@ const MAX_COMPONENTS_PER_SCENE = 4;
 /** Seconds of film each declared component costs the author to build. */
 const FILM_SEC_PER_COMPONENT = 2.0;
 
+/* ------------------------------------------------------- exit discipline */
+
+/**
+ * Station-dominating overlay kinds: each is invoked by an `open` beat and
+ * covers the content beneath it. When a SECOND one opens into the same station
+ * while the FIRST is still up (never closed/swapped/morphed), they pile into
+ * the "messy stack" the operator called out (probe-cutfix-3: "assets don't
+ * disappear when necessary and overlap"). This is the one exit defect the
+ * PLAN can prove: base content surfaces (app-window/stat-card/table/…) have no
+ * `open` beat — they enter via the author's own tween — so an overlay opening
+ * over base content (⌘K over a window, a modal over a dashboard) is the
+ * DESIGNED pattern and never involved here. Corner transients (toast) and
+ * inline widgets (search) are excluded — they do not dominate a station.
+ * Rendered overlap of any lingering surface — base or overlay — is the QA
+ * stage's advisory `stale_asset_lingers` job, not this plan gate.
+ */
+const STACKABLE_OVERLAY_KINDS: ReadonlySet<ComponentKind> = new Set<ComponentKind>([
+  "command-palette", "modal", "dropdown", "context-menu",
+]);
+
+/** Beats that retire or repurpose a surface so a later one may take its place. */
+const SURFACE_RETIRE_BEATS: ReadonlySet<ComponentBeatKind> = new Set<ComponentBeatKind>([
+  "close", "swap", "morph",
+]);
+
 /**
  * Deterministic plan-complexity audit, run at storyboard validation. The
  * 2026-07-04 baseline failure mode: GLM declared 11 components (4 in one
@@ -794,6 +819,76 @@ export function auditComponentComplexity(
     );
   }
   return findings;
+}
+
+/**
+ * Exit discipline (WS4), plan stage. Ownership was "the author owns entrances
+ * and final states"; exits were nobody's job, so a scene could OPEN a second
+ * overlay into a station already holding a live one and both just sat there
+ * overlapping (operator verdict on probe-cutfix-3: "assets don't disappear
+ * when necessary and overlap"). This surfaces that exact case as a cheap
+ * storyboard finding-retry (never a veto — it degrades to advisory on late
+ * attempts) asking the plan to retire the outgoing overlay (`close` / `swap` /
+ * `morph`) or give the incoming one its own `data-region` station.
+ *
+ * Conservative by construction, because false positives are the whole game:
+ * BOTH surfaces must be station-dominating overlays whose open windows
+ * OVERLAP (the second opens before the first is retired) in the SAME station.
+ * An overlay opening over base content, deliberate static composition,
+ * different stations, an already-retired surface, and an intended morph
+ * `live → incoming` all pass untouched.
+ */
+export function auditSurfaceExits(
+  scenes: Array<Pick<DirectScene, "id" | "startSec" | "components" | "beats">>,
+): string[] {
+  const findings: string[] = [];
+  for (const scene of scenes) {
+    const overlays = (scene.components ?? []).filter((component) =>
+      STACKABLE_OVERLAY_KINDS.has(component.kind)
+    );
+    if (overlays.length < 2) continue;
+    const beats = scene.beats ?? [];
+    const firstOpen = (id: string): number | undefined =>
+      beats
+        .filter((beat) => beat.component === id && beat.kind === "open")
+        .sort((a, b) => a.atSec - b.atSec)[0]?.atSec;
+    const regionBucket = (component: SceneComponentSpecV1): string =>
+      component.region?.trim() || "__viewport__";
+    for (const incoming of overlays) {
+      const openAt = firstOpen(incoming.id);
+      // Only a real `open` beat stacks an overlay; a statically composed one is
+      // deliberate layout the QA-stage rendered-overlap check owns.
+      if (openAt === undefined) continue;
+      const bucket = regionBucket(incoming);
+      for (const live of overlays) {
+        if (live.id === incoming.id || regionBucket(live) !== bucket) continue;
+        // `live` must already be open when `incoming` opens (its own earlier
+        // open beat — a statically composed overlay has no open window to clash).
+        const liveOpen = firstOpen(live.id);
+        if (liveOpen === undefined || liveOpen >= openAt) continue;
+        // `live` morphing INTO `incoming` is the intended transform.
+        if (beats.some((beat) => beat.component === live.id && beat.morphTo === incoming.id)) continue;
+        // A close/swap/morph on `live` before the open retires it cleanly.
+        if (
+          beats.some((beat) =>
+            beat.component === live.id &&
+            beat.atSec <= openAt + 0.05 &&
+            SURFACE_RETIRE_BEATS.has(beat.kind)
+          )
+        ) {
+          continue;
+        }
+        const station = live.region ? `station "${live.region}"` : "viewport";
+        findings.push(
+          `components/exit: scene "${scene.id}" opens "${incoming.id}" (${incoming.kind}) at ` +
+            `${openAt.toFixed(1)}s while "${live.id}" (${live.kind}) is still open in the same ` +
+            `${station} — two overlays stacked reads as clutter. Close or swap "${live.id}" ` +
+            `before opening "${incoming.id}", or give "${incoming.id}" its own data-region station.`,
+        );
+      }
+    }
+  }
+  return [...new Set(findings)];
 }
 
 /* ------------------------------------------------------- runtime + kit IO */

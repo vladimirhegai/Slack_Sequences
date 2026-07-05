@@ -373,7 +373,7 @@ describe("auditCameraEnergy", () => {
     ])).toEqual([]);
   });
 
-  it("flags four or more full moves sharing one verb", () => {
+  it("accepts four full moves sharing a QUIET verb (WS6: consistent panning is coherence)", () => {
     const pan = (region: string, at: number): NonNullable<DirectScene["camera"]>["path"][number] => ({
       version: 1,
       move: "pan",
@@ -381,7 +381,7 @@ describe("auditCameraEnergy", () => {
       startSec: at,
       durationSec: 1,
     });
-    const findings = auditCameraEnergy([
+    expect(auditCameraEnergy([
       scene({
         id: "a",
         startSec: 0,
@@ -390,9 +390,28 @@ describe("auditCameraEnergy", () => {
         cut: { version: 1, style: "zoom-through" },
       }),
       scene({ id: "b", startSec: 8, durationSec: 6 }),
+    ])).toEqual([]);
+  });
+
+  it("flags four full moves sharing a HIGH-ENERGY verb (WS6: four whips is noise, not a peak)", () => {
+    const whip = (region: string, at: number): NonNullable<DirectScene["camera"]>["path"][number] => ({
+      version: 1,
+      move: "whip",
+      toRegion: region,
+      startSec: at,
+      durationSec: 0.5,
+    });
+    const findings = auditCameraEnergy([
+      scene({
+        id: "a",
+        startSec: 0,
+        durationSec: 8,
+        camera: { version: 1, path: [whip("one", 0), whip("two", 2), whip("three", 4), whip("four", 6)] },
+      }),
+      scene({ id: "b", startSec: 8, durationSec: 6 }),
     ]);
     expect(findings).toHaveLength(1);
-    expect(findings[0]).toMatch(/same verb "pan"/);
+    expect(findings[0]).toMatch(/all 4 full camera moves are "whip"/);
   });
 });
 

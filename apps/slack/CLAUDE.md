@@ -207,8 +207,69 @@ on marginal misses): the moment-interval veto carries a 0.35s grace
 (`INTERVAL_GRACE_SEC`), and `pacing/*` findings block only the primary
 rung's first two attempts — from its final attempt onward a plan clean
 except for pacing ships with the findings logged as advisories
-(degrade-never-veto). Details in ROADMAP's 2026-07-05 section;
-WS_Improvements.md and LESS_FALLBACKS.md carry per-item STATUS blocks.
+(degrade-never-veto). Details in ROADMAP's 2026-07-05 sections (the
+IMPROVEMENT_PLAN / WS_Improvements / LESS_FALLBACKS planning docs are retired;
+ROADMAP's "Full audit" section carries their surviving record + parked items).
+The storyboard stage also grants ONE artifact-less grace replay per run (a
+response with no `<storyboard_json>` at all replays its attempt instead of
+consuming a rung's final slot — the audit-final-a1 death class) and persists
+every rejected/truncated/artifact-less attempt under
+`planning/attempts/storyboard-<n>-<outcome>.*` for offline diagnosis
+(author-stage parity).
+**Codex-audit fixes (2026-07-05, later):** the timing re-base now normalizes
+nested beat/camera/interaction/moment/ramp times in the model's OWN frame
+and shifts them by the re-basing delta, so repairing a scene's arithmetic
+never silently re-times the choreography inside it (storyboard cache
+contract v10); the final-resolve pacing exemption accepts only COMPACT
+resolve kinds (button/stat-card/toast/toggle/progress/progress-ring/
+avatar-stack) — a dense window in the final slot stays judged; headline
+detection matches `\btype` so "prototype reveal" no longer earns a reading
+floor; and `camera_framed_sparse` mid-window sampling covers scenes whose
+camera path has NO full move (drift/hold-only paths never land anywhere and
+were previously unsampled — the fix-ws-probe-3 tiny-toast class;
+`QA_CACHE_VERSION` 7).
+**Cleaner, coherent output (2026-07-05, WS4+WS6+WS7).** Exit discipline
+(WS4): `auditSurfaceExits` (`componentContract.ts`, plan-stage) flags two
+station-dominating overlays (command-palette/modal/dropdown/context-menu)
+whose open windows OVERLAP in one station without the first being
+closed/swapped/morphed — an overlay over BASE content (⌘K over a window) is
+the designed pattern and never flagged; and `stale_asset_lingers`
+(`layoutInspector.ts`, ALWAYS advisory, bounded seeks) flags a component
+whose last beat has passed still at opacity ≥0.9 overlapping the focal
+element (`QA_CACHE_VERSION` 8). The prompt gains an exits paragraph
+(short/directional ≤0.4s or recede to ≤40%; never stack a new surface over a
+live one). Transition-language coherence (WS6): `auditCutCoherence`
+(`cutContract.ts`) flags a cut-style ZOO — distinct non-`hard` styles beyond
+`max(4, round(0.6×boundaries))`, so the golden film's four premium cuts pass
+but a fifth novelty per seam is a cheap findings-retry; and
+`auditCameraEnergy`'s repeated-verb rule now fires ONLY on a repeated
+HIGH-energy verb (whip/orbit) — repeated pan/drift/track is coherence, not
+churn. `browserQualityPenalty` already weights
+`camera_framed_clipped`/`_sparse`/`cut_degraded`/`eye_trace_jump` so those
+findings steer the attempt-3 least-bad pick. Both new plan findings ride the
+same late-attempt polish demotion as `pacing/*` (advisory from the final
+rung). Thumbnails show the moment (WS7, `generateDirectThumbnails` in
+`directComposition.ts`): a moment naming a `data-part` subject
+(component/interaction) walks forward from its capture time to the first
+frame the subject is actually visible (opacity ≥0.5, on frame); a no-subject
+moment (scene-start cut / camera / text tween) walks to the first frame that
+paints meaningfully MORE than the capture frame (relative painted-pixel test
+— a soft bloom cancels in the ratio), fixing the empty title-card / palette
+"gray circle". Both walks stay inside the cut-safe window; the page.evaluate
+bodies avoid named nested functions (the MCP-server `node --import tsx`
+transform `__name`-wraps them, which is undefined in the browser). Live paid
+probe `ws467-probe-2` (a dense command-palette+modal+stat-card+button+
+terminal brief) **published `hyperframes-direct`, no fallback** via the full
+recovery ladder (primary rung exhausted → storyboard rescue → full
+re-author → critic), with 10 content-rich moment thumbnails and **zero**
+`stale_asset_lingers`/`components/exit`/`cuts/coherence` false positives; a
+second probe `ws467-probe-3b` gave the **WS6 live true-positive** —
+`auditCutCoherence` rejected a 5-distinct-style storyboard, the planner fixed
+it on retry, and the film published with no fallback.
+Proof: `test/componentContract.test.ts` (`auditSurfaceExits`),
+`test/cutContract.test.ts` (`auditCutCoherence`), `test/cameraContract.test.ts`
+(relaxed energy rule), `test/directComposition.test.ts` (`momentSubjectPart`),
+and `film:demo` (m10 lockup now shows the title card, not a bloom).
 Scenes may also declare a typed **`timeRamp`** — the fifth host-owned contract
 (2026-07-04, `timeRamp.ts` + `sequences-time.v1.js`): ONE motivated
 slow-motion dip per scene (max 2 per film, never scene 1) compiled into

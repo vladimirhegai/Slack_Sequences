@@ -63,6 +63,16 @@ export const PACING_TOLERANCE_SEC = 0.35;
 
 /** Beat kinds that put a NEW surface (or new content) in front of the viewer. */
 const ENTRANCE_BEAT_KINDS = new Set(["open", "rows", "swap"]);
+/**
+ * Component kinds compact enough to land late in a short final resolve (a
+ * logo / CTA / metric end card is read in one glance). Dense surfaces —
+ * windows, tables, terminals, charts, palettes — never qualify: one of those
+ * introduced at 90% of the last scene is exactly the unreadable ending the
+ * holds rule exists for.
+ */
+const COMPACT_RESOLVE_KINDS = new Set([
+  "button", "stat-card", "toast", "toggle", "progress", "progress-ring", "avatar-stack",
+]);
 /** Beat kinds whose landing is a payoff the viewer must see resolve. */
 const PAYOFF_BEAT_KINDS = new Set(["press", "set-state"]);
 
@@ -134,14 +144,16 @@ export function auditPacing(storyboard: DirectScene[]): string[] {
     // 1. Introduction → development ratio. The contract is per scene, not
     // only multi-surface scenes: ONE dense window opened at 90% of the scene
     // still needs time to be read. The single narrow exemption is a short
-    // final resolve (a logo/CTA card inside the moment contract's
-    // final-resolve allowance introducing one surface) — that landing late is
-    // the genre's signature, not a defect.
+    // final resolve (a logo/CTA-class COMPACT surface inside the moment
+    // contract's final-resolve allowance, introducing one surface) — that
+    // landing late is the genre's signature, not a defect. A dense kind in
+    // the same slot stays judged.
     const introductions = sceneIntroductionTimes(scene);
     const isShortFinalResolve =
       scene === storyboard[storyboard.length - 1] &&
       scene.durationSec <= FINAL_RESOLVE_ALLOWANCE_SEC &&
-      introductions.length === 1;
+      introductions.length === 1 &&
+      COMPACT_RESOLVE_KINDS.has(scene.components?.[0]?.kind ?? "");
     if (introductions.length >= 1 && !isShortFinalResolve) {
       const lastIntro = introductions[introductions.length - 1]!;
       // The 65% deadline is a viewer-time promise: under a slow-motion ramp
@@ -243,7 +255,9 @@ export function auditPacing(storyboard: DirectScene[]): string[] {
     for (const moment of scene.moments ?? []) {
       if (moment.importance !== "primary") continue;
       const intent = moment.motionIntent.toLowerCase();
-      if (!intent.includes("type") && !intent.includes("headline")) continue;
+      // Word-start match: "type-on"/"typed"/"typewriter" promise copy;
+      // "prototype reveal" does not.
+      if (!/\btype/.test(intent) && !intent.includes("headline")) continue;
       // A moment riding a typed beat already got the word-count floor above.
       if (copyBeatWindows.some((window) => moment.atSec >= window.from && moment.atSec <= window.to)) {
         continue;

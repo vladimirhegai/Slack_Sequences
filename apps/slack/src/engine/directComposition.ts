@@ -1010,9 +1010,50 @@ function serveDir(dir: string): Promise<{ url: string; close: () => void }> {
 interface ThumbnailCapture {
   key: string;
   atSec: number;
+  /** Scene the moment lives in — the WS7 walk-forward stays inside it. */
+  sceneId: string;
+  /** Cut-safe upper bound: the walk-forward never crosses the outgoing cut. */
+  latestSec: number;
+  /** The moment's bound data-part when it is a component/interaction subject. */
+  subjectPart?: string;
 }
 
 const MAX_MOMENT_THUMBNAILS = 10;
+
+/** WS7 walk-forward: total budget past the chosen capture time (clamped to the
+ *  cut-safe latest). A title card's copy can reveal ~1s after its scene opens. */
+const MOMENT_WALK_MAX_SEC = 1.0;
+/** Step for the opacity walk when the moment names a specific subject part. */
+const MOMENT_WALK_STEP_SEC = 0.1;
+/** Coarser step for the pixel walk (each step is a screenshot). */
+const MOMENT_PIXEL_STEP_SEC = 0.2;
+/**
+ * A no-subject moment (scene-start cut, camera arrival, text tween) is rescued
+ * only when a LATER frame paints meaningfully more than the capture frame — a
+ * relative test, so a soft bloom that sits in every frame cancels out and does
+ * not fool an absolute coverage threshold (the lockup title-card lesson: its
+ * container box carries opacity the whole scene while the glyphs clip-reveal
+ * ~1s in, so only painted pixels — and only their INCREASE — reveal the copy).
+ */
+const MOMENT_PAINTED_IMPROVEMENT = 1.25;
+
+/**
+ * The data-part a moment is about, when it is one — a `component` or
+ * `interaction` moment's evidence detail is `source→<data-part>` (WS7 checks
+ * that exact element is visible at capture time). Camera/cut/tween moments
+ * have no single data-part subject, so they fall back to scene coverage.
+ */
+export function momentSubjectPart(moment: StoryboardMomentV1): string | undefined {
+  const evidence = moment.evidence;
+  if (!evidence || (evidence.kind !== "component" && evidence.kind !== "interaction")) {
+    return undefined;
+  }
+  const arrow = evidence.detail.indexOf("→");
+  if (arrow < 0) return undefined;
+  const target = evidence.detail.slice(arrow + 1).trim();
+  // A data-part is a stable kebab id; reject selector punctuation (# . [ ]).
+  return /^[a-z0-9][a-z0-9-]*$/i.test(target) ? target : undefined;
+}
 
 /**
  * The thumbnail strip is the storyboard contact sheet. When the manifest
@@ -1028,6 +1069,8 @@ function thumbnailCaptures(manifest: DirectCompositionManifest): ThumbnailCaptur
     return manifest.scenes.map((scene) => ({
       key: scene.id,
       atSec: scene.startSec + scene.durationSec * 0.58,
+      sceneId: scene.id,
+      latestSec: Math.max(scene.startSec, scene.startSec + scene.durationSec - 0.05),
     }));
   }
   const selected = moments.length <= MAX_MOMENT_THUMBNAILS
@@ -1049,11 +1092,17 @@ function thumbnailCaptures(manifest: DirectCompositionManifest): ThumbnailCaptur
       const settledSec = moment.evidence
         ? moment.evidence.endSec + 0.08
         : moment.atSec + 0.42;
-      const latestSec =
-        scene.startSec + scene.durationSec - 0.05 - (cutExitByScene.get(scene.id) ?? 0);
+      const latestSec = Math.max(
+        scene.startSec,
+        scene.startSec + scene.durationSec - 0.05 - (cutExitByScene.get(scene.id) ?? 0),
+      );
+      const subjectPart = momentSubjectPart(moment);
       return {
         key: `m${String(index + 1).padStart(2, "0")}-${moment.id}`,
-        atSec: Math.min(Math.max(settledSec, scene.startSec), Math.max(scene.startSec, latestSec)),
+        atSec: Math.min(Math.max(settledSec, scene.startSec), latestSec),
+        sceneId: scene.id,
+        latestSec,
+        ...(subjectPart ? { subjectPart } : {}),
       };
     })
     .sort((a, b) => a.atSec - b.atSec)
@@ -1110,10 +1159,9 @@ export async function generateDirectThumbnails(
     // safe with the converted time: the warp maps each scene window onto
     // itself monotonically, so the output time stays inside the same scene.
     const toOutputTime = warpInverseOf(parseTimeRampPlan(current.html).plan);
-    const files: Record<string, string> = {};
-    for (const capture of thumbnailCaptures(current.manifest)) {
-      const at = toOutputTime(capture.atSec);
-      await page.evaluate(
+    const compositionId = current.manifest.compositionId;
+    const seekTo = (contentTime: number): Promise<void> =>
+      page.evaluate(
         (time: number, id: string) => {
           const win = window as unknown as {
             __timelines: Record<string, { seek(t: number, suppress?: boolean): void }>;
@@ -1125,9 +1173,122 @@ export async function generateDirectThumbnails(
             element.style.visibility = time >= start && time < start + duration ? "visible" : "hidden";
           });
         },
-        at,
-        current.manifest.compositionId,
+        toOutputTime(contentTime),
+        compositionId,
       );
+    // WS7: is the moment's subject actually on screen at this frame? A
+    // scene-start-anchored moment can settle its capture time before its own
+    // entrance finishes, producing an empty "gray circle" thumbnail
+    // (probe-cutfix-3 m03). Check the bound data-part (or, when the moment has
+    // no single subject, the scene's visible content coverage).
+    // NOTE: the page.evaluate callbacks below run inside puppeteer's page
+    // context. Do NOT introduce named nested functions in them — under
+    // `node --import tsx` the MCP-server transform wraps named functions with
+    // an esbuild `__name(...)` helper that is undefined in the browser, so the
+    // callback crashes ("__name is not defined"). Keep the math inline.
+
+    // Is the moment's named subject visibly present? "absent" when the part is
+    // not in the scene DOM (fall back to the pixel path). Cheap — no screenshot.
+    const subjectState = (sceneId: string, subjectPart: string): Promise<"visible" | "hidden" | "absent"> =>
+      page.evaluate((payload: { sceneId: string; subjectPart: string }) => {
+        const root = document.querySelector<HTMLElement>(
+          "[data-composition-id][data-width][data-height]",
+        );
+        const scene = root?.querySelector<HTMLElement>(
+          `[data-scene="${CSS.escape(payload.sceneId)}"]`,
+        );
+        // A bridge clone lives outside the scene subtree, so scoping avoids it.
+        const element = scene?.querySelector<HTMLElement>(
+          `[data-part="${CSS.escape(payload.subjectPart)}"]`,
+        );
+        if (!root || !element) return "absent" as const;
+        const rootRect = root.getBoundingClientRect();
+        let opacity = 1;
+        let node: Element | null = element;
+        while (node) {
+          const style = getComputedStyle(node);
+          if (style.display === "none" || style.visibility === "hidden") { opacity = 0; break; }
+          opacity *= Number.parseFloat(style.opacity) || 0;
+          node = node.parentElement;
+        }
+        const rect = element.getBoundingClientRect();
+        const w = Math.max(0, Math.min(rect.right, rootRect.right) - Math.max(rect.left, rootRect.left));
+        const h = Math.max(0, Math.min(rect.bottom, rootRect.bottom) - Math.max(rect.top, rootRect.top));
+        return opacity >= 0.5 && w * h > 0 ? ("visible" as const) : ("hidden" as const);
+      }, { sceneId, subjectPart });
+
+    // Fraction of frame pixels that deviate from the four-corner background —
+    // painted content, glyphs included (a clip-revealed title reads here even
+    // though its box is present the whole scene). Screenshot + canvas read.
+    const paintedFraction = async (): Promise<number> => {
+      const b64 = (await page.screenshot({ encoding: "base64", type: "png" })) as string;
+      return page.evaluate(async (dataUrl: string) => {
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const img = new Image();
+          img.addEventListener("load", () => resolve(img));
+          img.addEventListener("error", () => reject(new Error("thumb probe decode failed")));
+          img.src = "data:image/png;base64," + dataUrl;
+        });
+        const w = image.naturalWidth;
+        const h = image.naturalHeight;
+        if (!w || !h) return 0;
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const context = canvas.getContext("2d", { willReadFrequently: true })!;
+        context.drawImage(image, 0, 0);
+        const data = context.getImageData(0, 0, w, h).data;
+        const corners = [0, (w - 1) * 4, (h - 1) * w * 4, ((h - 1) * w + (w - 1)) * 4];
+        let br = 0;
+        let bg = 0;
+        let bb = 0;
+        for (const c of corners) { br += data[c]!; bg += data[c + 1]!; bb += data[c + 2]!; }
+        br /= 4; bg /= 4; bb /= 4;
+        let painted = 0;
+        let total = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          total += 1;
+          if (Math.abs(data[i]! - br) + Math.abs(data[i + 1]! - bg) + Math.abs(data[i + 2]! - bb) > 60) {
+            painted += 1;
+          }
+        }
+        return total ? painted / total : 0;
+      }, b64);
+    };
+
+    const files: Record<string, string> = {};
+    for (const capture of thumbnailCaptures(current.manifest)) {
+      let chosen = capture.atSec;
+      const walkEnd = Math.min(capture.atSec + MOMENT_WALK_MAX_SEC, capture.latestSec);
+      await seekTo(chosen);
+      const state = capture.subjectPart
+        ? await subjectState(capture.sceneId, capture.subjectPart)
+        : "absent";
+      if (state === "hidden") {
+        // Named subject present but not yet revealed (probe-cutfix-3 m03: the
+        // palette is opacity-0 mid-entrance) — walk to the first frame it shows.
+        for (let t = capture.atSec + MOMENT_WALK_STEP_SEC; t <= walkEnd + 1e-6; t += MOMENT_WALK_STEP_SEC) {
+          await seekTo(t);
+          if (await subjectState(capture.sceneId, capture.subjectPart!) === "visible") {
+            chosen = t;
+            break;
+          }
+        }
+        if (chosen === capture.atSec) await seekTo(chosen);
+      } else if (state === "absent") {
+        // No single subject (scene-start cut, camera arrival, text tween): walk
+        // to the first frame that paints meaningfully more than the capture
+        // frame — the lockup title card reveals its copy ~1s after it opens.
+        const base = await paintedFraction();
+        for (let t = capture.atSec + MOMENT_PIXEL_STEP_SEC; t <= walkEnd + 1e-6; t += MOMENT_PIXEL_STEP_SEC) {
+          await seekTo(t);
+          if (await paintedFraction() > base * MOMENT_PAINTED_IMPROVEMENT) {
+            chosen = t;
+            break;
+          }
+        }
+        if (chosen === capture.atSec) await seekTo(chosen);
+      }
       const safeId = capture.key.replace(/[^a-z0-9_-]/gi, "-");
       const staged = path.join(staging, `${safeId}.png`);
       await page.screenshot({ path: staged as `${string}.png` });

@@ -44,24 +44,37 @@ function coverageFilm(): { storyboard: DirectScene[]; html: string } {
     cameraScene("sparse-cam", 0, "lonely"),
     cameraScene("filled-cam", 4, "packed"),
     {
+      id: "drift-sparse",
+      title: "Tiny drifting",
+      purpose: "A small subject under a drift-only camera (no landing to sample)",
+      startSec: 8,
+      durationSec: 3,
+      camera: {
+        version: 1,
+        path: [
+          { version: 1, move: "drift", toRegion: "adrift", startSec: 8, durationSec: 3 },
+        ],
+      },
+    },
+    {
       id: "static-sparse",
       title: "Tiny static",
       purpose: "A small static subject in an empty frame",
-      startSec: 8,
+      startSec: 11,
       durationSec: 3,
     },
     {
       id: "static-filled",
       title: "Filled static",
       purpose: "A frame-filling static composition",
-      startSec: 11,
+      startSec: 14,
       durationSec: 3,
     },
     {
       id: "close",
       title: "Closing resolve",
       purpose: "A deliberately compact end card (exempt as the final scene)",
-      startSec: 14,
+      startSec: 17,
       durationSec: 2.5,
     },
   ];
@@ -83,7 +96,7 @@ body{color:#e8edf6;font-family:Arial,sans-serif}
 .big-panel{width:1500px;height:820px;border-radius:24px;background:#1c2c44;display:grid;place-items:center;font-size:48px}
 .center{position:absolute;inset:0;display:grid;place-items:center}
 </style></head><body>
-<main id="root" data-composition-id="coverage-smoke" data-width="1920" data-height="1080" data-duration="16.5">
+<main id="root" data-composition-id="coverage-smoke" data-width="1920" data-height="1080" data-duration="19.5">
 <section id="sparse-cam" class="scene clip" data-scene="sparse-cam" data-start="0" data-duration="4" data-track-index="1">
 <div class="world" data-camera-world>
 <div class="station" data-region="lonely"><div class="small-card" data-part="lonely-card">one card</div></div>
@@ -94,13 +107,18 @@ body{color:#e8edf6;font-family:Arial,sans-serif}
 <div class="station" data-region="packed"><div class="big-panel" data-part="hero-panel">the whole product</div></div>
 </div>
 </section>
-<section id="static-sparse" class="scene clip" data-scene="static-sparse" data-start="8" data-duration="3" data-track-index="1">
+<section id="drift-sparse" class="scene clip" data-scene="drift-sparse" data-start="8" data-duration="3" data-track-index="1">
+<div class="world" data-camera-world>
+<div class="station" data-region="adrift"><div class="small-card" data-part="adrift-card">tiny toast</div></div>
+</div>
+</section>
+<section id="static-sparse" class="scene clip" data-scene="static-sparse" data-start="11" data-duration="3" data-track-index="1">
 <div class="center"><div class="small-card" data-part="tiny-static">small</div></div>
 </section>
-<section id="static-filled" class="scene clip" data-scene="static-filled" data-start="11" data-duration="3" data-track-index="1">
+<section id="static-filled" class="scene clip" data-scene="static-filled" data-start="14" data-duration="3" data-track-index="1">
 <div class="center"><div class="big-panel" data-part="big-static">frame-filling</div></div>
 </section>
-<section id="close" class="scene clip" data-scene="close" data-start="14" data-duration="2.5" data-track-index="1">
+<section id="close" class="scene clip" data-scene="close" data-start="17" data-duration="2.5" data-track-index="1">
 <div class="center"><div class="small-card" data-part="end-card">the end card</div></div>
 </section>
 </main>
@@ -109,12 +127,13 @@ body{color:#e8edf6;font-family:Arial,sans-serif}
 window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
 tl.set("#sparse-cam",{opacity:1},0).set("#sparse-cam",{opacity:0},3.999);
 tl.set("#filled-cam",{opacity:1},4).set("#filled-cam",{opacity:0},7.999);
-tl.set("#static-sparse",{opacity:1},8).set("#static-sparse",{opacity:0},10.999);
-tl.set("#static-filled",{opacity:1},11).set("#static-filled",{opacity:0},13.999);
-tl.set("#close",{opacity:1},14).set("#close",{opacity:0},16.5);
-tl.fromTo("#static-sparse [data-part=tiny-static]",{opacity:0},{opacity:1,duration:.4},8.2);
-tl.fromTo("#static-filled [data-part=big-static]",{opacity:0},{opacity:1,duration:.4},11.2);
-tl.fromTo("#close [data-part=end-card]",{opacity:0},{opacity:1,duration:.4},14.2);
+tl.set("#drift-sparse",{opacity:1},8).set("#drift-sparse",{opacity:0},10.999);
+tl.set("#static-sparse",{opacity:1},11).set("#static-sparse",{opacity:0},13.999);
+tl.set("#static-filled",{opacity:1},14).set("#static-filled",{opacity:0},16.999);
+tl.set("#close",{opacity:1},17).set("#close",{opacity:0},19.5);
+tl.fromTo("#static-sparse [data-part=tiny-static]",{opacity:0},{opacity:1,duration:.4},11.2);
+tl.fromTo("#static-filled [data-part=big-static]",{opacity:0},{opacity:1,duration:.4},14.2);
+tl.fromTo("#close [data-part=end-card]",{opacity:0},{opacity:1,duration:.4},17.2);
 SequencesCamera.compile(tl,document.getElementById("root"));
 window.__timelines["coverage-smoke"]=tl;tl.seek(0);
 </script></body></html>`;
@@ -139,6 +158,9 @@ describe("framing coverage browser audit (camera_framed_sparse)", () => {
     expect(stationFinding!.message).toMatch(/fills only \d+% of the frame/);
     // …the filled camera landing does not…
     expect(sparse.some((issue) => issue.selector.includes("packed"))).toBe(false);
+    // …a drift-only camera scene has no landing to sample, so it takes the
+    // mid-window sample (fix-ws-probe-3: a tiny toast drifted unsampled)…
+    expect(sparse.some((issue) => issue.selector === '[data-scene="drift-sparse"]')).toBe(true);
     // …the tiny camera-less scene fires at mid-window…
     expect(sparse.some((issue) => issue.selector === '[data-scene="static-sparse"]')).toBe(true);
     // …the frame-filling camera-less scene stays silent…

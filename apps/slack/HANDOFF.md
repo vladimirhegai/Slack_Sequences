@@ -1,9 +1,12 @@
-# HANDOFF — next session (updated 2026-07-04, fallback-elimination pass)
+# HANDOFF — next session (updated 2026-07-05, WS audit pass)
 
-> **Next session's mandate:** [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) — a
-> perfect-what-exists motion-quality pass (readability, eye trace, holds,
-> exits, visible morph cuts) grounded in the `probe-cutfix-3` diagnostics.
-> Read it first; it supersedes the "candidate next goals" below for now.
+> **The 2026-07-04 motion-quality mandate is COMPLETE and audited.** All of
+> IMPROVEMENT_PLAN WS1–WS7, the WS_Improvements follow-ups, and the
+> LESS_FALLBACKS levers are built, live-probe-verified, and recorded in
+> ROADMAP's 2026-07-05 sections (those three planning docs are retired; the
+> "Full audit" section carries the parked follow-ups). The next mandate is
+> [MOTION_DESIGN_PLAN.md](MOTION_DESIGN_PLAN.md) — texture on top of the
+> hardened choreography.
 
 Newest first: the `palette-input` production fallback (17:49 UTC) is closed —
 `PLAN_source_author_fallback_reliability.md` is retired; the shipped design
@@ -98,24 +101,28 @@ attempts persisted under `planning/attempts/`. Details in ROADMAP.
 4. **Audio** — any soundtrack must be remapped through the same warp knots
    (`sequences-time.v1.js` header note). Do not add audio without it.
 
-### Something next (large — deliberately deferred by IMPROVEMENT_PLAN.md)
+### Something next (large — deliberately deferred by the motion-quality pass)
 
 These came out of the 2026-07-04 motion-quality diagnosis but are too big for
-the perfect-what-exists pass; park them here, do not start them ad hoc:
+the perfect-what-exists pass; park them here, do not start them ad hoc.
+(Smaller parked follow-ups — lever 11 frame-cache mirror, `stream`-beat
+top-up, WS5 occupancy grid, hint-less shape-match sanity — live in ROADMAP's
+2026-07-05 "Full audit" section.)
 
 5. **Host-owned exit contract (a sixth typed contract)** — typed `exits` the
    way cuts/camera/components/interactions/timeRamp are typed: the planner
    declares when a surface retires, the host compiles the directional exit.
-   IMPROVEMENT_PLAN WS4 ships the cheap version (plan-gate + stale-asset QA +
-   prompt doctrine); build the full contract only if that proves insufficient.
+   WS4 shipped the cheap version (`auditSurfaceExits` plan gate + advisory
+   `stale_asset_lingers` QA + prompt doctrine); build the full contract only
+   if that proves insufficient.
 6. **Content-aware station auto-fit** — when browser QA measures a framed
    station whose content bbox is clipped or sparse, deterministically adjust
    the station rect / fit zoom from the measured bounds instead of asking the
    author to move markup. Powerful, but it makes the camera plan a function of
    measured pixels — cache/determinism implications need real design.
-7. **Saliency-based eye-trace v2** — IMPROVEMENT_PLAN WS2's focal-part proxy,
-   upgraded to actual visual-saliency estimation over rendered frames (pairs
-   naturally with the vision half of the temporal judge, #2 above).
+7. **Saliency-based eye-trace v2** — WS2's focal-part proxy, upgraded to
+   actual visual-saliency estimation over rendered frames (pairs naturally
+   with the vision half of the temporal judge, #2 above).
 
 ## Gotchas that will save you hours (inherited + new)
 
@@ -125,18 +132,23 @@ the perfect-what-exists pass; park them here, do not start them ad hoc:
 2. **Time bases**: content time everywhere except enumerated viewer-time
    consumers; physical seeks convert via `warpInverseOf` at the seek only.
    The temporal judge follows this (it seeks through `seekContent`).
-3. **Bump the storyboard cache `contract`** (now v7) on storyboard shape
-   changes; bump `QA_CACHE_VERSION` (now 3) on inspector semantics changes.
+3. **Bump the storyboard cache `contract`** (now v10) on storyboard shape
+   changes; bump `QA_CACHE_VERSION` (now 8) on inspector semantics changes.
 4. **Vitest root gotcha**: `npm run test --workspace @sequences/slack`, or
    `npx vitest run --root ../.. apps/slack/test/<file>` from `apps/slack`.
 5. **`sequence:check` job dirs are immutable** — retried live probes need a
    fresh `--job-id`.
-6. **Paid live probe recipe**: `$env:OPENROUTER_API_KEY`, then
+6. **Paid live probe recipe**: extract `OPENROUTER_API_KEY` from
+   `apps/slack/.env` with an ABSOLUTE path and confirm it is non-empty (a
+   `no OpenRouter API key` fallback is a harness error, never a code
+   regression), set `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0` so a
+   probe fails visibly, then
    `npm run sequence:check --workspace @sequences/slack -- --product …
    --what "…" --provider openrouter-api --job-id <id> --format both`; inspect
-   `.data/projects/<id>/planning/` (now including `attempts/` and the
-   per-run `author-run.json` signature summary) and the report's
-   `authoringMode`/`fallbackStage`.
+   `.data/projects/<id>/planning/` (`attempts/` now covers BOTH the author
+   and storyboard stages, plus the per-run `author-run.json` signature
+   summary) and the report's `authoringMode`/`fallbackStage` — and LOOK at
+   `build/thumbs/*.png` with your own eyes.
 7. **Test styling via classes, not `data-part` attribute selectors** — bridge
    clones strip `data-part`.
 8. Finish = commit → `bash scripts/publish-public.sh "<msg>"` → `railway up`

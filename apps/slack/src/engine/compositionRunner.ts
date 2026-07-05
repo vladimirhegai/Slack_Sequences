@@ -33,6 +33,7 @@ import {
   CUT_RUNTIME_FILE,
   CUT_SHAPE_HINTS,
   CUT_STYLES,
+  auditCutCoherence,
   normalizeStoryboardCutIntent,
   resolveCutPlan,
   shapeHintsRhyme,
@@ -68,6 +69,7 @@ import {
   COMPONENT_KIT_VERSION,
   COMPONENT_RUNTIME_FILE,
   auditComponentComplexity,
+  auditSurfaceExits,
   componentAuthoringReference,
   componentPlanningVocabulary,
   componentSupportsBeat,
@@ -1299,10 +1301,14 @@ function rowsChildMarkup(kind: string | undefined, index: number): string {
  * — the runtime's childItems() finds nothing, the bind aborts the compile,
  * and a whole model retry is spent on paperwork the kit owns. Inject three
  * neutral kind-appropriate children host-side instead; the beat reveals
- * them, the author already styled the container. Only the mechanically
- * certain case is repaired: exactly one candidate root, zero revealable
- * children anywhere inside it. `kitMarkupAudit` keeps the same check for
- * whatever this pass cannot prove.
+ * them, the author already styled the container. `select` beats have the
+ * exact same childItems() bind requirement (live probe codexfix-probe-1:
+ * a childless command-palette burned 3 attempts + the rescue rung on
+ * `kit_markup_incomplete`) and the runtime clamps `item` into range, so
+ * they take the same top-up. Only the mechanically certain case is
+ * repaired: exactly one candidate root, zero revealable children anywhere
+ * inside it. `kitMarkupAudit` keeps the same check for whatever this pass
+ * cannot prove.
  */
 export function topUpRowsMarkup(
   html: string,
@@ -1313,7 +1319,9 @@ export function topUpRowsMarkup(
   for (const scene of scenes) {
     const kinds = new Map((scene.components ?? []).map((entry) => [entry.id, entry.kind]));
     for (const beat of scene.beats ?? []) {
-      if (beat.kind === "rows") targets.set(beat.component, kinds.get(beat.component));
+      if (beat.kind === "rows" || beat.kind === "select") {
+        targets.set(beat.component, kinds.get(beat.component));
+      }
     }
   }
   for (const [component, kind] of targets) {
@@ -2341,25 +2349,53 @@ function parseStoryboard(raw: string): DirectScene[] {
     }
     const spatialIntent = normalizeStoryboardSpatialIntent(scene.spatialIntent);
     const cut = normalizeStoryboardCutIntent(scene.cut);
-    const timeRamp = normalizeStoryboardTimeRamp(scene.timeRamp, { startSec, durationSec });
-    const camera = normalizeStoryboardCameraIntent(scene.camera, { startSec, durationSec });
+    // Nested beat/camera/interaction/moment/ramp times were authored against
+    // the model's OWN startSec. Normalize them in that frame — so each
+    // normalizer's scene-relative recovery heuristic judges the model's
+    // numbers, not the host's — then shift every absolute time by the
+    // re-basing delta below, so repairing the scene's arithmetic never
+    // silently re-times the choreography inside it.
+    const authoredFrame = { startSec: authoredStart, durationSec };
+    const timeRamp = normalizeStoryboardTimeRamp(scene.timeRamp, authoredFrame);
+    const camera = normalizeStoryboardCameraIntent(scene.camera, authoredFrame);
     const worldLayout = normalizeWorldLayout(scene.worldLayout, Boolean(camera?.path.length));
     const components = normalizeStoryboardComponents(scene.components);
     const beats = normalizeStoryboardComponentBeats(
       scene.beats,
-      { sceneId: id, startSec, durationSec },
+      { sceneId: id, ...authoredFrame },
       components,
     );
     const interactions = normalizeStoryboardInteractionIntents(scene.interactions, {
       sceneId: id,
-      startSec,
-      durationSec,
+      ...authoredFrame,
     });
     const moments = normalizeStoryboardMoments(scene.moments, {
       sceneId: id,
-      startSec,
-      durationSec,
+      ...authoredFrame,
     });
+    // The authored and rebased windows have identical length (duration is
+    // clamped once, above), so a pure shift keeps every time in-window and
+    // preserves relative ordering within each intent.
+    const rebaseDelta = Math.round((startSec - authoredStart) * 1000) / 1000;
+    if (Math.abs(rebaseDelta) > 0.0005) {
+      const shift = (value: number): number =>
+        Math.round((value + rebaseDelta) * 1000) / 1000;
+      if (timeRamp) timeRamp.atSec = shift(timeRamp.atSec);
+      for (const move of camera?.path ?? []) move.startSec = shift(move.startSec);
+      for (const beat of beats) beat.atSec = shift(beat.atSec);
+      for (const interaction of interactions) {
+        interaction.startSec = shift(interaction.startSec);
+        interaction.arriveSec = shift(interaction.arriveSec);
+        if (interaction.pressSec !== undefined) interaction.pressSec = shift(interaction.pressSec);
+        if (interaction.releaseSec !== undefined) {
+          interaction.releaseSec = shift(interaction.releaseSec);
+        }
+        if (interaction.holdUntilSec !== undefined) {
+          interaction.holdUntilSec = shift(interaction.holdUntilSec);
+        }
+      }
+      for (const moment of moments) moment.atSec = shift(moment.atSec);
+    }
     return {
       id,
       title,
@@ -2683,8 +2719,11 @@ export function validateStoryboardPlan(
   // author attempts on a cut that can never compile.
   errors.push(...auditShapeMatchHints(storyboard));
   // Camera-energy audit: every 12s+ film needs at least one high-energy
-  // element, and four-plus full moves may not share one verb.
+  // element, and four-plus full moves may not share one HIGH-ENERGY verb.
   errors.push(...auditCameraEnergy(storyboard));
+  // Transition-language coherence (WS6): a style zoo — a different cut per
+  // seam — reads as "messy"; a launch film reuses 1-2 signature transitions.
+  errors.push(...auditCutCoherence(storyboard));
   // Complexity governor: a plan the author cannot build (too many component
   // surfaces for the duration) fails HERE, where a retry costs one storyboard
   // call, not downstream where it burns every author attempt.
@@ -2693,6 +2732,10 @@ export function validateStoryboardPlan(
   // time, typed copy needs reading time, payoffs need outcome holds, and
   // camera density has a ceiling as well as a floor.
   errors.push(...auditPacing(storyboard));
+  // Exit discipline (WS4): a scene that opens a second content surface over a
+  // still-live one in the same station stacks clutter — retire the outgoing
+  // surface or give the incoming one its own station.
+  errors.push(...auditSurfaceExits(storyboard));
   return [...new Set(errors)];
 }
 
@@ -2935,12 +2978,21 @@ export function parseStoryboardResponse(
   // rung's final attempt onward a plan that is clean EXCEPT for pacing ships
   // with the findings logged as advisories.
   if (options.degradePacingFindings) {
-    const pacing = errors.filter((finding) => finding.startsWith("pacing/"));
-    if (pacing.length) {
-      errors = errors.filter((finding) => !finding.startsWith("pacing/"));
-      for (const line of pacing) {
+    // Exit-discipline (WS4) and cut-coherence (WS6) findings are polish-grade
+    // in exactly the same sense as pacing — a stacked overlay or a style zoo
+    // never aborts a compile or ships a dead film — so they ride the same
+    // late-attempt demotion to keep a plan clean except for polish from
+    // triggering the far worse fallback.
+    const isPolish = (finding: string): boolean =>
+      finding.startsWith("pacing/") ||
+      finding.startsWith("components/exit:") ||
+      finding.startsWith("cuts/coherence:");
+    const polish = errors.filter(isPolish);
+    if (polish.length) {
+      errors = errors.filter((finding) => !isPolish(finding));
+      for (const line of polish) {
         process.stderr.write(
-          `[storyboard] pacing finding accepted as advisory on a final attempt: ${line}\n`,
+          `[storyboard] polish finding accepted as advisory on a final attempt: ${line}\n`,
         );
       }
     }
@@ -3393,6 +3445,46 @@ export function inferStoryboardPlanRequirements(
   };
 }
 
+/**
+ * Diagnostic persistence for the storyboard chain (author-stage parity —
+ * LESS_FALLBACKS lever 12): every rejected attempt's raw response + findings
+ * land under `planning/attempts/` so a failed paid plan run can be studied
+ * offline. Best-effort only; a disk error never affects planning and nothing
+ * here re-enters the pipeline.
+ */
+function persistStoryboardAttempt(
+  projectDir: string,
+  attempt: number,
+  outcome: "rejected" | "truncated" | "artifact-missing",
+  details: { rung: string; findings?: string[]; raw?: string },
+): void {
+  try {
+    const dir = path.join(projectDir, "planning", "attempts");
+    fs.mkdirSync(dir, { recursive: true });
+    const stem = `storyboard-${attempt}-${outcome}`;
+    if (details.raw) {
+      fs.writeFileSync(path.join(dir, `${stem}.raw.txt`), details.raw.slice(0, 400_000), "utf8");
+    }
+    fs.writeFileSync(
+      path.join(dir, `${stem}.json`),
+      JSON.stringify(
+        {
+          attempt,
+          outcome,
+          rung: details.rung,
+          at: new Date().toISOString(),
+          findings: (details.findings ?? []).slice(0, 40),
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+  } catch {
+    // Diagnostics only.
+  }
+}
+
 export async function requestStoryboardPlan(
   provider: AgentProvider,
   args: {
@@ -3439,8 +3531,11 @@ export async function requestStoryboardPlan(
     // introduction development, camera budget; v9: pacing bugfixes — single-
     // introduction holds, in-flight camera conflicts, headline/swap reading
     // floors, viewer-time deadline — plus host-owned timing re-base and
-    // unsupported-beat degrade at parse).
-    contract: 9,
+    // unsupported-beat degrade at parse; v10: the re-base shifts nested
+    // beat/camera/interaction/moment/ramp times with their scene, the
+    // final-resolve pacing exemption covers only compact resolve surfaces,
+    // and headline detection no longer misreads "prototype").
+    contract: 10,
     provider: provider.id,
     model: model ?? null,
     brief: args.brief,
@@ -3799,6 +3894,12 @@ export async function requestStoryboardPlan(
   let totalAttempts = 0;
   let lastValidationError: Error | undefined;
   let lastError: unknown;
+  // One grace replay per RUN for a response carrying no storyboard artifact at
+  // all: there was no plan to reject, so spending a scarce attempt on it is
+  // pure waste (live probe audit-final-a1 died exactly here — the rescue
+  // model's FINAL attempt returned prose with no <storyboard_json> and the
+  // whole run fell through to the fallback path).
+  let artifactGraceUsed = false;
   for (const rung of rungs) {
     let recoveringFromTruncation = false;
     let reasoningFloor: CompleteOptions["thinkingMode"] | undefined;
@@ -3914,6 +4015,10 @@ export async function requestStoryboardPlan(
         if (error instanceof Error && isOutputTruncation(error)) {
           // A truncated artifact detected at parse time (opened-but-unclosed
           // wrapper) is the same failure as a provider-reported truncation.
+          persistStoryboardAttempt(args.projectDir, totalAttempts, "truncated", {
+            rung: rung.label,
+            raw,
+          });
           if (attempt < rung.maxAttempts) {
             recoveringFromTruncation = true;
             process.stderr.write(
@@ -3926,7 +4031,34 @@ export async function requestStoryboardPlan(
           break attempts;
         }
         if (error instanceof Error) {
+          // A response with NO storyboard artifact is not a rejected plan —
+          // the model glitched its output format. Replay the attempt once per
+          // run instead of letting a formatting fault consume a rung's final
+          // slot; the previous findings (if any) stay in the prompt untouched.
+          if (
+            !artifactGraceUsed &&
+            /missing <storyboard_json>/.test(error.message)
+          ) {
+            artifactGraceUsed = true;
+            persistStoryboardAttempt(args.projectDir, totalAttempts, "artifact-missing", {
+              rung: rung.label,
+              raw,
+            });
+            process.stderr.write(
+              `[storyboard] ${rung.label} attempt ${attempt} returned no storyboard artifact; ` +
+                `replaying the attempt once (formatting fault, not a plan rejection)\n`,
+            );
+            attempt -= 1;
+            continue;
+          }
           lastValidationError = error;
+          persistStoryboardAttempt(args.projectDir, totalAttempts, "rejected", {
+            rung: rung.label,
+            raw,
+            findings: error.message
+              .replace(/^invalid storyboard plan:\s*/i, "")
+              .split("; "),
+          });
           process.stderr.write(
             `[storyboard] ${rung.label} attempt ${attempt} rejected: ` +
               `${error.message.slice(0, 600)} — ${

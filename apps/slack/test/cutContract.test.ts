@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  auditCutCoherence,
   cutMotionWindows,
   normalizeStoryboardCutIntent,
   parseCutPlan,
@@ -8,6 +9,7 @@ import {
   validateCutContract,
   type CutPlanV1,
 } from "../src/engine/cutContract.ts";
+import type { CutStyle } from "../src/engine/cutContract.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
 import { quietWindowsFromCurve } from "../src/engine/temporalInspector.ts";
 
@@ -349,6 +351,47 @@ describe("shapeHintsRhyme", () => {
     expect(shapeHintsRhyme("pill", "card")).toBe(false);
     expect(shapeHintsRhyme("circle", "bar")).toBe(false);
     expect(shapeHintsRhyme("bar", "window")).toBe(false);
+  });
+});
+
+describe("auditCutCoherence", () => {
+  const cutScene = (id: string, at: number, style: CutStyle): DirectScene =>
+    scene({ id, startSec: at, durationSec: 3, cut: { version: 1, style } });
+
+  it("accepts the golden film's four premium cuts across four boundaries", () => {
+    expect(auditCutCoherence([
+      cutScene("a", 0, "cut-left"),
+      cutScene("b", 3, "flash-white"),
+      cutScene("c", 6, "object-match"),
+      cutScene("d", 9, "inverse-zoom"),
+      scene({ id: "e", startSec: 12, durationSec: 3 }),
+    ])).toEqual([]);
+  });
+
+  it("flags five distinct non-hard styles across five boundaries as a zoo", () => {
+    const findings = auditCutCoherence([
+      cutScene("a", 0, "cut-left"),
+      cutScene("b", 3, "cut-up"),
+      cutScene("c", 6, "flash-white"),
+      cutScene("d", 9, "object-match"),
+      cutScene("e", 12, "inverse-zoom"),
+      scene({ id: "f", startSec: 15, durationSec: 3 }),
+    ]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatch(/cuts\/coherence/);
+    expect(findings[0]).toContain("5 distinct");
+  });
+
+  it("accepts a consistent language (signatures repeated) and never counts hard cuts", () => {
+    expect(auditCutCoherence([
+      cutScene("a", 0, "cut-left"),
+      cutScene("b", 3, "zoom-through"),
+      cutScene("c", 6, "cut-left"),
+      cutScene("d", 9, "hard"),
+      cutScene("e", 12, "zoom-through"),
+      cutScene("f", 15, "cut-left"),
+      scene({ id: "g", startSec: 18, durationSec: 3 }),
+    ])).toEqual([]);
   });
 });
 

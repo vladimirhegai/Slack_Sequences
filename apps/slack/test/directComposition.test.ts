@@ -22,10 +22,12 @@ import {
   hasDirectComposition,
   isFloatingPointClipOverlap,
   loadDirectComposition,
+  momentSubjectPart,
   undoDirectComposition,
   validateDirectComposition,
   type DirectCompositionDraft,
 } from "../src/engine/directComposition.ts";
+import type { StoryboardMomentV1 } from "../src/engine/storyboardMoments.ts";
 import { inspectDirectComposition } from "../src/engine/layoutInspector.ts";
 import { initializeProject } from "../src/engine/projectTemplates.ts";
 import { buildJobFrame } from "../src/engine/frameDesign.ts";
@@ -117,6 +119,46 @@ describe("world-layout station map normalization", () => {
     expect(normalizeWorldLayout([{ region: "hero", cell: [0, 0] }], false)).toEqual([]);
     expect(normalizeWorldLayout({ region: "hero" }, true)).toEqual([]);
     expect(normalizeWorldLayout(undefined, true)).toEqual([]);
+  });
+});
+
+describe("momentSubjectPart (WS7 thumbnail subject resolution)", () => {
+  const moment = (evidence: StoryboardMomentV1["evidence"]): StoryboardMomentV1 => ({
+    version: 1,
+    id: "m",
+    sceneId: "s",
+    atSec: 1,
+    title: "t",
+    visualState: "",
+    change: "",
+    motionIntent: "",
+    importance: "primary",
+    ...(evidence ? { evidence } : {}),
+  });
+
+  it("resolves the bound data-part from component and interaction evidence", () => {
+    expect(momentSubjectPart(moment({
+      kind: "component", detail: "component:count→latency-stat", startSec: 1, endSec: 1.5,
+    }))).toBe("latency-stat");
+    expect(momentSubjectPart(moment({
+      kind: "interaction", detail: "interaction:click→cta-button", startSec: 1, endSec: 1.3,
+    }))).toBe("cta-button");
+  });
+
+  it("returns undefined for camera/cut/tween moments and selector-shaped targets", () => {
+    // Camera/cut moments have no single data-part subject (pixel path handles them).
+    expect(momentSubjectPart(moment({
+      kind: "camera", detail: "camera:pan→metrics", startSec: 1, endSec: 1.8,
+    }))).toBeUndefined();
+    expect(momentSubjectPart(moment({
+      kind: "cut", detail: "scene-start", startSec: 1, endSec: 1.08,
+    }))).toBeUndefined();
+    // A tween's target is a raw selector, not a clean data-part id.
+    expect(momentSubjectPart(moment({
+      kind: "tween", detail: "gsap.fromTo→#lk-title .line b", startSec: 1, endSec: 1.7,
+    }))).toBeUndefined();
+    // Unbound moment.
+    expect(momentSubjectPart(moment(undefined))).toBeUndefined();
   });
 });
 
@@ -335,6 +377,98 @@ function storyboard(): DirectCompositionDraft["storyboard"] {
     },
   ];
 }
+
+describe("host-owned scene-timing re-base (LESS_FALLBACKS lever 10)", () => {
+  it("shifts nested beat/camera/interaction/moment times with their re-based scene", () => {
+    const scenes = storyboard();
+    // The model fumbled the addition: scene 2 starts 1.3s late in its own
+    // frame (and scene 3 follows it), with every nested time authored against
+    // that wrong frame. Re-basing must carry the choreography along instead of
+    // re-timing it inside the scene.
+    const raw = [
+      scenes[0],
+      {
+        ...scenes[1],
+        startSec: 4.3,
+        components: [{ version: 1, id: "ops-window", kind: "app-window" }],
+        beats: [{
+          version: 1,
+          id: "fill-ops",
+          sceneId: "product-proof",
+          component: "ops-window",
+          kind: "rows",
+          atSec: 5.3, // 1.0s into the authored frame
+        }],
+        camera: {
+          version: 1,
+          path: [
+            { version: 1, move: "pan", toRegion: "stage", startSec: 5.0, durationSec: 0.8 },
+          ],
+        },
+        interactions: [{
+          version: 1,
+          id: "press-cta",
+          sceneId: "product-proof",
+          targetPart: "ops-window",
+          action: "click",
+          startSec: 4.8,
+          arriveSec: 5.4,
+        }],
+        moments: [{
+          version: 1,
+          id: "m-ops-rows",
+          sceneId: "product-proof",
+          atSec: 5.5,
+          title: "Alerts fill the window",
+          visualState: "rows visible",
+          change: "the alert rows arrive",
+          motionIntent: "ui-state",
+          importance: "primary",
+        }],
+      },
+      { ...scenes[2], startSec: 7.3 },
+    ];
+    const parsed = parseStoryboardResponse(
+      `<storyboard_json>${JSON.stringify(raw)}</storyboard_json>`,
+    );
+    expect(parsed[1]!.startSec).toBe(3);
+    expect(parsed[2]!.startSec).toBe(6);
+    // Every nested time moved by the -1.3s delta: same offsets inside the scene.
+    expect(parsed[1]!.beats![0]!.atSec).toBeCloseTo(4.0, 3);
+    expect(parsed[1]!.camera!.path[0]!.startSec).toBeCloseTo(3.7, 3);
+    expect(parsed[1]!.interactions![0]!.startSec).toBeCloseTo(3.5, 3);
+    expect(parsed[1]!.interactions![0]!.arriveSec).toBeCloseTo(4.1, 3);
+    // Look the declared moment up by id — the moment top-up may add
+    // synthesized siblings around it.
+    const moment = parsed[1]!.moments!.find((entry) => entry.id === "m-ops-rows")!;
+    expect(moment.atSec).toBeCloseTo(4.2, 3);
+  });
+
+  it("leaves nested times byte-identical when the authored arithmetic is right", () => {
+    const scenes = storyboard();
+    const raw = [
+      scenes[0],
+      {
+        ...scenes[1],
+        components: [{ version: 1, id: "ops-window", kind: "app-window" }],
+        beats: [{
+          version: 1,
+          id: "fill-ops",
+          sceneId: "product-proof",
+          component: "ops-window",
+          kind: "rows",
+          atSec: 4.0,
+        }],
+      },
+      scenes[2],
+    ];
+    const parsed = parseStoryboardResponse(
+      `<storyboard_json>${JSON.stringify(raw)}</storyboard_json>`,
+    );
+    expect(parsed[1]!.startSec).toBe(3);
+    expect(parsed[1]!.beats![0]!.atSec).toBe(4.0);
+  });
+});
 
 describe("unsupported component beats degrade at parse (fallback-elimination)", () => {
   function planWith(beats: object[], moments: object[] = []) {
@@ -1406,10 +1540,11 @@ describe("direct HyperFrames composition", () => {
       attempts,
     });
     expect(plan).toEqual(storyboard());
-    // 3 primary attempts with findings, then the rescue rung recovers.
-    expect(complete).toHaveBeenCalledTimes(4);
-    expect(attempts.count).toBe(4);
-    const rescueCall = complete.mock.calls[3] as [string, { model?: string; thinkingMode?: string }];
+    // One artifact-less grace replay + 3 primary attempts with findings, then
+    // the rescue rung recovers.
+    expect(complete).toHaveBeenCalledTimes(5);
+    expect(attempts.count).toBe(5);
+    const rescueCall = complete.mock.calls[4] as [string, { model?: string; thinkingMode?: string }];
     expect(rescueCall[1]).toMatchObject({
       model: "tencent/hy3-preview",
       thinkingMode: "medium",
@@ -1431,12 +1566,12 @@ describe("direct HyperFrames composition", () => {
     await expect(
       requestStoryboardPlan(provider, { brief: "Launch Relay", projectDir: dir, skills: skills() }),
     ).rejects.toThrow(/missing <storyboard_json>/);
-    // The bounded artifact gets findings-driven retries on the primary rung
-    // (3) and the rescue rung (2); transport-level retries never fire for
-    // content errors.
-    expect(complete).toHaveBeenCalledTimes(5);
-    expect(complete.mock.calls[1]?.[0]).toContain("Previous attempt rejected");
-    expect(complete.mock.calls[3]?.[1]).toMatchObject({ model: "tencent/hy3-preview" });
+    // The bounded artifact gets one artifact-less grace replay, findings-driven
+    // retries on the primary rung (3) and the rescue rung (2); transport-level
+    // retries never fire for content errors.
+    expect(complete).toHaveBeenCalledTimes(6);
+    expect(complete.mock.calls[2]?.[0]).toContain("Previous attempt rejected");
+    expect(complete.mock.calls[4]?.[1]).toMatchObject({ model: "tencent/hy3-preview" });
   });
 
   it("keeps the rescue rung off when the operator disables it", async () => {
@@ -1454,7 +1589,49 @@ describe("direct HyperFrames composition", () => {
     await expect(
       requestStoryboardPlan(provider, { brief: "Launch Relay", projectDir: dir, skills: skills() }),
     ).rejects.toThrow(/missing <storyboard_json>/);
-    expect(complete).toHaveBeenCalledTimes(3);
+    // 3 attempts + the one artifact-less grace replay.
+    expect(complete).toHaveBeenCalledTimes(4);
+  });
+
+  it("replays an artifact-less response once instead of spending a scarce attempt on it", async () => {
+    // Live probe audit-final-a1: the rescue rung's FINAL attempt returned
+    // prose with no <storyboard_json> and the whole run fell through to the
+    // fallback path — a formatting fault, not a plan rejection, consumed the
+    // last slot. The grace replay converts exactly one such response per run
+    // into a fresh draw.
+    vi.stubEnv("SLACK_SEQUENCES_CONCEPT_PASS", "0");
+    vi.stubEnv("SLACK_SEQUENCES_STORYBOARD_RESCUE_MODEL", "none");
+    const dir = projectDir();
+    let calls = 0;
+    const complete = vi.fn(async () => {
+      calls += 1;
+      return calls <= 3
+        ? "no array anywhere in this prose"
+        : `<storyboard_json>${JSON.stringify(storyboard())}</storyboard_json>`;
+    });
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test planner",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    // Without the grace, three artifact-less responses exhaust the rung and
+    // the valid fourth draw is never requested.
+    const plan = await requestStoryboardPlan(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: skills(),
+    });
+    expect(plan).toEqual(storyboard());
+    expect(complete).toHaveBeenCalledTimes(4);
+    // Every non-publishing attempt is persisted for offline diagnosis
+    // (author-stage parity): the graced response and the rejected retries.
+    const attemptsDir = path.join(dir, "planning", "attempts");
+    expect(fs.existsSync(path.join(attemptsDir, "storyboard-1-artifact-missing.json"))).toBe(true);
+    expect(fs.existsSync(path.join(attemptsDir, "storyboard-1-artifact-missing.raw.txt"))).toBe(true);
+    expect(fs.existsSync(path.join(attemptsDir, "storyboard-2-rejected.json"))).toBe(true);
+    expect(fs.existsSync(path.join(attemptsDir, "storyboard-3-rejected.json"))).toBe(true);
   });
 
   it("applies bounded exact repair patches without regenerating the composition", () => {

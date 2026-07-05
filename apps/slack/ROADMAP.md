@@ -38,6 +38,8 @@ point an agent at the listed file.
 | Framing coverage audit | `src/engine/layoutInspector.ts` | `camera_framed_sparse` — whole-scene on-frame content coverage floor at camera landings + static mid-windows (WS5) |
 | Hold-what-matters pacing audits | `src/engine/pacingAudit.ts` (called from `validateStoryboardPlan`) | plan-stage findings: introduction→development ratio, typed-copy reading floor, outcome holds after press/set-state/toast, camera-move budget per scene + whip cap per film (WS3) |
 | Eye-trace continuity audit | `src/engine/eyeTrace.ts` + `src/engine/layoutInspector.ts` | `eye_trace_jump` (gaze displacement across hard/undeclared cuts, strictOk-blocking; `SLACK_SEQUENCES_EYE_TRACE=audit\|0`) + advisory `eye_trace_pingpong` beat-pair findings (WS2) |
+| Exit discipline (assets disappear, don't overlap) | `src/engine/componentContract.ts` (`auditSurfaceExits`, plan-stage) + `src/engine/layoutInspector.ts` (`stale_asset_lingers`, QA advisory) | plan gate: two station-dominating overlays stacked without closing the first → cheap findings-retry (degrades to advisory late); QA: a done surface still opaque and overlapping the focal element → advisory (WS4) |
+| Transition-language coherence | `src/engine/cutContract.ts` (`auditCutCoherence`) + `src/engine/cameraContract.ts` (`auditCameraEnergy`) | plan gate: a cut-style ZOO (≥5 distinct non-hard styles, scaled by length) → findings-retry; camera repeat-verb rule relaxed to fire only on a repeated HIGH-energy verb (whip/orbit); `browserQualityPenalty` weights make sparse/clipped/degraded/jump findings stick at the least-bad-draft pick (WS6) |
 | Static motion-density guard | `src/engine/motionDensity.ts` | blocking liveness errors (quiet gaps, slide scenes, front-loading) + advisory warnings (dense bursts, empty holds) |
 | Storyboard moment contract | `src/engine/storyboardMoments.ts` | typed reviewable moments: planned floor (≥7 for 12s+), evidence binding, interval gate, synthesis for legacy films |
 | Motion-native component system | `src/engine/componentContract.ts`, `src/engine/templates/sequences-components.v1.css` / `.v1.js` | 22-kind SaaS component catalog, typed beats (type/open/count/chart/stream/morph/…), FLIP twin morphs, kit CSS, markup contract retrieval |
@@ -45,7 +47,7 @@ point an agent at the listed file.
 | Explicit fallback stages | `src/orchestrator.ts` | named stage receipts, `fallback:{stage,reason}`, Slack-safe fallback labeling |
 | Temporal motion evidence | `src/engine/temporalInspector.ts` | development strips, cut triptychs, change curve, quiet-window review |
 | Zero-token revise ("shorter" / "warmer") | `src/engine/tweakRunner.ts` | deterministic tweak matcher |
-| Render + thumbnails | `src/engine/render.ts`, `src/engine/thumbs.ts` | Chrome / FFmpeg pipeline, draft vs HD |
+| Render + thumbnails | `src/engine/render.ts`, `src/engine/thumbs.ts`, `src/engine/directComposition.ts` (`generateDirectThumbnails`) | Chrome / FFmpeg pipeline, draft vs HD; WS7 moment-thumbnail walk-forward: a scene-start moment whose subject hasn't revealed (opacity check) or whose copy clip-reveals later (relative painted-pixel check) walks to the first frame that actually shows the moment |
 | Curated model-free demo | `src/demo.ts` | the bulletproof preset reel |
 | Golden Slack ad film | `scripts/slackAdFilm.ts` | cinematic quality bar and end-to-end cut proof (`npm run film:demo`) |
 | Local `/sequences` simulator | `scripts/sequenceCheck.ts` | Slack-free create checks, model/provider receipts, validation, motion/artifact report |
@@ -1012,6 +1014,85 @@ moment) belong to WS4/WS6/WS7, not this pass. `eye_trace_jump` therefore
 ships **blocking by default** with `SLACK_SEQUENCES_EYE_TRACE=audit` as the
 observation lever.
 
+### Exit discipline, transition coherence, honest thumbnails (2026-07-05, WS4+WS6+WS7)
+
+The last IMPROVEMENT_PLAN commit. Three defects the operator named on
+`probe-cutfix-3` — "assets don't disappear when necessary and overlap", a
+different cut style at every seam, and a primary moment's thumbnail that was an
+empty gray circle — each closed against an existing mechanism, none a new
+system.
+
+**WS4 — exit discipline.** Ownership was "author owns entrances + final
+states"; exits were nobody's job, so surfaces piled up. Plan stage:
+`auditSurfaceExits` (`componentContract.ts`, in `validateStoryboardPlan`)
+flags TWO station-dominating overlays (command-palette/modal/dropdown/
+context-menu) whose `open` windows overlap in the same region bucket without
+the first being closed/swapped/morphed. It is deliberately narrow — base
+content surfaces (app-window/stat-card/table/…) have no `open` beat, so an
+overlay opening OVER base content (⌘K over a window, a modal over a
+dashboard) is the designed pattern and is never flagged; false positives are
+the whole game. QA stage: `stale_asset_lingers` (`layoutInspector.ts`) is an
+ALWAYS-advisory, bounded-seek pass — a component whose last beat has passed,
+not `role:"hero"`, still at opacity ≥0.9 AND overlapping the current focal
+element's rect (real overlap, not mere presence). Prompt: an explicit exits
+paragraph (exit short/directional ≤0.4s or recede to ≤40%; never stack a new
+surface over a live one). `QA_CACHE_VERSION` 7 → 8.
+
+**WS6 — transition-language coherence.** `auditCutCoherence`
+(`cutContract.ts`) flags a cut-style ZOO: distinct non-`hard` styles beyond
+`max(4, round(0.6 × boundaries))`. The floor is FIVE, not four — the golden
+film runs four premium cuts (cut-left/flash-white/object-match/inverse-zoom)
+across four boundaries and reads clean, so four signatures is the ceiling of
+"good" (verification law: an audit that fires on the golden film is wrong).
+`auditCameraEnergy`'s "all moves share one verb" rule is relaxed to fire ONLY
+when the repeated verb is itself HIGH-energy (whip/orbit) — repeating a quiet
+pan/drift/track is coherence, not churn. The shipping-policy slice (penalty
+weights on `camera_framed_clipped`/`_sparse`/`cut_degraded`/`eye_trace_jump`
+in `browserQualityPenalty`) already landed with the WS1/WS5 commit, so the
+attempt-3 least-bad-draft pick prefers an unclipped/unsparse/undegraded film.
+Both new plan findings degrade to advisory on late attempts alongside
+`pacing/*`.
+
+**WS7 — thumbnails show the moment.** `generateDirectThumbnails`
+(`directComposition.ts`) verifies a moment's frame actually shows its subject
+before capturing. A moment naming a `data-part` (component/interaction
+evidence) walks forward from its capture time to the first frame the subject
+is visible (opacity ≥0.5, on frame) — the palette "gray circle" class. A
+no-subject moment (scene-start cut / camera / clip-revealed text tween) can't
+use box+opacity (a title's container box carries opacity the whole scene
+while the glyphs clip-reveal ~1s in), so it walks to the first frame that
+paints meaningfully MORE than the capture frame — a RELATIVE painted-pixel
+test, so a soft bloom that sits in every frame cancels out. Both walks stay
+inside the cut-safe window. The `page.evaluate` bodies avoid named nested
+functions: under the MCP server's `node --import tsx`, esbuild `__name`-wraps
+them and the callback crashes ("`__name is not defined`") in the browser —
+the pre-WS7 loop only used anonymous inline arrows, which is why it never hit
+this.
+
+**Verification.** Deterministic ladder green (typecheck, 451 tests including
+new `auditSurfaceExits`/`auditCutCoherence`/relaxed-energy/`momentSubjectPart`
+cases; `film:demo` with the lockup thumbnail now showing the title card, not a
+bloom; `sequence:check --demo`). Live paid probe `ws467-probe-2` — a
+deliberately dense command-palette + modal + stat-card + button + terminal
+brief — **published `hyperframes-direct` with no fallback** through the full
+recovery ladder (primary rung exhausted on pacing rejects + a token
+truncation → storyboard rescue rung accepted with pacing demoted → compact
+patch broke bindings → forced full re-author → critic → publish), 11/11
+moments bound, 10 content-rich thumbnails (the command-palette moment, the
+exact original "empty circle" failure class, renders as a crisp palette), and
+**zero** `stale_asset_lingers` / `components/exit` / `cuts/coherence` false
+positives on a five-surface film. WS1 (`cut_degraded` + honest paperwork
+rewrite), WS3 (pacing demotion) and WS5 (`camera_framed_sparse` fired at 11%
+then repaired) all composed correctly in the same run. A second probe
+`ws467-probe-3b` (a revenue-analytics brief) delivered the **WS6 live
+true-positive**: `auditCutCoherence` rejected storyboard attempt 2 for "5
+distinct non-hard cut styles (cut-down, object-match, zoom-through,
+inverse-zoom, cut-right) across 6 boundaries", the planner reduced the
+palette on attempt 3 (the finding did not recur), and the film **published
+with no fallback** — 10 content-rich thumbnails including the revenue-record
+counter captured at its settled `$1,247,830` value (WS7 catching the landed
+count, not a mid-animation frame).
+
 ### WS audit fixes + fallback-elimination levers (2026-07-05)
 
 The WS_Improvements.md follow-ups and the LESS_FALLBACKS.md levers landed in
@@ -1109,6 +1190,147 @@ per-patch revert, beat degrade, timing re-base via parse, shared cache,
 pacing degrade-not-veto), `storyboardMoments.test.ts` (re-anchor/drop vs
 primary blocking, interval grace); full suite 435 tests green, `film:demo`
 + demo `sequence:check` clean.
+
+### Codex-audit fixes + WS5 sampling gap (2026-07-05, later)
+
+An external audit of the WS1+WS5/WS3+WS2/LESS_FALLBACKS work confirmed three
+defects, all fixed with regression tests:
+
+1. **(High) Timing re-base re-timed nested choreography.** `parseStoryboard`
+   re-based `startSec` but normalized nested beat/camera/interaction/moment/
+   ramp times against the REBASED window while the model authored them
+   against its own frame (and each normalizer's scene-relative recovery
+   heuristic judged in the wrong frame). Now: nested intents normalize in
+   the authored frame, then every absolute time shifts by the re-basing
+   delta — same offsets inside the scene, byte-identical when the model's
+   arithmetic was right. Storyboard cache contract v9→v10.
+2. **(Medium) Final-resolve pacing exemption was kind-blind.** Any final
+   single-introduction scene ≤3.25s was exempt from the holds rule; now only
+   compact resolve kinds (button/stat-card/toast/toggle/progress/
+   progress-ring/avatar-stack) qualify — a dense app-window/table/terminal
+   in the final slot stays judged.
+3. **(Low) Headline detection matched "prototype".** The reading-floor
+   moment scan used `includes("type")`; now `\btype` (type-on/typed/
+   typewriter yes, prototype/subtype no).
+
+Inspecting the published `fix-ws-probe-3` run (13/13 moments, status warn)
+also exposed a real **WS5 sampling gap**: the sparse audit samples full-move
+landings, and mid-window only for CAMERA-LESS scenes — a scene whose path is
+drift/hold-only (the probe's 3.5s toast scene: a toast at ~3% coverage
+pinned to the bottom edge) was never sampled at all. Scenes without a
+full-move landing now take the same mid-window coverage sample as
+camera-less scenes (`QA_CACHE_VERSION` 6→7,
+`framingCoverage.browser.test.ts` proves the drift-only case). Known
+remaining (parked, by design): blank moment THUMBNAILS when a primary
+moment's evidence is not yet visible at capture time (WS7), sparse films
+still publishing as least-bad drafts (WS6 shipping policy beyond the
+penalty weights), and planner PROSE advertising a morph while typing
+zoom-through (honest-paperwork only rewrites typed degrades).
+
+### Full audit of the WS + fallback work, storyboard grace replay (2026-07-05, audit pass)
+
+A dedicated audit session re-verified everything IMPROVEMENT_PLAN /
+WS_Improvements / LESS_FALLBACKS shipped, then **retired those three planning
+docs** — this section and the ones above are their surviving record, plus the
+per-feature rows in the map at the top of this file.
+
+**Deterministic re-verification:** typecheck, 451 tests, `film:demo` (the m10
+lockup thumbnail shows the title card — WS7 proof by eye), and demo
+`sequence:check` all green. Code audit confirmed every WS gate is wired in
+`validateStoryboardPlan` / browser QA, `reconcileDegradedCutPaperwork` still
+runs LAST, `browserQualityPenalty` weights the WS5/WS6 codes, and levers 1–10
+(rows/select top-up, never-end-on-a-blind-patch + source rescue rung,
+host-owned timing re-base, per-patch syntax revert, shared planning cache,
+supporting-moment re-anchor, branded fallback, unsupported-beat degrade,
+reasoning-preserving truncation recovery) are all present with tests.
+
+**Live probe, dense brief (`audit-final-b1`, LedgerOps close copilot — 8
+component kinds, palette+modal+toast overlays):** **published
+`hyperframes-direct`, no fallback**, 21/21 moments bound, 10 thumbnails. The
+whole ladder composed live: WS6 `cuts/coherence` rejected a 6-style zoo on
+storyboard attempt 1 (fixed on retry); WS3 reading-floor and dead-interval
+findings drove retries; `dedupeRedundantBeats` and
+`dropUnusableVolunteeredTimeRamps` degraded paperwork silently; author
+attempt 2's compact patch broke the runtime (`fromTo is not defined`) and
+`runtime_bind_exception` correctly forced a full-context re-author on
+attempt 3; cut discovery upgraded a measured `variance-card → anomaly-table`
+shape-match (score 0.88) and the shipped STORYBOARD.md labels it "(measured
+silhouette rhyme, discovered at QA)" — paperwork inspected and honest; the
+critic applied 5 directives. **Zero** `stale_asset_lingers` /
+`components/exit` / `eye_trace_*` false positives; by eye the palette exits
+before the modal scene and the anomalies table / CTA frames are crisp. Two
+frames shipped sparse (10% cold open, 8% modal whip landing) — the
+documented WS6 shipping-policy remainder, correctly non-blocking.
+
+**Live probe, morph bait (`audit-final-a1`, PulseFind pill→card):** failed
+VISIBLY at `storyboard-plan` (fallback disabled) and exposed one mechanical
+waste class. Five attempts drew five different rejections — two WS1
+`auditShapeMatchHints` true-positives (pill→card, pill→window), real
+moment-clustering / dead-interval / outcome-hold findings (non-convergence:
+each redesign mints new gaps elsewhere, the documented cost problem) — and
+the run DIED on the rescue rung's final attempt returning prose with **no
+`<storyboard_json>` at all**: a formatting fault, not a plan rejection,
+consumed the last slot. Two fixes landed with regression tests
+(`directComposition.test.ts`):
+
+1. **Artifact-less grace replay** — a response with no storyboard artifact
+   replays its attempt once per run instead of consuming a scarce slot
+   (previous findings stay in the prompt untouched).
+2. **LESS_FALLBACKS lever 12 (was parked)** — every rejected/truncated/
+   artifact-less storyboard attempt now persists raw response + findings
+   under `planning/attempts/storyboard-<n>-<outcome>.*` (author-stage
+   parity), so a failed paid plan run can be studied offline.
+
+The retest (`audit-final-a2`, same brief) **published `hyperframes-direct`,
+no fallback**: the storyboard passed on primary attempt 3 with `pacing/*`
+demoted to advisory (the designed degrade), 23/23 moments bound, honest cut
+paperwork (a coherent hard/zoom-through/cut-down/inverse-zoom language — the
+attempt-1/2 WS1 hint rejections taught the planner off the doomed morph), and
+crisp search-pill / toast / CTA thumbnails. One real defect shipped: the
+account-card whip landing is clipped mostly off frame (m06) — QA measured it
+exactly (`camera_framed_clipped` + `camera_framed_sparse` at card-station,
+both in the shipped warnings) and published least-bad anyway. Together with
+`audit-final-b1`'s two sparse frames this makes the **WS6 shipping-policy
+remainder** (least-bad drafts may still carry one measured clipped/sparse
+hero frame; detection is complete, publication pressure is the open lever)
+the top candidate for the next quality pass.
+
+**Parked follow-ups carried out of the retired docs** (do not lose these):
+
+- **Lever 11 (cost):** mirror the frame artifact into the shared planning
+  cache (brief+contract key) so an immediate same-brief retry reuses the same
+  look and therefore the whole validated plan — today the frame stage is an
+  uncached creative call, so every retry changes all downstream keys and the
+  shared-cache reuse path never fires across job ids. Decide first whether a
+  deliberate user re-take SHOULD draw a new look (the cache cannot tell a
+  retry from a re-take).
+- **`stream`-beat top-up sibling:** `topUpRowsMarkup` covers childless
+  `rows`/`select` targets; `stream` beats bind differently (text lines,
+  terminal/chat) and are NOT covered — if a live run burns an attempt there,
+  extend the same lever.
+- **Hint-less shape-match declarations** skip plan-time sanity entirely
+  (`auditShapeMatchHints` needs both hints); add a validation finding asking
+  for hints only if live evidence shows hint-less declarations recurring.
+- **WS5 v2 (occupancy grid):** the union-bbox coverage can be gamed by two
+  small elements at opposite corners; upgrade to a 24×14 cell occupancy grid
+  on the same sampled pass if probes show false negatives.
+- **Empty plan-level holds** (WS_Improvements 17): a "hold" that renders as
+  an empty frame is evidence for connecting WS3's develop-the-hold promise to
+  rendered moment evidence, and for WS6 shipping policy beyond penalty
+  weights.
+- **WS7 walk-forward stops at the FIRST improving frame**, which can be
+  mid-clip-reveal for a headline (golden film m01) — acceptable v1; a
+  "settled" variant would walk until the painted fraction stabilizes.
+- **Operator levers (from LESS_FALLBACKS):**
+  `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0` makes probes fail visibly
+  (keep the fallback ON for the live bot); `/sequences debug on` shows
+  per-stage attempt receipts; extract the probe key with an ABSOLUTE `.env`
+  path and confirm it is non-empty (`no OpenRouter API key` at
+  storyboard-plan is a harness error, never a code regression); job dirs are
+  immutable — every retry needs a fresh `--job-id`. Do NOT raise attempt
+  counts beyond 3+rescue, do NOT loosen static gates to "let more through",
+  and never touch prompts/reasoning/QA thresholds as a cost lever (sanctioned
+  seams: hedging, watchdogs, QA cache, MCP pooling).
 
 ---
 
