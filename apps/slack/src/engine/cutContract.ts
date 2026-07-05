@@ -72,6 +72,26 @@ const BRIDGED_STYLES: ReadonlySet<CutStyle> = new Set<CutStyle>([
   "shape-match",
 ]);
 
+/**
+ * Silhouette families for plan-time sanity: strips (pill, bar) rhyme with
+ * strips, blocks (card, circle, window) rhyme with blocks. A cross-family
+ * pair — a pill landing as a card, a circle as a bar — cannot stay inside the
+ * runtime's 2.5x aspect cap at any plausible size, so a shape-match declared
+ * with such hints is known-hopeless before any source is authored.
+ */
+const SHAPE_HINT_FAMILY: Record<CutShapeHint, "strip" | "block"> = {
+  pill: "strip",
+  bar: "strip",
+  card: "block",
+  circle: "block",
+  window: "block",
+};
+
+/** Whether two silhouette hints can plausibly rhyme as shape-match endpoints. */
+export function shapeHintsRhyme(shapeOut: CutShapeHint, shapeIn: CutShapeHint): boolean {
+  return SHAPE_HINT_FAMILY[shapeOut] === SHAPE_HINT_FAMILY[shapeIn];
+}
+
 /** A scene's declaration of its own outgoing boundary. */
 export interface SceneCutIntentV1 {
   version: 1;

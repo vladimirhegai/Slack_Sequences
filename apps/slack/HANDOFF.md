@@ -1,13 +1,45 @@
-# HANDOFF — next session (updated 2026-07-04, reliability + judge + depth pass)
+# HANDOFF — next session (updated 2026-07-04, fallback-elimination pass)
 
-Both remaining HANDOFF goals (rendered temporal judge, camera depth level 2)
-and all three source-author reliability levers from the motion-quality
-diagnosis are **BUILT and verified**; `PLAN_camera_depth_level2.md` is retired
-(the shipped design lives in ROADMAP "Source-author reliability + rendered
-temporal judge + camera depth level 2 (2026-07-04, later)" and CLAUDE.md).
-No plan docs survive — ROADMAP + CLAUDE.md are the inventory.
+> **Next session's mandate:** [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) — a
+> perfect-what-exists motion-quality pass (readability, eye trace, holds,
+> exits, visible morph cuts) grounded in the `probe-cutfix-3` diagnostics.
+> Read it first; it supersedes the "candidate next goals" below for now.
 
-## What shipped this session (2026-07-04, latest)
+Newest first: the `palette-input` production fallback (17:49 UTC) is closed —
+`PLAN_source_author_fallback_reliability.md` is retired; the shipped design
+lives in ROADMAP "Source-author fallback elimination (2026-07-04, latest)"
+and CLAUDE.md. Earlier the same day, both remaining HANDOFF goals (rendered
+temporal judge, camera depth level 2) and all three source-author reliability
+levers from the motion-quality diagnosis were **BUILT and verified**;
+`PLAN_camera_depth_level2.md` is retired. No plan docs survive — ROADMAP +
+CLAUDE.md are the inventory.
+
+## What shipped this session (2026-07-04, fallback elimination)
+
+1. **Contract-binding reconciliation** — bridged-cut focal parts and camera
+   stations/parts reconcile deterministically (exact id / unique semantic /
+   exact-name station, scene-scoped, ambiguity stays blocking) in
+   `applyDeterministicSourceRepairs`, before any paid repair is spent.
+2. **Volunteered-cut degradation** — a brief-unrequested shape-match/
+   object-match whose endpoint signature survives a model repair degrades to
+   zoom-through atomically (`degradeVolunteeredBridgedCuts`); brief-required
+   styles never degrade. The mutated storyboard persists + flows downstream.
+3. **Non-convergence strategy switch** — `findingSignature` collapses regex
+   + kit-audit wordings of one defect to one signature; a survivor of the
+   patch asked to fix it switches the final attempt to full-context
+   re-authoring (`repairStrategyAfterStaticRejection`); `near_blank_film:`
+   browser findings escalate the same way (a blank scene is a missing
+   visual world — probe-cutfix-2's stall class).
+4. **Repair-prompt bindings discipline** — bridged-cut endpoint checklist
+   (both sides, present/MISSING) + never-delete-other-bindings warning.
+5. **Run diagnostics** — `planning/author-run.json` per run: attempt modes,
+   normalized finding signatures, strategy changes, terminal signatures.
+
+Proof: `test/authorReliability.test.ts` (16 cases incl. the minimized
+incident replay both ways). Live: `probe-cutfix-1` (incident-shaped RADAR
+brief) published `hyperframes-direct`, no fallback. Details in ROADMAP.
+
+## What shipped earlier this day (2026-07-04, reliability + judge + depth)
 
 1. **Author scratch persistence** — every rejected author attempt writes
    document + findings to `planning/attempts/author-<n>-<outcome>.*`
@@ -66,6 +98,25 @@ attempts persisted under `planning/attempts/`. Details in ROADMAP.
 4. **Audio** — any soundtrack must be remapped through the same warp knots
    (`sequences-time.v1.js` header note). Do not add audio without it.
 
+### Something next (large — deliberately deferred by IMPROVEMENT_PLAN.md)
+
+These came out of the 2026-07-04 motion-quality diagnosis but are too big for
+the perfect-what-exists pass; park them here, do not start them ad hoc:
+
+5. **Host-owned exit contract (a sixth typed contract)** — typed `exits` the
+   way cuts/camera/components/interactions/timeRamp are typed: the planner
+   declares when a surface retires, the host compiles the directional exit.
+   IMPROVEMENT_PLAN WS4 ships the cheap version (plan-gate + stale-asset QA +
+   prompt doctrine); build the full contract only if that proves insufficient.
+6. **Content-aware station auto-fit** — when browser QA measures a framed
+   station whose content bbox is clipped or sparse, deterministically adjust
+   the station rect / fit zoom from the measured bounds instead of asking the
+   author to move markup. Powerful, but it makes the camera plan a function of
+   measured pixels — cache/determinism implications need real design.
+7. **Saliency-based eye-trace v2** — IMPROVEMENT_PLAN WS2's focal-part proxy,
+   upgraded to actual visual-saliency estimation over rendered frames (pairs
+   naturally with the vision half of the temporal judge, #2 above).
+
 ## Gotchas that will save you hours (inherited + new)
 
 1. **Injection anchors are load-bearing.** The time-wrap rewrite stays LAST
@@ -83,8 +134,9 @@ attempts persisted under `planning/attempts/`. Details in ROADMAP.
 6. **Paid live probe recipe**: `$env:OPENROUTER_API_KEY`, then
    `npm run sequence:check --workspace @sequences/slack -- --product …
    --what "…" --provider openrouter-api --job-id <id> --format both`; inspect
-   `.data/projects/<id>/planning/` (now including `attempts/`) and the
-   report's `authoringMode`/`fallbackStage`.
+   `.data/projects/<id>/planning/` (now including `attempts/` and the
+   per-run `author-run.json` signature summary) and the report's
+   `authoringMode`/`fallbackStage`.
 7. **Test styling via classes, not `data-part` attribute selectors** — bridge
    clones strip `data-part`.
 8. Finish = commit → `bash scripts/publish-public.sh "<msg>"` → `railway up`

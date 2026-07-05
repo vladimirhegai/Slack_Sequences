@@ -33,5 +33,9 @@ describe("deterministic direct fallback browser contract", () => {
       ["important_safe_area", "content_overlap", "clipped_text", "text_box_overflow"]
         .includes(issue.code)
     )).toEqual([]);
-  }, 20_000);
+    // The framing-coverage audit must not fire on the deterministic proof
+    // film (its compact end card is the final-scene exemption's proof case).
+    expect(qa.issues.filter((issue) => issue.code === "camera_framed_sparse")).toEqual([]);
+    // 30s: the coverage audit added deliberate extra seeks to browser QA.
+  }, 30_000);
 });

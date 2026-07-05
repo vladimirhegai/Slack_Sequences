@@ -4,6 +4,7 @@ import {
   normalizeStoryboardCutIntent,
   parseCutPlan,
   resolveCutPlan,
+  shapeHintsRhyme,
   validateCutContract,
   type CutPlanV1,
 } from "../src/engine/cutContract.ts";
@@ -332,6 +333,22 @@ describe("cutMotionWindows", () => {
     expect(windows[0]!.start).toBeCloseTo(4 - 0.3 - 0.05);
     expect(windows[0]!.end).toBeCloseTo(4 + 0.42 + 0.05);
     expect(cutMotionWindows(undefined)).toEqual([]);
+  });
+});
+
+describe("shapeHintsRhyme", () => {
+  it("rhymes within a silhouette family and rejects cross-family pairs", () => {
+    // Strips rhyme with strips…
+    expect(shapeHintsRhyme("pill", "bar")).toBe(true);
+    expect(shapeHintsRhyme("pill", "pill")).toBe(true);
+    // …blocks with blocks…
+    expect(shapeHintsRhyme("window", "card")).toBe(true);
+    expect(shapeHintsRhyme("circle", "card")).toBe(true);
+    expect(shapeHintsRhyme("circle", "window")).toBe(true);
+    // …and cross-family pairs are the known-hopeless class.
+    expect(shapeHintsRhyme("pill", "card")).toBe(false);
+    expect(shapeHintsRhyme("circle", "bar")).toBe(false);
+    expect(shapeHintsRhyme("bar", "window")).toBe(false);
   });
 });
 

@@ -34,7 +34,10 @@ point an agent at the listed file.
 | Cinematography kit (light/material/grade/grain) | `src/engine/cinemaKit.ts`, `src/engine/templates/sequences-cinema.v1.css` | grain/vignette floor, key lights, lit materials, bloom, scene grades / color arc |
 | Spatial / layout placement ("spacing" tool) | `frame.md` flow compositions + relational `data-layout-*` + `src/engine/layoutInspector.ts` | flow-first placement, safe-area / anchor / align / gap / optical audit |
 | Cursor interactions | `src/engine/interactionContract.ts`, `src/engine/templates/sequences-interactions.v1.js` | hotspot / target / ripple geometry, interaction QA |
-| Executable boundary cuts | `src/engine/cutContract.ts`, `src/engine/templates/sequences-cuts.v1.js` | typed cut styles, wrapper ownership, object-match bindings |
+| Executable boundary cuts | `src/engine/cutContract.ts`, `src/engine/templates/sequences-cuts.v1.js`, `src/engine/compositionRunner.ts` | typed cut styles, wrapper ownership, object/shape-match bindings, plan-time silhouette-family sanity (`auditShapeMatchHints`), repairable+honest degradation (`cut_degraded` finding, `reconcileDegradedCutPaperwork`) |
+| Framing coverage audit | `src/engine/layoutInspector.ts` | `camera_framed_sparse` — whole-scene on-frame content coverage floor at camera landings + static mid-windows (WS5) |
+| Hold-what-matters pacing audits | `src/engine/pacingAudit.ts` (called from `validateStoryboardPlan`) | plan-stage findings: introduction→development ratio, typed-copy reading floor, outcome holds after press/set-state/toast, camera-move budget per scene + whip cap per film (WS3) |
+| Eye-trace continuity audit | `src/engine/eyeTrace.ts` + `src/engine/layoutInspector.ts` | `eye_trace_jump` (gaze displacement across hard/undeclared cuts, strictOk-blocking; `SLACK_SEQUENCES_EYE_TRACE=audit\|0`) + advisory `eye_trace_pingpong` beat-pair findings (WS2) |
 | Static motion-density guard | `src/engine/motionDensity.ts` | blocking liveness errors (quiet gaps, slide scenes, front-loading) + advisory warnings (dense bursts, empty holds) |
 | Storyboard moment contract | `src/engine/storyboardMoments.ts` | typed reviewable moments: planned floor (≥7 for 12s+), evidence binding, interval gate, synthesis for legacy films |
 | Motion-native component system | `src/engine/componentContract.ts`, `src/engine/templates/sequences-components.v1.css` / `.v1.js` | 22-kind SaaS component catalog, typed beats (type/open/count/chart/stream/morph/…), FLIP twin morphs, kit CSS, markup contract retrieval |
@@ -768,6 +771,246 @@ changedRatio 0) as `moment_static_frame` polish feedback — the film still
 published, exactly the designed boundary. The bind-exception escalation path
 did not fire this run (statics caught everything first — the intended
 ordering); its behavior is proven by `test/layoutInspector.test.ts`.
+
+### Source-author fallback elimination — binding reconciliation, volunteered-cut degradation, repair strategy (2026-07-04, latest)
+
+**The incident:** the 17:49 UTC production run reached the deterministic safe
+fallback at `source-author`. Attempt 1 omitted one shape-match incoming part
+(`palette-input` in `trace-resolve`), two camera stations, and one moment's
+evidence; both compact repairs fixed everything else but the same cut
+signature survived all three static rejections (one patch also broke a
+component root while "fixing" it). Every one of those findings was binding
+paperwork over a film that otherwise existed. Four mechanisms in
+`compositionRunner.ts` now close that class:
+
+1. **Contract-binding reconciliation** (`reconcileContractBindings`, runs in
+   `applyDeterministicSourceRepairs` before every validation): bridged-cut
+   focal parts and camera `data-part` targets get the same conservative
+   scene-scoped ladder as interaction targets (exact element id → unique
+   ≥0.8 semantic candidate → duplicate cleanup), and missing `data-region`
+   stations are annotated onto the one element already carrying the station's
+   name as its id or data-part (exact-name only — regions place the camera,
+   so no semantic scoring). Ambiguity always stays blocking; nothing visible
+   is ever fabricated.
+2. **Volunteered-cut degradation** (`degradeVolunteeredBridgedCuts`): a
+   shape-match/object-match boundary the brief never explicitly requested
+   (`inferStoryboardPlanRequirements` provenance) whose endpoint signature
+   persists across two consecutive static rejections — i.e. it survived a
+   model repair that was told to fix it — degrades to `zoom-through` (typed,
+   energetic, keeps the boundary beat and cut-landing moment evidence). The
+   mutated storyboard is re-injected, revalidated atomically (only a fully
+   valid degraded draft is accepted), persisted via
+   `persistUpgradedStoryboard`, and flows to everything downstream — the
+   inverse of cut discovery's upgrade path. Attempt 1 never degrades, and a
+   brief-required style never degrades: it stays blocking and falls back
+   honestly.
+3. **Non-convergence strategy switch** (`repairStrategyAfterStaticRejection`
+   + `findingSignature`): equivalent findings from the regex gates and the
+   kit-markup DOM audit collapse to one normalized signature; when a
+   signature survives the very patch asked to fix it (and is not resolvable
+   by degradation), the loop abandons the scratch and spends the final
+   attempt as a full-context re-author instead of a third identical compact
+   patch. Runtime bind exceptions keep their existing immediate escalation,
+   and `near_blank_film:` browser findings join it: a scene rendering blank
+   means the visual world is missing, and creating one is full-document work
+   a compact patch provably cannot do (probe-cutfix-2 left the identical
+   blank-scene signature after two patches in a row).
+4. **Repair-prompt bindings discipline**: compact repairs now carry a
+   bridged-cut endpoint checklist (both endpoints with live present/MISSING
+   status — the stalled patches only ever saw the failing side) and an
+   explicit warning never to remove other `data-part`/`data-region`/
+   `data-component` attributes while repairing one finding (the attempt-2
+   regression class).
+
+**Diagnostics:** every authoring run persists `planning/author-run.json` —
+per-attempt mode + outcome + normalized finding signatures, strategy changes,
+and terminal signatures — so failed runs group into classes offline without
+scraping logs. Signatures only; never brief content or model output.
+
+**Proof:** `test/authorReliability.test.ts` (16 cases): signature collapse
+across validators, the minimized `palette-input` replay in both variants
+(uniquely identifiable endpoint reconciled without a model call; ambiguous
+endpoint untouched and still blocking), station reconciliation + cross-scene
+borrowing bans, persistent volunteered cut degraded with a consistent
+re-injected island, required cut never degraded, persistence window enforced,
+and all four strategy boundaries.
+
+**Verification:** slack typecheck; slack suite green except four
+browser-launch tests that time out identically on the *unmodified* tree
+(local Chrome contention, pre-existing); `mcp:demo`, `direct:demo`,
+`film:demo`, `sequence:check --demo --no-mcp` all green.
+
+**Live evidence (paid probes, 2026-07-04):** `probe-cutfix-1` — an
+incident-shaped RADAR brief (command palette, risk ring, rollback) published
+**`hyperframes-direct`, no fallback**: storyboard passed attempt 1, the
+author's single static rejection was component markup (named by the kit
+audit, repaired by patch), 13/13 moments bound, `author-run.json` recorded
+both rejected attempts' signatures. `probe-cutfix-2` — the same brief with
+an explicitly *required* shape-match — fell back honestly on genuine visual
+defects (a blank 4s hook scene, a clipped camera landing, focal silhouettes
+8.7× apart in aspect): binding paperwork never appeared as a finding, the
+required shape-match was correctly never silently degraded by the host, and
+`author-run.json` exposed the new stall shape (identical browser signatures
+across both patches) that motivated the blank-scene escalation above.
+`probe-cutfix-3` — the same required-shape-match brief rerun — published
+**`hyperframes-direct`, no fallback**, with the strategy switch firing live:
+attempt 2's patch left the same `kit_markup_incomplete` signature it was
+asked to fix, the loop abandoned the scratch and re-authored full-context,
+and attempt 3 passed static + browser QA (13/13 moments bound; the critic's
+own patch caused a runtime bind exception and was correctly rejected,
+keeping the pre-critique draft). Contract-binding reconciliation also fired
+(`reconciled 1 component binding(s)`).
+
+### "Readable, not just alive" — honest morph cuts + framing coverage (2026-07-04, WS1+WS5)
+
+The operator's verdict on `probe-cutfix-3` was that the film looked alive but
+"very messy — I never see the morphing / match cuts happen; assets seem
+tiny and random." Two mechanisms in that run traced the complaints: a
+planner-declared `shape-match` was silently degraded to zoom-through at bind
+time while every artifact still advertised the morph, and camera landings
+that framed ~6-10% content in a dark void passed QA (only *clipping* was
+checked, never *coverage*). WS1 makes declared morph/match cuts either happen
+or be told honestly; WS5 catches tiny-content-in-the-void.
+
+**WS1 — declared bridged cuts happen or are honestly labeled.** Three layers,
+all in `compositionRunner.ts` + `layoutInspector.ts` + `cutContract.ts`:
+1. **Repairable degradation.** Browser QA already read the runtime's
+   `__sequencesCutBindings` degrade flag as a warning-only `cut_degraded:`
+   string. A *planner-declared* bridged cut that degrades now ALSO becomes a
+   measured `cut_degraded` polish finding (strictOk-blocking, never
+   publication-blocking) carrying the endpoint boxes/aspects/radii from
+   `DirectBoundaryInventory` and a concrete restyle directive — so the author
+   loop gets a real repair chance instead of shipping a silent lie. Discovery
+   upgrades need no finding (the upgrade pass already rejects any candidate
+   that degrades).
+2. **Plan-time silhouette sanity.** `cutContract.ts` groups the `shapeOut`/
+   `shapeIn` hints into families (pill·bar strips vs card·circle·window
+   blocks); `auditShapeMatchHints` rejects a cross-family declaration
+   (pill→card) at storyboard validation so a cheap GLM findings-retry fixes
+   the pair. On the FINAL storyboard attempt a volunteered hopeless pair
+   degrades to zoom-through with honest prose (`degradeMismatchedShapeHintCuts`)
+   — degrade-never-veto; brief-required shape-match stays blocking. The
+   planning prompt now teaches the family table.
+3. **Honest paperwork.** `reconcileDegradedCutPaperwork` runs LAST in
+   `requestDirectComposition`: any declared bridged cut the runtime still
+   degraded is rewritten in the SHIPPED storyboard (cut → zoom-through, plus
+   truthful `outgoingCut` prose) from the QA warning, re-injected and
+   re-validated, so STORYBOARD.md / the Slack outline / manifest.json can no
+   longer advertise a morph that never compiled. The discovery-upgrade path
+   likewise rewrites its `outgoingCut` prose.
+
+**WS5 — framing coverage (`camera_framed_sparse`).** `layoutInspector.ts`
+measures the union bbox of each scene's on-frame content (post camera
+transform, clipped to the frame — text / media / `data-part` /
+`data-layout-important`, decoration and blooms counting toward nothing) at
+every fit-zoom camera landing and once mid-window for camera-less scenes.
+Coverage < 18% of frame area (with a 60%-axis escape for deliberate
+full-width bands and a final-scene exemption for compact end cards) →
+`camera_framed_sparse` polish finding (strictOk-blocking, never
+publication-blocking). Whole-scene scope, not station-scope, so a tight
+track-to-anchor close-up passes when surrounding UI fills the margins and
+only genuinely empty frames fire. `QA_CACHE_VERSION` 3→4.
+
+**Live evidence (paid probe `improve-ws15-1`, 2026-07-04):** an SRE
+incident-copilot brief whose language tempts a pill→card morph published
+**`hyperframes-direct`, no fallback** (status pass). The plan avoided the
+hopeless shape-match (used object-match on the same palette element instead,
+consistent with the new prompt guidance), cut-discovery upgraded a `hard`
+boundary to shape-match and its shipped `outgoingCut` was honestly rewritten
+("Shape-match: incident-card carries into incident-card (measured…)"), and
+WS5 fired on two genuinely sparse landings (a lone rollback button and a
+tiny CTA card adrift in dark voids — confirmed by eye in the thumbnails) as
+non-blocking warnings that fed the repair loop. Proof: `cutShapeMatch.browser.test.ts`
+(measured repair finding), `authorReliability.test.ts` (hint audit, plan-time
+degrade, paperwork rewrite, one-signature collapse), `cutContract.test.ts`
+(`shapeHintsRhyme`), `framingCoverage.browser.test.ts` (sparse fires / filled
+passes / final-scene exempt). The fallback film and `film:demo` stay clean of
+both new audits.
+
+### "Built for the eyes" — hold-what-matters pacing + eye-trace continuity (2026-07-04, WS3+WS2)
+
+The remaining probe-cutfix-3 complaints were choreographed churn: "not built
+for the eyes (I constantly look all over the place); important frames should
+stay on screen longer after introducing many assets." Two mechanisms: the
+system had density FLOORS everywhere (framings, moments, liveness) but no
+ceiling and no hold discipline, and nothing ever measured WHERE the viewer's
+eye is across a seam. WS3 adds the counterweight; WS2 adds the measurement.
+
+**WS3 — hold-what-matters pacing (`pacingAudit.ts`).** Deterministic audits
+run inside `validateStoryboardPlan` (post moment top-up, same findings-retry
+plumbing as `auditCameraEnergy`/`auditComponentComplexity`; a violation costs
+one cheap storyboard retry, never an author attempt). All windows are judged
+in viewer time (`warpInverseOf` over the resolved ramp plan):
+1. **Introduction→development ratio** — per scene, introductions = declared
+   components (at their first open/rows/swap beat, else scene start) + extra
+   swap beats; the last introduction must land by ~65% of the scene window
+   and leave ≥0.9s × introductions of development after it.
+2. **Reading-time floor** — a `type` beat's copy needs
+   min(4s, max(1.2s, 0.3s × words)) between typing settling and the next cut
+   or whip.
+3. **Outcome holds** — after a `press`/`set-state`/toast-`open` payoff,
+   ≥0.8s before the next framing change ("hold on outcomes longer than
+   actions").
+4. **Camera budget** — ≤ 1 + floor(sceneSec/3.5) full moves per scene
+   (paths are already compound-merged at parse, so mergeable pan+push pairs
+   count once) and ≤2 whips per film — the ceiling the system lacked.
+Every fix hint carries "hold ≠ freeze: develop the held surface with a
+count/progress/highlight beat" so plans don't thrash against the liveness
+gate. Prompt surgery in the same pass: the storyboard prompt and
+`planning-director.md` teach the pacing ceiling, single-focal discipline
+("one focal element at a time" replaced "two focal points minimum"), the
+outcome-hold rule, and per-word reading time; `STORYBOARD_SHAPES` long
+segments now say "held & developed". Storyboard cache `contract` v7→v8.
+
+**WS2 — eye-trace continuity (`eyeTrace.ts` + `layoutInspector.ts`).** The
+existing `DirectBoundaryInventory` pass already measures every boundary's
+visible `data-part` geometry just before the cut and at entry settle, under
+the real camera transform — exactly the two gaze samples Murch's eye-trace
+rule needs. A pure scorer resolves each boundary's attention targets from
+declared intent (outgoing: cut `focalPartOut` → last beat's component →
+`spatialIntent.focalPart`; incoming: cut `focalPartIn` → entry station's
+hero component → first beat target), takes the measured viewport centers
+(both must be ≥30% on frame), and emits `eye_trace_jump` when the
+displacement exceeds 38% of the frame diagonal across a cut that neither
+carries nor resets the eye — only `hard` and undeclared boundaries are
+judged; directional/zoom/bridged cuts carry the gaze and `flash-white`
+resets it. strictOk-blocking polish finding (never unpublishing), with
+`SLACK_SEQUENCES_EYE_TRACE=audit` (advisory) / `=0` (off) as the observation
+levers; the repair prompt carries both measured coordinates and a "move the
+incoming subject to where the eye already is" directive. The within-scene
+variant `eye_trace_pingpong` (always advisory) measures consecutive beats
+0.25–1.2s apart on different components (≤6 extra seeks per film, both
+targets sampled live just after the second beat) and flags gaze travel >50%
+of the diagonal. `QA_CACHE_VERSION` 4→5.
+
+Proof: `pacingAudit.test.ts` (15 cases: budget/whips/holds/reading/outcome +
+marginal-miss tolerance + fallback-film silence), `eyeTrace.test.ts`
+(attention resolution, scoring, exemptions, candidate selection/caps),
+`eyeTrace.browser.test.ts` (a real browser run where the hard-cut corner
+jump fires and blocks strictOk, the identical directional boundary stays
+silent, ping-pong reports advisory, and audit mode un-blocks strictOk). The
+fallback film, `film:demo`, and the demo `sequence:check` stay clean of all
+new audits.
+
+**Live evidence (paid probes, 2026-07-04):** `improve-ws32-1` (dense
+incident-command brief, fallback disabled) died at `storyboard-plan` — and
+its artifacts taught the audit its one real lesson: a rescue-rung plan was
+vetoed SOLELY by a 0.2s reading-time shortfall. Marginal misses now pass
+(`PACING_TOLERANCE_SEC` = 0.35s; the finding text still demands the full
+window); the run's other rejections were pre-existing classes now logged as
+LESS_FALLBACKS levers 8–10 (beat-support-map misuse, reasoning-stripped
+truncation recovery, scene-timing arithmetic). The re-run `improve-ws32-2`
+(same brief) **published `hyperframes-direct`, no fallback**: the storyboard
+passed on attempt 1 with the pacing gate active (3 full camera moves across
+the film, zero whip overload, zero pacing findings burned), 11/11 moments
+bound, 6 component kinds / 8 beats, cut discovery upgraded a boundary to
+shape-match, and browser QA raised **zero eye-trace findings** — the film's
+boundaries were directional/bridged (exempt by design), so no false
+positives; the true-positive path is proven by the browser test. Residual
+thumbnail defects (a clipped alert card mid-move, one static-at-capture
+moment) belong to WS4/WS6/WS7, not this pass. `eye_trace_jump` therefore
+ships **blocking by default** with `SLACK_SEQUENCES_EYE_TRACE=audit` as the
+observation lever.
 
 ---
 

@@ -143,6 +143,42 @@ only `hard`/directional boundaries), and the host upgrades the one provable
 rhyme to shape-match before the critic — mutating the locked storyboard
 everywhere downstream, keeping the pre-upgrade draft on any QA regression
 (`SLACK_SEQUENCES_CUT_DISCOVERY=0` opts out).
+**Declared morph/match cuts happen or are labeled honestly (2026-07-04, WS1):**
+a planner-**declared** bridged cut the runtime degrades is now a measured
+`cut_degraded` polish finding (strictOk-blocking, never unpublishing) carrying
+the endpoint geometry from `DirectBoundaryInventory` and a restyle directive,
+so the author loop can repair it instead of silently shipping a zoom-through;
+`cutContract.ts` groups the `shapeOut`/`shapeIn` hints into silhouette families
+(pill·bar vs card·circle·window) and `auditShapeMatchHints` rejects a
+cross-family declaration at storyboard validation (cheap findings-retry), with
+a volunteered hopeless pair degrading to zoom-through on the final attempt
+(`degradeMismatchedShapeHintCuts` — brief-required shape-match stays blocking);
+and `reconcileDegradedCutPaperwork` runs LAST in `requestDirectComposition` so
+STORYBOARD.md / the Slack outline / manifest.json record the cut that actually
+executed (`test/cutShapeMatch.browser.test.ts` + `test/authorReliability.test.ts`
+prove the finding, hint audit, plan-time degrade, and paperwork rewrite).
+**Built for the eyes (2026-07-04, WS3+WS2):** storyboard validation now runs
+`auditPacing` (`engine/pacingAudit.ts`) — the density CEILING the system
+lacked: per scene ≤ 1 + floor(sec/3.5) full camera moves and ≤2 whips per
+film, the last introduced surface must land by ~65% of its scene with ≥0.9s
+per surface of development after it, typed copy gets a
+max(1.2s, 0.3s×words) reading floor before the next cut/whip, and
+press/set-state/toast payoffs get a ≥0.8s outcome hold — all judged in
+viewer time, all cheap findings-retries with "hold ≠ freeze" fix hints so
+plans don't thrash against liveness, and a 0.35s marginal-miss tolerance so
+a paid attempt is never vetoed over a rounding-scale shortfall (the
+`improve-ws32-1` probe lesson; storyboard cache contract v7→v8, prompt
+surgery teaches the ceiling + single-focal discipline in both prompts). And
+browser QA scores **eye-trace continuity** (`engine/eyeTrace.ts`): from the
+boundary geometry inventory, the outgoing attention target's viewport center
+vs the incoming target's center — >38% of the frame diagonal across a
+`hard`/undeclared cut (directional/zoom/bridged carry the eye; flash resets
+it) is an `eye_trace_jump` polish finding (strictOk-blocking, never
+unpublishing; `SLACK_SEQUENCES_EYE_TRACE=audit|0` to observe/disable), and
+consecutive beats 0.25–1.2s apart whose targets sit >50% of the diagonal
+apart raise an always-advisory `eye_trace_pingpong` (≤6 extra seeks;
+`QA_CACHE_VERSION` 4→5). Proof: `test/pacingAudit.test.ts`,
+`test/eyeTrace.test.ts`, `test/eyeTrace.browser.test.ts`.
 Scenes may also declare a typed **`timeRamp`** — the fifth host-owned contract
 (2026-07-04, `timeRamp.ts` + `sequences-time.v1.js`): ONE motivated
 slow-motion dip per scene (max 2 per film, never scene 1) compiled into
@@ -203,7 +239,15 @@ triggers at storyboard parse; `auditComponentComplexity` blocks plans the
 author cannot build (>1 component per ~1.2s scene / cap 4, >1 per 2s film);
 and browser QA runs a **camera-arrival framing audit** (`camera_framed_clipped`)
 that seeks each full-move landing and proves the framed station's content is
-actually on frame (double-sampled so entrances can't false-positive). A
+actually on frame (double-sampled so entrances can't false-positive). The same
+pass runs a **framing-coverage audit** (`camera_framed_sparse`, 2026-07-04 WS5):
+the union bbox of each scene's on-frame content (post camera transform) at every
+fit-zoom landing and once mid-window for camera-less scenes must fill ≥18% of
+the frame — below that the viewer studies a tiny subject in a void. It is a
+polish finding (strictOk-blocking, never unpublishing) with a 60%-axis escape
+for full-width bands and a final-scene exemption for compact end cards;
+whole-scene scope means a tight track-to-anchor close-up passes when the
+surrounding UI fills the margins (`test/framingCoverage.browser.test.ts`). A
 light-model **shape hint** (`requestStoryboardShape`, `STORYBOARD_SHAPES`,
 kill switch `SLACK_SEQUENCES_SHAPE_HINT=0`) picks a pacing skeleton from six
 structural templates in parallel with the concept pass — deterministically
@@ -224,6 +268,27 @@ bind queries statically (linkedom parse — what a spec parser sees is what
 the browser will see) so missing chart bars/rows/fills, absent morph twins,
 lost scenes, and missing camera stations surface as named
 `kit_markup_incomplete`/`dom_markup_broken` findings before the browser.
+**Fallback elimination (2026-07-04, latest — the `palette-input` incident):**
+cut focal parts and camera stations/parts now get the same conservative
+deterministic reconciliation as interaction targets (exact id / unique
+semantic candidate / exact-name station, scene-scoped, ambiguity stays
+blocking) inside `applyDeterministicSourceRepairs`, so a mechanically
+recoverable locked-storyboard binding never consumes a paid repair; a
+**volunteered** bridged cut (shape-match/object-match the brief never asked
+for) whose endpoint binding survives a model repair degrades to zoom-through
+deterministically instead of sinking the film (brief-required styles never
+degrade — they stay blocking and fall back honestly); a structural finding
+signature that survives the very patch asked to fix it switches the final
+attempt to a full-context re-author instead of a third identical compact
+patch (`near_blank_film:` browser findings escalate the same way — a blank
+scene is a missing visual world, full-document work a compact patch cannot
+do); compact repair prompts carry a bridged-cut endpoint checklist
+(both sides, present/missing) plus a never-delete-other-bindings warning;
+and every run persists `planning/author-run.json` (per-attempt normalized
+finding signatures + strategy changes) for offline failure grouping.
+Proof: `test/authorReliability.test.ts` (the minimized incident replay:
+recoverable endpoint reconciled, ambiguous endpoint stays blocking,
+persistent volunteered cut degrades, required cut never does).
 Browser QA also runs the **rendered temporal judge**
 (`SLACK_SEQUENCES_TEMPORAL_JUDGE=0` to disable): before/mid/after frame
 triples around every evidence-bound moment, pixel-diffed in-page; an

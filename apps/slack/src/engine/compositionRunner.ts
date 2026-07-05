@@ -35,6 +35,7 @@ import {
   CUT_STYLES,
   normalizeStoryboardCutIntent,
   resolveCutPlan,
+  shapeHintsRhyme,
 } from "./cutContract.ts";
 import {
   CAMERA_FULL_MOVES,
@@ -45,6 +46,7 @@ import {
   injectCameraRuntimeTag,
   normalizeStoryboardCameraIntent,
   resolveCameraPlan,
+  sceneScopes,
 } from "./cameraContract.ts";
 import {
   CINEMA_KIT_FILE,
@@ -85,6 +87,7 @@ import {
   validatePlannedMoments,
 } from "./storyboardMoments.ts";
 import { analyzeMotionDensity } from "./motionDensity.ts";
+import { auditPacing } from "./pacingAudit.ts";
 import { readFrameMeta } from "./frameDesign.ts";
 import {
   creativeModel,
@@ -724,26 +727,30 @@ function lockedSceneGraphError(html: string, storyboard: DirectScene[]): string 
   return undefined;
 }
 
+/** One scene-scoped `data-part` (or station) name a locked contract binds. */
+interface ScenePartBinding {
+  sceneId: string;
+  part: string;
+}
+
 /**
- * Reconcile only interaction targets whose intended element is mechanically
- * unambiguous. Exact element ids win; a semantic-name fallback is allowed only
- * when one globally unique part is the sole high-confidence candidate.
- * Ambiguity deliberately remains for quarantine/repair instead of guessing.
+ * Reconcile only scene-scoped part bindings whose intended element is
+ * mechanically unambiguous. Exact element ids win; a semantic-name fallback is
+ * allowed only when one globally unique part is the sole high-confidence
+ * candidate. Ambiguity deliberately remains for quarantine/repair instead of
+ * guessing.
  */
-export function reconcileInteractionTargets(
+function reconcileScopedPartBindings(
   source: string,
-  interactions: NonNullable<DirectScene["interactions"]>,
+  bindings: ScenePartBinding[],
 ): { html: string; repairs: number } {
   let html = source;
   let repairs = 0;
-  const desiredParts = [...new Map(interactions.flatMap((interaction) => [
+  const desiredParts = [...new Map(bindings.flatMap((interaction) => [
     {
       sceneId: interaction.sceneId,
-      part: interaction.targetPart,
+      part: interaction.part,
     },
-    ...(interaction.dragTargetPart
-      ? [{ sceneId: interaction.sceneId, part: interaction.dragTargetPart }]
-      : []),
   ]).map((entry) => [`${entry.sceneId}\u0000${entry.part}`, entry])).values()];
 
   for (const { sceneId, part: desired } of desiredParts) {
@@ -822,6 +829,123 @@ export function reconcileInteractionTargets(
     html = html.slice(0, candidate.index) + replacement +
       html.slice(candidate.index + candidate.tag.length);
     repairs += 1;
+  }
+  return { html, repairs };
+}
+
+/**
+ * Reconcile interaction targets whose intended element is mechanically
+ * unambiguous (exact id, unique semantic candidate, or duplicate cleanup).
+ */
+export function reconcileInteractionTargets(
+  source: string,
+  interactions: NonNullable<DirectScene["interactions"]>,
+): { html: string; repairs: number } {
+  return reconcileScopedPartBindings(source, interactions.flatMap((interaction) => [
+    { sceneId: interaction.sceneId, part: interaction.targetPart },
+    ...(interaction.dragTargetPart
+      ? [{ sceneId: interaction.sceneId, part: interaction.dragTargetPart }]
+      : []),
+  ]));
+}
+
+/**
+ * Reconcile a missing `data-region` camera station onto the one element that
+ * already carries the station's name as its id or data-part. Regions place
+ * the camera, so only exact-name evidence is trusted here — no semantic
+ * scoring, and any ambiguity stays a blocking finding.
+ */
+function reconcileCameraRegionStations(
+  source: string,
+  bindings: ScenePartBinding[],
+): { html: string; repairs: number } {
+  let html = source;
+  let repairs = 0;
+  const desired = [...new Map(
+    bindings.map((entry) => [`${entry.sceneId} ${entry.part}`, entry]),
+  ).values()];
+  for (const { sceneId, part: region } of desired) {
+    const sceneTags = [...html.matchAll(
+      /<[a-z][\w:-]*\b[^>]*\bdata-scene\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)[^>]*>/gi,
+    )];
+    const sceneIndex = sceneTags.findIndex((match) =>
+      htmlAttr(match[0], "data-scene") === sceneId
+    );
+    if (sceneIndex < 0) continue;
+    const scopeStart = sceneTags[sceneIndex]!.index;
+    const scopeEnd = sceneTags[sceneIndex + 1]?.index ?? html.length;
+    const scope = html.slice(scopeStart, scopeEnd);
+    const regionPattern = new RegExp(
+      `\\bdata-region\\s*=\\s*(["'])${regexpEscape(region)}\\1`,
+      "i",
+    );
+    if (regionPattern.test(scope)) continue;
+    const tags = [...scope.matchAll(/<[a-z][\w:-]*\b[^>]*>/gi)].map((match) => ({
+      tag: match[0],
+      id: htmlAttr(match[0], "id"),
+      part: htmlAttr(match[0], "data-part"),
+      index: scopeStart + match.index,
+    })).filter((entry) =>
+      !entry.tag.includes("data-sequences-runtime-") &&
+      !htmlAttr(entry.tag, "data-region")
+    );
+    const idMatches = tags.filter((entry) => entry.id === region);
+    const partMatches = tags.filter((entry) => entry.part === region);
+    const candidate = idMatches.length === 1
+      ? idMatches[0]
+      : idMatches.length === 0 && partMatches.length === 1
+        ? partMatches[0]
+        : undefined;
+    if (!candidate) continue;
+    const replacement = candidate.tag.replace(/>$/, ` data-region="${region}">`);
+    if (replacement === candidate.tag) continue;
+    html = html.slice(0, candidate.index) + replacement +
+      html.slice(candidate.index + candidate.tag.length);
+    repairs += 1;
+  }
+  return { html, repairs };
+}
+
+/**
+ * Deterministic binding reconciliation for the host-owned cut and camera
+ * contracts. The author loop's most expensive failure class (the 2026-07-04
+ * live fallback) was a locked-storyboard binding — a shape-match focal part or
+ * a camera station — that the authored DOM carried under a near-miss name or
+ * simply left unannotated on the intended element. Mechanically unambiguous
+ * mismatches are reconciled here, before validation spends a paid repair on
+ * binding paperwork; ambiguous targets deliberately stay blocking.
+ */
+export function reconcileContractBindings(
+  source: string,
+  scenes: DirectScene[],
+): { html: string; repairs: number } {
+  let html = source;
+  let repairs = 0;
+  const partBindings: ScenePartBinding[] = [];
+  for (const cut of resolveCutPlan(scenes).cuts) {
+    if (cut.focalPartOut) partBindings.push({ sceneId: cut.fromScene, part: cut.focalPartOut });
+    if (cut.focalPartIn) partBindings.push({ sceneId: cut.toScene, part: cut.focalPartIn });
+  }
+  const regionBindings: ScenePartBinding[] = [];
+  for (const scenePlan of resolveCameraPlan(scenes).scenes) {
+    for (const segment of scenePlan.segments) {
+      for (const part of [segment.fromPart, segment.toPart, segment.focus?.part]) {
+        if (part) partBindings.push({ sceneId: scenePlan.sceneId, part });
+      }
+      for (const region of [segment.fromRegion, segment.toRegion]) {
+        if (region) regionBindings.push({ sceneId: scenePlan.sceneId, part: region });
+      }
+    }
+  }
+  if (partBindings.length) {
+    const parts = reconcileScopedPartBindings(html, partBindings);
+    html = parts.html;
+    repairs += parts.repairs;
+  }
+  if (regionBindings.length) {
+    const regions = reconcileCameraRegionStations(html, regionBindings);
+    html = regions.html;
+    repairs += regions.repairs;
   }
   return { html, repairs };
 }
@@ -1444,6 +1568,22 @@ export function applyDeterministicSourceRepairs(
     if (repairedBindings) {
       process.stderr.write(
         `[author] normalized ${repairedBindings} deterministic interaction binding(s)\n`,
+      );
+    }
+  }
+  // Cut focal parts and camera stations/parts get the same mechanical
+  // reconciliation as interaction targets: an unambiguous near-miss (exact id,
+  // unique semantic candidate, or an unannotated exact-name element) is fixed
+  // here instead of consuming a paid repair attempt on binding paperwork.
+  {
+    const contractBindings = reconcileContractBindings(
+      html,
+      lockedStoryboard ?? draft.storyboard,
+    );
+    if (contractBindings.repairs) {
+      html = contractBindings.html;
+      process.stderr.write(
+        `[author] reconciled ${contractBindings.repairs} cut/camera contract binding(s)\n`,
       );
     }
   }
@@ -2427,6 +2567,11 @@ export function validateStoryboardPlan(
   // entrances, repeat visual states, or leave dead intervals — before any
   // source budget is spent.
   errors.push(...validatePlannedMoments(storyboard, expectedStart));
+  // Plan-time silhouette sanity: a shape-match declared with cross-family
+  // hints is known-hopeless (the runtime would degrade it at bind time), so
+  // it gets fixed in a cheap storyboard findings-retry instead of burning
+  // author attempts on a cut that can never compile.
+  errors.push(...auditShapeMatchHints(storyboard));
   // Camera-energy audit: every 12s+ film needs at least one high-energy
   // element, and four-plus full moves may not share one verb.
   errors.push(...auditCameraEnergy(storyboard));
@@ -2434,7 +2579,67 @@ export function validateStoryboardPlan(
   // surfaces for the duration) fails HERE, where a retry costs one storyboard
   // call, not downstream where it burns every author attempt.
   errors.push(...auditComponentComplexity(storyboard));
+  // Hold-what-matters pacing (WS3): introduced surfaces need development
+  // time, typed copy needs reading time, payoffs need outcome holds, and
+  // camera density has a ceiling as well as a floor.
+  errors.push(...auditPacing(storyboard));
   return [...new Set(errors)];
+}
+
+/**
+ * Plan-time silhouette sanity for declared shape-match cuts (WS1). The
+ * storyboard's shapeOut/shapeIn hints carry no runtime geometry, but a
+ * cross-family pair (pill→card, circle→bar) provably cannot survive the
+ * runtime's 2.5× aspect audit — the declared morph would silently ship as
+ * zoom-through while every artifact still advertises it. Surface the
+ * mismatch as a validation finding so a cheap storyboard retry fixes the
+ * pair while the plan is still paper.
+ */
+export function auditShapeMatchHints(storyboard: DirectScene[]): string[] {
+  const findings: string[] = [];
+  for (const [index, scene] of storyboard.entries()) {
+    const next = storyboard[index + 1];
+    const cut = scene.cut;
+    if (!next || cut?.style !== "shape-match" || !cut.shapeOut || !cut.shapeIn) continue;
+    if (shapeHintsRhyme(cut.shapeOut, cut.shapeIn)) continue;
+    findings.push(
+      `shape-match ${scene.id}->${next.id} declares silhouette hints ` +
+        `${cut.shapeOut}->${cut.shapeIn}, which cannot rhyme (a ${cut.shapeOut} and a ` +
+        `${cut.shapeIn} differ beyond the runtime's 2.5x aspect cap at any plausible size, ` +
+        `so the cut would degrade to zoom-through at bind time) — re-point the cut at ` +
+        `endpoints whose silhouettes match (pill<->bar, or card<->window<->circle), fix the ` +
+        `hints if the real parts do rhyme, or declare zoom-through instead`,
+    );
+  }
+  return findings;
+}
+
+/**
+ * Degrade-never-veto rung for the hint audit above: on the final storyboard
+ * attempt a still-mismatched volunteered shape-match downgrades to
+ * zoom-through with honest prose instead of blocking the film. Brief-required
+ * shape-match never lands here — its finding stays blocking so the retry
+ * loop (and the rescue rung) remain the delivery mechanism.
+ */
+export function degradeMismatchedShapeHintCuts(
+  storyboard: DirectScene[],
+): { scenes: DirectScene[]; degraded: string[] } {
+  const degraded: string[] = [];
+  const scenes = storyboard.map((scene, index) => {
+    const next = storyboard[index + 1];
+    const cut = scene.cut;
+    if (!next || cut?.style !== "shape-match" || !cut.shapeOut || !cut.shapeIn) return scene;
+    if (shapeHintsRhyme(cut.shapeOut, cut.shapeIn)) return scene;
+    degraded.push(`${scene.id}->${next.id} (${cut.shapeOut}->${cut.shapeIn})`);
+    return {
+      ...scene,
+      cut: { version: 1 as const, style: "zoom-through" as const },
+      outgoingCut:
+        `Zoom-through into the next shot (a declared shape-match with non-rhyming ` +
+        `silhouette hints ${cut.shapeOut}->${cut.shapeIn} was degraded at plan time).`,
+    };
+  });
+  return { scenes, degraded };
 }
 
 /**
@@ -2487,6 +2692,7 @@ export function dropUnusableVolunteeredTimeRamps(storyboard: DirectScene[]): Dir
 export function parseStoryboardResponse(
   raw: string,
   requirements: StoryboardPlanRequirements = {},
+  options: { degradeShapeHintMismatches?: boolean } = {},
 ): DirectScene[] {
   const knownCapabilities = new Set(
     loadCapabilityIndex().capabilities.map((capability) => capability.id),
@@ -2501,6 +2707,21 @@ export function parseStoryboardResponse(
   // vetoing the plan. Brief-demanded ramps keep their blocking findings.
   if (!requirements.requireTimeRamp) {
     storyboard = dropUnusableVolunteeredTimeRamps(storyboard);
+  }
+  // Early attempts keep the hint-mismatch finding blocking so a cheap
+  // findings-retry fixes the pair; the FINAL attempt degrades a volunteered
+  // hopeless shape-match to zoom-through instead of blocking the film
+  // (degrade-never-veto). Brief-required shape-match never degrades here.
+  if (options.degradeShapeHintMismatches && !requirements.requireShapeMatch) {
+    const degradation = degradeMismatchedShapeHintCuts(storyboard);
+    if (degradation.degraded.length) {
+      storyboard = degradation.scenes;
+      for (const line of degradation.degraded) {
+        process.stderr.write(
+          `[storyboard] degraded hint-mismatched shape-match to zoom-through: ${line}\n`,
+        );
+      }
+    }
   }
   // Double-triggered motion (repeated pulses, overlapping same-channel beats,
   // press beats under a cursor press) degrades to single triggers before
@@ -2714,17 +2935,17 @@ export interface StoryboardShape {
 export const STORYBOARD_SHAPES: readonly StoryboardShape[] = [
   {
     id: "problem-turn-product-cta",
-    label: "problem (short) → turn (short) → product proof (long) → CTA resolve (short)",
+    label: "problem (short) → turn (short) → product proof (long, held & developed) → CTA resolve (short)",
     best: "pain-led briefs where the product resolves a named workflow problem",
   },
   {
     id: "hook-demo-payoff",
-    label: "cold hook (short) → guided product demo (long) → payoff metric + CTA (medium)",
+    label: "cold hook (short) → guided product demo (long, held & developed) → payoff metric + CTA (medium)",
     best: "feature launches whose UI walkthrough is the star",
   },
   {
     id: "stat-proof-tour",
-    label: "hero stat (medium) → proof tour across product surfaces (long) → brand resolve (short)",
+    label: "hero stat (medium) → proof tour across product surfaces (long, one held framing per surface) → brand resolve (short)",
     best: "metric- or performance-led stories",
   },
   {
@@ -2970,8 +3191,10 @@ export async function requestStoryboardPlan(
     // Bump when the storyboard contract changes shape (v2: StoryboardMomentV1,
     // v3: typed components + beats; v4: brief-derived coverage requirements;
     // v5: shape-match cuts + orbit/rack-focus camera vocabulary; v6: timeRamp
-    // speed-ramping dips; v7: depth3d level-2 camera depth).
-    contract: 7,
+    // speed-ramping dips; v7: depth3d level-2 camera depth; v8:
+    // hold-what-matters pacing audits — reading floors, outcome holds,
+    // introduction development, camera budget).
+    contract: 8,
     provider: provider.id,
     model: model ?? null,
     brief: args.brief,
@@ -3010,6 +3233,18 @@ export async function requestStoryboardPlan(
     "shot boundary OR a typed camera move. Plan density accordingly: a 15s film",
     "needs 4+ framings, a 24s film 7+, a 40s+ film 12. Short punchy shots",
     "(1.5-3s) are welcome; so are longer shots whose camera keeps traveling.",
+    "PACING CEILING — density has a ceiling as well as a floor, enforced",
+    "deterministically. Per shot, at most 1 + floor(shotSec/3.5) full camera",
+    "moves; at most 2 whips per film. After introducing a dense surface, HOLD",
+    "and develop it: the last new surface in a shot must land by ~65% of the",
+    "shot window, leaving ~0.9s per introduced surface to read. Hold on",
+    "outcomes longer than actions: after a press, set-state, or toast payoff,",
+    "leave >=0.8s before the next framing change. Typed copy needs ~0.3s per",
+    "word of reading time before the frame cuts or whips away. A hold is not",
+    "a freeze — develop the held surface with count/progress/highlight beats.",
+    "ONE focal element at a time: secondary detail may coexist, but only one",
+    "thing commands motion at any moment; two beats that yank the eye across",
+    "the frame within ~1.2s read as noise, not richness.",
     "CAMERA RIG — the continuous spatial world. Each scene may declare a typed",
     '"camera" path over a data-camera-world plane larger than the 1920x1080',
     "viewport. The author scatters that scene's content across named",
@@ -3102,7 +3337,10 @@ export async function requestStoryboardPlan(
     'shapeOut/shapeIn hints from pill|bar|card|circle|window as your own',
     "silhouette self-check. Declare shape-match only when the two silhouettes",
     "genuinely rhyme; a >2.5x aspect mismatch degrades to zoom-through at bind",
-    "time). The host compiles the cut deterministically;",
+    "time. Silhouette families: pill and bar rhyme with each other; card,",
+    "window, and circle rhyme with each other; a cross-family pair like",
+    "pill->card is rejected deterministically at plan time).",
+    "The host compiles the cut deterministically;",
     "the prose outgoingCut must describe the same editorial idea as cut.style.",
     "SPEED RAMP — time itself may bend for emphasis. A shot may declare ONE",
     '"timeRamp": the film decelerates to slowTo (0.2-0.6) for holdSec seconds',
@@ -3394,7 +3632,9 @@ export async function requestStoryboardPlan(
       }
       let storyboard: DirectScene[];
       try {
-        storyboard = parseStoryboardResponse(raw, requirements);
+        storyboard = parseStoryboardResponse(raw, requirements, {
+          degradeShapeHintMismatches: attempt === rung.maxAttempts,
+        });
       } catch (error) {
         if (error instanceof Error && isOutputTruncation(error)) {
           // A truncated artifact detected at parse time (opened-but-unclosed
@@ -3873,6 +4113,56 @@ function lockedLayoutGuidance(scenes: DirectScene[]): string {
   return lines.join("\n");
 }
 
+/**
+ * A machine-readable endpoint checklist for bridged-cut findings. A compact
+ * patch shown only the failing side routinely edits the wrong scene or
+ * deletes the healthy endpoint while "fixing" the broken one (the 2026-07-04
+ * stall): show both endpoints with live present/missing status and the one
+ * required action.
+ */
+function bridgedCutRepairChecklist(
+  findings: string[],
+  scenes: DirectScene[],
+  html: string,
+): string {
+  const failing = new Set(
+    findings
+      .map((finding) => cutSignatureBoundary(findingSignature(finding)))
+      .filter((boundary): boundary is string => Boolean(boundary)),
+  );
+  if (!failing.size) return "";
+  const scopes = new Map(sceneScopes(html).map((scene) => [scene.id, scene.scope]));
+  const status = (part: string, sceneId: string): string => {
+    const pattern = new RegExp(
+      `\\bdata-part\\s*=\\s*(["'])${regexpEscape(part)}\\1`,
+      "i",
+    );
+    return pattern.test(scopes.get(sceneId) ?? "") ? "present" : "MISSING";
+  };
+  const rows = resolveCutPlan(scenes).cuts.flatMap((cut) => {
+    if (!failing.has(`${cut.fromScene}->${cut.toScene}`)) return [];
+    if (!cut.focalPartOut || !cut.focalPartIn) return [];
+    return [
+      `- ${cut.style} ${cut.fromScene} -> ${cut.toScene}`,
+      `  outgoing: data-part="${cut.focalPartOut}" in scene "${cut.fromScene}" ` +
+        `[${status(cut.focalPartOut, cut.fromScene)}]`,
+      `  incoming: data-part="${cut.focalPartIn}" in scene "${cut.toScene}" ` +
+        `[${status(cut.focalPartIn, cut.toScene)}]`,
+    ];
+  });
+  if (!rows.length) return "";
+  return [
+    "## Bridged-cut endpoint checklist",
+    "Each cut below carries one focal element across its boundary and binds",
+    "scene-scoped on BOTH sides. Add the missing data-part attribute to exactly",
+    "one existing focal element already inside the named scene — the element",
+    "that visually plays that role. Never create a new element for it, never",
+    "edit the side marked present, and never remove any other data-part,",
+    "data-region, or data-component attribute while doing so.",
+    ...rows,
+  ].join("\n");
+}
+
 function creationPrompt(args: {
   brief: string;
   projectDir: string;
@@ -3890,6 +4180,11 @@ function creationPrompt(args: {
     const scratchComponents = componentReferenceFor(
       args.lockedStoryboard ?? args.scratch.storyboard,
     );
+    const cutChecklist = bridgedCutRepairChecklist(
+      args.validationFeedback ?? [],
+      args.lockedStoryboard ?? args.scratch.storyboard,
+      args.scratch.html,
+    );
     return [
       "SYSTEM: You are a precise HTML/CSS/GSAP repair engineer.",
       "Repair the supplied scratch composition with the fewest local edits. Preserve its art",
@@ -3904,6 +4199,23 @@ function creationPrompt(args: {
       "For camera_framed_clipped findings, the named element hangs outside the station",
       "rect the camera frames: move it fully inside its data-region box (keep an ~8%",
       "inner margin) or shrink it — never move the region itself or edit the camera plan.",
+      "For camera_framed_sparse findings, the framed content is a small subject adrift",
+      "in an empty frame: enlarge the station's content, tighten its data-region rect so",
+      "the fit zoom lands closer, or move more of that scene's content into the framed",
+      "station — the viewer should never study a mostly-empty frame.",
+      "For cut_degraded findings, a declared shape-match/object-match compiled as",
+      "zoom-through because the endpoint silhouettes do not rhyme. Use the measured",
+      "numbers in the finding: restyle one endpoint, or move its data-part attribute",
+      "onto a sub-element whose box does rhyme (e.g. a condensed header band matching",
+      "the outgoing pill), so both parts sit within a 2.5x aspect ratio, under 60 nodes,",
+      "and on frame at the boundary. Never rename the parts or edit the cut plan JSON.",
+      "For eye_trace_jump findings, the viewer's gaze is on the outgoing focal element",
+      "when the cut lands but the incoming subject appears across the frame: move the",
+      "incoming scene's opening subject (or its station rect) so it appears near the",
+      "measured outgoing position — the finding carries both viewport coordinates.",
+      "Never retime the cut, change scene timing, or edit the cut plan JSON for it.",
+      "For eye_trace_pingpong findings, consecutive beats yank the eye across the frame:",
+      "bring the two beat targets closer together in the layout — never delete beats.",
       "For motion/liveness findings, add seek-safe GSAP beats on child elements,",
       "semantic component parts, or data-camera-world wrappers at explicit",
       "composition times. Do not animate scene wrappers to fake activity.",
@@ -3913,10 +4225,14 @@ function creationPrompt(args: {
       "make the timeline honor it.",
       "Never edit data-composition-id, data-scene values, scene element ids, or storyboard timing.",
       "Do not edit JavaScript unless a finding explicitly identifies script/source validation.",
+      "While repairing one finding, never remove or rename other data-part, data-region,",
+      "or data-component attributes and never delete a component root — destroying a valid",
+      "binding creates new blocking findings and rejects the whole patch atomically.",
       "",
       "## Deterministic findings to repair",
       ...(args.validationFeedback ?? []).map((issue) => `- ${issue}`),
       "",
+      ...(cutChecklist ? [cutChecklist, ""] : []),
       ...(scratchComponents ? [scratchComponents, ""] : []),
       "## Scratch HTML",
       "<scratch_index_html>",
@@ -4104,15 +4420,278 @@ function persistAuthorAttempt(
   }
 }
 
+/* --------------------------- author-loop reliability: signatures + strategy */
+
+const CUT_ENDPOINT_STATIC_FINDING =
+  /^cut ([\w-]+)->([\w-]+) (outgoing|incoming) part "([^"]+)" must exist as a data-part inside scene/;
+const CUT_ENDPOINT_KIT_FINDING =
+  /^kit_markup_incomplete: cut ([\w-]+)->([\w-]+) \([\w-]+\) needs data-part="([^"]+)" in scene "([\w-]+)"/;
+
+/**
+ * Normalize one deterministic validation finding into a stable structural
+ * signature. Two purposes: (a) the author loop compares signatures across
+ * attempts to detect a repair that is not converging, so equivalent findings
+ * from different validators (the cut contract's regex gate and the kit markup
+ * audit's DOM gate emit differently worded messages for the same defect) must
+ * collapse to ONE signature; (b) the persisted run summary reports signatures
+ * instead of raw messages, so failed runs can be grouped offline without
+ * scraping log lines. Unknown findings keep a truncated `other:` prefix —
+ * never raise here.
+ */
+export function findingSignature(finding: string): string {
+  const text = finding.trim();
+  const cutStatic = text.match(CUT_ENDPOINT_STATIC_FINDING);
+  if (cutStatic) {
+    return `cut_missing_${cutStatic[3]}_part:${cutStatic[1]}->${cutStatic[2]}:${cutStatic[4]}`;
+  }
+  const cutKit = text.match(CUT_ENDPOINT_KIT_FINDING);
+  if (cutKit) {
+    const side = cutKit[4] === cutKit[2] ? "incoming" : "outgoing";
+    return `cut_missing_${side}_part:${cutKit[1]}->${cutKit[2]}:${cutKit[3]}`;
+  }
+  const cameraRegion = text.match(
+    /^scene "([\w-]+)" camera targets region "([^"]+)"/,
+  ) ?? text.match(
+    /^kit_markup_incomplete: camera path in scene "([\w-]+)" frames data-region="([^"]+)"/,
+  );
+  if (cameraRegion) {
+    return `camera_region_missing:${cameraRegion[1]}:${cameraRegion[2]}`;
+  }
+  const cameraPart = text.match(
+    /^scene "([\w-]+)" camera targets part "([^"]+)"/,
+  ) ?? text.match(
+    /^kit_markup_incomplete: camera path in scene "([\w-]+)" frames data-part="([^"]+)"/,
+  );
+  if (cameraPart) {
+    return `camera_part_missing:${cameraPart[1]}:${cameraPart[2]}`;
+  }
+  const componentRoot = text.match(
+    /^scene "([\w-]+)" declares component "([^"]+)"/,
+  );
+  if (componentRoot) {
+    return `component_root_missing:${componentRoot[1]}:${componentRoot[2]}`;
+  }
+  const componentBeat = text.match(
+    /beat "([^"]+)" targets component "([^"]+)" but scene "([\w-]+)"/,
+  );
+  if (componentBeat) {
+    return `component_beat_unbound:${componentBeat[3]}:${componentBeat[2]}`;
+  }
+  const moment = /storyboard\/moments/.test(text)
+    ? text.match(/moment "([^"]+)"/)
+    : undefined;
+  if (moment) return `moment_unbound:${moment[1]}`;
+  // Both encodings of one degraded boundary — the raw runtime warning
+  // ("cut_degraded: shape-match a->b compiled …") and the measured polish
+  // finding ("cut_degraded [data-part=…] (t=…): The storyboard declares a
+  // shape-match cut a->b …") — collapse to one signature per boundary.
+  if (text.startsWith("cut_degraded")) {
+    const boundary = text.match(/\b([\w-]+->[\w-]+)\b/);
+    return `cut_degraded:${boundary?.[1] ?? "unknown"}`;
+  }
+  if (text.startsWith("dom_markup_broken:")) return "dom_markup_broken";
+  if (text.startsWith("runtime_bind_exception")) return "runtime_bind_exception";
+  if (text.startsWith("kit_markup_incomplete:")) {
+    return `kit_markup_incomplete:${text.match(/"([^"]+)"/)?.[1] ?? "unknown"}`;
+  }
+  if (text.startsWith("browser_warning:")) {
+    return `browser_warning:${text.slice(16, 136).trim()}`;
+  }
+  return `other:${text.slice(0, 120)}`;
+}
+
+/** Boundary key ("from->to") when a signature names a bridged-cut endpoint. */
+function cutSignatureBoundary(signature: string): string | undefined {
+  return signature.match(
+    /^cut_missing_(?:incoming|outgoing)_part:([\w-]+->[\w-]+):/,
+  )?.[1];
+}
+
+/**
+ * Bridged-cut boundaries the planner volunteered as enhancements: the brief
+ * never asked for that cut style, so the film must not die for it. A style the
+ * brief explicitly requested is never in this set — explicit requirements do
+ * not silently degrade.
+ */
+export function volunteeredCutBoundaries(
+  storyboard: DirectScene[],
+  requirements: Pick<StoryboardPlanRequirements, "requireObjectMatch" | "requireShapeMatch">,
+): Set<string> {
+  const boundaries = new Set<string>();
+  for (const [index, scene] of storyboard.entries()) {
+    const next = storyboard[index + 1];
+    if (!next || !scene.cut) continue;
+    const volunteered =
+      (scene.cut.style === "shape-match" && !requirements.requireShapeMatch) ||
+      (scene.cut.style === "object-match" && !requirements.requireObjectMatch);
+    if (volunteered) boundaries.add(`${scene.id}->${next.id}`);
+  }
+  return boundaries;
+}
+
+/**
+ * Strategy selection after a compact patch is statically rejected. A patch
+ * whose candidate still carries a structural signature it was asked to fix is
+ * not converging — repeating another compact patch against the same scratch
+ * was exactly the 2026-07-04 stall, so the loop abandons the scratch and
+ * spends its final attempt as a full-context re-author instead. Survivors
+ * that volunteered-cut degradation can resolve deterministically do NOT
+ * trigger the switch: the compact patch keeps its chance to repair everything
+ * else, and the degradation rung retires the stuck boundary.
+ */
+export function repairStrategyAfterStaticRejection(args: {
+  patchMode: boolean;
+  signatures: ReadonlySet<string>;
+  previousSignatures: ReadonlySet<string>;
+  degradableBoundaries: ReadonlySet<string>;
+}): "compact-repair" | "full-reauthor" {
+  if (!args.patchMode) return "compact-repair";
+  for (const signature of args.signatures) {
+    if (!args.previousSignatures.has(signature)) continue;
+    const boundary = cutSignatureBoundary(signature);
+    if (boundary && args.degradableBoundaries.has(boundary)) continue;
+    return "full-reauthor";
+  }
+  return "compact-repair";
+}
+
+interface CutDegradationResult {
+  draft: DirectCompositionDraft;
+  storyboard: DirectScene[];
+  degraded: string[];
+}
+
+/**
+ * Volunteered bridged cuts must never sink an otherwise valid film. When a
+ * shape-match/object-match endpoint binding persists across two consecutive
+ * static rejections (so it survived at least one model repair that was told
+ * to fix it) and the brief did not explicitly request that cut style, degrade
+ * the boundary to zoom-through — a typed, energetic, non-bridged cut that
+ * preserves the boundary beat, the energy audit's peak, and every moment
+ * bound to the cut landing — then re-run the deterministic injections so the
+ * shipped island matches the shipped storyboard. Explicitly requested bridged
+ * cuts are never degraded here; they stay blocking and fall back honestly.
+ */
+export function degradeVolunteeredBridgedCuts(args: {
+  draft: DirectCompositionDraft;
+  errors: string[];
+  storyboard: DirectScene[];
+  requirements: Pick<StoryboardPlanRequirements, "requireObjectMatch" | "requireShapeMatch">;
+  persistentSignatures: ReadonlySet<string>;
+  projectDir: string;
+}): CutDegradationResult | undefined {
+  const volunteered = volunteeredCutBoundaries(args.storyboard, args.requirements);
+  const stuck = new Set<string>();
+  for (const error of args.errors) {
+    const signature = findingSignature(error);
+    const boundary = cutSignatureBoundary(signature);
+    if (!boundary || !volunteered.has(boundary)) continue;
+    if (!args.persistentSignatures.has(signature)) continue;
+    stuck.add(boundary);
+  }
+  if (!stuck.size) return undefined;
+  const degraded: string[] = [];
+  const storyboard = args.storyboard.map((scene, index) => {
+    const next = args.storyboard[index + 1];
+    if (!next || !scene.cut || !stuck.has(`${scene.id}->${next.id}`)) return scene;
+    degraded.push(`${scene.id}->${next.id} (${scene.cut.style})`);
+    return { ...scene, cut: { version: 1 as const, style: "zoom-through" as const } };
+  });
+  if (!degraded.length) return undefined;
+  const draft = applyDeterministicSourceRepairs(
+    { storyboard, html: args.draft.html },
+    args.projectDir,
+    storyboard,
+  );
+  return { draft, storyboard, degraded };
+}
+
+/** Per-attempt entry of the persisted author-run diagnostic summary. */
+interface AuthorRunAttempt {
+  number: number;
+  mode: "full" | "patch";
+  outcome: "static-rejected" | "browser-rejected" | "exception";
+  findingSignatures: string[];
+}
+
+interface AuthorRunSummary {
+  stage: "source-author";
+  outcome?: "published" | "failed";
+  attempts: AuthorRunAttempt[];
+  strategyChanges: string[];
+  failureReason?: string;
+}
+
+/**
+ * One queryable JSON artifact per authoring run (`planning/author-run.json`):
+ * attempt modes, normalized finding signatures, and strategy changes — enough
+ * to group failed runs into classes offline without scraping log lines or
+ * re-reading every persisted attempt document. Signatures only, never brief
+ * content or model output; best-effort like every diagnostic.
+ */
+function persistAuthorRunSummary(projectDir: string, summary: AuthorRunSummary): void {
+  try {
+    const dir = path.join(projectDir, "planning");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "author-run.json"),
+      JSON.stringify(
+        {
+          ...summary,
+          terminalFindingSignatures:
+            summary.attempts[summary.attempts.length - 1]?.findingSignatures ?? [],
+          at: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+  } catch {
+    // Diagnostics only.
+  }
+}
+
 async function authorComposition(
   provider: AgentProvider,
   args: DirectCompositionArgs,
+): Promise<CompositionRunResult> {
+  const summary: AuthorRunSummary = {
+    stage: "source-author",
+    attempts: [],
+    strategyChanges: [],
+  };
+  try {
+    const result = await authorCompositionLoop(provider, args, summary);
+    summary.outcome = "published";
+    return result;
+  } catch (error) {
+    summary.outcome = "failed";
+    summary.failureReason = (error instanceof Error ? error.message : String(error))
+      .slice(0, 600);
+    throw error;
+  } finally {
+    persistAuthorRunSummary(args.projectDir, summary);
+  }
+}
+
+async function authorCompositionLoop(
+  provider: AgentProvider,
+  args: DirectCompositionArgs,
+  summary: AuthorRunSummary,
 ): Promise<CompositionRunResult> {
   if (!args.brief.trim()) throw new Error("brief is empty");
   let validationFeedback: string[] | undefined;
   let scratch: DirectCompositionDraft | undefined;
   let compact = false;
   let lastError: unknown;
+  // Requirement provenance for degradation decisions: a bridged cut style the
+  // brief explicitly requested must never silently degrade, while one the
+  // planner volunteered must never sink the film.
+  const requirements = inferStoryboardPlanRequirements(args.brief);
+  // Signatures of the previous static rejection — a signature present in two
+  // consecutive rejections survived a repair that was told to fix it.
+  let previousStaticSignatures: ReadonlySet<string> = new Set();
   let lastBrowserValid:
     | (CompositionRunResult & { qualityPenalty: number })
     | undefined;
@@ -4145,7 +4724,7 @@ async function authorComposition(
     });
     process.stderr.write(
       `[author] attempt ${attempt}/3 · prompt ${prompt.length} chars · ` +
-      `${compact ? "compact repair" : "full context"} · ` +
+      `${patchMode ? "compact repair" : compact ? "full re-author (compact context)" : "full context"} · ` +
       `${repairTier ? "explicit repair tier" : selectedTier ?? "provider primary tier"} · ` +
       `reasoning ${attemptThinking}\n`,
     );
@@ -4197,6 +4776,47 @@ async function authorComposition(
           validation = await validateDirectComposition(args.projectDir, draft);
         }
       }
+      // Degradation rung: a volunteered bridged cut whose endpoint binding
+      // survived a model repair (same signature across consecutive static
+      // rejections) is provably stuck — retire the boundary to zoom-through
+      // deterministically instead of burning the remaining budget on it. Only
+      // a fully valid degraded draft is accepted (atomic, like every other
+      // recovery); attempt 1 never degrades so the author always gets one
+      // real chance to bind the declared focal parts.
+      if (!validation.ok && (patchMode || attempt === 3)) {
+        const degradation = degradeVolunteeredBridgedCuts({
+          draft,
+          errors: validation.errors,
+          storyboard: args.lockedStoryboard ?? draft.storyboard,
+          requirements,
+          persistentSignatures: previousStaticSignatures,
+          projectDir: args.projectDir,
+        });
+        if (degradation) {
+          const revalidated = await validateDirectComposition(args.projectDir, degradation.draft);
+          if (revalidated.ok) {
+            process.stderr.write(
+              `[author] degraded ${degradation.degraded.length} volunteered bridged cut(s) with ` +
+                `persistently unbindable focal parts to zoom-through: ` +
+                `${degradation.degraded.join(", ")}\n`,
+            );
+            summary.strategyChanges.push(
+              `degraded-volunteered-cut:${degradation.degraded.join(",")}`,
+            );
+            draft = degradation.draft;
+            validation = revalidated;
+            if (args.lockedStoryboard) {
+              args = { ...args, lockedStoryboard: degradation.storyboard };
+              persistUpgradedStoryboard(args.projectDir, degradation.storyboard);
+            }
+          } else {
+            process.stderr.write(
+              `[author] volunteered-cut degradation left the draft invalid ` +
+                `(${(revalidated.errors[0] ?? "").slice(0, 200)}); keeping the finding blocking\n`,
+            );
+          }
+        }
+      }
       if (!validation.ok) {
         process.stderr.write(
           `[author] attempt ${attempt}/3 static validation rejected: ` +
@@ -4206,6 +4826,15 @@ async function authorComposition(
           mode: patchMode ? "patch" : "full",
           findings: validation.errors,
           html: draft.html,
+        });
+        const signatures: ReadonlySet<string> = new Set(
+          validation.errors.map(findingSignature),
+        );
+        summary.attempts.push({
+          number: attempt,
+          mode: patchMode ? "patch" : "full",
+          outcome: "static-rejected",
+          findingSignatures: [...signatures].slice(0, 24),
         });
         const previousFeedback = validationFeedback ?? [];
         validationFeedback = patchMode
@@ -4231,9 +4860,36 @@ async function authorComposition(
         );
         if (!patchMode && !graphBroken) scratch = draft;
         compact = true;
+        // Non-convergence switch: a structural signature that survived the
+        // very patch asked to fix it will not yield to a second identical
+        // compact patch — abandon the scratch and spend the next attempt as
+        // a full-context re-author carrying the findings.
+        if (
+          repairStrategyAfterStaticRejection({
+            patchMode,
+            signatures,
+            previousSignatures: previousStaticSignatures,
+            degradableBoundaries: volunteeredCutBoundaries(
+              args.lockedStoryboard ?? draft.storyboard,
+              requirements,
+            ),
+          }) === "full-reauthor"
+        ) {
+          process.stderr.write(
+            `[author] compact repair is not converging (a structural finding survived the ` +
+              `patch asked to fix it); switching to a full-context re-author\n`,
+          );
+          summary.strategyChanges.push("full-reauthor-after-stalled-patch");
+          scratch = undefined;
+        }
+        previousStaticSignatures = signatures;
         lastError = new Error(validationFeedback.join("; "));
         continue;
       }
+      // Static validation passed, so every tracked structural binding is now
+      // proven bindable; a later rejection would be a fresh patch regression,
+      // not a persistent defect. Reset the persistence window accordingly.
+      previousStaticSignatures = new Set();
       const browserQa = await inspectDirectComposition(args.projectDir, draft, {
         captureGuide: false,
       });
@@ -4294,13 +4950,32 @@ async function authorComposition(
         findings: validationFeedback,
         html: draft.html,
       });
+      summary.attempts.push({
+        number: attempt,
+        mode: patchMode ? "patch" : "full",
+        outcome: "browser-rejected",
+        findingSignatures: validationFeedback.map(findingSignature).slice(0, 24),
+      });
       // A runtime bind exception means the compile aborted before the timeline
       // registered: the document's structure lied to static validation, so a
       // compact patch would repair blind against markup the DOM does not agree
       // with (the 2026-07-04 paid-run bottleneck — the patch fixed the chart
       // and broke the last scene). Escalate straight back to full-context
       // re-authoring with the named findings instead of seeding a scratch.
-      if (browserQa.errors.some((entry) => entry.includes("runtime_bind_exception"))) {
+      // A scene rendering blank gets the same treatment: its content is
+      // missing, off-world, or permanently hidden, and creating a visual
+      // world is full-document work — a compact patch provably cannot do it
+      // (probe-cutfix-2, 2026-07-04: two patches in a row left the same
+      // near_blank_film finding untouched and the run fell back).
+      const structuralBrowserFailure = browserQa.errors.find((entry) =>
+        entry.includes("runtime_bind_exception") || entry.startsWith("near_blank_film:")
+      );
+      if (structuralBrowserFailure) {
+        summary.strategyChanges.push(
+          structuralBrowserFailure.startsWith("near_blank_film:")
+            ? "full-reauthor-after-blank-scene"
+            : "full-reauthor-after-runtime-bind-exception",
+        );
         scratch = undefined;
         compact = false;
       } else {
@@ -4316,6 +4991,12 @@ async function authorComposition(
         mode: patchMode ? "patch" : "full",
         findings: [message],
         raw: attemptRaw,
+      });
+      summary.attempts.push({
+        number: attempt,
+        mode: patchMode ? "patch" : "full",
+        outcome: "exception",
+        findingSignatures: [findingSignature(message)],
       });
       if (isReasoningMandatoryError(error)) {
         // Endpoint rejects reasoning:none outright — retry the same work with
@@ -4649,7 +5330,18 @@ async function applyShapeMatchUpgrade(
   });
   if (!cut) return undefined;
   const storyboard = shipped.map((scene) =>
-    scene.id === upgrade.fromScene ? { ...scene, cut } : scene
+    scene.id === upgrade.fromScene
+      ? {
+          ...scene,
+          cut,
+          // The artifacts (STORYBOARD.md, Slack outline, manifest) advertise
+          // outgoingCut prose — rewrite it so paperwork matches the executed
+          // boundary instead of describing the pre-upgrade cut.
+          outgoingCut:
+            `Shape-match: "${upgrade.focalPartOut}" carries into ` +
+            `"${upgrade.focalPartIn}" (measured silhouette rhyme, discovered at QA).`,
+        }
+      : scene
   );
   process.stderr.write(
     `[cut-discovery] upgrading ${upgrade.fromScene}->${upgrade.toScene} to shape-match ` +
@@ -4694,6 +5386,105 @@ async function applyShapeMatchUpgrade(
   }
 }
 
+/** The raw runtime-degradation warning emitted by browser QA. */
+const RAW_DEGRADED_CUT_WARNING =
+  /^cut_degraded: \S+ ([\w-]+)->([\w-]+) compiled as zoom-through: (.*)$/;
+
+/**
+ * Pure half of the paperwork reconciler: rewrite every runtime-degraded
+ * declared bridged cut in the SHIPPED storyboard as the zoom-through that
+ * actually executed, with honest advertising prose. Exported for tests.
+ */
+export function rewriteDegradedCutStoryboard(
+  shipped: DirectScene[],
+  qaWarnings: string[],
+): { storyboard: DirectScene[]; rewritten: string[] } {
+  const degradedReasons = new Map<string, string>();
+  for (const warning of qaWarnings) {
+    const match = warning.match(RAW_DEGRADED_CUT_WARNING);
+    if (match) degradedReasons.set(`${match[1]}->${match[2]}`, match[3] ?? "");
+  }
+  const rewritten: string[] = [];
+  if (!degradedReasons.size) return { storyboard: shipped, rewritten };
+  const storyboard = shipped.map((scene, index) => {
+    const next = shipped[index + 1];
+    const cut = scene.cut;
+    if (!next || !cut) return scene;
+    if (cut.style !== "shape-match" && cut.style !== "object-match") return scene;
+    const reason = degradedReasons.get(`${scene.id}->${next.id}`);
+    if (reason === undefined) return scene;
+    rewritten.push(`${scene.id}->${next.id} (${cut.style})`);
+    return {
+      ...scene,
+      cut: {
+        version: 1 as const,
+        style: "zoom-through" as const,
+        // Keep any authored boundary timing so the executed window stays put.
+        ...(cut.travelPx !== undefined ? { travelPx: cut.travelPx } : {}),
+        ...(cut.exitSec !== undefined ? { exitSec: cut.exitSec } : {}),
+        ...(cut.entrySec !== undefined ? { entrySec: cut.entrySec } : {}),
+      },
+      outgoingCut:
+        `Zoom-through into "${next.title}" (a declared ${cut.style} was degraded at ` +
+        `bind time: ${reason}).`,
+    };
+  });
+  return { storyboard, rewritten };
+}
+
+/**
+ * Honest paperwork for boundaries the runtime degraded (WS1). When a declared
+ * bridged cut survived every repair opportunity and still compiled as
+ * zoom-through, the shipped artifacts — STORYBOARD.md, the Slack outline,
+ * manifest.json, the cut island — must record the cut that actually executed,
+ * never the morph that did not. Rewrite the shipped storyboard from the QA
+ * result, re-inject deterministically, and accept the rewrite only when full
+ * validation stays healthy; the executed motion is already a zoom-through, so
+ * this changes records, not the film. Any regression keeps the pre-reconcile
+ * draft (enhancement-never-veto).
+ */
+async function reconcileDegradedCutPaperwork(
+  args: DirectCompositionArgs,
+  result: CompositionRunResult,
+): Promise<CompositionRunResult> {
+  // Rewrite from the storyboard that actually SHIPPED (gotcha #10).
+  const { storyboard, rewritten } = rewriteDegradedCutStoryboard(
+    result.draft.storyboard,
+    result.browserQa?.warnings ?? [],
+  );
+  if (!rewritten.length) return result;
+  try {
+    const draft = applyDeterministicSourceRepairs(
+      { storyboard, html: result.draft.html },
+      args.projectDir,
+      storyboard,
+    );
+    const validation = await validateDirectComposition(args.projectDir, draft);
+    if (!validation.ok) {
+      throw new Error(`static validation rejected the rewrite: ${validation.errors[0] ?? ""}`);
+    }
+    const browserQa = await inspectDirectComposition(args.projectDir, draft, {
+      captureGuide: false,
+    });
+    if (!browserQa.ok && !browserQa.infraError) {
+      throw new Error(`browser QA rejected the rewrite: ${browserQa.errors[0] ?? ""}`);
+    }
+    persistUpgradedStoryboard(args.projectDir, storyboard);
+    process.stderr.write(
+      `[cut-honesty] rewrote ${rewritten.length} runtime-degraded boundary/ies as executed ` +
+        `zoom-through in the shipped storyboard: ${rewritten.join(", ")}\n`,
+    );
+    return { ...result, draft, browserQa };
+  } catch (error) {
+    process.stderr.write(
+      `[cut-honesty] paperwork reconcile rejected (${
+        error instanceof Error ? error.message : String(error)
+      }); keeping the shipped draft as-is\n`,
+    );
+    return result;
+  }
+}
+
 export async function requestDirectComposition(
   provider: AgentProvider,
   args: DirectCompositionArgs,
@@ -4708,5 +5499,7 @@ export async function requestDirectComposition(
     result = upgraded.result;
     critiqueArgs = { ...args, lockedStoryboard: upgraded.storyboard };
   }
-  return applyContinuityCritique(provider, critiqueArgs, result);
+  const critiqued = await applyContinuityCritique(provider, critiqueArgs, result);
+  // LAST: whatever ships, its paperwork tells the truth about every boundary.
+  return reconcileDegradedCutPaperwork(args, critiqued);
 }

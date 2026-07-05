@@ -121,5 +121,19 @@ describe("shape-match cut runtime browser contract", () => {
     expect(degraded[0]).toContain("zoom-through");
     expect(degraded[0]).toContain("aspect ratio");
     expect(qa.ok).toBe(true);
+    // WS1: the degradation of a planner-DECLARED cut is also a repairable
+    // polish finding carrying the measured endpoint geometry — it must block
+    // strictOk (so the author loop gets a repair chance) but never `ok`.
+    const findings = qa.issues.filter((issue) => issue.code === "cut_degraded");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.severity).toBe("warning");
+    expect(findings[0]!.message).toContain("shape-match cut two->three");
+    // Measured numbers, not vibes: both endpoints' px boxes appear.
+    expect(findings[0]!.message).toMatch(/"wide-banner" \d+x\d+px/);
+    expect(findings[0]!.message).toMatch(/"tall-card" \d+x\d+px/);
+    expect(findings[0]!.fixHint).toContain("2.5x");
+    expect(qa.strictOk).toBe(false);
+    // The healthy one->two bridge earns no finding.
+    expect(findings[0]!.message).not.toContain("one->two");
   }, 30_000);
 });

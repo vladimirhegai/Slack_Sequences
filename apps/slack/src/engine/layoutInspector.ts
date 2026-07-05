@@ -47,6 +47,11 @@ import {
   warpInverseOf,
 } from "./timeRamp.ts";
 import { resolveMomentContract } from "./storyboardMoments.ts";
+import {
+  pingPongCandidates,
+  scoreEyeTraceBoundaries,
+  scorePingPongPair,
+} from "./eyeTrace.ts";
 import { findBrowserExecutable } from "./render.ts";
 
 export type LayoutSeverity = "error" | "warning" | "info";
@@ -257,7 +262,11 @@ function loadBrowserAudit(name: "layout-audit.browser.js" | "contrast-audit.brow
  */
 // v2: camera-arrival framing audit (camera_framed_clipped) joined the pass.
 // v3: rendered temporal judge evidence + whip lens relocation.
-const QA_CACHE_VERSION = 3;
+// v4: cut_degraded became a measured polish finding + camera_framed_sparse
+//     coverage audit joined the arrival pass.
+// v5: eye-trace continuity audit (eye_trace_jump boundary findings +
+//     advisory eye_trace_pingpong within-scene findings).
+const QA_CACHE_VERSION = 5;
 
 /** Everything environment-side that can change the verdict for the same draft. */
 let cachedStaticFingerprint: string | undefined;
@@ -278,9 +287,24 @@ function qaStaticFingerprint(): string {
         loadBrowserAudit("contrast-audit.browser.js"),
       ].map((source) => createHash("sha256").update(source).digest("hex")),
       interactionQaMode: process.env.SLACK_SEQUENCES_INTERACTION_QA?.trim().toLowerCase() ?? "",
+      eyeTraceMode: eyeTraceMode(),
     }))
     .digest("hex");
   return cachedStaticFingerprint;
+}
+
+/**
+ * Eye-trace enforcement mode: "block" (default) makes `eye_trace_jump` a
+ * strictOk-blocking polish finding; "audit" keeps it a reported advisory
+ * warning while the false-positive rate is observed on live probes; "off"
+ * disables the audit entirely. The within-scene ping-pong variant is always
+ * advisory regardless of mode.
+ */
+function eyeTraceMode(): "block" | "audit" | "off" {
+  const raw = process.env.SLACK_SEQUENCES_EYE_TRACE?.trim().toLowerCase() ?? "";
+  if (raw === "0" || raw === "off") return "off";
+  if (raw === "audit") return "audit";
+  return "block";
 }
 
 function qaCacheEnabled(): boolean {
@@ -1462,6 +1486,18 @@ async function measureBoundaryParts(
   }, { sceneId, minPx: BOUNDARY_PART_MIN_PX, cap: BOUNDARY_PART_CAP });
 }
 
+/**
+ * Below this union-bbox fraction of the frame area, a framed landing reads as
+ * a tiny subject adrift in a void (probe-cutfix-3 m06 measured ~6-8% and the
+ * operator called it "messy"); deliberate holds with supporting content
+ * measure well above it.
+ */
+const SPARSE_COVERAGE_MIN = 0.18;
+/** Content spanning this much of one frame axis is a deliberate composition. */
+const SPARSE_AXIS_ESCAPE = 0.6;
+/** Scenes shorter than this are stings/flashes — never judged for coverage. */
+const SPARSE_MIN_SCENE_SEC = 2;
+
 /** Below this content-coverage fraction a sampled frame reads as blank. */
 const NEAR_BLANK_COVERAGE = 0.005;
 /** Scenes shorter than this are micro-beats (flashes, stings) — never judged. */
@@ -1824,24 +1860,40 @@ export async function inspectDirectComposition(
     });
     // The cut runtime may degrade a boundary at bind time (shape-match's
     // geometry audit compiles zoom-through instead of a broken bridge). That
-    // is a designed, deterministic decision — surface it as a warning so the
-    // operator sees why the premium cut did not appear, never as a blocker.
-    const degradedCutWarnings = await page.evaluate(() => {
+    // is a designed, deterministic decision — keep the raw warning string for
+    // operators and downstream passes (cut discovery, paperwork reconciler),
+    // and additionally raise a measured polish finding further below once the
+    // boundary geometry inventory exists.
+    const degradedCutBindings = await page.evaluate(() => {
       const bindings = (window as unknown as {
         __sequencesCutBindings?: Array<{
-          cut?: { style?: string; fromScene?: string; toScene?: string };
+          cut?: {
+            style?: string;
+            fromScene?: string;
+            toScene?: string;
+            focalPartOut?: string;
+            focalPartIn?: string;
+          };
           degraded?: boolean;
           reason?: string;
         }>;
       }).__sequencesCutBindings ?? [];
       return bindings
         .filter((binding) => binding?.degraded)
-        .map((binding) =>
-          `cut_degraded: ${binding.cut?.style ?? "cut"} ` +
-          `${binding.cut?.fromScene ?? "?"}->${binding.cut?.toScene ?? "?"} ` +
-          `compiled as zoom-through: ${binding.reason ?? "geometry audit failed"}`
-        );
+        .map((binding) => ({
+          style: binding.cut?.style ?? "cut",
+          fromScene: binding.cut?.fromScene ?? "?",
+          toScene: binding.cut?.toScene ?? "?",
+          focalPartOut: binding.cut?.focalPartOut ?? "",
+          focalPartIn: binding.cut?.focalPartIn ?? "",
+          reason: binding.reason ?? "geometry audit failed",
+        }));
     });
+    const degradedCutWarnings = degradedCutBindings.map((binding) =>
+      `cut_degraded: ${binding.style} ` +
+      `${binding.fromScene}->${binding.toScene} ` +
+      `compiled as zoom-through: ${binding.reason}`
+    );
     const tweenBoundaries = await collectTweenBoundaries(page);
     const samples = buildDirectLayoutSampleTimes(draft.storyboard, tweenBoundaries, duration);
     const interactionPlan = parseInteractionPlan(draft.html).plan;
@@ -2011,6 +2063,179 @@ export async function inspectDirectComposition(
       }
     }
 
+    // A planner-DECLARED bridged cut that the runtime degraded is a broken
+    // promise the author can usually keep: the storyboard (and every artifact
+    // derived from it) advertises a morph the viewer never gets. Raise it as
+    // a polish finding — strictOk-blocking so the repair loop asks the author
+    // to make the two silhouettes actually rhyme, never a publication error —
+    // and carry the measured endpoint geometry so the repair prompt gets the
+    // real numbers, not a vibe. Discovery upgrades need no finding here: the
+    // upgrade pass already rejects any candidate whose boundary degrades.
+    const declaredBridgedBoundaries = new Map<string, number>();
+    for (let index = 0; index < draft.storyboard.length - 1; index += 1) {
+      const scene = draft.storyboard[index]!;
+      const style = scene.cut?.style;
+      if (style !== "shape-match" && style !== "object-match") continue;
+      declaredBridgedBoundaries.set(
+        `${scene.id}->${draft.storyboard[index + 1]!.id}`,
+        scene.startSec + scene.durationSec,
+      );
+    }
+    for (const degraded of degradedCutBindings) {
+      const boundaryKey = `${degraded.fromScene}->${degraded.toScene}`;
+      const atSec = declaredBridgedBoundaries.get(boundaryKey);
+      if (atSec === undefined) continue;
+      const inventory = boundaryInventories.find((entry) =>
+        entry.fromScene === degraded.fromScene && entry.toScene === degraded.toScene
+      );
+      const summarize = (
+        side: BoundaryPartMeasurement[] | undefined,
+        partName: string,
+      ): string => {
+        const part = side?.find((entry) => entry.part === partName);
+        if (!part) return `"${partName}" (not measurable at the boundary sample)`;
+        return `"${partName}" ${Math.round(part.width)}x${Math.round(part.height)}px ` +
+          `(aspect ${(part.width / Math.max(1, part.height)).toFixed(2)}, ` +
+          `radius ${Math.round(part.radiusPx)}px, ${part.nodeCount} nodes, ` +
+          `${Math.round(part.onFrameRatio * 100)}% on frame)`;
+      };
+      rawIssues.push({
+        code: "cut_degraded",
+        severity: "warning",
+        time: atSec,
+        selector: `[data-part="${degraded.focalPartOut}"]`,
+        message:
+          `The storyboard declares a ${degraded.style} cut ${boundaryKey}, but the runtime ` +
+          `degraded it to zoom-through at bind time: ${degraded.reason}. Measured at the ` +
+          `boundary: outgoing ${summarize(inventory?.outgoing, degraded.focalPartOut)} vs ` +
+          `incoming ${summarize(inventory?.incoming, degraded.focalPartIn)}.`,
+        fixHint:
+          `Make the endpoint silhouettes genuinely rhyme so the declared cut compiles: ` +
+          `restyle one endpoint — e.g. give "${degraded.focalPartIn}" a condensed band whose ` +
+          `box matches "${degraded.focalPartOut}"'s proportions and move that data-part ` +
+          `attribute onto the band (a sub-element that rhymes) — or resize the other part. ` +
+          `Both parts need aspect ratios within 2.5x of each other, subtrees under 60 nodes, ` +
+          `and must sit on frame at the boundary. Never rename the parts, edit the cut plan ` +
+          `JSON, or remove any other binding.`,
+        source: "sequences",
+      });
+    }
+
+    // Eye-trace continuity (WS2). The boundary inventory above measured the
+    // outgoing scene just before each cut and the incoming scene at entry
+    // settle — exactly the two gaze samples Murch's eye-trace rule needs. A
+    // hard/undeclared boundary whose declared attention targets sit far apart
+    // in viewport space breaks comprehension ("I constantly look all over the
+    // place"); directional/zoom/bridged cuts carry the eye and a flash resets
+    // it, so those styles are exempt. `eye_trace_jump` is a polish finding —
+    // strictOk-blocking under the default mode, advisory under
+    // SLACK_SEQUENCES_EYE_TRACE=audit — and never unpublishes a runnable
+    // draft. The within-scene ping-pong variant is always advisory.
+    const eyeTrace = eyeTraceMode();
+    if (eyeTrace !== "off") {
+      for (const jump of scoreEyeTraceBoundaries({
+        scenes: draft.storyboard,
+        boundaries: boundaryInventories,
+        frameWidth: width,
+        frameHeight: height,
+      })) {
+        rawIssues.push({
+          code: "eye_trace_jump",
+          severity: "warning",
+          time: jump.atSec,
+          selector: `[data-part="${jump.inPart}"]`,
+          message:
+            `The viewer's eye is on "${jump.outPart}" at (${jump.outCenter.x},` +
+            `${jump.outCenter.y}) when scene "${jump.fromScene}" cuts to ` +
+            `"${jump.toScene}", but the incoming attention target "${jump.inPart}" ` +
+            `appears at (${jump.inCenter.x},${jump.inCenter.y}) — a ` +
+            `${Math.round(jump.displacementFraction * 100)}%-of-frame-diagonal jump ` +
+            `across a ${jump.cutStyle} cut, which does not carry the eye.`,
+          fixHint:
+            "Place the incoming shot's opening subject where the eye already is at the " +
+            "cut: align the two focal elements' frame positions, or move the incoming " +
+            "scene's entry station so its hero lands near the measured outgoing position. " +
+            "Never retime the cut or edit the cut plan JSON.",
+          source: "sequences",
+        });
+      }
+      // One extra seek per candidate pair (capped), measured with both
+      // surfaces live just after the second beat fires.
+      for (const candidate of pingPongCandidates(draft.storyboard)) {
+        await seekContent(candidate.measureAtSec);
+        const centers = await page.evaluate(
+          (payload: { sceneId: string; firstPart: string; secondPart: string }) => {
+            const root = document.querySelector<HTMLElement>(
+              "[data-composition-id][data-width][data-height]",
+            );
+            const scene = root?.querySelector<HTMLElement>(
+              `[data-scene="${CSS.escape(payload.sceneId)}"]`,
+            );
+            if (!root || !scene) return {};
+            const rootRect = root.getBoundingClientRect();
+            const center = (part: string): { x: number; y: number } | undefined => {
+              const element = scene.querySelector<HTMLElement>(
+                `[data-part="${CSS.escape(part)}"]`,
+              );
+              if (!element) return undefined;
+              const rect = element.getBoundingClientRect();
+              if (rect.width < 8 || rect.height < 8) return undefined;
+              let opacity = 1;
+              let node: Element | null = element;
+              while (node) {
+                const style = getComputedStyle(node);
+                if (style.display === "none" || style.visibility === "hidden") return undefined;
+                opacity *= Number.parseFloat(style.opacity) || 0;
+                node = node.parentElement;
+              }
+              if (opacity < 0.15) return undefined;
+              return {
+                x: Math.min(
+                  rootRect.width,
+                  Math.max(0, rect.left - rootRect.left + rect.width / 2),
+                ),
+                y: Math.min(
+                  rootRect.height,
+                  Math.max(0, rect.top - rootRect.top + rect.height / 2),
+                ),
+              };
+            };
+            const first = center(payload.firstPart);
+            const second = center(payload.secondPart);
+            return {
+              ...(first ? { first } : {}),
+              ...(second ? { second } : {}),
+            };
+          },
+          {
+            sceneId: candidate.sceneId,
+            firstPart: candidate.firstPart,
+            secondPart: candidate.secondPart,
+          },
+        );
+        const pingPong = scorePingPongPair(candidate, centers, width, height);
+        if (!pingPong) continue;
+        rawIssues.push({
+          code: "eye_trace_pingpong",
+          severity: "warning",
+          time: pingPong.secondAtSec,
+          selector: `[data-part="${pingPong.secondPart}"]`,
+          message:
+            `Consecutive beats "${pingPong.firstBeatId}" -> "${pingPong.secondBeatId}" in ` +
+            `scene "${pingPong.sceneId}" move the eye ` +
+            `${Math.round(pingPong.displacementFraction * 100)}% of the frame diagonal in ` +
+            `${(pingPong.secondAtSec - pingPong.firstAtSec).toFixed(2)}s ` +
+            `("${pingPong.firstPart}" -> "${pingPong.secondPart}") — ping-pong choreography ` +
+            `reads as noise.`,
+          fixHint:
+            "Bring the two beat targets closer together in the frame, stagger the beats " +
+            "further apart in time, or let one component carry both beats — one focal " +
+            "element at a time.",
+          source: "sequences",
+        });
+      }
+    }
+
     // Typed cuts intentionally move scene wrappers across the safe area and
     // stack both scenes' geometry for a few hundred milliseconds around each
     // boundary. Static-layout heuristics sampled inside those windows would
@@ -2122,6 +2347,97 @@ export async function inspectDirectComposition(
         return clipped;
       }, { sceneId, ...(part ? { part } : {}), ...(region ? { region } : {}) });
     };
+    // Framing-coverage audit (WS5). Clipping proves nothing about a landing
+    // that frames 6% of content adrift in a void (probe-cutfix-3 m06): after
+    // each fit-zoom landing (and once mid-window for camera-less scenes),
+    // measure the union bounding box of the scene's visible content — text,
+    // media, data-part / data-layout-important elements; decoration and
+    // blooms carry none of those markers and count toward nothing — clipped
+    // to the frame, and flag framings the viewer sees as mostly empty. The
+    // scope is deliberately the whole SCENE, not the framed station: a tight
+    // track-to-anchor close-up on a button is fine when the surrounding UI
+    // fills the margins (the fit zoom caps how tight small parts frame), and
+    // is the m06 defect exactly when nothing else is on frame around it.
+    const measureFramedCoverage = async (
+      time: number,
+      sceneId: string,
+    ): Promise<
+      { fraction: number; widthFraction: number; heightFraction: number } | undefined
+    > => {
+      await seekContent(time);
+      return page.evaluate((payload: { sceneId: string }) => {
+        const root = document.querySelector<HTMLElement>(
+          "[data-composition-id][data-width][data-height]",
+        );
+        if (!root) return undefined;
+        const rootRect = root.getBoundingClientRect();
+        if (rootRect.width < 1 || rootRect.height < 1) return undefined;
+        const scope = root.querySelector<HTMLElement>(
+          `[data-scene="${CSS.escape(payload.sceneId)}"]`,
+        );
+        if (!scope) return undefined;
+        const MEDIA = new Set(["IMG", "SVG", "VIDEO", "CANVAS", "PICTURE"]);
+        const opacityCache = new Map<Element, number>();
+        const chainOpacity = (element: Element | null): number => {
+          if (!element || (!root.contains(element) && element !== root)) return 1;
+          const cached = opacityCache.get(element);
+          if (cached !== undefined) return cached;
+          const style = getComputedStyle(element);
+          const own = style.display === "none" || style.visibility === "hidden"
+            ? 0
+            : Number.parseFloat(style.opacity);
+          const value = (Number.isFinite(own) ? own : 1) * chainOpacity(element.parentElement);
+          opacityCache.set(element, value);
+          return value;
+        };
+        let left = Infinity;
+        let top = Infinity;
+        let right = -Infinity;
+        let bottom = -Infinity;
+        for (const element of [scope, ...Array.from(scope.querySelectorAll<HTMLElement>("*"))]) {
+          if (element.closest("[data-layout-ignore]")) continue;
+          const hasText = Array.from(element.childNodes).some((node) =>
+            node.nodeType === Node.TEXT_NODE && /\S/.test(node.textContent ?? ""),
+          );
+          const isContent = hasText ||
+            MEDIA.has(element.tagName.toUpperCase()) ||
+            element.hasAttribute("data-part") ||
+            element.hasAttribute("data-layout-important");
+          if (!isContent) continue;
+          const rect = element.getBoundingClientRect();
+          if (rect.width < 12 || rect.height < 12) continue;
+          if (chainOpacity(element) < 0.15) continue;
+          const l = Math.max(rect.left, rootRect.left);
+          const t = Math.max(rect.top, rootRect.top);
+          const r = Math.min(rect.right, rootRect.right);
+          const b = Math.min(rect.bottom, rootRect.bottom);
+          if (r - l < 4 || b - t < 4) continue;
+          left = Math.min(left, l);
+          top = Math.min(top, t);
+          right = Math.max(right, r);
+          bottom = Math.max(bottom, b);
+        }
+        if (right <= left || bottom <= top) {
+          return { fraction: 0, widthFraction: 0, heightFraction: 0 };
+        }
+        return {
+          fraction: ((right - left) * (bottom - top)) / (rootRect.width * rootRect.height),
+          widthFraction: (right - left) / rootRect.width,
+          heightFraction: (bottom - top) / rootRect.height,
+        };
+      }, { sceneId });
+    };
+    const isSparseCoverage = (
+      coverage: { fraction: number; widthFraction: number; heightFraction: number } | undefined,
+    ): coverage is { fraction: number; widthFraction: number; heightFraction: number } =>
+      Boolean(
+        coverage &&
+        coverage.fraction < SPARSE_COVERAGE_MIN &&
+        // A composition that spans most of one frame axis (a full-width
+        // headline band, a tall rail) is a deliberate shape, not sparseness.
+        coverage.widthFraction < SPARSE_AXIS_ESCAPE &&
+        coverage.heightFraction < SPARSE_AXIS_ESCAPE,
+      );
     for (const scenePlan of parseCameraPlan(draft.html).plan?.scenes ?? []) {
       const scene = draft.storyboard.find((entry) => entry.id === scenePlan.sceneId);
       if (!scene) continue;
@@ -2133,46 +2449,123 @@ export async function inspectDirectComposition(
         if (segment.zoom > 1.05) continue;
         const settleAt = Math.min(segment.endSec + 0.35, sceneEnd - 0.1);
         if (settleAt <= segment.endSec - 0.01 || insideCutWindow(settleAt)) continue;
+        const confirmAt = Math.min(settleAt + 0.8, sceneEnd - 0.05);
+        const canConfirm = confirmAt > settleAt + 0.05 && !insideCutWindow(confirmAt);
+        const station = segment.toPart
+          ? `part "${segment.toPart}"`
+          : `region "${segment.toRegion}"`;
         const found = await measureArrivalClipping(
           settleAt,
           scenePlan.sceneId,
           segment.toPart,
           segment.toRegion,
         );
-        if (!found.length) continue;
-        const confirmAt = Math.min(settleAt + 0.8, sceneEnd - 0.05);
-        const confirmed = confirmAt > settleAt + 0.05 && !insideCutWindow(confirmAt)
-          ? await measureArrivalClipping(
-              confirmAt,
-              scenePlan.sceneId,
-              segment.toPart,
-              segment.toRegion,
-            )
-          : found;
-        const confirmedSelectors = new Set(confirmed.map((entry) => entry.selector));
-        const station = segment.toPart
-          ? `part "${segment.toPart}"`
-          : `region "${segment.toRegion}"`;
-        for (const clip of found.filter((entry) => confirmedSelectors.has(entry.selector)).slice(0, 4)) {
-          rawIssues.push({
-            code: "camera_framed_clipped",
-            severity: "error",
-            time: settleAt,
-            selector: clip.selector,
-            ...(clip.text ? { text: clip.text } : {}),
-            message:
-              `Camera ${segment.move} lands on ${station} in scene "${scenePlan.sceneId}" at ` +
-              `${segment.endSec.toFixed(1)}s, but ${clip.selector} is only ` +
-              `${Math.round(clip.fraction * 100)}% inside the frame after the move settles — ` +
-              `the audience sees it clipped.`,
-            fixHint:
-              "Content at a camera station must fit that station's box: move the element fully " +
-              "inside its data-region rect (with an ~8% inner margin), shrink it, or relocate it " +
-              "to the station the camera actually frames.",
-            source: "sequences",
-          });
+        if (found.length) {
+          const confirmed = canConfirm
+            ? await measureArrivalClipping(
+                confirmAt,
+                scenePlan.sceneId,
+                segment.toPart,
+                segment.toRegion,
+              )
+            : found;
+          const confirmedSelectors = new Set(confirmed.map((entry) => entry.selector));
+          for (
+            const clip of found.filter((entry) => confirmedSelectors.has(entry.selector)).slice(0, 4)
+          ) {
+            rawIssues.push({
+              code: "camera_framed_clipped",
+              severity: "error",
+              time: settleAt,
+              selector: clip.selector,
+              ...(clip.text ? { text: clip.text } : {}),
+              message:
+                `Camera ${segment.move} lands on ${station} in scene "${scenePlan.sceneId}" at ` +
+                `${segment.endSec.toFixed(1)}s, but ${clip.selector} is only ` +
+                `${Math.round(clip.fraction * 100)}% inside the frame after the move settles — ` +
+                `the audience sees it clipped.`,
+              fixHint:
+                "Content at a camera station must fit that station's box: move the element fully " +
+                "inside its data-region rect (with an ~8% inner margin), shrink it, or relocate it " +
+                "to the station the camera actually frames.",
+              source: "sequences",
+            });
+          }
+        }
+        const coverage = await measureFramedCoverage(settleAt, scenePlan.sceneId);
+        if (isSparseCoverage(coverage)) {
+          // Double-sample like the clipping audit: an entrance still tweening
+          // at the settle sample must not masquerade as a sparse framing.
+          const confirmedCoverage = canConfirm
+            ? await measureFramedCoverage(confirmAt, scenePlan.sceneId)
+            : coverage;
+          if (isSparseCoverage(confirmedCoverage)) {
+            rawIssues.push({
+              code: "camera_framed_sparse",
+              severity: "warning",
+              time: settleAt,
+              selector: segment.toPart
+                ? `[data-part="${segment.toPart}"]`
+                : `[data-region="${segment.toRegion}"]`,
+              message:
+                `Camera ${segment.move} lands on ${station} in scene "${scenePlan.sceneId}" at ` +
+                `${segment.endSec.toFixed(1)}s, but the scene's visible content fills only ` +
+                `${Math.round(confirmedCoverage.fraction * 100)}% of the frame — a small subject ` +
+                `adrift in empty space.`,
+              fixHint:
+                "Fill the framing: enlarge the framed content, tighten the station rect (the fit " +
+                "zoom follows the data-region box), or bring more of the scene's content into the " +
+                "frame the camera lands on — a tight close-up is fine only when surrounding UI " +
+                "still fills the margins.",
+              source: "sequences",
+            });
+          }
         }
       }
+    }
+
+    // Camera-less scenes get the same coverage discipline once at mid-window:
+    // a static framing whose content fills a sliver of the frame is the same
+    // "tiny content in the void" defect without a camera to blame. The film's
+    // FINAL scene is exempt — a closing resolve legitimately compresses to one
+    // small focal point (logo sting, lone CTA); the deterministic fallback
+    // film's end card is the proof case.
+    const cameraScenes = new Set(
+      (parseCameraPlan(draft.html).plan?.scenes ?? [])
+        .filter((scene) => scene.segments.length > 0)
+        .map((scene) => scene.sceneId),
+    );
+    for (const scene of draft.storyboard.slice(0, -1)) {
+      if (cameraScenes.has(scene.id)) continue;
+      if (scene.durationSec < SPARSE_MIN_SCENE_SEC) continue;
+      const sceneEnd = scene.startSec + scene.durationSec;
+      const sampleAt = scene.startSec + scene.durationSec * 0.6;
+      if (insideCutWindow(sampleAt)) continue;
+      const coverage = await measureFramedCoverage(sampleAt, scene.id);
+      if (!isSparseCoverage(coverage)) continue;
+      // Fully blank scenes are the near-blank audit's finding; sparse is the
+      // "content exists but is tiny" class.
+      if (coverage.fraction <= 0) continue;
+      const confirmAt = Math.min(sampleAt + 0.8, sceneEnd - 0.1);
+      const confirmedCoverage = confirmAt > sampleAt + 0.05 && !insideCutWindow(confirmAt)
+        ? await measureFramedCoverage(confirmAt, scene.id)
+        : coverage;
+      if (!isSparseCoverage(confirmedCoverage) || confirmedCoverage.fraction <= 0) continue;
+      rawIssues.push({
+        code: "camera_framed_sparse",
+        severity: "warning",
+        time: sampleAt,
+        selector: `[data-scene="${scene.id}"]`,
+        message:
+          `Scene "${scene.id}" holds a static framing whose visible content fills only ` +
+          `${Math.round(confirmedCoverage.fraction * 100)}% of the frame — a small subject ` +
+          `adrift in empty space.`,
+        fixHint:
+          "Fill the frame: scale the composition up (hero content at 60-80% of frame width), " +
+          "or develop the safe area around the subject with supporting evidence instead of " +
+          "leaving it empty.",
+        source: "sequences",
+      });
     }
 
     // Blank-frame guard (2026-07-03 incident: a live film published with the
@@ -2226,7 +2619,14 @@ export async function inspectDirectComposition(
         : [];
 
     const issues = collapseIssues(rawIssues.filter((issue) =>
-      issue.code.startsWith("interaction_") || !insideCutWindow(issue.time)
+      issue.code.startsWith("interaction_") ||
+      // A degraded cut's time IS its boundary window — the window suppression
+      // exists for geometry heuristics sampled mid-motion, not for this
+      // deliberate bind-time decision. Eye-trace findings likewise live AT
+      // their boundary/beat by design and were sampled deliberately.
+      issue.code === "cut_degraded" ||
+      issue.code.startsWith("eye_trace") ||
+      !insideCutWindow(issue.time)
     )).slice(0, 80);
     const interactionIssues = issues.filter((issue) =>
       issue.code.startsWith("interaction_")
@@ -2258,6 +2658,10 @@ export async function inspectDirectComposition(
     ];
     const repairWarnings = issues.filter((issue) =>
       issue.severity === "warning" &&
+      // Ping-pong is always advisory; the boundary jump is advisory only in
+      // audit mode — both stay in `warnings` so repair prompts still see them.
+      issue.code !== "eye_trace_pingpong" &&
+      (issue.code !== "eye_trace_jump" || eyeTrace === "block") &&
       (
         issue.source === "sequences" ||
         issue.code === "content_overlap" ||
