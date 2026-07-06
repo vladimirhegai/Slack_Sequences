@@ -122,13 +122,12 @@ When you see a new hard-error class in a `FAILURE.md`, add its recovery here.
 
 ## Known open risks (not yet recovered)
 
-- **`gsap.timeline({ paused: true })` validation regex.** The static gate in
-  [directComposition.ts](src/engine/directComposition.ts) matches
-  `gsap\.timeline\s*\(\s*\{[^}]*paused\s*:\s*true` — the `[^}]*` breaks on a nested
-  object, e.g. `gsap.timeline({ defaults: { ease: "none" }, paused: true })`, and
-  would **false-reject a valid composition**. Low frequency (authors usually write
-  the bare form), but if a `FAILURE.md` shows repeated `create one synchronous
-  gsap.timeline({ paused: true })` on a document that clearly has one, this is why.
+- **`gsap.timeline({ paused: true })` validation — FIXED (Sentinel Phase 1).**
+  The old static-gate regex (`[^}]*`) broke on a nested options object, e.g.
+  `gsap.timeline({ defaults: { ease: "none" }, paused: true })`, and could
+  false-reject a valid composition. [directComposition.ts](src/engine/directComposition.ts)
+  now brace-matches the whole options object before testing for `paused: true`,
+  so arbitrary nesting passes. Kept here as the closed incident record.
 
 ---
 

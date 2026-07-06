@@ -3,7 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { creationPrompt } from "../src/engine/compositionRunner.ts";
+import {
+  adaptDirectorPromptForSlots,
+  creationPrompt,
+} from "../src/engine/compositionRunner.ts";
 import { buildFallbackComposition } from "../src/engine/fallbackComposition.ts";
 import { retrieveHyperframesSkillContext } from "../src/agent/skillContext.ts";
 
@@ -74,6 +77,33 @@ describe("Prompt budget — planning-director.md", () => {
         `budget. Deleting a rule made redundant at L0–L2 is fine; ADDING prose means ` +
         `raising this budget in a diff a reviewer sees (SENTINEL.md).`,
     ).toBeLessThanOrEqual(PLANNING_DIRECTOR_BUDGET_BYTES);
+  });
+});
+
+describe("Slot-mode director-prompt surgery — no contradictory whole-doc contract", () => {
+  it("every rewrite anchor still matches planning-director.md (zero misses)", () => {
+    const director = fs.readFileSync(path.join(APP_DIR, "prompts", "planning-director.md"), "utf8");
+    const misses: string[] = [];
+    adaptDirectorPromptForSlots(director, misses);
+    expect(
+      misses,
+      "A planning-director.md edit broke a SLOT_MODE_DIRECTOR_REWRITES anchor — " +
+        "update the anchor with the edit so slot mode keeps its surgical rewrite " +
+        "(the appended-override fallback is weaker).",
+    ).toEqual([]);
+  });
+
+  it("the assembled slot prompt carries no whole-document instructions", () => {
+    const { prompt } = assembledFixturePrompt();
+    // The p7-denseui no-slots attempt + documented slot-envelope drift trace to
+    // the base prompt instructing exactly these; slot mode must never see them.
+    expect(prompt).not.toContain("Return a complete HTML document");
+    expect(prompt).not.toContain("requests only `<index_html>`");
+    expect(prompt).not.toContain("initialized synchronously and registered as");
+    expect(prompt).not.toContain("The paused timeline must own scene-window opacity");
+    expect(prompt).not.toContain("Mark each storyboard scene with");
+    // And it does carry the slot response contract.
+    expect(prompt).toContain("Response contract (scene slots)");
   });
 });
 

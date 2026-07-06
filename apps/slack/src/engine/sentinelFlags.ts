@@ -28,3 +28,14 @@ export function sentinelSkeletonEnabled(): boolean {
 export function sentinelSlotsEnabled(): boolean {
   return process.env.SLACK_SEQUENCES_SENTINEL_SLOTS !== "0";
 }
+
+/**
+ * Phase 3 — skip the continuity critic when the banked draft is already
+ * pristine (strictOk + zero browser quality penalty + no static repair
+ * warnings). Default ON; `SLACK_SEQUENCES_CRITIC_SKIP_CLEAN=0` restores
+ * always-run. Read here (not `process.env` at the call site) so SENTINEL.md's
+ * flag table stays the single source of truth.
+ */
+export function criticSkipCleanEnabled(): boolean {
+  return process.env.SLACK_SEQUENCES_CRITIC_SKIP_CLEAN !== "0";
+}

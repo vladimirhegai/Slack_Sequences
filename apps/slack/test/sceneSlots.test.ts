@@ -1,14 +1,32 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   assembleSlotComposition,
   attributeFindingsToScenes,
   extractSceneSlots,
 } from "../src/engine/sceneSlots.ts";
+import {
+  authorSlotDraft,
+  slotScaffoldViolations,
+} from "../src/engine/compositionRunner.ts";
+import type { AgentProvider } from "@sequences/platform/providers";
+import type { RetrievedSkillContext } from "../src/agent/skillContext.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
 
 function scene(id: string, startSec: number, durationSec = 4): DirectScene {
   return { id, title: id, purpose: `show ${id}`, startSec, durationSec };
 }
+
+const SKILLS: RetrievedSkillContext = {
+  skillNames: [],
+  blueprintIds: [],
+  ruleIds: [],
+  capabilityIds: [],
+  registryVersion: "test",
+  text: "",
+};
 
 const TWO_SCENE_RESPONSE = [
   "<film_style>",
@@ -134,6 +152,190 @@ describe("assembleSlotComposition", () => {
     // Present scenes still assemble; missing ones leave an empty (host) shell.
     expect(result.html).toContain("<h1>only</h1>");
     expect(result.html).toContain('data-scene="cta-close"');
+  });
+});
+
+describe("slotScaffoldViolations — only states the L2 reconcilers cannot fix", () => {
+  const componentScene = (): DirectScene => ({
+    ...scene("hero-open", 0),
+    components: [{ version: 1, id: "deploy-btn", kind: "button", role: "hero" }],
+  });
+
+  it("flags a declared component with NO trace at all (root and kind both absent)", () => {
+    const slots = extractSceneSlots(
+      '<scene_html id="hero-open"><div class="hero">no component here</div></scene_html>' +
+        '<scene_script id="hero-open">tl.set("[data-scene=\\"hero-open\\"]", {}, 0);</scene_script>',
+    );
+    const violations = slotScaffoldViolations([componentScene()], slots);
+    expect(violations.get("hero-open")?.[0]).toContain('data-part="deploy-btn"');
+  });
+
+  it("leaves a kind-marked near-miss to the free L2 reconciler", () => {
+    const slots = extractSceneSlots(
+      '<scene_html id="hero-open"><div class="cmp cmp-button" data-component="button" data-part="wrong-name">Deploy</div></scene_html>',
+    );
+    expect(slotScaffoldViolations([componentScene()], slots).size).toBe(0);
+  });
+
+  it("flags a camera station only when the scene has FEWER stations than required", () => {
+    const cameraScene: DirectScene = {
+      ...scene("tour", 0, 8),
+      camera: {
+        version: 1,
+        path: [
+          { version: 1, move: "hold", toRegion: "hero-claim", startSec: 0, durationSec: 2 },
+          { version: 1, move: "pan", toRegion: "metric-wall", startSec: 2, durationSec: 2 },
+        ],
+      },
+    };
+    const missingOne = extractSceneSlots(
+      '<scene_html id="tour"><div data-camera-world style="width:3840px;height:1080px">' +
+        '<div data-region="hero-claim">claim</div></div></scene_html>',
+    );
+    const violations = slotScaffoldViolations([cameraScene], missingOne);
+    expect(violations.get("tour")?.some((note) => note.includes('data-region="metric-wall"'))).toBe(
+      true,
+    );
+    // Same station COUNT under different names is the reconciler's near-miss.
+    const renamed = extractSceneSlots(
+      '<scene_html id="tour"><div data-camera-world style="width:3840px;height:1080px">' +
+        '<div data-region="hero_claim">claim</div><div data-region="metrics">stats</div></div></scene_html>',
+    );
+    expect(slotScaffoldViolations([cameraScene], renamed).size).toBe(0);
+  });
+
+  it("never flags a scene whose interior is wholly missing (that is the truncation path)", () => {
+    const slots = extractSceneSlots("<film_style>.x{}</film_style>");
+    expect(slotScaffoldViolations([componentScene()], slots).size).toBe(0);
+  });
+});
+
+describe("authorSlotDraft — script-aware continuation + scene-scoped scaffold repair", () => {
+  const roots: string[] = [];
+  beforeEach(() => {
+    vi.stubEnv("SLACK_SEQUENCES_HEDGED_REQUESTS", "0");
+  });
+  afterEach(() => {
+    for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+    vi.unstubAllEnvs();
+  });
+  const tempDir = (): string => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "slot-draft-"));
+    roots.push(dir);
+    return dir;
+  };
+  const providerOf = (responses: string[]): { provider: AgentProvider; complete: ReturnType<typeof vi.fn> } => {
+    const complete = vi.fn();
+    for (const value of responses) complete.mockResolvedValueOnce(value);
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+    return { provider, complete };
+  };
+  const storyboard = (): DirectScene[] => [scene("hero-open", 0), scene("cta-close", 4)];
+  const argsOf = (sb: DirectScene[]) => ({
+    brief: "Launch Relay",
+    projectDir: tempDir(),
+    skills: SKILLS,
+    lockedStoryboard: sb,
+  });
+  const htmlSlot = (id: string, body: string): string =>
+    `<scene_html id="${id}">${body}</scene_html>`;
+  const scriptSlot = (id: string, body: string): string =>
+    `<scene_script id="${id}">${body}</scene_script>`;
+
+  it("re-requests a scene whose <scene_script> is missing (previously assembled silently static)", async () => {
+    const sb = storyboard();
+    const first = [
+      "<film_style>.hero{color:#fff}</film_style>",
+      htmlSlot("hero-open", '<div class="hero">Ship</div>'),
+      scriptSlot("hero-open", 'tl.from(".hero", { opacity: 0, duration: 0.4 }, 0.2);'),
+      htmlSlot("cta-close", '<div class="hero">Go</div>'),
+      // No cta-close script: before the fix this assembled into a scene that
+      // never moved and nothing re-requested it.
+    ].join("\n");
+    const second = [
+      htmlSlot("cta-close", '<div class="hero">Go</div>'),
+      scriptSlot("cta-close", 'tl.from(".hero", { scale: 0.9, duration: 0.4 }, 4.2);'),
+    ].join("\n");
+    const { provider, complete } = providerOf([first, second]);
+
+    const result = await authorSlotDraft(provider, argsOf(sb), "PROMPT", {});
+
+    expect(complete).toHaveBeenCalledTimes(2);
+    const continuation = complete.mock.calls[1]![0] as string;
+    expect(continuation).toContain('id="cta-close"');
+    expect(continuation).not.toContain('<scene_html id="hero-open">');
+    expect(result.draft.html).toContain("scale: 0.9");
+  });
+
+  it("throws when a script is still missing after the continuation round", async () => {
+    const sb = storyboard();
+    const first = [
+      htmlSlot("hero-open", "<h1>a</h1>"),
+      scriptSlot("hero-open", "tl.set('#x', {}, 0);"),
+      htmlSlot("cta-close", "<h1>b</h1>"),
+    ].join("\n");
+    const { provider } = providerOf([first, "no slots here", "still nothing"]);
+    await expect(authorSlotDraft(provider, argsOf(sb), "PROMPT", {})).rejects.toThrow(
+      /missing <scene_script>/,
+    );
+  });
+
+  it("scene-scoped scaffold repair: a dropped component root re-requests ONLY that scene with findings and the previous interior", async () => {
+    const sb: DirectScene[] = [
+      {
+        ...scene("hero-open", 0),
+        components: [{ version: 1, id: "deploy-btn", kind: "button", role: "hero" }],
+      },
+      scene("cta-close", 4),
+    ];
+    const first = [
+      "<film_style>.hero{color:#fff}</film_style>",
+      // The hero scene came back with NO trace of the declared button.
+      htmlSlot("hero-open", '<div class="hero">Ship faster</div>'),
+      scriptSlot("hero-open", 'tl.from(".hero", { opacity: 0, duration: 0.4 }, 0.2);'),
+      htmlSlot("cta-close", '<div class="hero">Go</div>'),
+      scriptSlot("cta-close", 'tl.from(".hero", { scale: 0.9, duration: 0.4 }, 4.2);'),
+    ].join("\n");
+    const repaired = [
+      htmlSlot(
+        "hero-open",
+        '<div class="hero">Ship faster</div>' +
+          '<button class="cmp cmp-button" data-component="button" data-part="deploy-btn">Deploy</button>',
+      ),
+      scriptSlot("hero-open", 'tl.from(".hero", { opacity: 0, duration: 0.4 }, 0.2);'),
+    ].join("\n");
+    const { provider, complete } = providerOf([first, repaired]);
+
+    const result = await authorSlotDraft(provider, argsOf(sb), "PROMPT", {});
+
+    expect(complete).toHaveBeenCalledTimes(2);
+    const repairPrompt = complete.mock.calls[1]![0] as string;
+    expect(repairPrompt).toContain("Host-contract findings");
+    expect(repairPrompt).toContain('data-part="deploy-btn"');
+    // Minimal-edit baseline: the model's own defective interior rides along.
+    expect(repairPrompt).toContain('<previous_scene_html id="hero-open">');
+    expect(repairPrompt).not.toContain('<scene_html id="cta-close">');
+    expect(result.draft.html).toContain('data-part="deploy-btn"');
+  });
+
+  it("a clean slot response costs exactly one call (no repair round fires)", async () => {
+    const sb = storyboard();
+    const clean = [
+      "<film_style>.hero{color:#fff}</film_style>",
+      htmlSlot("hero-open", "<h1>a</h1>"),
+      scriptSlot("hero-open", "tl.set('#a', {}, 0);"),
+      htmlSlot("cta-close", "<h1>b</h1>"),
+      scriptSlot("cta-close", "tl.set('#b', {}, 4);"),
+    ].join("\n");
+    const { provider, complete } = providerOf([clean]);
+    await authorSlotDraft(provider, argsOf(sb), "PROMPT", {});
+    expect(complete).toHaveBeenCalledTimes(1);
   });
 });
 

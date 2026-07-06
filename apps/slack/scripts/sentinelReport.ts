@@ -34,10 +34,18 @@ interface SentinelRun {
   slotsEnabled?: boolean | null;
   wallClock?: { tier1Ms?: number | null; tier2Ms?: number | null };
   stages?: StageTiming[];
-  modelCalls?: { total?: number; byStage?: Record<string, number> };
+  modelCalls?: {
+    total?: number;
+    byStage?: Record<string, number>;
+    failed?: Record<string, number>;
+    failedTotal?: number;
+    hedged?: Record<string, number>;
+    hedgedTotal?: number;
+  };
   promptChars?: { maxAuthor?: number; totalPrompt?: number; totalCompletion?: number };
   layers?: Record<string, number>;
   normalizations?: Record<string, number>;
+  degradations?: string[];
   __projectDir?: string;
 }
 
@@ -148,7 +156,10 @@ function main(): void {
     return;
   }
 
-  const modelRuns = runs.filter((run) => run.disposition !== "fail-loud");
+  // Attempt averages deliberately include fail-loud runs: those are the runs
+  // that spent the MOST attempts, and excluding them (the old behavior) biased
+  // the aggregate away from exactly the failures the mission table exists to
+  // measure. Runs with no recorded stage data still drop out naturally.
   const cleanRuns = runs.filter((run) => run.disposition === "published");
 
   const metrics = {
@@ -158,11 +169,20 @@ function main(): void {
     published: cleanRuns.length,
     publishedDegraded: runs.filter((run) => run.disposition === "published-degraded").length,
     storyboardAttemptsAvg: avg(
-      modelRuns.map((run) => stageAttempts(run, "storyboard-plan")).filter((v): v is number => v !== undefined),
+      runs.map((run) => stageAttempts(run, "storyboard-plan")).filter((v): v is number => v !== undefined),
     ),
     sourceAttemptsAvg: avg(
-      modelRuns.map((run) => sourceAttempts(run)).filter((v): v is number => v !== undefined),
+      runs.map((run) => sourceAttempts(run)).filter((v): v is number => v !== undefined),
     ),
+    failedModelCallsTotal: runs.reduce(
+      (sum, run) => sum + (run.modelCalls?.failedTotal ?? 0),
+      0,
+    ),
+    hedgedModelCallsTotal: runs.reduce(
+      (sum, run) => sum + (run.modelCalls?.hedgedTotal ?? 0),
+      0,
+    ),
+    degradationsTotal: runs.reduce((sum, run) => sum + (run.degradations?.length ?? 0), 0),
     tier1MsAvg: avg(
       runs.map((run) => run.wallClock?.tier1Ms).filter((v): v is number => typeof v === "number"),
     ),
@@ -223,6 +243,13 @@ function main(): void {
   lines.push(
     `published ${metrics.published} · published-degraded ${metrics.publishedDegraded} · ` +
       `fallback ${metrics.fallbacks} · fail-loud ${metrics.hardFailures}`,
+  );
+  lines.push("");
+  lines.push("## Cost honesty");
+  lines.push("");
+  lines.push(
+    `failed model calls ${metrics.failedModelCallsTotal} · hedge duplicates ` +
+      `${metrics.hedgedModelCallsTotal} · shipped degradations ${metrics.degradationsTotal}`,
   );
   lines.push("");
   lines.push("## Findings by layer (L0→L5)");

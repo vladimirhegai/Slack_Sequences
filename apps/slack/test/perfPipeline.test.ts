@@ -166,5 +166,8 @@ describe("browser QA cache", () => {
     expect(third.infraError).toBeUndefined();
     expect(fs.readdirSync(cacheDir).filter((name) => name.endsWith(".json")).length)
       .toBeGreaterThanOrEqual(entries.length);
-  }, 40_000);
+    // Outer budget covers TWO real browser QA passes of a 20s film — measured
+    // 39.8s on 2026-07-06, so 40s flaked on machine variance. The perf
+    // assertion that matters is the <2s cache hit above, not this ceiling.
+  }, 75_000);
 });

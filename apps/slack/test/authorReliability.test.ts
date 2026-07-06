@@ -17,6 +17,7 @@ import {
   reconcileComponentBindings,
   reconcileComponentInternalPartAliases,
   reconcileContractBindings,
+  repairMalformedFromToCalls,
   repairStrategyAfterStaticRejection,
   rewriteDegradedCutStoryboard,
   stripAllHostPlanIslands,
@@ -1071,6 +1072,28 @@ describe("Sentinel Phase 1 — skeleton scaffold makes paperwork classes unrepre
   });
 });
 
+describe("repairMalformedFromToCalls — the s5-interactions call-shape class", () => {
+  it("rewrites fromTo(target, vars, <number>) to from(target, vars, position)", () => {
+    const source =
+      '<script>tl.fromTo("#runbook .cmp-stat", { opacity: 1, scale: 1, duration: 0.6, ease: "seqSettle" }, 15.8);</script>';
+    const result = repairMalformedFromToCalls(source);
+    expect(result.repairs).toBe(1);
+    expect(result.html).toContain(
+      'tl.from("#runbook .cmp-stat", { opacity: 1, scale: 1, duration: 0.6, ease: "seqSettle" }, 15.8);',
+    );
+    expect(result.html).not.toContain("fromTo");
+  });
+
+  it("never touches a well-formed fromTo (toVars present) or non-literal targets", () => {
+    const wellFormed =
+      'tl.fromTo("[data-part=\'ack\']",{opacity:0,y:40},{opacity:1,y:0,duration:1.2},0.2);\n' +
+      "tl.fromTo(el, { opacity: 0 }, 1.5);"; // variable target — conservative skip
+    const result = repairMalformedFromToCalls(wellFormed);
+    expect(result.repairs).toBe(0);
+    expect(result.html).toBe(wellFormed);
+  });
+});
+
 describe("Sentinel Phase 1 — host plan islands are host-owned, always", () => {
   it("stripAllHostPlanIslands removes every host island unconditionally", () => {
     const withIslands = HOST_PLAN_ISLAND_IDS.map(
@@ -1081,6 +1104,18 @@ describe("Sentinel Phase 1 — host plan islands are host-owned, always", () => 
     for (const id of HOST_PLAN_ISLAND_IDS) {
       expect(result.html).not.toContain(`id="${id}"`);
     }
+  });
+
+  it("counts only unmarked islands as model-authored — host-marked islands re-strip as plumbing", () => {
+    const mixed = [
+      '<script type="application/json" id="sequences-camera">{"model":true}</script>',
+      '<script type="application/json" data-sequences-host="1" id="sequences-cuts">{"host":true}</script>',
+    ].join("\n");
+    const result = stripAllHostPlanIslands(mixed);
+    // Both are stripped (host islands are host-owned, always)…
+    expect(new Set(result.removed)).toEqual(new Set(["sequences-camera", "sequences-cuts"]));
+    // …but only the unmarked one counts as a model-authored normalization.
+    expect(result.removedModel).toEqual(["sequences-camera"]);
   });
 
   it("incident 2 replay: a model-authored shadow sequences-camera island is replaced with the canonical plan", () => {

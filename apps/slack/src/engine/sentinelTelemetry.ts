@@ -53,6 +53,16 @@ interface SentinelRunState {
   projectDir: string;
   startedAt: number;
   modelCalls: ModelCallRecord[];
+  /** Failed logical calls by stage — the paid/spent attempts `modelCalls` (successes only) omits. */
+  failedModelCalls: Record<string, number>;
+  /** Hedge duplicates launched by stage — extra PHYSICAL requests (cost), not logical calls. */
+  hedgedModelCalls: Record<string, number>;
+  /**
+   * Honesty ledger: every degradation the run shipped with (moment demotion,
+   * least-bad pick, quarantined interactions, degraded cuts, browser-QA infra
+   * bypass). Any entry downgrades a `published` finalize to `published-degraded`.
+   */
+  degradations: string[];
   layerFindings: Record<SentinelLayer, number>;
   normalizations: Record<string, number>;
   stages: SentinelStageTiming[];
@@ -95,6 +105,9 @@ export function beginSentinelRun(
     projectDir,
     startedAt: Date.now(),
     modelCalls: [],
+    failedModelCalls: {},
+    hedgedModelCalls: {},
+    degradations: [],
     layerFindings: emptyLayers(),
     normalizations: {},
     stages: [],
@@ -106,6 +119,35 @@ export function beginSentinelRun(
 /** Record one logical model call (already de-hedged by the retry wrappers). */
 export function recordSentinelModelCall(rec: ModelCallRecord): void {
   active()?.modelCalls.push(rec);
+}
+
+/**
+ * Record a FAILED logical model call (transport fault, truncation, stall).
+ * `modelCalls` counts only successes, so without this the cost ledger hid the
+ * most expensive runs — the ones that spent calls and got nothing back.
+ */
+export function recordSentinelModelCallFailure(stage: string): void {
+  const state = active();
+  if (!state) return;
+  state.failedModelCalls[stage] = (state.failedModelCalls[stage] ?? 0) + 1;
+}
+
+/** Record one hedge duplicate launched (an extra physical request = cost). */
+export function recordSentinelHedge(stage: string): void {
+  const state = active();
+  if (!state) return;
+  state.hedgedModelCalls[stage] = (state.hedgedModelCalls[stage] ?? 0) + 1;
+}
+
+/**
+ * Record that the shipping draft carries a degradation (a demoted moment, a
+ * least-bad pick with open polish findings, a quarantined interaction, a
+ * degraded declared cut, a browser-QA infrastructure bypass). Any entry turns
+ * a `published` finalize into `published-degraded` so the disposition ledger
+ * never reports a salvaged film as clean.
+ */
+export function recordSentinelDegradation(reason: string): void {
+  active()?.degradations.push(reason);
 }
 
 /** Count a finding caught (or a state made unrepresentable) at a given layer. */
@@ -158,12 +200,31 @@ export function recordSentinelTier(tier: "tier1" | "tier2", ms: number): void {
 }
 
 /**
+ * Record a delivery tier as elapsed-since-run-start, measured where the tier
+ * actually completes (inside `buildPreviews`, after the thumbnails/MP4 exist)
+ * rather than where the orchestrator happens to be. Tier 1 previously stopped
+ * the clock BEFORE preview generation, so the mission metric "wall-clock to
+ * thumbnails" quietly excluded the thumbnails.
+ */
+export function recordSentinelTierFromRunStart(tier: "tier1" | "tier2"): void {
+  const state = active();
+  if (!state) return;
+  recordSentinelTier(tier, Date.now() - state.startedAt);
+}
+
+/**
  * Summarize the current run to `planning/sentinel-run.json`. Best-effort; a
  * missing context (never began a run) or a disk error is swallowed.
  */
 export function finalizeSentinelRun(disposition: SentinelDisposition): void {
   const state = active();
   if (!state) return;
+  // The honesty downgrade: a "published" run that shipped with recorded
+  // degradations is published-degraded. Callers keep the simple two-outcome
+  // call site; the ledger decides which publish it really was.
+  if (disposition === "published" && state.degradations.length) {
+    disposition = "published-degraded";
+  }
   state.disposition = disposition;
   try {
     const dir = path.join(state.projectDir, "planning");
@@ -191,7 +252,12 @@ export function finalizeSentinelRun(disposition: SentinelDisposition): void {
       modelCalls: {
         total: state.modelCalls.length,
         byStage,
+        failed: state.failedModelCalls,
+        failedTotal: Object.values(state.failedModelCalls).reduce((sum, n) => sum + n, 0),
+        hedged: state.hedgedModelCalls,
+        hedgedTotal: Object.values(state.hedgedModelCalls).reduce((sum, n) => sum + n, 0),
       },
+      degradations: state.degradations,
       promptChars: {
         maxAuthor: maxAuthorPromptChars,
         totalPrompt: totalPromptChars,

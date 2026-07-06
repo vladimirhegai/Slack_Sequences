@@ -1722,16 +1722,18 @@ const NEAR_BLANK_FILM_FRACTION = 0.3;
 
 function normalizeHyperframesIssue(value: Record<string, unknown>): DirectLayoutIssue {
   const code = String(value.code ?? "layout_issue");
+  // Keys quoted deliberately: these are HyperFrames finding codes, and the
+  // Sentinel closed-world scanner only sees quoted code literals.
   const scaffoldHints: Record<string, string> = {
-    content_overlap:
+    "content_overlap":
       "Give each load-bearing group its own .zone inside a named flow layout; reserve overlap for an annotated decorative layer.",
-    important_safe_area:
+    "important_safe_area":
       "Keep the group in the .scene flow container so its safe padding applies; use a .zone and widen the grid track before wrapping.",
-    container_overflow:
+    "container_overflow":
       "Move the content into a min-width:0 .zone and let the named grid/flex layout size the container.",
-    clipped_text:
+    "clipped_text":
       "Reflow the text in a .stack/.zone, remove fixed box height, then reduce type only if the flow layout still cannot fit.",
-    text_box_overflow:
+    "text_box_overflow":
       "Reflow the text in a .stack/.zone, remove fixed box height, then reduce type only if the flow layout still cannot fit.",
   };
   return {

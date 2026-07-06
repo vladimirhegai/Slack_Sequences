@@ -102,12 +102,15 @@ import {
 } from "./pacingAudit.ts";
 import { readFrameMeta } from "./frameDesign.ts";
 import {
+  recordSentinelDegradation,
+  recordSentinelHedge,
   recordSentinelLayerFinding,
   recordSentinelModelCall,
+  recordSentinelModelCallFailure,
   recordSentinelNormalization,
   recordSentinelScaffold,
 } from "./sentinelTelemetry.ts";
-import { sentinelSkeletonEnabled, sentinelSlotsEnabled } from "./sentinelFlags.ts";
+import { criticSkipCleanEnabled, sentinelSkeletonEnabled, sentinelSlotsEnabled } from "./sentinelFlags.ts";
 import {
   assembleSlotComposition,
   attributeFindingsToScenes,
@@ -1418,12 +1421,16 @@ const REVEALABLE_CHILD_CLASS =
 
 /** The kind-appropriate revealable child class for a rows-markup top-up. */
 function rowsChildMarkup(kind: string | undefined, index: number): string {
-  if (kind === "kanban") return `<div class="cmp-card material">Card ${index}</div>`;
-  if (kind === "chat") return `<div class="cmp-msg">Message ${index}</div>`;
+  // data-sequences-neutral marks host-invented placeholder copy so the
+  // publish-time honesty scan can tell whether it actually SHIPPED (an
+  // earlier attempt's injection may be superseded by a real re-author).
+  const mark = ' data-sequences-neutral="1"';
+  if (kind === "kanban") return `<div class="cmp-card material"${mark}>Card ${index}</div>`;
+  if (kind === "chat") return `<div class="cmp-msg"${mark}>Message ${index}</div>`;
   if (kind === "table") {
-    return `<div class="cmp-row"><span>Row ${index}</span><span class="cmp-chip">ok</span></div>`;
+    return `<div class="cmp-row"${mark}><span>Row ${index}</span><span class="cmp-chip">ok</span></div>`;
   }
-  return `<div class="cmp-item">Item ${index}</div>`;
+  return `<div class="cmp-item"${mark}>Item ${index}</div>`;
 }
 
 /**
@@ -1506,9 +1513,13 @@ function normalizeJsonIsland(
   const html = source.replace(pattern, (match, open: string, _quote: string, body: string, close: string) => {
     if (!found) {
       found = true;
-      if (body === payload) return match;
-      repairs += 1;
-      return `${open}${payload}${close}`;
+      // Stamp the host marker even when the payload already matches: from here
+      // on this island's content is host truth, and a later repair pass must
+      // not count re-stripping it as a model-authored island.
+      const hostOpen = ensureTagAttr(open, "data-sequences-host", "1");
+      if (body === payload && hostOpen === open) return match;
+      if (body !== payload) repairs += 1;
+      return `${hostOpen}${payload}${close}`;
     }
     repairs += 1;
     return "";
@@ -1516,17 +1527,24 @@ function normalizeJsonIsland(
   return { html, repairs, found };
 }
 
-function removeJsonIsland(source: string, id: string): { html: string; removed: number } {
+function removeJsonIsland(
+  source: string,
+  id: string,
+): { html: string; removed: number; removedModel: number } {
   let removed = 0;
+  let removedModel = 0;
   const pattern = new RegExp(
     `\\n?[ \\t]*<script\\b[^>]*\\bid\\s*=\\s*(["'])${regexpEscape(id)}\\1[^>]*>[\\s\\S]*?<\\/script>`,
     "gi",
   );
-  const html = source.replace(pattern, () => {
+  const html = source.replace(pattern, (match) => {
     removed += 1;
+    // Islands the host injected/canonicalized carry data-sequences-host; a
+    // repair pass re-stripping them is routine plumbing, not a model fault.
+    if (!/\bdata-sequences-host\s*=\s*["']1["']/i.test(match)) removedModel += 1;
     return "";
   });
-  return { html, removed };
+  return { html, removed, removedModel };
 }
 
 /**
@@ -1582,15 +1600,22 @@ export const HOST_PLAN_ISLAND_IDS = [
  * about an island can ever reach validation. Idempotent for a document with no
  * author islands (the post-prompt-deletion steady state — removed stays empty).
  */
-export function stripAllHostPlanIslands(source: string): { html: string; removed: string[] } {
+export function stripAllHostPlanIslands(
+  source: string,
+): { html: string; removed: string[]; removedModel: string[] } {
   let html = source;
   const removed: string[] = [];
+  // Only islands WITHOUT the host marker — the ones the model actually
+  // hand-wrote. Host-injected islands from an earlier repair pass are
+  // re-stripped as routine plumbing and must not inflate the L2 telemetry.
+  const removedModel: string[] = [];
   for (const id of HOST_PLAN_ISLAND_IDS) {
     const result = removeJsonIsland(html, id);
     html = result.html;
     for (let index = 0; index < result.removed; index += 1) removed.push(id);
+    for (let index = 0; index < result.removedModel; index += 1) removedModel.push(id);
   }
-  return { html, removed };
+  return { html, removed, removedModel };
 }
 
 function ensureTagAttr(tag: string, name: string, value: string): string {
@@ -2139,6 +2164,33 @@ export function ensureRuntimeScriptOrdering(source: string): { html: string; cha
   return { html: rebuilt, changed: rebuilt !== source };
 }
 
+/**
+ * `.fromTo(target, vars, <number>)` is never valid GSAP — fromTo takes
+ * (target, fromVars, toVars, position). When the model omits toVars, GSAP
+ * receives the position NUMBER as the to-object and the compile throws
+ * "Cannot create property 'parent' on number '…'" — a runtime_bind_exception
+ * (and the whole paid attempt) spent on a call-shape typo (the
+ * sentinel-s5-interactions probe class, 2026-07-06). Rewriting the call to
+ * `.from(target, vars, position)` is exact and content-free: same target,
+ * same authored vars, same position, valid signature. Conservative by
+ * construction: only a string-literal target and a FLAT vars object match.
+ */
+export function repairMalformedFromToCalls(
+  source: string,
+): { html: string; repairs: number } {
+  let repairs = 0;
+  const pattern =
+    /\.fromTo\(\s*((["'])(?:\\.|(?!\2).)*\2)\s*,\s*(\{[^{}]*\})\s*,\s*(-?\d+(?:\.\d+)?)\s*\)/g;
+  const html = source.replace(
+    pattern,
+    (_match, target: string, _quote: string, vars: string, position: string) => {
+      repairs += 1;
+      return `.from(${target}, ${vars}, ${position})`;
+    },
+  );
+  return { html, repairs };
+}
+
 export function applyDeterministicSourceRepairs(
   draft: DirectCompositionDraft,
   projectDir: string,
@@ -2150,6 +2202,15 @@ export function applyDeterministicSourceRepairs(
     html = visibilityTweens.html;
     process.stderr.write(
       `[author] normalized ${visibilityTweens.repairs} GSAP display/visibility tween(s)\n`,
+    );
+  }
+  const fromToShape = repairMalformedFromToCalls(html);
+  if (fromToShape.repairs) {
+    html = fromToShape.html;
+    recordSentinelNormalization("gsap-call-shape", fromToShape.repairs);
+    process.stderr.write(
+      `[author] rewrote ${fromToShape.repairs} malformed fromTo(target, vars, <position>) ` +
+        `call(s) to from(...) — a missing toVars crashes GSAP compile\n`,
     );
   }
   if (lockedStoryboard?.length) {
@@ -2259,10 +2320,14 @@ export function applyDeterministicSourceRepairs(
     const strippedPlans = stripAllHostPlanIslands(html);
     if (strippedPlans.removed.length) {
       html = strippedPlans.html;
-      recordSentinelNormalization("island-strip", strippedPlans.removed.length);
+      // Count only genuinely model-authored islands (no host marker); islands
+      // the host injected on an earlier pass re-strip as routine plumbing.
+      recordSentinelNormalization("island-strip", strippedPlans.removedModel.length);
+      const modelAuthored = strippedPlans.removedModel.length;
       process.stderr.write(
-        `[author] stripped ${strippedPlans.removed.length} model-authored host plan island(s) ` +
-          `(re-injected canonically): ${[...new Set(strippedPlans.removed)].join(", ")}\n`,
+        `[author] stripped ${strippedPlans.removed.length} host plan island(s) ` +
+          `(${modelAuthored} model-authored, re-injected canonically): ` +
+          `${[...new Set(strippedPlans.removed)].join(", ")}\n`,
       );
     }
   }
@@ -2294,7 +2359,7 @@ export function applyDeterministicSourceRepairs(
       const timelineScript = /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
       if (timelineScript?.index !== undefined) {
         html = html.slice(0, timelineScript.index) +
-          `<script type="application/json" id="sequences-interactions">${payload}</script>\n` +
+          `<script type="application/json" data-sequences-host="1" id="sequences-interactions">${payload}</script>\n` +
           html.slice(timelineScript.index);
         repairedBindings += 1;
       }
@@ -2452,7 +2517,7 @@ export function applyDeterministicSourceRepairs(
         /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
       if (timelineScript?.index !== undefined) {
         html = html.slice(0, timelineScript.index) +
-          `<script type="application/json" id="sequences-cuts">${payload}</script>\n` +
+          `<script type="application/json" data-sequences-host="1" id="sequences-cuts">${payload}</script>\n` +
           html.slice(timelineScript.index);
         repairedCuts += 1;
       }
@@ -2513,7 +2578,7 @@ export function applyDeterministicSourceRepairs(
         /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
       if (timelineScript?.index !== undefined) {
         html = html.slice(0, timelineScript.index) +
-          `<script type="application/json" id="sequences-camera">${payload}</script>\n` +
+          `<script type="application/json" data-sequences-host="1" id="sequences-camera">${payload}</script>\n` +
           html.slice(timelineScript.index);
         repairedCamera += 1;
       }
@@ -2579,7 +2644,7 @@ export function applyDeterministicSourceRepairs(
         /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
       if (timelineScript?.index !== undefined) {
         html = html.slice(0, timelineScript.index) +
-          `<script type="application/json" id="sequences-components">${payload}</script>\n` +
+          `<script type="application/json" data-sequences-host="1" id="sequences-components">${payload}</script>\n` +
           html.slice(timelineScript.index);
         repairedComponents += 1;
       }
@@ -2690,7 +2755,7 @@ export function applyDeterministicSourceRepairs(
         /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
       if (timelineScript?.index !== undefined) {
         html = html.slice(0, timelineScript.index) +
-          `<script type="application/json" id="sequences-time">${payload}</script>\n` +
+          `<script type="application/json" data-sequences-host="1" id="sequences-time">${payload}</script>\n` +
           html.slice(timelineScript.index);
         repairedTime += 1;
       }
@@ -2882,6 +2947,7 @@ export async function hedgedCompletion(
     const startBackup = (): void => {
       if (settled || backupStarted || !inFlight.primary) return;
       backupStarted = true;
+      recordSentinelHedge(label);
       process.stderr.write(
         `[${label}] slow response — hedging with a parallel duplicate request\n`,
       );
@@ -2975,6 +3041,7 @@ async function completeWithRetry(
       return output;
     } catch (error) {
       lastError = error;
+      recordSentinelModelCallFailure(label);
       if (attempt >= attempts || isOutputTruncation(error) || !isTransientProviderError(error)) {
         throw error;
       }
@@ -3019,12 +3086,13 @@ async function completeReasoningWithRetry(
       return output;
     } catch (error) {
       lastError = error;
+      recordSentinelModelCallFailure(label);
       if (attempt >= attempts || isOutputTruncation(error) || !isTransientProviderError(error)) {
         throw error;
       }
       process.stderr.write(
         `[${label}] attempt ${attempt}/${attempts} transient streaming fault: ` +
-          `${error instanceof Error ? error.message : String(error)} â€” retrying\n`,
+          `${error instanceof Error ? error.message : String(error)} — retrying\n`,
       );
       await new Promise((resolve) => setTimeout(resolve, 1_500 * attempt));
     }
@@ -4492,6 +4560,14 @@ function persistStoryboardAttempt(
   outcome: "rejected" | "truncated" | "artifact-missing",
   details: { rung: string; findings?: string[]; raw?: string },
 ): void {
+  // Storyboard-stage layer attribution (the author stage already has this):
+  // a rejected plan's findings were caught at L3 static (plan audits run in
+  // parseStoryboardResponse), and every persisted failed attempt bought a
+  // paid replacement call — an L5 model retry.
+  if (outcome === "rejected") {
+    recordSentinelLayerFinding("static", Math.max(1, details.findings?.length ?? 0));
+  }
+  recordSentinelLayerFinding("model-retry");
   try {
     const dir = path.join(projectDir, "planning", "attempts");
     fs.mkdirSync(dir, { recursive: true });
@@ -4743,7 +4819,7 @@ export async function requestStoryboardPlan(
     ...(requirements.minRequestedComponentKinds
       ? [
           "",
-          "BRIEF-SPECIFIC COMPONENT COVERAGE â€” this brief explicitly asks for",
+          "BRIEF-SPECIFIC COMPONENT COVERAGE — this brief explicitly asks for",
           `motion-native ${requirements.requestedComponentKinds?.join(", ")} components.`,
           `Plan at least ${requirements.minRequestedComponentKinds} of those distinct kinds and at least`,
           `${requirements.minComponentBeats} typed component beats. Product beats must become`,
@@ -5915,6 +5991,49 @@ export function countScaffoldedBindings(scenes: DirectScene[]): number {
 }
 
 /**
+ * The HONEST L1 figure: how many of the storyboard's host-guaranteed bindings
+ * (camera-world plane, stations, component roots) are actually PRESENT in the
+ * document that ships. The skeleton/slot templates emit these, but the model
+ * returns the interiors — a binding it dropped that no reconciler restored is
+ * not "unrepresentable", so counting planned bindings (the old behavior)
+ * overstated L1. Scanned per scene scope over the final html.
+ */
+export function countScaffoldBindingsPresent(
+  scenes: DirectScene[],
+  html: string,
+): number {
+  const scopes = new Map(
+    [...sceneScopeLocations(html)].map((scope) => [
+      scope.id,
+      html.slice(scope.openEnd, scope.closeStart),
+    ]),
+  );
+  let count = 0;
+  for (const scene of scenes) {
+    const content = scopes.get(scene.id);
+    if (!content) continue;
+    if (scene.camera?.path?.length) {
+      if (/\bdata-camera-world\b/i.test(content)) count += 1;
+      for (const region of worldStationRects(scene).keys()) {
+        if (
+          new RegExp(`\\bdata-region\\s*=\\s*["']${regexpEscape(region)}["']`, "i").test(content)
+        ) {
+          count += 1;
+        }
+      }
+    }
+    for (const component of scene.components ?? []) {
+      if (
+        new RegExp(`\\bdata-part\\s*=\\s*["']${regexpEscape(component.id)}["']`, "i").test(content)
+      ) {
+        count += 1;
+      }
+    }
+  }
+  return count;
+}
+
+/**
  * Per-scene interior templates (Sentinel Phase 2 slots): the inner HTML the
  * author fills for each `<scene_html id>` slot. The host owns the `<section>`
  * wrapper at assembly time, so the model only sees and returns the interior.
@@ -5985,6 +6104,112 @@ function slotResponseContract(storyboard: DirectScene[]): string {
     "Keep each scene's html + script focused; the whole response must stay under",
     "the output-size limit above.",
   ].join("\n");
+}
+
+/**
+ * The director prompt's whole-document bullets, each with its slot-mode
+ * replacement. In slot mode the host owns the chassis, section wrappers, the
+ * paused timeline, and scene-window visibility — the base prompt telling the
+ * author to build exactly those things is what produced the documented
+ * "slot-envelope drift" (and the p7-denseui attempt that returned no slots at
+ * all). Exact-match surgery, not prose appended after a contradiction: the
+ * model must never see both instructions.
+ *
+ * Every entry MUST keep matching `prompts/planning-director.md` byte-for-byte —
+ * `test/promptBudget.test.ts` fails if an anchor goes stale, so a prompt edit
+ * that would silently resurrect the contradiction fails CI instead.
+ */
+export const SLOT_MODE_DIRECTOR_REWRITES: ReadonlyArray<{ find: string; replace: string }> = [
+  {
+    find:
+      "- Return a complete HTML document with one root carrying\n" +
+      "  `data-composition-id`, `data-width`, `data-height`, and finite\n" +
+      "  `data-duration`.",
+    replace:
+      "- The host owns the document chassis: the root element and its\n" +
+      "  `data-composition-id`, `data-width`, `data-height`, and `data-duration`\n" +
+      "  are assembled deterministically. Author only the requested scene slots.",
+  },
+  {
+    find:
+      "- Use one paused GSAP timeline, initialized synchronously and registered as\n" +
+      '  `window.__timelines["<composition-id>"]` after all tweens are authored.',
+    replace:
+      "- The host creates, registers, and seeks the single paused GSAP timeline;\n" +
+      "  your `<scene_script>` statements are appended into it. Never create or\n" +
+      "  register a timeline yourself.",
+  },
+  {
+    find:
+      '- Mark each storyboard scene with `class="scene clip"`, a stable `id`,\n' +
+      "  `data-scene`, `data-start`, `data-duration`, and `data-track-index`.",
+    replace:
+      "- The host emits every scene `<section>` wrapper with its `id`,\n" +
+      "  `data-scene`, timing, and track attributes. Never author a `<section>`\n" +
+      "  wrapper yourself.",
+  },
+  {
+    find:
+      "- The paused timeline must own scene-window opacity so exactly the intended\n" +
+      "  scene(s) are visible at every seeked time. Initialize all scene wrappers\n" +
+      "  explicitly, reveal them at their `data-start`, and clear them at the end of\n" +
+      "  their window; never rely on DOM order to cover inactive scenes.",
+    replace:
+      "- The host owns scene-window visibility: each scene is revealed at its\n" +
+      "  start and cleared at the end of its window deterministically. Never\n" +
+      "  author opacity sets on a scene wrapper; animate interior elements only.",
+  },
+  {
+    find:
+      "Return exactly these two tags and nothing else when no locked storyboard is\n" +
+      "provided. When `<locked_storyboard_json>` is present, the job prompt overrides\n" +
+      "this contract and requests only `<index_html>`.",
+    replace:
+      "The job prompt's scene-slot response contract overrides this section:\n" +
+      "return one `<film_style>` plus per-scene `<scene_html>`/`<scene_script>`\n" +
+      "tags — never `<index_html>` or a complete document.",
+  },
+];
+
+/**
+ * Rewrite the whole-document contract bullets for slot mode. A stale anchor
+ * must never sink a live paid call, so a miss degrades to an explicit
+ * precedence block appended after the director text (weaker than surgery, but
+ * unambiguous) plus a stderr warning; `test/promptBudget.test.ts` asserts zero
+ * misses so the drift is caught in CI, not in production.
+ */
+export function adaptDirectorPromptForSlots(
+  prompt: string,
+  misses?: string[],
+): string {
+  let adapted = prompt;
+  let missed = false;
+  for (const { find, replace } of SLOT_MODE_DIRECTOR_REWRITES) {
+    if (!adapted.includes(find)) {
+      missed = true;
+      misses?.push(find);
+      process.stderr.write(
+        `[author] slot-mode director rewrite anchor no longer matches ` +
+          `planning-director.md: "${find.slice(0, 60)}…" — update ` +
+          `SLOT_MODE_DIRECTOR_REWRITES with the edit\n`,
+      );
+      continue;
+    }
+    adapted = adapted.replace(find, replace);
+  }
+  if (missed) {
+    adapted += [
+      "",
+      "",
+      "## SLOT-MODE PRECEDENCE (overrides any contradicting rule above)",
+      "The host owns the document chassis, every scene <section> wrapper, the",
+      "single paused registered timeline, and scene-window visibility. Return",
+      "ONLY <film_style> plus per-scene <scene_html>/<scene_script> tags —",
+      "never <index_html>, a complete document, a timeline registration, or",
+      "opacity sets on a scene wrapper.",
+    ].join("\n");
+  }
+  return adapted;
 }
 
 export function creationPrompt(args: {
@@ -6106,12 +6331,6 @@ export function creationPrompt(args: {
         ...args.validationFeedback.map((issue) => `- ${issue}`),
       ].join("\n")
     : "";
-  // L1 telemetry: when the skeleton/slots path is active the host guarantees
-  // these bindings instead of leaving them to the model — count them once
-  // (idempotent-by-max, so re-emitting on a retry doesn't inflate).
-  if (args.lockedStoryboard && (args.slots || sentinelSkeletonEnabled())) {
-    recordSentinelScaffold(countScaffoldedBindings(args.lockedStoryboard));
-  }
   const lockedStoryboard = args.lockedStoryboard
     ? [
         "## Locked storyboard and cut graph",
@@ -6194,7 +6413,7 @@ export function creationPrompt(args: {
   );
   return [
     "SYSTEM:",
-    DIRECTOR_PROMPT,
+    args.slots ? adaptDirectorPromptForSlots(DIRECTOR_PROMPT) : DIRECTOR_PROMPT,
     "",
     args.compact ? compactSkillText(args.skills.text) : args.skills.text,
     "",
@@ -6556,27 +6775,55 @@ function slotCompositionId(projectDir: string): string {
 }
 
 /**
- * A compact continuation prompt for a truncated slot response: keep every
- * completed scene, re-request only the missing tail. Carries the shared film
- * style already produced (so the tail matches) and only the missing scenes'
- * interior templates — far cheaper than re-authoring the whole film.
+ * A compact continuation prompt for a truncated or contract-violating slot
+ * response: keep every completed scene, re-request only the named scenes.
+ * Carries the shared film style already produced (so the tail matches) and
+ * only those scenes' interior templates — far cheaper than re-authoring the
+ * whole film. When `repairNotes` is set this is a scaffold repair, not a
+ * truncation: the defective scene's own html/script ride along as the
+ * minimal-edit baseline (the storyboard findings-retry lesson — carrying the
+ * artifact forward converges where re-draws whack-a-mole).
  */
 function slotContinuationPrompt(
   args: DirectCompositionArgs,
   filmStyle: string | undefined,
   missing: DirectScene[],
+  repairNotes?: Map<string, string[]>,
+  previousSlots?: ParsedSceneSlots,
 ): string {
   const interiors = buildSceneSlotInteriors(args.lockedStoryboard ?? []);
-  const templates = missing.flatMap((scene) => [
-    "",
-    `<scene_html id="${scene.id}">`,
-    interiors.get(scene.id) ?? "…compose this scene's interior…",
-    "</scene_html>",
-  ]);
+  const templates = missing.flatMap((scene) => {
+    const notes = repairNotes?.get(scene.id) ?? [];
+    const previous = previousSlots?.scenes.get(scene.id);
+    return [
+      "",
+      ...(notes.length
+        ? [`Host-contract findings for scene "${scene.id}" (restore these bindings):`, ...notes.map((note) => `- ${note}`)]
+        : []),
+      ...(previous?.html?.trim()
+        ? [
+            "Your previous interior for this scene (keep its content and copy;",
+            "change ONLY what the findings above require):",
+            `<previous_scene_html id="${scene.id}">`,
+            previous.html,
+            "</previous_scene_html>",
+          ]
+        : []),
+      `<scene_html id="${scene.id}">`,
+      interiors.get(scene.id) ?? "…compose this scene's interior…",
+      "</scene_html>",
+    ];
+  });
+  const intro = repairNotes
+    ? "Some scenes came back without host-contract bindings the template carried. The" +
+      "\nother scenes are kept; re-author ONLY the scenes below, keeping each template's" +
+      "\ndata-camera-world plane, data-region stations, and component roots" +
+      "\n(data-part/data-component) exactly as given."
+    : "The previous response was cut off. The completed scenes are kept; author ONLY" +
+      "\nthe missing scenes below, matching the established film style exactly.";
   return [
     "SYSTEM: You are the HyperFrames author finishing a partly-written launch film.",
-    "The previous response was cut off. The completed scenes are kept; author ONLY",
-    "the missing scenes below, matching the established film style exactly.",
+    intro,
     "",
     "## Job brief and trusted evidence",
     args.brief,
@@ -6600,14 +6847,85 @@ function slotContinuationPrompt(
 }
 
 /**
+ * The scaffold-contract violations the L2 reconcilers CANNOT mechanically fix:
+ * a required camera station or declared component root COMPLETELY absent from
+ * a returned scene interior. Near-misses stay out deliberately —
+ * `reconcileContractBindings` claims an exact-name/unique-candidate station and
+ * `reconcileComponentBindings` claims a kind-marked or semantically unique
+ * element for free — so this only names the states that would otherwise burn a
+ * whole-document paid retry (`component_root_missing` / `camera_region_missing`).
+ * The missing camera-world plane is likewise excluded: `reconcileCameraWorldPlanes`
+ * wraps the interior deterministically.
+ */
+export function slotScaffoldViolations(
+  storyboard: DirectScene[],
+  slots: ParsedSceneSlots,
+): Map<string, string[]> {
+  const { cameraById } = skeletonContext(storyboard);
+  const out = new Map<string, string[]>();
+  for (const scene of storyboard) {
+    const html = slots.scenes.get(scene.id)?.html?.trim();
+    if (!html) continue; // a wholly missing interior is the truncation path
+    const notes: string[] = [];
+    const cameraScene = scene.camera?.path?.length ? cameraById.get(scene.id) : undefined;
+    if (cameraScene) {
+      const required = new Set<string>();
+      for (const segment of cameraScene.segments) {
+        if (segment.fromRegion) required.add(segment.fromRegion);
+        if (segment.toRegion) required.add(segment.toRegion);
+      }
+      const present = new Set(
+        [...html.matchAll(/\bdata-region\s*=\s*["']([^"']+)["']/gi)].map((m) => m[1]!),
+      );
+      // Count tolerance: with as many stations as required, a renamed station
+      // is a near-miss the L2 reconciler owns; fewer stations than required is
+      // a true omission no reconciler can invent.
+      if (present.size < required.size) {
+        for (const region of required) {
+          if (!present.has(region)) {
+            notes.push(`camera station data-region="${region}" is missing from this scene`);
+          }
+        }
+      }
+    }
+    for (const component of scene.components ?? []) {
+      const rootRe = new RegExp(
+        `\\bdata-part\\s*=\\s*["']${regexpEscape(component.id)}["']`,
+        "i",
+      );
+      const kindRe = new RegExp(
+        `\\bdata-component\\s*=\\s*["']${regexpEscape(component.kind)}["']`,
+        "i",
+      );
+      // A kind-marked element without the right data-part is the near-miss
+      // reconcileComponentBindings claims for free; only a component with NO
+      // trace at all needs the model again.
+      if (!rootRe.test(html) && !kindRe.test(html)) {
+        notes.push(
+          `component root data-part="${component.id}" data-component="${component.kind}" ` +
+            "is missing from this scene",
+        );
+      }
+    }
+    if (notes.length) out.set(scene.id, notes);
+  }
+  return out;
+}
+
+/**
  * Author one scene-slot composition (Sentinel Phase 2). Requests the shared
  * film style + per-scene interior/script slots in one call, recovers a
  * truncated tail by re-requesting only the missing scenes (keeping every
- * completed scene), and assembles the canonical document deterministically.
- * A response missing every scene, or still missing scenes after one
- * continuation, throws so the loop falls back to the whole-doc ladder.
+ * completed scene AND treating a scene whose <scene_script> is missing as
+ * incomplete — an interior without a script assembles into a scene that never
+ * moves), then enforces the scaffold contract with ONE scene-scoped repair
+ * round (the bounded scene-scoped retry: a dropped component root or camera
+ * station re-requests only the offending scenes at ~continuation cost instead
+ * of burning a whole-document paid attempt). A response missing every scene,
+ * or still missing interiors/scripts after continuation, throws so the loop
+ * falls back to the whole-doc ladder.
  */
-async function authorSlotDraft(
+export async function authorSlotDraft(
   provider: AgentProvider,
   args: DirectCompositionArgs,
   initialPrompt: string,
@@ -6617,16 +6935,17 @@ async function authorSlotDraft(
   let raw = await completeSourceWithContinuation(provider, initialPrompt, completeOptions);
   let slots = extractSceneSlots(raw);
   const missingOf = (parsed: ParsedSceneSlots): DirectScene[] =>
-    storyboard.filter((scene) => !parsed.scenes.get(scene.id)?.html?.trim());
-  let missing = missingOf(slots);
-  if (missing.length && missing.length < storyboard.length) {
-    process.stderr.write(
-      `[author] slot response truncated (${missing.length}/${storyboard.length} scenes missing); ` +
-        `re-requesting only the missing tail: ${missing.map((s) => s.id).join(", ")}\n`,
-    );
+    storyboard.filter((scene) => {
+      const slot = parsed.scenes.get(scene.id);
+      return !slot?.html?.trim() || !slot?.script?.trim();
+    });
+  const requestScenes = async (
+    scenes: DirectScene[],
+    repairNotes?: Map<string, string[]>,
+  ): Promise<void> => {
     const contRaw = await completeSourceWithContinuation(
       provider,
-      slotContinuationPrompt(args, slots.filmStyle, missing),
+      slotContinuationPrompt(args, slots.filmStyle, scenes, repairNotes, repairNotes ? slots : undefined),
       { ...completeOptions, maxTokens: Math.min(authorMaxTokens(), 8_192) },
     );
     const contSlots = extractSceneSlots(contRaw);
@@ -6635,9 +6954,32 @@ async function authorSlotDraft(
     }
     if (!slots.filmStyle && contSlots.filmStyle) slots = { ...slots, filmStyle: contSlots.filmStyle };
     raw = `${raw}\n<!-- slot continuation -->\n${contRaw}`;
+  };
+  let missing = missingOf(slots);
+  const anyHtml = storyboard.some((scene) => slots.scenes.get(scene.id)?.html?.trim());
+  if (missing.length && anyHtml) {
+    process.stderr.write(
+      `[author] slot response incomplete (${missing.length}/${storyboard.length} scenes missing ` +
+        `an interior or script); re-requesting only those scenes: ` +
+        `${missing.map((s) => s.id).join(", ")}\n`,
+    );
+    await requestScenes(missing);
     missing = missingOf(slots);
   }
-  const { html, missingHtml } = assembleSlotComposition({
+  // Scaffold-contract enforcement (the scene-scoped retry): one bounded repair
+  // round for scenes that dropped a host-guaranteed binding the L2 reconcilers
+  // cannot restore. If the round does not converge, assemble anyway — the L3
+  // static gate still owns the finding (gates are never loosened).
+  const violations = slotScaffoldViolations(storyboard, slots);
+  if (violations.size) {
+    const offenders = storyboard.filter((scene) => violations.has(scene.id));
+    process.stderr.write(
+      `[author] slot scaffold repair: ${violations.size} scene(s) dropped host-contract ` +
+        `bindings (${offenders.map((s) => s.id).join(", ")}); re-requesting only those scenes\n`,
+    );
+    await requestScenes(offenders, violations);
+  }
+  const { html, missingHtml, missingScript } = assembleSlotComposition({
     storyboard,
     slots,
     compositionId: slotCompositionId(args.projectDir),
@@ -6649,6 +6991,13 @@ async function authorSlotDraft(
     throw new Error(
       `author slot response is missing scene interior(s) after continuation: ${missingHtml.join(", ")}` +
         " — the next attempt must emit every scene more compactly.",
+    );
+  }
+  if (missingScript.length) {
+    throw new Error(
+      `author slot response is missing <scene_script> block(s) after continuation: ` +
+        `${missingScript.join(", ")} — every scene needs its timeline statements ` +
+        "(a scene without a script never moves).",
     );
   }
   return { draft: { storyboard, html }, raw, slots };
@@ -6693,11 +7042,15 @@ async function authorComposition(
     throw error;
   } finally {
     persistAuthorRunSummary(args.projectDir, summary);
-    // Attribute each rejected author attempt to the layer that caught it —
-    // static (L3) vs browser (L4) — plus the paid re-authors it cost (L5).
+    // Attribute each rejected author attempt's FINDINGS to the layer that
+    // caught them — static (L3) vs browser (L4) — plus the paid re-authors the
+    // rejections cost (L5). Counting findings, not attempts: one attempt that
+    // died on six findings is six caught states, and the docs promised
+    // findings-by-layer.
     for (const attempt of summary.attempts) {
-      if (attempt.outcome === "static-rejected") recordSentinelLayerFinding("static");
-      else if (attempt.outcome === "browser-rejected") recordSentinelLayerFinding("browser");
+      const findings = Math.max(1, attempt.findingSignatures.length);
+      if (attempt.outcome === "static-rejected") recordSentinelLayerFinding("static", findings);
+      else if (attempt.outcome === "browser-rejected") recordSentinelLayerFinding("browser", findings);
       if (attempt.number > 1) recordSentinelLayerFinding("model-retry");
     }
   }
@@ -6866,6 +7219,9 @@ async function authorCompositionLoop(
             summary.strategyChanges.push(
               `degraded-volunteered-cut:${degradation.degraded.join(",")}`,
             );
+            recordSentinelDegradation(
+              `degraded-volunteered-cut:${degradation.degraded.join(",")}`,
+            );
             draft = degradation.draft;
             validation = revalidated;
             if (args.lockedStoryboard) {
@@ -6967,6 +7323,7 @@ async function authorCompositionLoop(
           `[author] browser QA infrastructure unavailable; publishing statically valid draft: ` +
             `${browserQa.infraError}\n`,
         );
+        recordSentinelDegradation("browser-qa-infra-bypass");
         return { draft, raw, attempts: attempt, browserQa };
       }
       if (
@@ -7008,6 +7365,13 @@ async function authorCompositionLoop(
         return { draft, raw, attempts: attempt, browserQa };
       }
       if (attempt === 3 && browserQa.ok && lastBrowserValid) {
+        // The least-bad pick: browser-valid but with open polish findings /
+        // repair warnings — an honest publish, not a clean one.
+        if (lastBrowserValid.qualityPenalty > 0 || !lastBrowserValid.browserQa?.strictOk) {
+          recordSentinelDegradation(
+            `least-bad-pick:penalty=${lastBrowserValid.qualityPenalty}`,
+          );
+        }
         const { qualityPenalty: _qualityPenalty, ...best } = lastBrowserValid;
         return { ...best, attempts: attempt };
       }
@@ -7113,6 +7477,14 @@ async function authorCompositionLoop(
       `[author] final repair regressed; publishing browser-valid attempt ` +
         `${lastBrowserValid.attempts}/3 instead\n`,
     );
+    // The other least-bad publish seam (the s5-slotrepair probe found it
+    // unmarked): browser-valid but carrying open polish findings / repair
+    // warnings — an honest publish, not a clean one.
+    if (lastBrowserValid.qualityPenalty > 0 || !lastBrowserValid.browserQa?.strictOk) {
+      recordSentinelDegradation(
+        `least-bad-pick:penalty=${lastBrowserValid.qualityPenalty}`,
+      );
+    }
     const { qualityPenalty: _qualityPenalty, ...best } = lastBrowserValid;
     return { ...best, attempts: 3 };
   }
@@ -7192,6 +7564,8 @@ async function authorCompositionLoop(
         // ok), exactly like the least-bad pick at attempt 3 — polish
         // findings must not sink the run's only working draft.
         if (browserQa.ok || browserQa.infraError) {
+          if (browserQa.infraError) recordSentinelDegradation("browser-qa-infra-bypass");
+          else if (!browserQa.strictOk) recordSentinelDegradation("rescue-published-with-polish-findings");
           return { draft, raw, attempts: 4, browserQa };
         }
         persistAuthorAttempt(args.projectDir, 4, "browser-rejected", {
@@ -7276,6 +7650,9 @@ async function authorCompositionLoop(
             `moment-demote-last-resort:${[...unboundPrimaryIds].join(",")}`,
           );
           recordSentinelNormalization("moment-demote-last-resort", unboundPrimaryIds.size);
+          recordSentinelDegradation(
+            `moment-demote-last-resort:${[...unboundPrimaryIds].join(",")}`,
+          );
           args = { ...args, lockedStoryboard: demoted };
           persistUpgradedStoryboard(args.projectDir, demoted);
           return { draft: salvageDraft, raw: lastMomentBlocked.raw, attempts: 4, browserQa };
@@ -7443,7 +7820,7 @@ async function applyContinuityCritique(
   // when any polish finding shipped — that is exactly the draft the critic
   // exists to improve.
   if (
-    process.env.SLACK_SEQUENCES_CRITIC_SKIP_CLEAN !== "0" &&
+    criticSkipCleanEnabled() &&
     criticSkippableCleanDraft(result.browserQa, result.staticRepairWarnings ?? [])
   ) {
     process.stderr.write(
@@ -7720,6 +8097,7 @@ async function reconcileDegradedCutPaperwork(
       `[cut-honesty] rewrote ${rewritten.length} runtime-degraded boundary/ies as executed ` +
         `zoom-through in the shipped storyboard: ${rewritten.join(", ")}\n`,
     );
+    recordSentinelDegradation(`cut-degraded-shipped:${rewritten.join(",")}`);
     return { ...result, draft, browserQa };
   } catch (error) {
     process.stderr.write(
@@ -7747,5 +8125,28 @@ export async function requestDirectComposition(
   }
   const critiqued = await applyContinuityCritique(provider, critiqueArgs, result);
   // LAST: whatever ships, its paperwork tells the truth about every boundary.
-  return reconcileDegradedCutPaperwork(args, critiqued);
+  const final = await reconcileDegradedCutPaperwork(args, critiqued);
+  // L1 telemetry measured against the document that SHIPS: how many
+  // host-guaranteed bindings the skeleton/slots path actually preserved, not
+  // how many the templates planned (idempotent-by-max across revisions).
+  if (sentinelSkeletonEnabled() || sentinelSlotsEnabled()) {
+    recordSentinelScaffold(
+      countScaffoldBindingsPresent(final.draft.storyboard, final.draft.html),
+    );
+  }
+  // Publish-time honesty scan: host-invented neutral placeholder children
+  // (`topUpRowsMarkup`) that survived into the SHIPPING document mean the
+  // film shows literal "Item 1…" copy (the s5-slotrepair probe's terminal did,
+  // on frame). Detected here — not at injection — because an earlier attempt's
+  // injection may be superseded by a real re-author.
+  if (/\bdata-sequences-neutral\s*=\s*["']1["']/i.test(final.draft.html)) {
+    recordSentinelDegradation("rows-neutral-children-shipped");
+  }
+  // Quarantined interactions likewise leave a detectable style tag; scanning
+  // the shipping document (not the quarantine helpers, which also run on
+  // attempts that later lose) keeps the ledger exact.
+  if (/<style\s+data-sequences-quarantine\b/i.test(final.draft.html)) {
+    recordSentinelDegradation("interaction-quarantine-shipped");
+  }
+  return final;
 }

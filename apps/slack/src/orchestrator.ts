@@ -62,7 +62,7 @@ import {
   beginSentinelRun,
   finalizeSentinelRun,
   recordSentinelStages,
-  recordSentinelTier,
+  recordSentinelTierFromRunStart,
 } from "./engine/sentinelTelemetry.ts";
 import { sentinelSkeletonEnabled, sentinelSlotsEnabled } from "./engine/sentinelFlags.ts";
 
@@ -625,12 +625,18 @@ async function buildPreviews(
     }
   }
 
+  // Tier 1 = "thumbnails exist" — recorded here, where that is true, not at
+  // the orchestrator call site (which used to stamp it before this function).
+  recordSentinelTierFromRunStart("tier1");
+
   if (!options.render) return { thumbnailPaths, toolCalls, usedMcp };
   // MP4 needs FFmpeg + Chrome; renderVideo degrades to thumbnails-only on failure.
   const rendered = await renderVideo(dir, {
     preferMcp: options.preferMcp,
     onProgress: options.onProgress,
   });
+  // Tier 2 = "MP4 exists"; a degraded thumbnails-only result records nothing.
+  if (rendered.mp4Path) recordSentinelTierFromRunStart("tier2");
   return {
     thumbnailPaths,
     mp4Path: rendered.mp4Path,
@@ -689,7 +695,6 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       skeleton: sentinelSkeletonEnabled(),
       slots: sentinelSlotsEnabled(),
     });
-    const sentinelStart = performance.now();
     const brief = assembleBrief(options);
     const skills = retrieveHyperframesSkillContext("create", brief);
     skillsUsed = skills.skillNames;
@@ -853,17 +858,16 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       options.preferMcp,
       options.onProgress,
     );
-    // Wall-clock to tier 1 = the model-bound authoring + submit that precedes
-    // thumbnails; the render_preview inside buildPreviews is fast and
-    // infra-bound (recorded separately in stage-timings.json).
-    recordSentinelTier("tier1", performance.now() - sentinelStart);
+    // Tier wall-clocks are recorded INSIDE buildPreviews, where each tier
+    // actually completes: tier 1 when the thumbnails exist, tier 2 when the
+    // MP4 exists. (They used to be stamped here, before/around the call, so
+    // "wall-clock to thumbnails" quietly excluded the thumbnails.)
     const willRender = options.render ?? true;
     const previews = await buildPreviews(dir, {
       render: willRender,
       preferMcp: options.preferMcp,
       onProgress: options.onProgress,
     });
-    if (willRender) recordSentinelTier("tier2", performance.now() - sentinelStart);
     recordSentinelStages(stages);
     finalizeSentinelRun(fallbackInfo ? "fallback" : "published");
     const current = loadDirectComposition(dir);
@@ -903,7 +907,6 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
   // calls, "published") so the telemetry instrument has a real, no-cost
   // end-to-end run to prove itself.
   beginSentinelRun(dir, { skeleton: sentinelSkeletonEnabled(), slots: sentinelSlotsEnabled() });
-  const presetStart = performance.now();
   const mutation = await applyMutation(
     dir,
     planToCommands(project, plan),
@@ -911,14 +914,14 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     options.preferMcp,
     options.onProgress,
   );
-  recordSentinelTier("tier1", performance.now() - presetStart);
+  // Tier wall-clocks are recorded inside buildPreviews when each tier's
+  // artifact actually exists.
   const presetWillRender = options.render ?? true;
   const previews = await buildPreviews(dir, {
     render: presetWillRender,
     preferMcp: options.preferMcp,
     onProgress: options.onProgress,
   });
-  if (presetWillRender) recordSentinelTier("tier2", performance.now() - presetStart);
   finalizeSentinelRun("published");
   const applied = loadProject(dir);
   return {

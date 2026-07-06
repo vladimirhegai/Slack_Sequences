@@ -77,30 +77,40 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
     id: "camera.world-plane",
     group: "camera",
     layer: "scaffold",
-    blocking: "impossible",
+    blocking: "blocking",
     findingPrefixes: ["camera_region_missing", "camera_part_missing"],
     promptCostChars: 1400,
     test: "test/authorReliability.test.ts",
     addedBecause:
       "2026-07-05 incident 1a: a scene declared a camera path but shipped no " +
-      "data-camera-world plane/stations. Phase 1 emits the plane + data-region " +
-      "stations at their exact worldLayout rects in the skeleton " +
-      "(buildSceneSkeletons, SENTINEL_SKELETON); reconcileCameraWorldPlanes is " +
-      "the L2 backstop and these codes stay the flag-OFF / brief-required gate.",
+      "data-camera-world plane/stations. The skeleton/slot templates emit the " +
+      "plane + data-region stations at their exact worldLayout rects " +
+      "(buildSceneSkeletons/buildSceneSlotInteriors). HONESTY (2026-07-06 final " +
+      "audit): the model returns the interiors, so omission stays representable " +
+      "— the ladder is: template → slotScaffoldViolations scene-scoped repair " +
+      "(missing stations re-request ONLY that scene) → reconcileCameraWorldPlanes " +
+      "L2 plane wrap → these codes as the L3 gate. The old 'impossible' label " +
+      "overstated the guarantee (p6/p7 probes still hit the codes); the L1 " +
+      "telemetry now counts bindings PRESERVED in the shipped document, not " +
+      "planned by the template.",
   },
   {
     id: "components.root",
     group: "components",
     layer: "scaffold",
-    blocking: "impossible",
+    blocking: "blocking",
     findingPrefixes: ["component_root_missing", "component_beat_unbound"],
     promptCostChars: 1200,
     test: "test/authorReliability.test.ts",
     addedBecause:
       "2026-07-05 incident 1b: a declared component had no data-part root. " +
-      "Phase 1 stamps the kit exemplar root (correct tag, cmp-<kind> class, real " +
-      "id as data-part) inside its station (componentSkeletonMarkup); " +
-      "reconcileComponentBindings is the L2 backstop; the codes stay the gate.",
+      "The templates stamp the kit exemplar root (correct tag, cmp-<kind> class, " +
+      "real id as data-part) inside its station (componentSkeletonMarkup). " +
+      "HONESTY (2026-07-06 final audit): same ladder as camera.world-plane — " +
+      "template → scene-scoped slot repair for a root with NO trace at all → " +
+      "reconcileComponentBindings for near-misses (kind-marked/unique candidate) " +
+      "→ these codes as the L3 gate. Never labeled 'impossible' again while the " +
+      "model authors the interiors.",
   },
 
   // ── L2 normalize — deterministic repair, zero paid attempts ─────────────────
@@ -228,6 +238,24 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "components/complexity reverts). Telemetry tag: morph-twin-reconcile.",
   },
 
+  {
+    id: "normalize.gsap-call-shape",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/authorReliability.test.ts",
+    addedBecause:
+      "2026-07-06 sentinel-s5-interactions probe: a `.fromTo(target, vars, " +
+      "<number>)` call (toVars omitted) makes GSAP treat the position number as " +
+      "the to-object and the compile throws 'Cannot create property parent on " +
+      "number' — a runtime_bind_exception and a burned paid attempt for a " +
+      "call-shape typo. repairMalformedFromToCalls rewrites the call to " +
+      "`.from(target, vars, position)` — exact, content-free, valid signature; " +
+      "only string-literal targets with a flat vars object match (conservative). " +
+      "It PREVENTS the runtime.invariants row's runtime_bind_exception.",
+  },
   {
     id: "normalize.moment-demote-last-resort",
     group: "normalize",
@@ -490,6 +518,36 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "camera transits and for off-frame world stations.",
   },
   {
+    id: "layout.hyperframes-spatial",
+    group: "layout",
+    layer: "browser",
+    blocking: "advisory",
+    findingPrefixes: [
+      "clipped_text",
+      "text_box_overflow",
+      "canvas_overflow",
+      "text_occluded",
+      "motion_appears_late",
+      "motion_out_of_order",
+      "motion_off_frame",
+      "motion_frozen",
+      "motion_selector_missing",
+      "motion_selector_ambiguous",
+    ],
+    promptCostChars: 0,
+    test: "test/layoutInspector.test.ts",
+    addedBecause:
+      "2026-07-06 final audit: HyperFrames' own layout/motion audit codes flow " +
+      "through normalizeHyperframesIssue as DYNAMIC strings, so the closed-world " +
+      "scan never saw them and probes shipped unregistered clipped_text / " +
+      "text_box_overflow findings (p7-denseui). The closed world for these is the " +
+      "vendored LayoutIssueCode union (vendor/hyperframes/packages/cli/src/utils/" +
+      "layoutAudit.ts, now in FINDING_SOURCE_FILES). Disposition: layoutInspector " +
+      "deliberately converts visual severities to non-publication-blocking " +
+      "warnings (resilience policy) — but any run shipping them is recorded " +
+      "published-degraded, never clean.",
+  },
+  {
     id: "runtime.invariants",
     group: "runtime",
     layer: "browser",
@@ -537,6 +595,13 @@ export const FINDING_SOURCE_FILES: readonly string[] = [
   "directComposition.ts",
   "compositionRunner.ts",
   "sceneSlots.ts",
+  // timeRamp's findings are prose-form today (no codes), but its errors flow
+  // into direct validation — scanned so a future typed code cannot slip past.
+  "timeRamp.ts",
+  // The vendored HyperFrames layout/motion audit: its LayoutIssueCode union is
+  // the closed world for the codes normalizeHyperframesIssue passes through
+  // dynamically (they never appear as literals in our own engine sources).
+  "../../vendor/hyperframes/packages/cli/src/utils/layoutAudit.ts",
 ];
 
 /**

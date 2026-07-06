@@ -20,9 +20,21 @@ The old architecture was *"model writes everything → host validates → host
 regex-repairs → model retries the whole artifact."* Every hardening pass
 strengthened detection; none shrank the surface the model can get wrong. Sentinel
 **moves every mechanically-decidable obligation OFF the model** so whole classes
-become *unrepresentable* instead of *detected*, and retries become *scene-scoped*
-instead of *document-scoped*. **Gates are never loosened — Sentinel changes WHERE
-an obligation is enforced, not WHETHER.**
+become host-owned instead of merely detected. **Gates are never loosened —
+Sentinel changes WHERE an obligation is enforced, not WHETHER.**
+
+**Honest scope (2026-07-06 final audit).** The host truly owns, by construction:
+the document chassis, every scene `<section>` wrapper, stage positioning, the
+paused timeline + its registration + the seek, scene-window visibility, and every
+plan island/runtime/compile seam. The model still authors scene INTERIORS, so an
+interior-level binding (camera station, component root) remains *representable* as
+missing — its ladder is: host template → **scene-scoped slot repair**
+(`slotScaffoldViolations`: a scene that dropped a station/root with no trace is
+re-requested ALONE, with findings + its own previous interior as the minimal-edit
+baseline) → free L2 reconciliation for near-misses → the L3 gate. Retry
+scope today: slot **truncation and scaffold repair are scene-scoped**; a
+validation-stage rejection still retries the document (findings are attributed
+per scene in the logs; per-scene validation retries remain future work).
 
 ## The layer model
 
@@ -93,8 +105,8 @@ rung) · **advisory** (never blocks).
 
 | Obligation (group) | id | Layer | Blocking | Owns finding prefixes | Proof |
 | --- | --- | --- | --- | --- | --- |
-| camera | `camera.world-plane` | L1 scaffold | impossible | `camera_region_missing`, `camera_part_missing` | authorReliability |
-| components | `components.root` | L1 scaffold | impossible | `component_root_missing`, `component_beat_unbound` | authorReliability |
+| camera | `camera.world-plane` | L1 scaffold | blocking | `camera_region_missing`, `camera_part_missing` | authorReliability |
+| components | `components.root` | L1 scaffold | blocking | `component_root_missing`, `component_beat_unbound` | authorReliability |
 | interactions | `normalize.host-plan-islands` | L2 normalize | det-repair | — (prevents island contract-parse errors) | authorReliability |
 | interactions | `normalize.source-bindings` | L2 normalize | det-repair | — (reconciles near-miss data-part/region) | authorReliability |
 | normalize | `normalize.camera-budget-clamp` | L2 normalize | det-repair | — (prevents `pacing/camera-budget`) | pacingAudit |
@@ -102,6 +114,8 @@ rung) · **advisory** (never blocks).
 | normalize | `normalize.camera-move-delay` | L2 normalize | det-repair | — (prevents `pacing/outcome` "0.0s later") | pacingAudit |
 | normalize | `normalize.timeramp-retime` | L2 normalize | det-repair | — (prevents ramp motivation/solvability vetoes) | directComposition |
 | normalize | `normalize.morph-twin-reconcile` | L2 normalize | det-repair | — (prevents morph-to-undeclared-twin vetoes) | directComposition |
+| normalize | `normalize.gsap-call-shape` | L2 normalize | det-repair | — (rewrites `fromTo(t, vars, <number>)` → `from(...)`; prevents a `runtime_bind_exception` compile crash) | authorReliability |
+| normalize | `normalize.moment-demote-last-resort` | L2 normalize | det-repair | — (pre-throw salvage: unbound PRIMARY moments demote to supporting; run records `published-degraded`) | directComposition |
 | camera | `camera.energy` | L3 static | blocking | `camera/energy` | cameraContract |
 | components | `components.complexity` | L3 static | blocking | `components/complexity` | componentContract |
 | coherence | `cuts.coherence` | L3 static | advisory-late | `cuts/coherence` | cutContract |
@@ -119,12 +133,20 @@ rung) · **advisory** (never blocks).
 | exits | `exits.stale-asset` | L4 browser | advisory | `stale_asset_lingers` | layoutInspector |
 | layout | `layout` | L4 browser | blocking | `layout_`, `spatial_focal_`, `important_safe_area`, `content_overlap`, `container_overflow`, `contrast_aa` | layoutInspector |
 | runtime | `runtime.invariants` | L4 browser | blocking | `runtime_bind_exception`, `near_blank_film`, `near_blank_scene`, `browser_warning`, `browser_runtime`, `invalid_inline_script_syntax`, `overlapping_clips_same_track` | directComposition |
+| layout | `layout.hyperframes-spatial` | L4 browser | advisory | `clipped_text`, `text_box_overflow`, `canvas_overflow`, `text_occluded`, `motion_*` (the vendored `LayoutIssueCode` union) | layoutInspector |
 
 The `normalize.*` rows deliberately carry NO finding prefixes because they
 PREVENT another row's findings rather than emitting their own. The scaffold rows
 still list the L3/L4 backstop codes — the gate is never removed, so with
 `SENTINEL_SKELETON=0` (or a brief-required case) those codes still fire and the
-closed-world test stays green in either flag position.
+closed-world test stays green in either flag position. The
+`layout.hyperframes-spatial` codes are DYNAMIC pass-throughs
+(`normalizeHyperframesIssue`), so the closed-world scan also reads the vendored
+`LayoutIssueCode` union (`vendor/hyperframes/packages/cli/src/utils/layoutAudit.ts`)
+— the 2026-07-06 audit found probes shipping `clipped_text`/`text_box_overflow`
+unregistered. Their severity conversion to non-blocking warnings is deliberate
+resilience policy, but any run that ships them via the least-bad pick is
+recorded `published-degraded`, never clean.
 
 ### The storyboard normalizers are atomic
 
@@ -236,23 +258,50 @@ ladder count ever changes, that boundary and all attempt accounting move with it
 ## Telemetry (the before/after instrument)
 
 Per job, `planning/sentinel-run.json` (`src/engine/sentinelTelemetry.ts`) records
-per-stage wall-clock + attempts, model-call count, prompt/completion chars
+per-stage wall-clock + attempts, model-call counts, prompt/completion chars
 (`maxAuthor`), **findings-by-layer** (L0→L5), deterministic-normalization tags,
 tier-1/tier-2 wall-clock, and the disposition
 (`published | published-degraded | fallback | fail-loud`). Collection uses
 `AsyncLocalStorage` (diagnostic-only; a disk fault never disturbs a build).
 
-- **The L1 scaffold counter** (`recordSentinelScaffold`) records the number of
-  host-guaranteed bindings (camera planes + stations, component roots) the
-  skeleton/slots path made unrepresentable this run — idempotent-by-max, so
-  re-emitting on a retry doesn't inflate. Before this, L1 always read 0 in the
-  Carryover A telemetry even with the skeleton active; now it carries a real
-  number. (L1 is *also* observable as the absence of the L2 paperwork repairs —
-  `component-binding`, `camera-world-plane`, `contract-binding` — it replaces.)
+The 2026-07-06 final audit made the instrument honest end-to-end:
+
+- **`published-degraded` is real.** Every degradation the run ships with —
+  `moment-demote-last-resort`, `least-bad-pick` (browser-valid with open polish
+  findings; BOTH least-bad seams), `interaction-quarantine-shipped`,
+  `rows-neutral-children-shipped` (host placeholder "Item 1…" copy on frame),
+  `degraded-volunteered-cut`, `cut-degraded-shipped`,
+  `rescue-published-with-polish-findings`, `browser-qa-infra-bypass` — is
+  recorded (`recordSentinelDegradation`), and `finalizeSentinelRun("published")`
+  auto-downgrades to `published-degraded` when any exists. Draft-embedded
+  degradations (quarantine's style tag, neutral children's
+  `data-sequences-neutral`) are detected on the SHIPPING document at the end of
+  `requestDirectComposition`, so an attempt that later loses can't leave a
+  stale entry. A salvaged film can no longer report itself clean.
+- **Cost ledger counts failures.** `modelCalls.failed`/`failedTotal` record
+  failed logical calls (transport faults, stalls, truncations) and
+  `modelCalls.hedged`/`hedgedTotal` the hedge duplicates launched — previously
+  only successes were counted, hiding the most expensive runs.
+- **Layer counters count findings, not attempts** (author stage) and the
+  **storyboard stage now participates** (a rejected plan's findings land in L3
+  static; every persisted failed attempt lands in L5 model-retry).
+- **`island-strip` counts only model-authored islands** — host-injected islands
+  carry `data-sequences-host="1"` and re-strip as plumbing on repair passes.
+- **Tier semantics are literal.** Tier 1 is recorded inside `buildPreviews`
+  when the thumbnails exist; tier 2 when the MP4 exists
+  (`recordSentinelTierFromRunStart`). They used to be stamped around the call,
+  excluding preview generation from "wall-clock to thumbnails".
+- **The L1 scaffold counter** (`recordSentinelScaffold`) counts host-guaranteed
+  bindings **actually present in the shipped document**
+  (`countScaffoldBindingsPresent` — camera planes, stations, component roots),
+  not the bindings the templates planned. Idempotent-by-max across revisions.
 
 `npm run sentinel:report --workspace @sequences/slack -- <dir>` aggregates every
 `sentinel-run.json` (+ sibling `author-run.json`) into the mission metric table
-(`--json` / `--label` for before/after captures).
+(`--json` / `--label` for before/after captures). Attempt averages **include**
+fail-loud runs (the old report excluded exactly the most expensive failures);
+a "Cost honesty" line carries failed calls, hedge duplicates, and shipped
+degradations.
 
 ---
 
@@ -267,7 +316,7 @@ the existing kill-switch culture.
 | Flag | Default | Effect |
 | --- | --- | --- |
 | `SLACK_SEQUENCES_SENTINEL_SKELETON` | **ON** (flipped 2026-07-06; `=0` reverts for one release) | Host emits scene skeletons carrying the camera-world plane + stations, component roots, and focal-part carriers so those paperwork classes are unrepresentable. `=0` force-reverts to bare shells. |
-| `SLACK_SEQUENCES_SENTINEL_SLOTS` | **ON** (flipped 2026-07-06; `=0` reverts for one release) | Scene-addressable authoring (`film_style` + per-scene `scene_html`/`scene_script`) so validation/truncation/retries are scene-scoped. `=0` force-reverts to whole-doc. |
+| `SLACK_SEQUENCES_SENTINEL_SLOTS` | **ON** (flipped 2026-07-06; `=0` reverts for one release) | Scene-addressable authoring (`film_style` + per-scene `scene_html`/`scene_script`). Truncation recovery is script-aware (a scene missing its `scene_script` re-requests, not just missing html); a scene that dropped host-contract bindings gets ONE scene-scoped repair round (`slotScaffoldViolations`); the director prompt's whole-doc contract bullets are surgically rewritten for slot mode (`SLOT_MODE_DIRECTOR_REWRITES`, anchors CI-tested). Validation-stage retries remain document-scoped. `=0` force-reverts to whole-doc. |
 | `SLACK_SEQUENCES_CRITIC_SKIP_CLEAN` | **ON** | Skip the continuity critic when the banked draft is already pristine (`strictOk` + `browserQualityPenalty == 0`). `=0` restores always-run. |
 
 ### The kill-switch family it joins

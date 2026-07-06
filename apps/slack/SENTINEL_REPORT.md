@@ -1521,3 +1521,148 @@ TEXT (message wording), which re-validation absorbs.
 3. **Slot-envelope drift** (author returns whole-doc into slot mode) costs
    ~1 author attempt occasionally; a deterministic whole-doc→slot splitter
    at parse would absorb it.
+
+---
+
+## Session 5 (2026-07-06, final pass) — external-audit fixes + honest closeout
+
+An independent audit (Codex) reviewed the "Sentinel COMPLETE" declaration
+against the code and the persisted probe artifacts. Its load-bearing findings
+were verified true and fixed this session; its bottom line — *"a promising
+reliability layer with a successful targeted rescue battery, not a completed
+correctness-by-construction system"* — is accepted and reflected in
+SENTINEL.md's rewritten "honest scope" thesis.
+
+### The honest final mission table
+
+Measured over the five completion-battery runs (p6-camera-b, p6-interactions,
+p7-camera, p7-longcopy, p7-denseui) — the numbers the earlier completion
+section omitted:
+
+| Metric | Target | Observed (final battery) | Verdict |
+| --- | --- | --- | --- |
+| Fail-louds | 0 | 0 | **MET** |
+| Visible fallbacks | 0 | 0 | **MET** |
+| Storyboard attempts / run | ≤ 1.5 | 3.0 | missed (was 5+fail; 3–10× cheaper) |
+| Source attempts / run | ≤ 1.5 | 3.2 | missed |
+| Tier-1 wall-clock | ≤ 8 min | 13.4 min avg | missed (was 10–29 min + fail) |
+| Tier-2 / MP4 | ≤ 14 min | not measured in battery | unproven |
+| Max author prompt | ≤ 45k | 120,635 chars | missed (`.todo`, reduction plan stands) |
+| Model calls / clean run | ≤ 5 | 9.0 | missed |
+
+Sentinel's reliability goals are met on the targeted briefs; its cost/speed
+targets are NOT met and remain open work — the completion label applies to
+the phase contract's shipped scope, not the mission table as written.
+
+### Audit findings fixed this session (all verified in code first)
+
+1. **L1 was not correctness-by-construction** (`sceneSlots.ts` inserted model
+   interiors verbatim; probes still hit `component_root_missing`). Fixed
+   honestly, twice over: (a) `slotScaffoldViolations` + a **scene-scoped
+   repair round** in `authorSlotDraft` — a scene that dropped a required
+   camera station or component root **with no trace** (near-misses stay with
+   the free L2 reconcilers) is re-requested ALONE, with findings and its own
+   previous interior as the minimal-edit baseline; (b) the registry rows'
+   `impossible` claim downgraded to `blocking` with the real ladder written
+   out, and the **L1 telemetry counter now measures bindings present in the
+   shipped document** (`countScaffoldBindingsPresent`), not planned by the
+   template.
+2. **Slot truncation ignored missing `<scene_script>`** (a scene with html
+   but no script assembled silently static). `missingOf` is now script-aware,
+   the continuation re-requests those scenes, and assembly throws if a script
+   is still missing.
+3. **The closed-world registry wasn't closed** — HyperFrames' spatial codes
+   (`clipped_text`, `text_box_overflow`, `canvas_overflow`, `text_occluded`,
+   `motion_*`) flow through `normalizeHyperframesIssue` dynamically and were
+   unregistered. The vendored `LayoutIssueCode` union joined
+   `FINDING_SOURCE_FILES` (+ `timeRamp.ts`), a `layout.hyperframes-spatial`
+   row owns the codes, and the scaffold-hint keys are quoted so the scanner
+   sees them.
+4. **Telemetry now measures what the docs say**: failed model calls and hedge
+   duplicates are counted (`modelCalls.failed/hedged`); L3/L4 counters count
+   findings (not attempts) and the storyboard stage participates;
+   `island-strip` counts only unmarked (model-authored) islands —
+   host-injected islands carry `data-sequences-host="1"`; **tier 1/2 are
+   recorded when the thumbnails/MP4 actually exist** (inside
+   `buildPreviews`); and **`published-degraded` is real** — every shipped
+   degradation (moment demotion, least-bad pick, quarantine, degraded cut,
+   rescue-with-findings, browser-QA infra bypass) is recorded and
+   auto-downgrades the disposition. `sentinel:report` includes fail-loud runs
+   in attempt averages (the old exclusion biased away from the most expensive
+   failures) and prints a "Cost honesty" line.
+5. **Slot mode received contradictory instructions** — the director prompt's
+   "Hard runtime contract" (return a complete document, register the
+   timeline, own scene-window opacity) directly contradicted the slot
+   response contract; the plausible root of the documented slot-envelope
+   drift. `SLOT_MODE_DIRECTOR_REWRITES` now surgically rewrites those bullets
+   in slot mode; anchors are CI-tested (`promptBudget.test.ts`) and a stale
+   anchor degrades to an explicit precedence block, never a live failure.
+6. **Doc drift**: FALLBACKS.md's nested-`gsap.timeline` regex risk marked
+   FIXED (the brace-matching parser shipped in Phase 1); SENTINEL.md's
+   contract table gained the missing `normalize.moment-demote-last-resort`
+   and `layout.hyperframes-spatial` rows; `CRITIC_SKIP_CLEAN` is now read
+   through `sentinelFlags.ts` as the flag table claims; the thesis line
+   "retries become scene-scoped" rewritten to the truth (truncation +
+   scaffold repair are scene-scoped; validation retries are document-scoped).
+
+### Accepted, not fixed (with reasons)
+
+- **Full scene-scoped validation retries** (the Phase-2 cut-line): still the
+  right next structural move, still out of scope days before the deadline —
+  the bounded slot repair above covers the highest-frequency trigger
+  (dropped bindings) at ~continuation cost.
+- **Prompt reduction to 45k**: untouched; the anti-growth ceiling holds and
+  the reduction plan in SENTINEL.md stands. Slot-mode surgery changed
+  contradictions, not size (±26 bytes).
+- **Severity conversion of visual errors to warnings** (layoutInspector):
+  kept as deliberate resilience policy — but such publishes are now honestly
+  `published-degraded`, which is the part that was actually wrong.
+
+### Verification (session 5)
+
+- ✅ typecheck; ✅ full suite **557 passed + 1 todo** (new: script-aware
+  continuation, scaffold-violation triage incl. near-miss/renamed-station
+  negatives, slot-repair prompt shape, telemetry downgrade/cost-honesty,
+  island host-marker counting, slot-prompt surgery anchors + absence of
+  whole-doc instructions, gsap-call-shape repair). The QA-cache perf spec's
+  OUTER timeout rose 40s→75s (it measures two real browser passes at ~41s;
+  the <2s cache-hit assertion is unchanged).
+- ✅ **3 paid live probes** (all fail-loud, fresh briefs/job-ids, flipped
+  defaults; see below).
+
+### Session-5 probes — the new machinery, live
+
+| Probe | Brief shape | Outcome | SB att | Src att | Calls (fail/hedge) | Tier1 | Tier2 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sentinel-s5-slotrepair` | 5-component incident-replay console + camera world, `--render` | **published** (MP4 2.7MB, 18/18 moments, 10 thumbs) | 3 | 3 | 9 (1/7) | 11.9 min | **13.6 min** |
+| `sentinel-s5-interactions` | chat+toast+kanban+ring handoff, required rack-focus | **fail-loud** (honest: 4 author attempts died on model runtime errors) | 3 | 4 | 11 (0/6) | — | — |
+| `sentinel-s5-interactions-b` | same brief, post `gsap-call-shape` fix | **published-degraded** (`least-bad-pick:penalty=72`) | 3 | 3 | 10 (0/8) | 17.0 min | — |
+
+What the probes proved live:
+
+- **Tier-2 finally measured: 13.6 min ≤ the 14-min target** (`--render` on
+  s5-slotrepair) — the mission table's last "unproven" row now has a data
+  point, barely under target.
+- **Both new slot mechanisms fired as true positives**: the script-aware
+  continuation re-requested `runbook-ring-resolve` (interior present, script
+  missing — previously assembled silently static), and the scene-scoped
+  scaffold repair re-requested `runbook-ring-resolve` / `scattered-signal`
+  after dropped host-contract bindings, each at continuation cost instead of
+  a whole-document paid retry.
+- **The disposition ledger works**: `-b` published via the least-bad seam and
+  recorded `published-degraded` with `least-bad-pick:penalty=72` — the exact
+  class (p7-denseui) that used to report itself clean. (s5-slotrepair ran
+  BEFORE the second least-bad seam was instrumented; under today's code its
+  clean `published` would read `published-degraded` too — its terminal
+  shipped host-injected neutral "Item 1/2/3" rows, which is also why the
+  publish-time `rows-neutral-children-shipped` scan now exists.)
+- **Cost honesty is visible**: failed calls (1) and hedge duplicates (6–8 per
+  run!) now appear in `modelCalls`; the hedge rate says wall-clock pressure is
+  mostly upstream-provider latency, not attempt count.
+- **The honest fail-loud earned its keep**: s5-interactions died on three
+  distinct model runtime errors; its attempt-3 class — `fromTo(target, vars,
+  <number>)` crashing GSAP compile — was mechanically decidable and became
+  the L2 `normalize.gsap-call-shape` repair the same day. The re-run
+  published.
+- L1 scaffold now reads a REAL number per run (11 / 17 bindings preserved in
+  the shipped document).

@@ -705,7 +705,7 @@ export function storyboardMarkdown(title: string, scenes: DirectScene[]): string
         : "",
       ...(scene.interactions ?? []).map((interaction) =>
         `- Interaction: ${interaction.action} ${interaction.cursorId} â†’ ` +
-        `${interaction.targetPart} (${interaction.startSec.toFixed(2)}â€“${
+        `${interaction.targetPart} (${interaction.startSec.toFixed(2)}–${
           (interaction.holdUntilSec ?? interaction.releaseSec ?? interaction.arriveSec).toFixed(2)
         }s, ${interaction.path})`
       ),
