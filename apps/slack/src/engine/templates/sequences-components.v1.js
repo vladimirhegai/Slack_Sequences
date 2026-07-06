@@ -394,18 +394,58 @@
     }, beat.startSec + duration * 0.4);
   }
 
+  // An overlay kind's root spans the whole scene (.cmp-modal is inset:0 with a
+  // centered .cmp-dialog inside): the FLIP must land on the VISUAL surface,
+  // never the overlay root — morphing a search pill onto a full-scene rect is
+  // the 2026-07-06 "weird morphing" artifact.
+  function morphVisualBox(el) {
+    return el.querySelector(".cmp-dialog") || el;
+  }
+
   function compileMorph(timeline, scene, el, beat) {
     var target = scene.querySelector('[data-part="' + CSS.escape(beat.morphTo) + '"]');
     if (!target) fail(beat.id, 'morph target "' + beat.morphTo + '" is absent');
-    var from = layoutPosition(el);
-    var to = layoutPosition(target);
+    var from = layoutPosition(morphVisualBox(el));
+    var to = layoutPosition(morphVisualBox(target));
     var duration = beat.endSec - beat.startSec;
+    var revealAt = beat.startSec + duration * 0.45;
     // The twin arrives only through this morph: pre-rendered hidden at build.
+    // A morph IS the twin's entrance, so it must do everything `open` would —
+    // kit CSS keeps an overlay's scrim/panel/items at opacity 0 until opened,
+    // and a separate `open` beat on a morphed-in twin is deduped at plan time
+    // (it would re-run the entrance over this reveal and flash).
     reveal(timeline, target, { opacity: 0 }, {
       opacity: 1,
       duration: duration * 0.45,
       ease: "power2.out",
-    }, beat.startSec + duration * 0.45);
+    }, revealAt);
+    setState(timeline, target, "open", revealAt);
+    var opened = openTargets(target);
+    if (opened.scrim) {
+      reveal(timeline, opened.scrim, { opacity: 0 }, {
+        opacity: 1,
+        duration: Math.max(0.2, duration * 0.4),
+        ease: "power2.out",
+      }, revealAt);
+    }
+    if (opened.panel && opened.panel !== target) {
+      reveal(timeline, opened.panel, { opacity: 0 }, {
+        opacity: 1,
+        duration: Math.max(0.2, duration * 0.45),
+        ease: "power2.out",
+      }, revealAt);
+    }
+    var itemStep = opened.items.length > 1
+      ? (duration * 0.3) / (opened.items.length - 1)
+      : 0;
+    for (var i = 0; i < opened.items.length; i += 1) {
+      reveal(timeline, opened.items[i], { opacity: 0, y: -8 }, {
+        opacity: 1,
+        y: 0,
+        duration: Math.max(0.18, duration * 0.3),
+        ease: "power3.out",
+      }, revealAt + itemStep * i);
+    }
     move(timeline, el, {
       x: 0,
       y: 0,

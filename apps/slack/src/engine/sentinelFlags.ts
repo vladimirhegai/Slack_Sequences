@@ -9,18 +9,22 @@
 /**
  * Phase 1 — host emits scene skeletons carrying the camera-world plane,
  * component roots, focal-part carriers, and runtime script block, so those
- * paperwork classes are unrepresentable rather than repaired. Default OFF until
- * Phase 5; `SLACK_SEQUENCES_SENTINEL_SKELETON=0` force-reverts to bare shells.
+ * paperwork classes are unrepresentable rather than repaired. Default ON since
+ * the 2026-07-06 Phase-5 completion probes (dense-UI published clean 4× with
+ * the skeleton, and the p6 battery re-proved the full brief set);
+ * `SLACK_SEQUENCES_SENTINEL_SKELETON=0` force-reverts to bare shells for one
+ * release.
  */
 export function sentinelSkeletonEnabled(): boolean {
-  return process.env.SLACK_SEQUENCES_SENTINEL_SKELETON === "1";
+  return process.env.SLACK_SEQUENCES_SENTINEL_SKELETON !== "0";
 }
 
 /**
  * Phase 2 — scene-addressable authoring (film_style + per-scene slots) so
- * validation/truncation/retries are scene-scoped. Default OFF until Phase 5;
- * `SLACK_SEQUENCES_SENTINEL_SLOTS=1` enables, `=0` force-reverts to whole-doc.
+ * validation/truncation/retries are scene-scoped. Default ON since the
+ * 2026-07-06 Phase-5 completion probes; `SLACK_SEQUENCES_SENTINEL_SLOTS=0`
+ * force-reverts to whole-doc for one release.
  */
 export function sentinelSlotsEnabled(): boolean {
-  return process.env.SLACK_SEQUENCES_SENTINEL_SLOTS === "1";
+  return process.env.SLACK_SEQUENCES_SENTINEL_SLOTS !== "0";
 }

@@ -433,3 +433,4 @@ describe("fallback composition moment contract", () => {
     expect(validatePlannedMoments(draft.storyboard, 15)).toEqual([]);
   });
 });
+

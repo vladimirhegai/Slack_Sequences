@@ -174,6 +174,81 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "Telemetry tag: pacing-stretch. Visible in STORYBOARD.md.",
   },
 
+  {
+    id: "normalize.camera-move-delay",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/pacingAudit.test.ts",
+    addedBecause:
+      "Phase-5 hardening (2026-07-06 probes): the single most repeated rejection " +
+      "was pacing/outcome 'framing changes 0.0s later' — a camera move starting " +
+      "right after a payoff/typed-copy beat. delayConflictingCameraMoves delays " +
+      "the move (<= MAX_PACING_STRETCH_SEC) so the hold lands, only when the move " +
+      "starts AT/after the beat settles, still fits the scene, does not pass the " +
+      "next full move, and is not load-bearing. Same atomic commit-or-revert. " +
+      "Telemetry tag: camera-move-delay. Visible in STORYBOARD.md.",
+  },
+  {
+    id: "normalize.timeramp-retime",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/directComposition.test.ts",
+    addedBecause:
+      "Phase-5 hardening (2026-07-06 sentinel-p5-longcopy): the ramp motivation " +
+      "contract demands the model land a moment inside a sub-second solver-derived " +
+      "hold window — host arithmetic, not creative judgment. " +
+      "retimeUnmotivatedTimeRamps scans atSec candidates (0.1s grid, " +
+      "nearest-to-declared first) and commits the first that resolves AND covers a " +
+      "declared moment; per-scene convergence-checked, never invents a dip or " +
+      "moment; scenes with no moments / no working candidate keep the existing " +
+      "drop/finding path. Telemetry tag: timeramp-retime. Visible in STORYBOARD.md.",
+  },
+  {
+    id: "normalize.morph-twin-reconcile",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/directComposition.test.ts",
+    addedBecause:
+      "Phase-5 hardening (2026-07-06 sentinel-p5-camera-b rescue attempt died " +
+      "SOLELY on 'morphs to undeclared component'). reconcileUndeclaredMorphTargets " +
+      "declares the missing twin when the source kind has exactly ONE legal " +
+      "catalog partner (interaction-reconciliation precedent: unique candidate " +
+      "reconciles, ambiguity stays blocking); an ambiguous non-load-bearing morph " +
+      "degrades to highlight; ambiguous load-bearing keeps the blocking finding. " +
+      "Runs inside the atomic commit-or-revert (a twin that would breach " +
+      "components/complexity reverts). Telemetry tag: morph-twin-reconcile.",
+  },
+
+  {
+    id: "normalize.moment-demote-last-resort",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/directComposition.test.ts",
+    addedBecause:
+      "Phase-5 completion (2026-07-06 sentinel-p6-longcopy): the author ladder " +
+      "exhausted with a runnable, browser-clean draft blocked SOLELY by an " +
+      "unbound PRIMARY moment ('hairline-grow has no executable timeline " +
+      "evidence' x 5 paid attempts -> fail-loud). The pre-throw salvage demotes " +
+      "exactly the unbound primaries to supporting (they re-anchor onto authored " +
+      "evidence or drop with a warning — the path supporting moments already " +
+      "take), re-validates, and ships only if the draft then passes static + " +
+      "browser gates. Any other finding still fails the salvage; STORYBOARD.md " +
+      "and the moment strip show the true bound set. Telemetry tag: " +
+      "moment-demote-last-resort.",
+  },
+
   // ── L3 static — linkedom / regex / plan-stage audits; cheap findings-retry ──
   {
     id: "camera.energy",

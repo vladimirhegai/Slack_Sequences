@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   auditPacing,
   sceneIntroductionTimes,
+  delayConflictingCameraMoves,
   normalizeCameraBudget,
   stretchMarginalPacingMisses,
   LAST_INTRODUCTION_MAX_FRACTION,
@@ -747,6 +748,102 @@ describe("Sentinel Phase 3 — normalizeCameraBudget (normalize-before-retry)", 
     expect(result.storyboard.find((s) => s.id === "b")!.camera).toBeDefined();
     expect(result.storyboard.find((s) => s.id === "c")!.camera).toBeUndefined();
     expect(auditPacing(result.storyboard).some((f) => f.includes("whips"))).toBe(false);
+  });
+});
+
+describe("Sentinel Phase 5 — delayConflictingCameraMoves (normalize-before-retry)", () => {
+  it("delays a move that starts right after a payoff so the outcome holds", () => {
+    // set-state settles at 2.0s; a pan starts at 2.1s — the probe set's
+    // dominant "framing changes 0.0s later" shape. The host delays the pan to
+    // 2.8s (beat end + OUTCOME_HOLD_SEC) and the finding disappears.
+    const busy = scene({
+      id: "payoff",
+      startSec: 0,
+      durationSec: 6,
+      components: [{ version: 1 as const, id: "deploy-button", kind: "button" as const }],
+      beats: [beat("payoff", {
+        id: "b-press",
+        component: "deploy-button",
+        kind: "set-state",
+        atSec: 1.2,
+        durationSec: 0.8,
+        toState: "success",
+      })],
+      camera: {
+        version: 1,
+        path: [move({ move: "pan", startSec: 2.1, durationSec: 1.0 })],
+      },
+    });
+    const before = auditPacing([busy]);
+    expect(before.some((f) => f.startsWith("pacing/outcome:"))).toBe(true);
+    const result = delayConflictingCameraMoves([busy]);
+    expect(result.normalized).toHaveLength(1);
+    const delayed = result.storyboard[0]!.camera!.path[0]!;
+    expect(delayed.startSec).toBeCloseTo(2.8, 3);
+    expect(auditPacing(result.storyboard).some((f) => f.startsWith("pacing/outcome:"))).toBe(false);
+    expect(result.storyboard[0]!.sentinelNormalizations?.length).toBe(1);
+  });
+
+  it("leaves a move already in flight when the beat lands (arrival choreography)", () => {
+    const busy = scene({
+      id: "arrival",
+      startSec: 0,
+      durationSec: 6,
+      components: [{ version: 1 as const, id: "deploy-button", kind: "button" as const }],
+      beats: [beat("arrival", {
+        id: "b-press",
+        component: "deploy-button",
+        kind: "set-state",
+        atSec: 1.2,
+        durationSec: 0.8,
+        toState: "success",
+      })],
+      camera: {
+        version: 1,
+        // Starts at 1.5s, before the beat settles at 2.0s — in flight.
+        path: [move({ move: "pan", startSec: 1.5, durationSec: 1.2 })],
+      },
+    });
+    const result = delayConflictingCameraMoves([busy]);
+    expect(result.normalized).toEqual([]);
+    expect(result.storyboard[0]!.camera!.path[0]!.startSec).toBe(1.5);
+  });
+
+  it("never delays a load-bearing move or one that would no longer fit the scene", () => {
+    const loadBearing = scene({
+      id: "pinned",
+      startSec: 0,
+      durationSec: 6,
+      components: [{ version: 1 as const, id: "deploy-button", kind: "button" as const }],
+      beats: [beat("pinned", {
+        id: "b-press",
+        component: "deploy-button",
+        kind: "set-state",
+        atSec: 1.2,
+        durationSec: 0.8,
+        toState: "success",
+      })],
+      camera: { version: 1, path: [move({ move: "pan", startSec: 2.1, durationSec: 1.0 })] },
+      moments: [moment("pinned", "m-arrival", 2.6)],
+    });
+    expect(delayConflictingCameraMoves([loadBearing]).normalized).toEqual([]);
+    const cramped = scene({
+      id: "cramped",
+      startSec: 0,
+      durationSec: 3.2,
+      components: [{ version: 1 as const, id: "deploy-button", kind: "button" as const }],
+      beats: [beat("cramped", {
+        id: "b-press",
+        component: "deploy-button",
+        kind: "set-state",
+        atSec: 1.2,
+        durationSec: 0.8,
+        toState: "success",
+      })],
+      // Delayed to 2.8s the 1.0s pan would end at 3.8s — past the 3.2s scene.
+      camera: { version: 1, path: [move({ move: "pan", startSec: 2.1, durationSec: 1.0 })] },
+    });
+    expect(delayConflictingCameraMoves([cramped]).normalized).toEqual([]);
   });
 });
 

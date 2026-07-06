@@ -354,6 +354,16 @@ export function componentSupportsBeat(kind: ComponentKind, beat: ComponentBeatKi
 }
 
 /**
+ * The catalog's legal FLIP-morph partner kinds for a component kind (empty when
+ * the kind has no morph pairing). Used by the parse-side morph-twin
+ * reconciliation: a morph whose twin id is undeclared can be completed
+ * host-side only when the source kind has exactly ONE legal partner.
+ */
+export function morphPartnerKinds(kind: ComponentKind): ComponentKind[] {
+  return [...(CATALOG_BY_KIND.get(kind)?.morphsWith ?? [])];
+}
+
+/**
  * The canonical host-owned root element for a declared component (Sentinel
  * Phase 1 scaffold). The catalog exemplar already carries the correct tag,
  * `cmp cmp-<kind>` class, `data-component`, and a kit-valid interior; here its
@@ -754,6 +764,34 @@ export function dedupeRedundantBeats(storyboard: DirectScene[]): BeatDedupeResul
             `re-triggers "${conflict.id}" (${conflict.kind}) on the same component — dropped`,
         );
         continue;
+      }
+      // Rule 4: a morph already brings its twin on stage (the runtime reveals
+      // the pre-hidden target mid-morph); an `open` on that twin afterwards
+      // re-runs its entrance OVER the morph reveal — two fromTo tweens fight
+      // on one element and the twin flashes hidden then re-opens (the
+      // 2026-07-06 sentinel-p5-denseui "weird morphing" artifact). Drop the
+      // open unless an intervening `close` put the twin away first.
+      if (beat.kind === "open") {
+        const morphIn = kept.find((earlier) =>
+          earlier.kind === "morph" &&
+          earlier.morphTo === beat.component &&
+          beat.atSec >= earlier.atSec &&
+          !kept.some((mid) =>
+            mid.component === beat.component &&
+            mid.kind === "close" &&
+            mid.atSec > earlier.atSec &&
+            mid.atSec < beat.atSec
+          )
+        );
+        if (morphIn) {
+          changed = true;
+          dropped.push(
+            `scene "${scene.id}": beat "${beat.id}" (open on ${beat.component}) re-opens the ` +
+              `twin that morph "${morphIn.id}" already brings on stage — dropped (a morph IS ` +
+              `the twin's entrance)`,
+          );
+          continue;
+        }
       }
       kept.push(beat);
     }

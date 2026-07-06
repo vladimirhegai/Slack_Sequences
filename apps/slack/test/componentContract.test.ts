@@ -444,6 +444,41 @@ describe("dedupeRedundantBeats", () => {
     expect(result.dropped[0]).toContain("stutter");
   });
 
+  it("drops an open that re-enters a twin a morph already brings on stage (Rule 4)", () => {
+    // The 2026-07-06 sentinel-p5-denseui artifact: morph→modal at 3.1s then
+    // open on the modal at 3.7s — the open re-ran the entrance over the morph
+    // reveal and the modal flashed. The morph IS the twin's entrance.
+    const result = dedupeRedundantBeats([scene({
+      id: "s1",
+      startSec: 0,
+      durationSec: 8,
+      components: declared(["palette", "search"], ["confirm", "modal"]),
+      beats: [
+        beat("the-morph", "palette", "morph", 3.1, { morphTo: "confirm" }),
+        beat("re-open", "confirm", "open", 3.7),
+      ],
+    })]);
+    expect(result.scenes[0]?.beats?.map((entry) => entry.id)).toEqual(["the-morph"]);
+    expect(result.dropped).toHaveLength(1);
+    expect(result.dropped[0]).toContain("re-open");
+  });
+
+  it("keeps an open on a morph twin when a close intervened (a real second entrance)", () => {
+    const result = dedupeRedundantBeats([scene({
+      id: "s1",
+      startSec: 0,
+      durationSec: 12,
+      components: declared(["palette", "search"], ["confirm", "modal"]),
+      beats: [
+        beat("the-morph", "palette", "morph", 2, { morphTo: "confirm" }),
+        beat("put-away", "confirm", "close", 5),
+        beat("second-look", "confirm", "open", 8),
+      ],
+    })]);
+    expect(result.scenes[0]?.beats).toHaveLength(3);
+    expect(result.dropped).toEqual([]);
+  });
+
   it("keeps pulses that are far apart, on different components, or different select items", () => {
     const result = dedupeRedundantBeats([scene({
       id: "s1",

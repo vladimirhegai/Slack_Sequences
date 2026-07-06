@@ -99,6 +99,9 @@ rung) · **advisory** (never blocks).
 | interactions | `normalize.source-bindings` | L2 normalize | det-repair | — (reconciles near-miss data-part/region) | authorReliability |
 | normalize | `normalize.camera-budget-clamp` | L2 normalize | det-repair | — (prevents `pacing/camera-budget`) | pacingAudit |
 | normalize | `normalize.pacing-stretch` | L2 normalize | det-repair | — (prevents `pacing/reading`,`/outcome`) | pacingAudit |
+| normalize | `normalize.camera-move-delay` | L2 normalize | det-repair | — (prevents `pacing/outcome` "0.0s later") | pacingAudit |
+| normalize | `normalize.timeramp-retime` | L2 normalize | det-repair | — (prevents ramp motivation/solvability vetoes) | directComposition |
+| normalize | `normalize.morph-twin-reconcile` | L2 normalize | det-repair | — (prevents morph-to-undeclared-twin vetoes) | directComposition |
 | camera | `camera.energy` | L3 static | blocking | `camera/energy` | cameraContract |
 | components | `components.complexity` | L3 static | blocking | `components/complexity` | componentContract |
 | coherence | `cuts.coherence` | L3 static | advisory-late | `cuts/coherence` | cutContract |
@@ -117,29 +120,49 @@ rung) · **advisory** (never blocks).
 | layout | `layout` | L4 browser | blocking | `layout_`, `spatial_focal_`, `important_safe_area`, `content_overlap`, `container_overflow`, `contrast_aa` | layoutInspector |
 | runtime | `runtime.invariants` | L4 browser | blocking | `runtime_bind_exception`, `near_blank_film`, `near_blank_scene`, `browser_warning`, `browser_runtime`, `invalid_inline_script_syntax`, `overlapping_clips_same_track` | directComposition |
 
-Two rows deliberately carry NO finding prefixes because they PREVENT another
-row's findings rather than emitting their own (`normalize.host-plan-islands`,
-`normalize.source-bindings`, and the two Phase-3 normalizers). The scaffold rows
+The `normalize.*` rows deliberately carry NO finding prefixes because they
+PREVENT another row's findings rather than emitting their own. The scaffold rows
 still list the L3/L4 backstop codes — the gate is never removed, so with
 `SENTINEL_SKELETON=0` (or a brief-required case) those codes still fire and the
 closed-world test stays green in either flag position.
 
-### The Phase-3 normalizers are atomic
+### The storyboard normalizers are atomic
 
-`normalizeCameraBudget` and `stretchMarginalPacingMisses` run in
-`parseStoryboardResponse` **before** `validateStoryboardPlan`, and commit
-**only if the normalized plan re-validates clean**. A normalization that would
-mint a *different* blocking finding (framing-density floor, `minCameraMoves`,
-moment spacing, the 60s film cap) logs `sentinel-normalization reverted`,
-restores the model's own artifact, and re-validates THAT — so a host arithmetic
-fix can never invent a finding the model didn't earn (the
-`degradeVolunteeredBridgedCuts` commit-only-if-clean precedent). They run before
-`topUpStoryboardMoments` (moments anchor only on surviving moves / post-stretch
-times) and never drop a move whose window overlaps a declared moment's evidence
-search (the load-bearing guard). Every normalization is logged
+`reconcileUndeclaredMorphTargets`, `normalizeCameraBudget`,
+`delayConflictingCameraMoves`, and `stretchMarginalPacingMisses` run in
+`parseStoryboardResponse` **before** `validateStoryboardPlan` and commit
+**atomically**: the normalized plan is kept when it re-validates clean OR when
+every remaining finding belongs to a class (digit-stripped comparison) the
+model's OWN plan already carried — the arithmetic fixes stand and the
+findings-retry list shrinks to the real deficits. A normalization that would
+mint a *new* finding class (framing-density floor, `minCameraMoves`, moment
+spacing, the 60s film cap, `components/complexity` from a declared twin) logs
+`sentinel-normalization reverted`, restores the model's own artifact, and
+re-validates THAT — a host arithmetic fix can never invent a finding the model
+didn't earn (the `degradeVolunteeredBridgedCuts` precedent, extended by the
+2026-07-06 probe lesson: the old commit-only-if-fully-clean rule meant
+normalizations never committed live, because every probe plan also carried a
+moments deficit). They run before `topUpStoryboardMoments` (moments anchor only
+on surviving moves / post-stretch times) and never touch a move whose window
+overlaps a declared moment's evidence search (the load-bearing guard).
+`retimeUnmotivatedTimeRamps` runs earlier (before the volunteered-ramp drop)
+with its own per-scene convergence check: a retime commits only when the ramp
+provably resolves AND covers a declared moment. Every normalization is logged
 `[storyboard] sentinel-normalized: …`, recorded in telemetry
-(`camera-budget-clamp` / `pacing-stretch` tags), and rendered into STORYBOARD.md
-as `- Sentinel normalized: …` lines.
+(`morph-twin-reconcile` / `camera-budget-clamp` / `camera-move-delay` /
+`pacing-stretch` / `timeramp-retime` tags), and rendered into STORYBOARD.md as
+`- Sentinel normalized: …` lines.
+
+### The findings-retry is a minimal edit, not a redesign
+
+A rejected storyboard attempt now carries the exact plan the findings describe
+(`StoryboardValidationError.storyboard`, post any committed normalization) back
+into the retry prompt as `<previous_storyboard_json>`, with the instruction to
+fix ONLY the findings and keep everything else byte-identical. The 2026-07-06
+probe set proved findings-only retries make both planner models redesign from
+scratch each attempt and mint fresh violations (4/5 probes exhausted all five
+rungs that way). The rescue rung gets the same baseline — a different model on
+the same convergence seam, not a fresh draw.
 
 ---
 
@@ -243,8 +266,8 @@ the existing kill-switch culture.
 
 | Flag | Default | Effect |
 | --- | --- | --- |
-| `SLACK_SEQUENCES_SENTINEL_SKELETON` | **OFF** (Phase-5 flips ON) | Host emits scene skeletons carrying the camera-world plane + stations, component roots, and focal-part carriers so those paperwork classes are unrepresentable. `=0` force-reverts to bare shells. |
-| `SLACK_SEQUENCES_SENTINEL_SLOTS` | **OFF** (Phase-5 flips ON) | Scene-addressable authoring (`film_style` + per-scene `scene_html`/`scene_script`) so validation/truncation/retries are scene-scoped. `=0` force-reverts to whole-doc. |
+| `SLACK_SEQUENCES_SENTINEL_SKELETON` | **ON** (flipped 2026-07-06; `=0` reverts for one release) | Host emits scene skeletons carrying the camera-world plane + stations, component roots, and focal-part carriers so those paperwork classes are unrepresentable. `=0` force-reverts to bare shells. |
+| `SLACK_SEQUENCES_SENTINEL_SLOTS` | **ON** (flipped 2026-07-06; `=0` reverts for one release) | Scene-addressable authoring (`film_style` + per-scene `scene_html`/`scene_script`) so validation/truncation/retries are scene-scoped. `=0` force-reverts to whole-doc. |
 | `SLACK_SEQUENCES_CRITIC_SKIP_CLEAN` | **ON** | Skip the continuity critic when the banked draft is already pristine (`strictOk` + `browserQualityPenalty == 0`). `=0` restores always-run. |
 
 ### The kill-switch family it joins

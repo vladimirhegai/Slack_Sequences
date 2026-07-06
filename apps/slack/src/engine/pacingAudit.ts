@@ -334,7 +334,7 @@ function cameraMoveEnergyRank(move: CameraMoveIntentV1): number {
  * blocking finding (the parse-side convergence check then reverts the whole
  * normalization).
  */
-function isLoadBearingMove(scene: DirectScene, move: CameraMoveIntentV1): boolean {
+export function isLoadBearingMove(scene: DirectScene, move: CameraMoveIntentV1): boolean {
   const moveEnd = move.startSec + move.durationSec;
   return (scene.moments ?? []).some((moment) =>
     moveEnd >= moment.atSec - EVIDENCE_BEFORE_SEC &&
@@ -343,7 +343,7 @@ function isLoadBearingMove(scene: DirectScene, move: CameraMoveIntentV1): boolea
 }
 
 /** Append host-normalization notes a scene carries into STORYBOARD.md. */
-function withNormalizationNotes(scene: DirectScene, notes: string[]): DirectScene {
+export function withNormalizationNotes(scene: DirectScene, notes: string[]): DirectScene {
   if (!notes.length) return scene;
   return {
     ...scene,
@@ -456,6 +456,95 @@ export function normalizeCameraBudget(
     }
   }
 
+  return { storyboard: scenes, normalized };
+}
+
+/**
+ * Sentinel normalize-before-retry (Phase-5 hardening): a payoff/typed-copy
+ * beat whose hold is cut short by a camera move that starts right after it is
+ * the single most repeated `pacing/outcome` shape in the 2026-07-06 probe set
+ * ("lands its payoff at Ns but the framing changes 0.0s later"). The finding's
+ * own fix hint is "delay the reframe" — pure arithmetic the host can do:
+ * delay the conflicting move so the payoff gets its hold, when
+ *  - the move starts AT/after the beat settles (a move already in flight when
+ *    the beat lands is the model's own arrival choreography — left alone),
+ *  - the delay is <= MAX_PACING_STRETCH_SEC,
+ *  - the delayed move still fits inside the scene and does not pass the next
+ *    full move, and
+ *  - the move is not load-bearing (no declared moment binds to its window).
+ * Runs inside the same parse-side atomic commit-or-revert as the clamp/stretch.
+ */
+export function delayConflictingCameraMoves(
+  storyboard: DirectScene[],
+): { storyboard: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  const rampSceneIds = new Set(resolveTimeRampPlan(storyboard).ramps.map((ramp) => ramp.sceneId));
+  const resolvedBeatsByScene = new Map<string, ResolvedComponentBeatV1[]>(
+    resolveComponentPlan(storyboard).scenes.map((scene) => [scene.sceneId, scene.beats]),
+  );
+  const scenes = storyboard.map((scene) => {
+    if (rampSceneIds.has(scene.id)) return scene;
+    const path = scene.camera?.path;
+    if (!path?.length) return scene;
+    const sceneEnd = scene.startSec + scene.durationSec;
+    const fullMoves = path
+      .map((move, index) => ({ move, index }))
+      .filter((entry) => CAMERA_FULL_MOVES.has(entry.move.move));
+    if (!fullMoves.length) return scene;
+    const componentKinds = new Map(
+      (scene.components ?? []).map((component) => [component.id, component.kind]),
+    );
+    const beats = resolvedBeatsByScene.get(scene.id) ?? [];
+    // The latest hold each too-early move must clear, from every beat it cuts.
+    const requiredStart = new Map<number, number>();
+    for (const beat of beats) {
+      let needed = 0;
+      if ((beat.kind === "type" || beat.kind === "swap") && beat.text) {
+        needed = Math.min(
+          READING_MAX_SEC,
+          Math.max(READING_MIN_SEC, READING_SEC_PER_WORD * words(beat.text)),
+        );
+      }
+      const isToastOpen = beat.kind === "open" && componentKinds.get(beat.component) === "toast";
+      if (PAYOFF_BEAT_KINDS.has(beat.kind) || isToastOpen) {
+        needed = Math.max(needed, OUTCOME_HOLD_SEC);
+      }
+      if (!needed) continue;
+      for (const entry of fullMoves) {
+        const start = entry.move.startSec;
+        if (start < beat.endSec - 0.05) continue;
+        if (start + PACING_TOLERANCE_SEC >= beat.endSec + needed) continue;
+        requiredStart.set(
+          entry.index,
+          Math.max(requiredStart.get(entry.index) ?? 0, round(beat.endSec + needed)),
+        );
+      }
+    }
+    if (!requiredStart.size) return scene;
+    const newPath = [...path];
+    const notes: string[] = [];
+    for (const entry of fullMoves) {
+      const target = requiredStart.get(entry.index);
+      if (target === undefined) continue;
+      const delay = target - entry.move.startSec;
+      if (delay <= 0 || delay > MAX_PACING_STRETCH_SEC + 1e-9) continue;
+      if (isLoadBearingMove(scene, entry.move)) continue;
+      if (target + entry.move.durationSec > sceneEnd + 1e-6) continue;
+      const next = fullMoves.find((other) => other.move.startSec > entry.move.startSec + 1e-6);
+      if (next && target + entry.move.durationSec > next.move.startSec + 1e-6) continue;
+      newPath[entry.index] = { ...entry.move, startSec: round(target) };
+      const note =
+        `delayed the ${entry.move.move} from ${entry.move.startSec.toFixed(2)}s to ` +
+        `${target.toFixed(2)}s so the payoff/copy before it holds`;
+      notes.push(note);
+      normalized.push(`scene "${scene.id}": ${note}`);
+    }
+    if (!notes.length) return scene;
+    return withNormalizationNotes(
+      { ...scene, camera: { ...scene.camera!, path: newPath } },
+      notes,
+    );
+  });
   return { storyboard: scenes, normalized };
 }
 

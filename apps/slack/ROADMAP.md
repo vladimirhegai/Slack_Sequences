@@ -1712,3 +1712,17 @@ Historical backlog order:
 4. **§8 component contracts + the bounded visual critic from §10** — extend the
    proven `data-part`/object-match bridge into reusable state and morph contracts.
 5. **§6 music/sound cues & §11 utilities/foundry/learning** — final polish.
+
+## 2026-07-06 — Sentinel completion (session 4)
+
+Sentinel is COMPLETE: the §7 probe set publishes with zero fallback on the
+flipped defaults (`SENTINEL_SKELETON`/`SENTINEL_SLOTS` now default ON, `=0`
+reverts for one release). The storyboard stage converges via minimal-edit
+findings-retries (the rejected plan travels back in the prompt), the
+normalizers commit-with-findings, and five new L2 owners landed
+(camera-move-delay, timeramp-retime, morph-twin-reconcile, load-bearing
+text/numeric beat analogs, last-resort unbound-primary-moment salvage). The
+morph runtime FLIPs onto visual boxes and owns the twin's entrance
+(open-after-morph dedupes). Full record: SENTINEL_REPORT.md "Auditor review +
+Sentinel COMPLETION". Owed before judging: Docker + sandbox ladder, and
+`SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=1` on Railway.
