@@ -71,8 +71,8 @@ export const FINAL_RESOLVE_ALLOWANCE_SEC = 3.25;
 /** Marginal interval overage that never vetoes (see intervalErrors). */
 export const INTERVAL_GRACE_SEC = 0.35;
 /** Evidence search window around a declared moment's atSec. */
-const EVIDENCE_BEFORE_SEC = 0.45;
-const EVIDENCE_AFTER_SEC = 0.75;
+export const EVIDENCE_BEFORE_SEC = 0.45;
+export const EVIDENCE_AFTER_SEC = 0.75;
 /** Synthesized moments closer than this merge into one reviewable state. */
 const SYNTH_DEDUPE_SEC = 0.35;
 /**

@@ -760,7 +760,12 @@ export function validateCameraContract(
 }
 
 /** Zoom at or above which a push-in counts as a high-energy commitment. */
-const HIGH_ENERGY_PUSH_ZOOM = 1.3;
+export const HIGH_ENERGY_PUSH_ZOOM = 1.3;
+
+/** The effective zoom a move resolves to (declared, else its move-kind default). */
+export function cameraMoveZoom(move: CameraMoveIntentV1): number {
+  return move.zoom ?? MOVE_DEFAULTS[move.move].zoom;
+}
 /**
  * Verbs that are intrinsically a peak (WS6): repeating one of these on every
  * reframe is noise. A repeated push-in is NOT here — its energy depends on the

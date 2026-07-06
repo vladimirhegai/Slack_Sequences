@@ -526,13 +526,12 @@ the guide deliberately. Do not turn every shot into the same grid.
   interaction actors with its canonical high-contrast pointer/ripple layer.
   Author the target parts and semantic JSON intent; never hide an active target
   with `data-layout-ignore`.
-- When the locked storyboard has interactions, load
-  `<script src="sequences-interactions.v1.js"></script>`, copy those interaction
-  objects exactly into one
-  `<script type="application/json" id="sequences-interactions">` JSON island,
-  and call `SequencesInteractions.compile(tl, root)` only after all authored
-  target and camera tweens have been added. Register and seek the timeline after
-  compilation.
+- The host owns the interaction runtime, its `sequences-interactions` JSON
+  island, and the `SequencesInteractions.compile(tl, root)` call — all injected
+  deterministically from the locked storyboard. Never author, copy, or alter a
+  JSON island or a compile call for any host contract. Author only the target
+  `data-part` elements and the semantic interaction intent; register and seek
+  the paused timeline under the composition id as usual.
 - The interaction runtime owns standard cursor translation, synchronized press,
   drag, actor visibility, cursor hotspot, and ripple geometry. The target,
   approach, path family, subtle bend, ease, timing, normalized interior aim,
@@ -551,9 +550,9 @@ the guide deliberately. Do not turn every shot into the same grid.
 - Use one paused GSAP timeline, initialized synchronously and registered as
   `window.__timelines["<composition-id>"]` after all tweens are authored.
 - Load GSAP only from `<script src="gsap.min.js"></script>`. It is supplied by
-  the host. Do not use CDNs, remote fonts, fetches, or any network URL.
-- Interaction-enabled compositions also load the host-copied local
-  `sequences-interactions.v1.js`; no other interaction runtime is allowed.
+  the host. Do not use CDNs, remote fonts, fetches, or any network URL. The host
+  injects every `sequences-*.v1.js` contract runtime, its JSON island, and its
+  compile call deterministically — you never load, order, or author them.
 - Mark each storyboard scene with `class="scene clip"`, a stable `id`,
   `data-scene`, `data-start`, `data-duration`, and `data-track-index`.
 - The paused timeline must own scene-window opacity so exactly the intended

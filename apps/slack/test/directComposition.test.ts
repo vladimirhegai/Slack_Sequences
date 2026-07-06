@@ -16,6 +16,7 @@ import {
   reconcileInteractionTargets,
   requestDirectComposition,
   requestStoryboardPlan,
+  criticSkippableCleanDraft,
 } from "../src/engine/compositionRunner.ts";
 import {
   commitDirectComposition,
@@ -23,12 +24,13 @@ import {
   isFloatingPointClipOverlap,
   loadDirectComposition,
   momentSubjectPart,
+  storyboardMarkdown,
   undoDirectComposition,
   validateDirectComposition,
   type DirectCompositionDraft,
 } from "../src/engine/directComposition.ts";
 import type { StoryboardMomentV1 } from "../src/engine/storyboardMoments.ts";
-import { inspectDirectComposition } from "../src/engine/layoutInspector.ts";
+import { inspectDirectComposition, type DirectBrowserQaResult } from "../src/engine/layoutInspector.ts";
 import { initializeProject } from "../src/engine/projectTemplates.ts";
 import { buildJobFrame } from "../src/engine/frameDesign.ts";
 import { injectCinemaKit } from "../src/engine/cinemaKit.ts";
@@ -602,6 +604,151 @@ describe("unsupported component beats degrade at parse (fallback-elimination)", 
       atSec: 3.5,
     }]);
     expect(parsed[1]!.beats!.find((entry) => entry.id === "good-rows")!.kind).toBe("rows");
+  });
+});
+
+describe("Sentinel Phase 3 — storyboard normalization is wired into parseStoryboardResponse", () => {
+  it("clamps an over-budget camera scene before the pacing gate, so it never throws", () => {
+    // The 3s middle scene declares 3 full moves (budget = 1). Without the
+    // Phase-3 clamp this throws `pacing/camera-budget`; with it, the two
+    // lowest-energy moves are dropped deterministically and the plan parses.
+    const scenes = storyboard();
+    const raw = scenes.map((scene, index) =>
+      index === 1
+        ? {
+            ...scene,
+            camera: {
+              version: 1,
+              path: [
+                { version: 1, move: "pan", toRegion: "left", startSec: 3.2, durationSec: 0.5 },
+                { version: 1, move: "track-to-anchor", toPart: "chip", startSec: 4.0, durationSec: 0.5 },
+                { version: 1, move: "pull-back", toRegion: "wide", startSec: 4.8, durationSec: 0.5 },
+              ],
+            },
+          }
+        : scene
+    );
+    const response = `<storyboard_json>${JSON.stringify(raw)}</storyboard_json>`;
+    const parsed = parseStoryboardResponse(response);
+    // The over-budget scene survived and its path was clamped to the budget.
+    const middle = parsed[1]!;
+    expect(middle.camera!.path.filter((move) => move.move !== "hold" && move.move !== "drift"))
+      .toHaveLength(1);
+    // The surviving move is the highest-energy one (pull-back outranks pan/track).
+    expect(middle.camera!.path.some((move) => move.move === "pull-back")).toBe(true);
+    // The committed normalization is visible on the scene → STORYBOARD.md.
+    expect(middle.sentinelNormalizations?.length).toBe(1);
+    expect(storyboardMarkdown("t", parsed)).toContain("- Sentinel normalized: dropped 2");
+  });
+
+  it("reverts a normalization that would mint a NEW blocking finding (atomic commit)", () => {
+    // Same over-budget scene, but the brief explicitly demands 3 typed camera
+    // moves: the clamp would satisfy pacing/camera-budget while violating
+    // minCameraMoves — a finding the model never earned. The parse must
+    // revert to the model's own plan and throw ITS findings, not the
+    // normalization's.
+    const scenes = storyboard();
+    const raw = scenes.map((scene, index) =>
+      index === 1
+        ? {
+            ...scene,
+            camera: {
+              version: 1,
+              path: [
+                { version: 1, move: "pan", toRegion: "left", startSec: 3.2, durationSec: 0.5 },
+                { version: 1, move: "track-to-anchor", toPart: "chip", startSec: 4.0, durationSec: 0.5 },
+                { version: 1, move: "pull-back", toRegion: "wide", startSec: 4.8, durationSec: 0.5 },
+              ],
+            },
+          }
+        : scene
+    );
+    const response = `<storyboard_json>${JSON.stringify(raw)}</storyboard_json>`;
+    let message = "";
+    try {
+      parseStoryboardResponse(response, { minCameraMoves: 3 });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    // The model's own finding (over budget), not the normalization's side
+    // effect (too few moves after the clamp).
+    expect(message).toContain("pacing/camera-budget");
+    expect(message).not.toContain("typed camera moves");
+  });
+
+  it("stretches a marginal scene-boundary reading miss and cascade-shifts later scenes", () => {
+    // The 3s middle scene types a headline that lands too late to read before
+    // its own cut — a marginal miss the host closes by extending the cut,
+    // instead of a findings-retry. The later scene shifts by the same delta.
+    const scenes = storyboard();
+    const raw = scenes.map((scene, index) =>
+      index === 1
+        ? {
+            ...scene,
+            components: [{ version: 1, id: "headline", kind: "search" }],
+            beats: [{
+              version: 1,
+              id: "type-headline",
+              sceneId: "product-proof",
+              component: "headline",
+              kind: "type",
+              atSec: 5.0,
+              text: "deploy",
+            }],
+          }
+        : scene
+    );
+    const response = `<storyboard_json>${JSON.stringify(raw)}</storyboard_json>`;
+    const parsed = parseStoryboardResponse(response);
+    const middle = parsed[1]!;
+    const closer = parsed[2]!;
+    // The middle scene grew past its declared 3s, and the closer moved to the
+    // new boundary — the plan stays contiguous.
+    expect(middle.durationSec).toBeGreaterThan(3);
+    expect(closer.startSec).toBeCloseTo(middle.startSec + middle.durationSec, 3);
+  });
+});
+
+describe("Sentinel Phase 3 — criticSkippableCleanDraft (critic gating predicate)", () => {
+  const base: DirectBrowserQaResult = {
+    ok: true,
+    strictOk: true,
+    samples: [0, 2, 4],
+    issues: [],
+    errors: [],
+    warnings: [],
+  };
+
+  it("skips the critic for a pristine draft (strictOk, zero quality penalty)", () => {
+    expect(criticSkippableCleanDraft(base)).toBe(true);
+  });
+
+  it("runs the critic when a polish finding shipped (not strictOk)", () => {
+    expect(criticSkippableCleanDraft({ ...base, strictOk: false })).toBe(false);
+  });
+
+  it("runs the critic when a weighted issue is present even if strictOk", () => {
+    expect(criticSkippableCleanDraft({
+      ...base,
+      issues: [{
+        code: "camera_framed_sparse",
+        severity: "warning",
+        time: 4,
+        selector: "#scene",
+        message: "sparse",
+        source: "sequences",
+      }],
+    })).toBe(false);
+  });
+
+  it("runs the critic when a browser console warning is present", () => {
+    expect(criticSkippableCleanDraft({ ...base, warnings: ["browser_warning: deprecated api"] }))
+      .toBe(false);
+  });
+
+  it("runs the critic when browser QA did not execute (infra outage) or is absent", () => {
+    expect(criticSkippableCleanDraft({ ...base, infraError: "no chrome" })).toBe(false);
+    expect(criticSkippableCleanDraft(undefined)).toBe(false);
   });
 });
 

@@ -3,22 +3,35 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  applyDeterministicSourceRepairs,
   auditShapeMatchHints,
+  buildSceneSkeletons,
   dedupeFeedbackBySignature,
   degradeMismatchedShapeHintCuts,
   degradeVolunteeredBridgedCuts,
   ensureRuntimeScriptOrdering,
   findingSignature,
+  HOST_PLAN_ISLAND_IDS,
+  injectMissingLivenessBeats,
+  reconcileCameraWorldPlanes,
   reconcileComponentBindings,
+  reconcileComponentInternalPartAliases,
   reconcileContractBindings,
   repairStrategyAfterStaticRejection,
   rewriteDegradedCutStoryboard,
+  stripAllHostPlanIslands,
   stripHostKitAssetReferences,
+  stripUnusedHostPlanIslands,
   topUpRowsMarkup,
   volunteeredCutBoundaries,
 } from "../src/engine/compositionRunner.ts";
+import { hasPausedTimeline } from "../src/engine/directComposition.ts";
+import { validateCameraContract } from "../src/engine/cameraContract.ts";
+import { validateComponentContract } from "../src/engine/componentContract.ts";
 import { resolveCutPlan, validateCutContract } from "../src/engine/cutContract.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
+import { validateInteractionContract } from "../src/engine/interactionContract.ts";
+import { analyzeMotionDensity } from "../src/engine/motionDensity.ts";
 
 const roots: string[] = [];
 
@@ -661,6 +674,187 @@ describe("reconcileComponentBindings — missing data-part recovery", () => {
     expect(out).toContain('data-component="search"');
     expect(out).not.toContain('data-component="command-palette"');
   });
+
+  it("claims a lone kind-marked palette root even when it carried a cut alias", () => {
+    const html = wrap(
+      '<div class="cmp cmp-palette" data-component="command-palette" data-part="palette-input">' +
+        '<div class="cmp-input"></div></div>',
+    );
+    const { html: out, repairs } = reconcileComponentBindings(html, [
+      scene("dashboard-overload", 0, {
+        components: [component("cmd-palette", "command-palette")],
+      }),
+    ]);
+    expect(repairs).toBe(1);
+    expect(out).toContain('data-component="command-palette" data-part="cmd-palette"');
+  });
+});
+
+describe("deterministic source repair ordering: camera world + component aliases", () => {
+  const storyboard = (): DirectScene[] => [
+    scene("dashboard-overwhelm", 0, {
+      cut: {
+        version: 1,
+        style: "shape-match",
+        focalPartOut: "palette-input",
+        focalPartIn: "palette-input",
+      },
+    }),
+    scene("palette-ship", 4, {
+      components: [{ version: 1, id: "cmd-palette", kind: "command-palette" }],
+      beats: [{
+        version: 1,
+        id: "filtered-rows",
+        sceneId: "palette-ship",
+        component: "cmd-palette",
+        kind: "rows",
+        atSec: 5,
+      }],
+    }),
+    scene("stat-resolve", 8, {
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "push-in",
+          toRegion: "stat-card",
+          startSec: 9,
+          durationSec: 1,
+        }],
+      },
+    }),
+  ];
+
+  function sourceHtml(): string {
+    return `<!doctype html><html><head><script src="gsap.min.js"></script></head><body>
+<main data-composition-id="c" data-width="1920" data-height="1080" data-duration="12">
+  <section id="dashboard-overwhelm" data-scene="dashboard-overwhelm" data-start="0" data-duration="4">
+    <div data-part="palette-input"></div>
+  </section>
+  <section id="palette-ship" data-scene="palette-ship" data-start="4" data-duration="4">
+    <div class="cmp cmp-palette material" data-component="command-palette">
+      <div class="cmp-input inset-well"><span class="cmp-text">deploy</span></div>
+    </div>
+  </section>
+  <section id="stat-resolve" data-scene="stat-resolve" data-start="8" data-duration="4">
+    <div data-region="stat-card"><div class="metric">98%</div></div>
+  </section>
+</main>
+<script>const tl = gsap.timeline({ paused: true }); window.__timelines["c"] = tl;</script>
+</body></html>`;
+  }
+
+  it("wraps a camera scene that omitted only the data-camera-world plane", () => {
+    const { html, repairs } = reconcileCameraWorldPlanes(sourceHtml(), storyboard());
+    expect(repairs).toBe(1);
+    expect(html).toContain('data-camera-world style="position:absolute;inset:0;transform-origin:0 0"');
+    expect(validateCameraContract(
+      applyDeterministicSourceRepairs({ html, storyboard: storyboard() }, tempDir(), storyboard()).html,
+      storyboard(),
+    ).errors).toEqual([]);
+  });
+
+  it("materializes a command-palette input alias without stealing the component root", () => {
+    const scenes = storyboard();
+    const html = reconcileComponentBindings(sourceHtml(), scenes).html;
+    const { html: withAlias, repairs } = reconcileComponentInternalPartAliases(html, scenes);
+    expect(repairs).toBe(1);
+    expect(withAlias).toContain('data-part="cmd-palette"');
+    expect(withAlias).toContain('class="cmp-input inset-well" data-part="palette-input"');
+  });
+
+  it("recovers the combined latest source-author failure before static validation", () => {
+    const scenes = storyboard();
+    const repaired = applyDeterministicSourceRepairs(
+      { html: sourceHtml(), storyboard: scenes },
+      tempDir(),
+      scenes,
+    );
+    expect(repaired.html).toContain("data-camera-world");
+    expect(repaired.html).toContain('data-part="cmd-palette"');
+    expect(repaired.html).toContain('data-part="palette-input"');
+    expect(repaired.html.match(/class="cmp-item"/g)).toHaveLength(3);
+    expect(validateCutContract(repaired.html, scenes).errors).toEqual([]);
+    expect(validateCameraContract(repaired.html, scenes).errors).toEqual([]);
+    expect(validateComponentContract(repaired.html, scenes).errors).toEqual([]);
+  });
+});
+
+describe("unused host islands and liveness recovery", () => {
+  const quietScenes = (): DirectScene[] => [
+    scene("dashboard-noise", 0, { durationSec: 2.5 }),
+    scene("proof", 2.5, { durationSec: 4 }),
+    scene("close", 6.5, { durationSec: 4 }),
+  ];
+
+  function quietHtml(extraHead = ""): string {
+    return `<!doctype html><html><head><script src="gsap.min.js"></script>${extraHead}</head><body>
+<main data-composition-id="c" data-width="1920" data-height="1080" data-duration="10.5">
+  <section id="dashboard-noise" data-scene="dashboard-noise" data-start="0" data-duration="2.5">
+    <div id="dashboard-card" class="panel metric-card">Noisy dashboard</div>
+  </section>
+  <section id="proof" data-scene="proof" data-start="2.5" data-duration="4">
+    <h2 id="proof-title">Signal resolves</h2>
+  </section>
+  <section id="close" data-scene="close" data-start="6.5" data-duration="4">
+    <h2 id="close-title">Ship the answer</h2>
+  </section>
+</main>
+<script>const tl = gsap.timeline({ paused: true });
+tl.fromTo("#proof-title", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: .45 }, 4.6);
+tl.fromTo("#close-title", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: .45 }, 8.8);
+window.__timelines["c"] = tl;</script>
+</body></html>`;
+  }
+
+  it("strips hallucinated interaction/camera/component islands when the locked storyboard has no plan", () => {
+    const scenes = quietScenes();
+    const html = quietHtml(
+      '<script type="application/json" id="sequences-interactions">[]</script>' +
+        '<script type="application/json" id="sequences-camera">{"version":1,"scenes":[{}]}</script>' +
+        '<script type="application/json" id="sequences-components">[]</script>',
+    );
+    const { html: out, removed } = stripUnusedHostPlanIslands(html, scenes);
+    expect(removed).toEqual([
+      "sequences-interactions",
+      "sequences-camera",
+      "sequences-components",
+    ]);
+    expect(out).not.toContain("sequences-interactions");
+    expect(out).not.toContain("sequences-camera");
+    expect(out).not.toContain("sequences-components");
+    expect(validateInteractionContract(out, scenes, 10.5).errors).toEqual([]);
+    expect(validateCameraContract(out, scenes).errors).toEqual([]);
+    expect(validateComponentContract(out, scenes).errors).toEqual([]);
+  });
+
+  it("injects a minimal seek-safe child beat for a short slide-like scene", () => {
+    const scenes = quietScenes();
+    const before = analyzeMotionDensity(quietHtml(), scenes, 10.5);
+    expect(before.errors.join("\n")).toContain('scene "dashboard-noise" has 0 authored');
+    const { html, repaired } = injectMissingLivenessBeats(quietHtml(), scenes);
+    expect(repaired).toEqual(["dashboard-noise"]);
+    expect(html).toContain('data-sequences-liveness-beat="dashboard-noise"');
+    expect(html).toContain('tl.fromTo("[data-sequences-liveness-beat=\\"dashboard-noise\\"]"');
+    const after = analyzeMotionDensity(html, scenes, 10.5);
+    expect(after.errors.join("\n")).not.toContain('scene "dashboard-noise"');
+  });
+
+  it("recovers the latest unused-island plus dashboard-noise liveness failure end to end", () => {
+    const scenes = quietScenes();
+    const html = quietHtml(
+      '<script type="application/json" id="sequences-interactions">{}</script>' +
+        '<script type="application/json" id="sequences-camera">{"version":1,"scenes":[{}]}</script>',
+    );
+    const repaired = applyDeterministicSourceRepairs({ html, storyboard: scenes }, tempDir(), scenes);
+    expect(repaired.html).not.toContain('id="sequences-interactions"');
+    expect(repaired.html).not.toContain('id="sequences-camera"');
+    expect(repaired.html).toContain('data-sequences-liveness-beat="dashboard-noise"');
+    expect(validateInteractionContract(repaired.html, scenes, 10.5).errors).toEqual([]);
+    expect(validateCameraContract(repaired.html, scenes).errors).toEqual([]);
+    expect(analyzeMotionDensity(repaired.html, scenes, 10.5).errors.join("\n"))
+      .not.toContain('scene "dashboard-noise"');
+  });
 });
 
 // The parked re-run defect (2026-07-05): attempt 3 threw
@@ -755,5 +949,186 @@ describe("ensureRuntimeScriptOrdering — the SequencesInteractions is not defin
     const { html: out, changed } = ensureRuntimeScriptOrdering(noGsap);
     expect(changed).toBe(false);
     expect(out).toBe(noGsap);
+  });
+});
+
+/* -------------------------------------------- Sentinel Phase 1 — scaffold */
+
+/** The 2026-07-05 incident 1 shape: a component scene + a camera-path scene
+ * where the model omitted the component `data-part` and the `data-camera-world`
+ * plane. The Phase-1 skeleton emits both so those repairs never fire. */
+function incident1Storyboard(): DirectScene[] {
+  return [
+    scene("palette-ship", 0, {
+      components: [
+        { version: 1, id: "cmd-palette", kind: "command-palette", role: "hero" },
+      ],
+      beats: [
+        {
+          version: 1,
+          id: "palette-open",
+          sceneId: "palette-ship",
+          component: "cmd-palette",
+          kind: "open",
+          atSec: 1,
+        },
+      ],
+    }),
+    scene("stat-resolve", 4, {
+      worldLayout: [
+        { region: "hero-claim", cell: [0, 0] },
+        { region: "metric-wall", cell: [1, 0] },
+      ],
+      camera: {
+        version: 1,
+        // Absolute times inside the [4, 8) scene window.
+        path: [
+          { version: 1, move: "hold", toRegion: "hero-claim", startSec: 4.2, durationSec: 0.8 },
+          { version: 1, move: "whip", toRegion: "metric-wall", startSec: 5.6, durationSec: 0.5 },
+        ],
+      },
+    }),
+  ];
+}
+
+function wrapSkeletonDoc(skeletons: string[], id = "incident1"): string {
+  return [
+    "<!doctype html><html><head></head><body>",
+    `<div data-composition-id="${id}" data-width="1920" data-height="1080" data-duration="12">`,
+    ...skeletons,
+    "</div>",
+    '<script src="gsap.min.js"></script>',
+    `<script>var tl = gsap.timeline({ paused: true });\nwindow.__timelines["${id}"] = tl;</script>`,
+    "</body></html>",
+  ].join("\n");
+}
+
+function extractIslandBody(html: string, id: string): string | undefined {
+  const match = html.match(
+    new RegExp(`<script[^>]*id="${id}"[^>]*>([\\s\\S]*?)</script>`, "i"),
+  );
+  return match?.[1];
+}
+
+describe("Sentinel Phase 1 — skeleton scaffold makes paperwork classes unrepresentable", () => {
+  it("incident 1 replay: skeleton emits the camera-world plane + component root; zero repairs", () => {
+    const storyboard = incident1Storyboard();
+    const [paletteShell, statShell] = buildSceneSkeletons(storyboard);
+
+    // Component root present by construction.
+    expect(paletteShell).toContain('data-part="cmd-palette"');
+    expect(paletteShell).toContain('data-component="command-palette"');
+    // Camera-world plane + both stations present by construction.
+    expect(statShell).toContain("data-camera-world");
+    expect(statShell).toContain('data-region="hero-claim"');
+    expect(statShell).toContain('data-region="metric-wall"');
+    // Stations carry the deterministic rects (not guessed coordinates).
+    expect(statShell).toMatch(/data-region="hero-claim"[^>]*left:260px/);
+
+    // A document built from the skeletons needs ZERO deterministic repair for
+    // the camera-world and component-root classes (attempt-1, no fallback).
+    const doc = wrapSkeletonDoc([paletteShell!, statShell!]);
+    expect(reconcileCameraWorldPlanes(doc, storyboard).repairs).toBe(0);
+    expect(reconcileComponentBindings(doc, storyboard).repairs).toBe(0);
+    expect(reconcileContractBindings(doc, storyboard).repairs).toBe(0);
+  });
+
+  it("incident 1 replay: without the skeleton the plane + root are absent (proving the class was real)", () => {
+    const storyboard = incident1Storyboard();
+    // Bare shells — the pre-Sentinel default — omit the plane and the root.
+    const bare = storyboard
+      .map(
+        (s) =>
+          `<section id="${s.id}" class="scene clip" data-scene="${s.id}" ` +
+          `data-start="${s.startSec}" data-duration="${s.durationSec}" data-track-index="1">` +
+          "…content…</section>",
+      )
+      .join("\n");
+    const bareDoc = wrapSkeletonDoc([bare]);
+    // The camera-world class was real: the L2 repair must wrap a plane, and the
+    // component root is simply absent (a would-be blocking finding).
+    expect(reconcileCameraWorldPlanes(bareDoc, storyboard).repairs).toBeGreaterThan(0);
+    expect(bareDoc).not.toContain('data-part="cmd-palette"');
+    // The skeleton supplies both, so no repair is needed and the root is present.
+    const skeletonDoc = wrapSkeletonDoc(buildSceneSkeletons(storyboard));
+    expect(reconcileCameraWorldPlanes(skeletonDoc, storyboard).repairs).toBe(0);
+    expect(skeletonDoc).toContain('data-part="cmd-palette"');
+  });
+
+  it("component skeleton roots stamp the real id and the kit class", () => {
+    const [paletteShell] = buildSceneSkeletons([
+      scene("s", 0, {
+        components: [
+          { version: 1, id: "deploy-btn", kind: "button", role: "hero" },
+        ],
+      }),
+    ]);
+    expect(paletteShell).toContain('data-part="deploy-btn"');
+    expect(paletteShell).toContain('data-component="button"');
+    expect(paletteShell).toContain("cmp-button");
+    // The exemplar's placeholder data-part is not leaked.
+    expect(paletteShell).not.toContain('data-part="deploy-cta"');
+  });
+});
+
+describe("Sentinel Phase 1 — host plan islands are host-owned, always", () => {
+  it("stripAllHostPlanIslands removes every host island unconditionally", () => {
+    const withIslands = HOST_PLAN_ISLAND_IDS.map(
+      (id) => `<script type="application/json" id="${id}">{"bogus":true}</script>`,
+    ).join("\n");
+    const result = stripAllHostPlanIslands(withIslands);
+    expect(new Set(result.removed)).toEqual(new Set(HOST_PLAN_ISLAND_IDS));
+    for (const id of HOST_PLAN_ISLAND_IDS) {
+      expect(result.html).not.toContain(`id="${id}"`);
+    }
+  });
+
+  it("incident 2 replay: a model-authored shadow sequences-camera island is replaced with the canonical plan", () => {
+    const storyboard = incident1Storyboard(); // carries a camera plan (stat-resolve)
+    const dir = tempDir();
+    const shadow =
+      '<script type="application/json" id="sequences-camera">{"version":1,"scenes":"not-an-array"}</script>';
+    const skeletons = buildSceneSkeletons(storyboard);
+    const html = wrapSkeletonDoc([shadow, ...skeletons]);
+
+    const repaired = applyDeterministicSourceRepairs({ storyboard, html }, dir, storyboard);
+
+    // Exactly one camera island survives, and its scenes is a real array.
+    const islands = [...repaired.html.matchAll(/id="sequences-camera"/g)];
+    expect(islands.length).toBe(1);
+    const body = extractIslandBody(repaired.html, "sequences-camera");
+    expect(body).toBeDefined();
+    const parsed = JSON.parse(body!);
+    expect(Array.isArray(parsed.scenes)).toBe(true);
+    expect(parsed.scenes.length).toBeGreaterThan(0);
+  });
+
+  it("incident 2 replay: a shadow sequences-interactions island with a bad version is removed when the plan has none", () => {
+    const storyboard = incident1Storyboard(); // no interactions declared
+    const dir = tempDir();
+    const shadow =
+      '<script type="application/json" id="sequences-interactions">{"version":9}</script>';
+    const html = wrapSkeletonDoc([shadow, ...buildSceneSkeletons(storyboard)]);
+
+    const repaired = applyDeterministicSourceRepairs({ storyboard, html }, dir, storyboard);
+
+    // No interactions in the plan ⇒ the model's island is gone, not re-injected.
+    expect(repaired.html).not.toContain('id="sequences-interactions"');
+  });
+});
+
+describe("hasPausedTimeline — Sentinel Phase 1 false-reject fix", () => {
+  it("accepts a paused timeline with a nested config object before paused", () => {
+    expect(
+      hasPausedTimeline('const tl = gsap.timeline({ defaults: { ease: "none" }, paused: true });'),
+    ).toBe(true);
+  });
+
+  it("accepts the bare paused form", () => {
+    expect(hasPausedTimeline("var tl = gsap.timeline({ paused: true });")).toBe(true);
+  });
+
+  it("rejects a timeline that is not paused (even with a nested config)", () => {
+    expect(hasPausedTimeline('gsap.timeline({ defaults: { ease: "none" } });')).toBe(false);
   });
 });

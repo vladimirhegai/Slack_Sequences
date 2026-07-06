@@ -10,6 +10,13 @@ The real enemy is the **middle class**: a *mechanically recoverable* paperwork b
 that silently burns a paid authoring attempt and pushes a good brief into the ugly
 fallback. This doc names all of them and how we recover them.
 
+> **New contract classes go through [SENTINEL.md](SENTINEL.md) placement FIRST.**
+> This catalog is the **L2 ledger** (deterministic repair), not the default home
+> for a new obligation. Before adding a class-C recovery, walk the SENTINEL.md
+> placement decision tree — the cheapest owner might be a schema (L0), a
+> host-emitted scaffold (L1), or a normalizer (L2), not another regex repair. A
+> gate that could have been L0/L1 is a Sentinel violation.
+
 ---
 
 ## ⚠️ PREP-MODE FLAG — set it back before judging
@@ -158,5 +165,6 @@ fixing agent.
 
 ---
 
-See also: [ROADMAP.md](ROADMAP.md) "Full audit" (surviving records + parked items),
-[CLAUDE.md](CLAUDE.md) (rules/state), and the `slack-map` skill.
+See also: [SENTINEL.md](SENTINEL.md) (the layer model + contract registry + how to
+place a new obligation), [ROADMAP.md](ROADMAP.md) "Full audit" (surviving records +
+parked items), [CLAUDE.md](CLAUDE.md) (rules/state), and the `slack-map` skill.

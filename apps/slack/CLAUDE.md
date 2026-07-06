@@ -24,7 +24,25 @@ changes need a publish but not a redeploy. Full runbook: [OPERATIONS.md](OPERATI
 [OPERATIONS.md](OPERATIONS.md) (local setup + Railway deploy + recovery) ·
 [FALLBACKS.md](FALLBACKS.md) (fallback classes, recoverable-paperwork catalog, the
 prep-mode fail-loud flag, how to diagnose a fallback) ·
+[SENTINEL.md](SENTINEL.md) (the correctness-by-construction system: layer model,
+contract registry, budgets, and EVERY Sentinel flag) ·
 [HACKATHON_RULES.md](HACKATHON_RULES.md) (challenge constraints).
+
+## Sentinel — correctness by construction
+
+Authoring reliability is governed by **Sentinel** (SENTINEL_PLAN.md → shipped per
+SENTINEL_REPORT.md; the system is documented in [SENTINEL.md](SENTINEL.md)). The
+thesis: move every mechanically-decidable obligation OFF the model so whole
+classes become *unrepresentable* (L0 schema / L1 host scaffold) or
+*deterministically repaired* (L2 normalize) instead of detected-and-retried.
+**Gates are never loosened — Sentinel changes WHERE an obligation is enforced,
+not WHETHER.** Before adding any authoring gate, rule, or repair, walk the
+SENTINEL.md placement decision tree and register the finding class in
+[src/engine/sentinel.ts](src/engine/sentinel.ts) (`test/sentinel.test.ts` fails on
+an unregistered class). Flags: `SLACK_SEQUENCES_SENTINEL_SKELETON` /
+`_SENTINEL_SLOTS` (host scene scaffolds + scene-addressable slots) and
+`SLACK_SEQUENCES_CRITIC_SKIP_CLEAN` (skip the critic on a pristine draft) — all in
+`src/engine/sentinelFlags.ts`, all in SENTINEL.md's flag table.
 
 > ⚠️ **Prep-mode:** the bot currently runs **fail-loud**
 > (`SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0`) so authoring failures surface

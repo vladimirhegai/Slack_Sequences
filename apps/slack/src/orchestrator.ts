@@ -58,6 +58,13 @@ import {
 } from "./engine/directComposition.ts";
 import { inspectDirectComposition } from "./engine/layoutInspector.ts";
 import { tryDirectInteractionRevision } from "./engine/directRevisionRouter.ts";
+import {
+  beginSentinelRun,
+  finalizeSentinelRun,
+  recordSentinelStages,
+  recordSentinelTier,
+} from "./engine/sentinelTelemetry.ts";
+import { sentinelSkeletonEnabled, sentinelSlotsEnabled } from "./engine/sentinelFlags.ts";
 
 /* ----------------------------------------------------------- provider choice */
 
@@ -676,6 +683,13 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
   if (options.presetPlan === undefined) {
     const provider = PROVIDERS[providerId];
     if (!provider) throw new Error(`unknown provider "${providerId}"`);
+    // Phase 0 telemetry: enter a Sentinel run context so every downstream
+    // model call and deterministic repair lands in planning/sentinel-run.json.
+    beginSentinelRun(dir, {
+      skeleton: sentinelSkeletonEnabled(),
+      slots: sentinelSlotsEnabled(),
+    });
+    const sentinelStart = performance.now();
     const brief = assembleBrief(options);
     const skills = retrieveHyperframesSkillContext("create", brief);
     skillsUsed = skills.skillNames;
@@ -753,6 +767,8 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
         stages,
       });
       writeFailureReport(dir, report);
+      recordSentinelStages(stages);
+      finalizeSentinelRun("fail-loud");
       throw new Error(report);
     }
     const frame = framed.value;
@@ -812,6 +828,8 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
         );
         // The whole report becomes the surfaced error so Slack (code-block) and
         // sequence:check show the log directly; FAILURE.md carries the untruncated copy.
+        recordSentinelStages(stages);
+        finalizeSentinelRun("fail-loud");
         throw new Error(report);
       }
       process.stderr.write(
@@ -835,11 +853,19 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       options.preferMcp,
       options.onProgress,
     );
+    // Wall-clock to tier 1 = the model-bound authoring + submit that precedes
+    // thumbnails; the render_preview inside buildPreviews is fast and
+    // infra-bound (recorded separately in stage-timings.json).
+    recordSentinelTier("tier1", performance.now() - sentinelStart);
+    const willRender = options.render ?? true;
     const previews = await buildPreviews(dir, {
-      render: options.render ?? true,
+      render: willRender,
       preferMcp: options.preferMcp,
       onProgress: options.onProgress,
     });
+    if (willRender) recordSentinelTier("tier2", performance.now() - sentinelStart);
+    recordSentinelStages(stages);
+    finalizeSentinelRun(fallbackInfo ? "fallback" : "published");
     const current = loadDirectComposition(dir);
     return {
       ...previews,
@@ -873,6 +899,11 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     throw new Error("unreachable authoring mode");
   }
 
+  // The model-free preset/demo path also emits a sentinel-run.json (0 model
+  // calls, "published") so the telemetry instrument has a real, no-cost
+  // end-to-end run to prove itself.
+  beginSentinelRun(dir, { skeleton: sentinelSkeletonEnabled(), slots: sentinelSlotsEnabled() });
+  const presetStart = performance.now();
   const mutation = await applyMutation(
     dir,
     planToCommands(project, plan),
@@ -880,12 +911,15 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     options.preferMcp,
     options.onProgress,
   );
-
+  recordSentinelTier("tier1", performance.now() - presetStart);
+  const presetWillRender = options.render ?? true;
   const previews = await buildPreviews(dir, {
-    render: options.render ?? true,
+    render: presetWillRender,
     preferMcp: options.preferMcp,
     onProgress: options.onProgress,
   });
+  if (presetWillRender) recordSentinelTier("tier2", performance.now() - presetStart);
+  finalizeSentinelRun("published");
   const applied = loadProject(dir);
   return {
     ...previews,

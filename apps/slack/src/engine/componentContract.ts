@@ -353,6 +353,25 @@ export function componentSupportsBeat(kind: ComponentKind, beat: ComponentBeatKi
   return CATALOG_BY_KIND.get(kind)?.beats.includes(beat) ?? false;
 }
 
+/**
+ * The canonical host-owned root element for a declared component (Sentinel
+ * Phase 1 scaffold). The catalog exemplar already carries the correct tag,
+ * `cmp cmp-<kind>` class, `data-component`, and a kit-valid interior; here its
+ * `data-part` is stamped with THIS component's stable id so
+ * `component_root_missing` / `component_beat_unbound` are unrepresentable
+ * rather than repaired. The author fills/restyles the interior; the binding is
+ * guaranteed present. A kind outside the catalog degrades to a bare bound div.
+ */
+export function componentSkeletonMarkup(spec: SceneComponentSpecV1): string {
+  const entry = CATALOG_BY_KIND.get(spec.kind);
+  if (!entry) {
+    return `<div class="cmp" data-component="${spec.kind}" data-part="${spec.id}"></div>`;
+  }
+  // The root is the first element; its data-part is the first occurrence, and
+  // no exemplar carries a second data-part in its interior.
+  return entry.markup.replace(/\bdata-part\s*=\s*"[^"]*"/, `data-part="${spec.id}"`);
+}
+
 /* --------------------------------------------------------------- intents */
 
 /** A declared component instance in a scene (the planner's build order). */

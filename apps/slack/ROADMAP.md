@@ -1410,6 +1410,60 @@ Follow-up audit — closed the parked seam and made every authoring failure legi
 
 ---
 
+### Sentinel — correctness by construction (2026-07-05 → 07-06)
+
+The reliability rework that turns "model writes everything → host validates →
+host repairs → model retries the whole artifact" into *move every
+mechanically-decidable obligation OFF the model.* Full design in
+[SENTINEL_PLAN.md](SENTINEL_PLAN.md), shipped-state ledger in
+[SENTINEL_REPORT.md](SENTINEL_REPORT.md), the auditable system in
+[SENTINEL.md](SENTINEL.md). **Gates are never loosened — Sentinel changes WHERE
+an obligation is enforced, not WHETHER.**
+
+- **Phase 0 (telemetry).** `engine/sentinelTelemetry.ts` writes
+  `planning/sentinel-run.json` per job (per-stage wall-clock/attempts, model
+  calls, prompt chars, findings-by-layer L0→L5, normalization tags, disposition);
+  `npm run sentinel:report` aggregates the mission metric table.
+- **Phase 1 (scaffold, `SENTINEL_SKELETON`).** The host emits scene skeletons
+  carrying the camera-world plane + `data-region` stations, component roots, and
+  focal-part carriers, and strips **every** model-authored `sequences-*` island
+  unconditionally — the two 2026-07-05 incident classes become unrepresentable.
+  Default OFF until the Phase-5 flip.
+- **Phase 2 (slots, `SENTINEL_SLOTS`).** Scene-addressable authoring
+  (`engine/sceneSlots.ts`: `film_style` + per-scene `scene_html`/`scene_script`,
+  host-owned stage `<style>` + reveal/clear sets, truncation-tail recovery) so
+  validation/attribution/retries are scene-scoped. Default OFF.
+- **Phase 3 (normalize + critic gating).** `normalizeCameraBudget` +
+  `stretchMarginalPacingMisses` (`engine/pacingAudit.ts`) do the storyboard
+  arithmetic the host can already do — clamp camera-move counts, stretch a
+  marginal reading/outcome miss — **atomically** (commit only if the normalized
+  plan re-validates clean; revert to the model's own artifact otherwise), before
+  the moment top-up, never dropping a moment-bearing move, and visible in
+  STORYBOARD.md. `criticSkippableCleanDraft` skips the continuity critic on a
+  pristine banked draft (`SLACK_SEQUENCES_CRITIC_SKIP_CLEAN`, default on). The
+  ladder/token retunes (3→2, 30720→20480) and slot-retry-before-least-bad are
+  deferred to Phase 5 (probe-gated).
+- **Phase 4 (the manifest + budgets — documentation is load-bearing).**
+  `engine/sentinel.ts` is the typed contract registry (one row per obligation ×
+  layer, with `findingPrefixes`, `blocking`, `test`, `addedBecause`);
+  `test/sentinel.test.ts` walks the registered prefixes against the validators'
+  actually-emitted strings so an **unregistered finding class fails CI** — the
+  closed-world guarantee the FALLBACKS.md catalog never had. `test/promptBudget.test.ts`
+  holds `planning-director.md` ≤ 40,711 bytes and tracks the ≤45k assembled-prompt
+  target (a `.todo` with a written reduction plan — the base prompt + RAG budget
+  alone exceed 45k, so it needs the structural cuts documented in SENTINEL.md, not
+  a silent ceiling bump). A distinct L1 scaffold telemetry counter
+  (`recordSentinelScaffold`) makes host-guaranteed bindings visible instead of
+  always-0. SENTINEL.md carries the layer model, placement decision tree,
+  feature-addition protocol, contract table, budgets, and every flag; FALLBACKS.md
+  / CLAUDE.md / slack-map point at it.
+- **Phase 5 (probes → retune → flip → ship).** Pending: the §7 paid probe set
+  (flags ON, fail-loud), the probe-gated Phase-3 retunes, one revise+undo, then
+  flipping `SENTINEL_SKELETON`/`SENTINEL_SLOTS` default ON (legacy behind `=0`),
+  and the full ship ladder.
+
+---
+
 ## Current Architecture
 
 ```mermaid
