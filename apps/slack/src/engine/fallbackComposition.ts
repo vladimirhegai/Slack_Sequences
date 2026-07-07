@@ -6,6 +6,7 @@ import {
   resolveComponentPlan,
 } from "./componentContract.ts";
 import { TIME_RUNTIME_FILE, resolveTimeRampPlan } from "./timeRamp.ts";
+import { FX_RUNTIME_FILE, resolveFxPlan } from "./fxContract.ts";
 import type { StoryboardMomentV1 } from "./storyboardMoments.ts";
 import type { DirectCompositionDraft, DirectScene } from "./directComposition.ts";
 
@@ -15,6 +16,14 @@ interface FallbackCompositionArgs {
   audience?: string;
   lengthSec?: number;
   frameMd?: string;
+  /**
+   * The locked storyboard, when source authoring failed with a proven plan in
+   * hand. Its scene titles / purposes / declared moments SKIN the safe film's
+   * supporting-copy slots so the fallback reads bespoke; the structure, camera,
+   * timing, and motion stay byte-deterministic. Omitted (storyboard-plan
+   * failure or demo) → the film is byte-identical to the generic proof reel.
+   */
+  plan?: DirectScene[];
 }
 
 function text(value: string, limit = 180): string {
@@ -26,6 +35,38 @@ function text(value: string, limit = 180): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/**
+ * Skin the safe film's three supporting-copy slots (hook context line, proof
+ * caption, close promise) with the locked plan's OWN words. Untrusted plan copy
+ * is clamped + escaped exactly like the brief fields (`text`). Every slot is
+ * `undefined` when no usable plan is passed, so the model-free path stays
+ * byte-identical. This never compiles the plan's structure — only its copy.
+ */
+function planSkin(plan: DirectScene[] | undefined): {
+  hook?: string;
+  proof?: string;
+  close?: string;
+} {
+  const scenes = (plan ?? []).filter((scene) => scene && (scene.title || scene.purpose));
+  if (!scenes.length) return {};
+  const first = scenes[0]!;
+  const last = scenes[scenes.length - 1]!;
+  const line = (value: string | undefined, limit = 72): string | undefined => {
+    const raw = (value ?? "").trim();
+    return raw ? text(raw, limit) : undefined;
+  };
+  const firstPrimaryTitle = (scene: DirectScene): string | undefined =>
+    (scene.moments ?? []).find((moment) => moment.importance === "primary")?.title;
+  const strongestChange = scenes
+    .flatMap((scene) => scene.moments ?? [])
+    .find((moment) => moment.importance === "primary")?.change;
+  return {
+    hook: line(firstPrimaryTitle(first) ?? first.title ?? first.purpose),
+    proof: line(strongestChange ?? scenes[Math.floor(scenes.length / 2)]!.purpose, 80),
+    close: line(last.title ?? last.purpose),
+  };
 }
 
 function slug(value: string): string {
@@ -92,6 +133,12 @@ export function buildFallbackComposition(
   const accentText = frameColor(args.frameMd, "Text on accent", "#06100e");
   const display = frameFont(args.frameMd, "Display / headlines");
   const body = frameFont(args.frameMd, "Body / UI");
+  // Skin the supporting-copy slots with the locked plan's own words when one
+  // exists; undefined everywhere for the no-plan path → byte-identical output.
+  const skin = planSkin(args.plan);
+  const hookLine = skin.hook ?? "Live in your workspace today";
+  const proofCaption = skin.proof ?? "Shipped &middot; verified &middot; in the channel";
+  const promiseLine = skin.close ?? "From shipped to shown";
 
   // ── Beat grid (all times absolute; every declared moment sits on a beat) ──
   // Hook: headline → tools line → ghost mark → accent rule (back half).
@@ -197,6 +244,15 @@ export function buildFallbackComposition(
               slowTo: 0.45,
               holdSec: 0.45,
               recoverSec: 0.8,
+            },
+            // MD4 deterministic proof path: the story's temperature turns from
+            // cold context to warm payoff exactly as the shipped value reads
+            // (coincides with the proof-reveal primary moment). The scene opens
+            // grade-cold; the fx runtime swaps to grade-warm at full cover.
+            gradeShift: {
+              version: 1 as const,
+              atSec: r2(proofPanel + 0.2),
+              toGrade: "warm" as const,
             },
           }
         : {}),
@@ -324,12 +380,18 @@ export function buildFallbackComposition(
   const cameraIsland = JSON.stringify(resolveCameraPlan(storyboard));
   const componentIsland = JSON.stringify(resolveComponentPlan(storyboard));
   const timeIsland = JSON.stringify(resolveTimeRampPlan(storyboard));
+  // MD2 deterministic proof path: the same host-derived fx plan every live
+  // film gets (a sweep + glow answering the progress payoff, connector slots
+  // for the camera arrivals) rides the fallback too, so the model-free gate
+  // proves the fx runtime on every CI pass.
+  const fxIsland = JSON.stringify(resolveFxPlan(storyboard));
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=1920, height=1080">
 <title>${product} launch</title><script src="gsap.min.js"></script>
 <script src="${CAMERA_RUNTIME_FILE}"></script>
 <script src="${COMPONENT_RUNTIME_FILE}"></script>
-<script src="${TIME_RUNTIME_FILE}"></script>${componentKitStyleTag()}${cinemaKitStyleTag()}<style>
+<script src="${TIME_RUNTIME_FILE}"></script>
+<script src="${FX_RUNTIME_FILE}"></script>${componentKitStyleTag()}${cinemaKitStyleTag()}<style>
 *{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:${bg}}
 body{color:${foreground};font-family:${body},Arial,sans-serif}
 #root{--space-safe:72px;--space-region:64px;--space-element:28px;--surface:${surface};--accent:${accent};--accent-text:${accentText};--text:${foreground};--muted:${muted};position:relative;width:1920px;height:1080px;overflow:hidden;background:radial-gradient(circle at 80% 12%,${surface},${bg} 52%)}
@@ -355,26 +417,27 @@ h1{max-width:11ch;font-size:150px;line-height:.88}h2{max-width:15ch;font-size:92
 <main id="root" data-composition-id="${compositionId}" data-width="1920" data-height="1080" data-duration="${duration}">
 <section id="fallback-hook" class="scene clip layout-editorial-left" data-scene="fallback-hook" data-start="0" data-duration="${first}" data-track-index="1">
 <div class="keylight keylight-tl" data-layout-ignore></div>
-<div class="zone stack" data-layout-important><div class="eyebrow">Now shipping</div><h1 data-part="release-headline">${product}</h1><div class="tools" id="hook-tools">Live in your workspace today</div><div class="rule" id="hook-rule"></div></div><div class="mark zone" aria-hidden="true" id="hook-mark">${product.slice(0, 1)}</div>
+<div class="zone stack" data-layout-important><div class="eyebrow">Now shipping</div><h1 data-part="release-headline">${product}</h1><div class="tools" id="hook-tools">${hookLine}</div><div class="rule" id="hook-rule"></div></div><div class="mark zone" aria-hidden="true" id="hook-mark">${product.slice(0, 1)}</div>
 </section>
-<section id="fallback-proof" class="scene clip" style="padding:0" data-scene="fallback-proof" data-start="${starts[1]}" data-duration="${second}" data-track-index="1">
+<section id="fallback-proof" class="scene clip${duration >= 12 ? " grade-cold" : ""}" style="padding:0" data-scene="fallback-proof" data-start="${starts[1]}" data-duration="${second}" data-track-index="1">
 <div class="keylight keylight-c" data-layout-ignore></div>
 <div class="world" data-camera-world>
 <div class="region" data-region="proof-context" style="left:0;width:1800px">
 <div class="zone stack"><div class="eyebrow">What changed</div><p class="audience" id="proof-audience">Built for ${audience}</p></div>
 </div>
 <div class="region" data-region="proof-panel" style="left:1800px;width:1400px">
-<div class="zone proof material-hero" data-layout-important data-part="release-proof"><h2>${shipped}</h2><div class="cmp cmp-progress" data-component="progress" data-part="release-progress"><i data-cmp-fill></i></div><div class="progress-cap" id="proof-cap">Shipped &middot; verified &middot; in the channel</div></div>
+<div class="zone proof material-hero" data-layout-important data-part="release-proof"><h2>${shipped}</h2><div class="cmp cmp-progress" data-component="progress" data-part="release-progress"><i data-cmp-fill></i></div><div class="progress-cap" id="proof-cap">${proofCaption}</div></div>
 </div>
 </div>
 </section>
 <section id="fallback-close" class="scene clip layout-center-stack" data-scene="fallback-close" data-start="${starts[2]}" data-duration="${third}" data-track-index="1">
 <span class="bloom" style="width:900px;height:900px;left:50%;top:40%;transform:translate(-50%,-50%)" data-layout-ignore></span>
-<div class="zone stack" data-layout-important data-layout-anchor="frame:center" style="align-items:center"><div class="lockup">${product}</div><div class="divider" id="close-rule"></div><div class="cta" data-part="release-cta">See what shipped</div><div class="promise" id="close-promise">From shipped to shown</div></div>
+<div class="zone stack" data-layout-important data-layout-anchor="frame:center" style="align-items:center"><div class="lockup">${product}</div><div class="divider" id="close-rule"></div><div class="cta" data-part="release-cta">See what shipped</div><div class="promise" id="close-promise">${promiseLine}</div></div>
 </section></main>
 <script type="application/json" id="sequences-camera">${cameraIsland}</script>
 <script type="application/json" id="sequences-components">${componentIsland}</script>
 <script type="application/json" id="sequences-time">${timeIsland}</script>
+<script type="application/json" id="sequences-fx">${fxIsland}</script>
 <script>
 window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
 tl.set("#fallback-hook",{opacity:1},0).set("#fallback-hook",{opacity:0},${cut(starts[1]!)});
@@ -395,6 +458,7 @@ tl.fromTo("#fallback-close .cta",{y:44,opacity:0},{y:0,opacity:1,duration:.6,eas
 tl.fromTo("#close-promise",{y:18,opacity:0},{y:0,opacity:1,duration:.5,ease:"power3.out"},${closePromise});
 SequencesCamera.compile(tl,document.querySelector("[data-composition-id]"));
 SequencesComponents.compile(tl,document.querySelector("[data-composition-id]"));
+SequencesFx.compile(tl,document.querySelector("[data-composition-id]"));
 var __seqWarped = SequencesTime.wrap(tl); window.__timelines["${compositionId}"]=__seqWarped;tl.seek(0);
 </script></body></html>`;
   return { storyboard, html };

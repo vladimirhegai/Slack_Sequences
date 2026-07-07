@@ -659,11 +659,14 @@ describe("sequences-camera runtime ease library", () => {
       expect(ease, `${name} must be registered`).toBeTypeOf("function");
       expect(ease!(0)).toBeCloseTo(0, 5);
       expect(ease!(1)).toBeCloseTo(1, 5);
+      // seqPop is the deliberate loud overshoot (~10%); every other curve stays
+      // within the seqMicrobounce/seqStamp restraint band.
+      const overshootCeiling = name === "seqPop" ? 1.12 : 1.06;
       for (let t = 0; t <= 1.0001; t += 0.01) {
         const value = ease!(t);
         expect(Number.isFinite(value)).toBe(true);
         expect(value).toBeGreaterThan(-0.12); // seqAnticipate dips, bounded
-        expect(value).toBeLessThan(1.06); // seqMicrobounce overshoots, bounded
+        expect(value).toBeLessThan(overshootCeiling);
       }
     }
   });

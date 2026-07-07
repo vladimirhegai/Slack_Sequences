@@ -58,6 +58,23 @@
       var u = t - 1;
       return 1 + c3 * u * u * u + c1 * u * u;
     },
+    // Playful pop (MD6): back-out family, fast attack, ~10% single overshoot —
+    // the typed exception for scale-from-small on compact acknowledgment
+    // surfaces. Louder than seqMicrobounce; never for cameras or text blocks.
+    seqPop: function (t) {
+      var c1 = 1.70158;
+      var c3 = c1 + 1;
+      var u = t - 1;
+      return 1 + c3 * u * u * u + c1 * u * u;
+    },
+    // Stamp landing (MD6): arrives ~4% oversized and settles down — a seal/badge
+    // that presses into place. Smaller overshoot than seqPop, same family.
+    seqStamp: function (t) {
+      var c1 = 1.05;
+      var c3 = c1 + 1;
+      var u = t - 1;
+      return 1 + c3 * u * u * u + c1 * u * u;
+    },
   };
 
   function registerEases() {
@@ -73,6 +90,9 @@
   // ---------------------------------------------------------------- camera
   var ZOOM_MIN = 0.5;
   var ZOOM_MAX = 2.8;
+  // Dive leg fallbacks — kept in sync with cameraContract's diveWindows.
+  var DIVE_LEG_MAX = 0.8;
+  var DIVE_LEG_FRACTION = 0.25;
   var REGION_MARGIN_RATIO = 0.04;
   var PART_MARGIN_RATIO = 0.16;
   var CREEP_ZOOM = 1.028;
@@ -399,6 +419,48 @@
       var segment = segments[s];
       var duration = segment.endSec - segment.startSec;
       var end;
+      if (segment.move === "dive") {
+        // One typed move for zoom-in → act → zoom-out (MD5): push in to the
+        // part-framed state, hold while the typed beat develops the surface,
+        // and return EXACTLY to the saved pre-dive state so the surrounding
+        // path is undisturbed. The host derived the leg durations from the
+        // overlapping beat windows; here they are plain numbers.
+        var diveTarget = targetElement(scene, segment, false);
+        if (!diveTarget || !diveTarget.element) {
+          fail(
+            scenePlan.sceneId,
+            'dive target "' + (diveTarget ? diveTarget.name : "?") + '" is absent',
+          );
+        }
+        var framedDive = frameState(
+          viewport, world, diveTarget.element, "part", segment.zoom,
+        );
+        var legCap = Math.min(DIVE_LEG_MAX, duration * DIVE_LEG_FRACTION);
+        var inSec = isFinite(segment.inSec) ? segment.inSec : legCap;
+        var outSec = isFinite(segment.outSec) ? segment.outSec : legCap;
+        tween(timeline, proxy, { x: state.x, y: state.y, z: state.z }, {
+          x: framedDive.x,
+          y: framedDive.y,
+          z: framedDive.z,
+          duration: inSec,
+          ease: segment.ease || "seqSettle",
+          onUpdate: apply,
+        }, segment.startSec);
+        tween(timeline, proxy, {
+          x: framedDive.x,
+          y: framedDive.y,
+          z: framedDive.z,
+        }, {
+          x: state.x,
+          y: state.y,
+          z: state.z,
+          duration: outSec,
+          ease: "power3.inOut",
+          onUpdate: apply,
+        }, segment.endSec - outSec);
+        // state is unchanged by construction — the camera came home.
+        continue;
+      }
       if (segment.move === "hold") {
         end = state;
       } else {

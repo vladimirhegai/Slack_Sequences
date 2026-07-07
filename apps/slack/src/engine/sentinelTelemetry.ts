@@ -29,7 +29,7 @@ export type SentinelDisposition =
 /** The Sentinel layer model (SENTINEL_PLAN.md §2) — where a finding was caught. */
 export type SentinelLayer =
   | "schema" // L0 — invalid output can't parse
-  | "scaffold" // L1 — host-generated chassis; illegal states unrepresentable
+  | "scaffold" // L1 — host chassis + bindings present in the shipped document
   | "normalize" // L2 — deterministic repair, zero paid attempts
   | "static" // L3 — linkedom/regex/kitMarkupAudit findings
   | "browser" // L4 — measured browser truth
@@ -57,6 +57,8 @@ interface SentinelRunState {
   failedModelCalls: Record<string, number>;
   /** Hedge duplicates launched by stage — extra PHYSICAL requests (cost), not logical calls. */
   hedgedModelCalls: Record<string, number>;
+  /** Scene-slot subcalls that are hidden inside one outer source-author attempt. */
+  slotCalls: Record<SentinelSlotCallKind, { calls: number; scenes: number }>;
   /**
    * Honesty ledger: every degradation the run shipped with (moment demotion,
    * least-bad pick, quarantined interactions, degraded cuts, browser-QA infra
@@ -65,6 +67,8 @@ interface SentinelRunState {
   degradations: string[];
   layerFindings: Record<SentinelLayer, number>;
   normalizations: Record<string, number>;
+  scaffoldCoverage?: { planned: number; present: number };
+  scaffoldRestorationEvents: Record<SentinelScaffoldRestorationSource, number>;
   stages: SentinelStageTiming[];
   tier1Ms?: number;
   tier2Ms?: number;
@@ -72,6 +76,9 @@ interface SentinelRunState {
   skeletonEnabled?: boolean;
   slotsEnabled?: boolean;
 }
+
+export type SentinelSlotCallKind = "truncation-continuation" | "scaffold-repair" | "validation-repair";
+export type SentinelScaffoldRestorationSource = "scene-repair" | "l2-normalize";
 
 const storage = new AsyncLocalStorage<SentinelRunState>();
 
@@ -107,9 +114,18 @@ export function beginSentinelRun(
     modelCalls: [],
     failedModelCalls: {},
     hedgedModelCalls: {},
+    slotCalls: {
+      "truncation-continuation": { calls: 0, scenes: 0 },
+      "scaffold-repair": { calls: 0, scenes: 0 },
+      "validation-repair": { calls: 0, scenes: 0 },
+    },
     degradations: [],
     layerFindings: emptyLayers(),
     normalizations: {},
+    scaffoldRestorationEvents: {
+      "scene-repair": 0,
+      "l2-normalize": 0,
+    },
     stages: [],
     skeletonEnabled: flags?.skeleton,
     slotsEnabled: flags?.slots,
@@ -139,6 +155,46 @@ export function recordSentinelHedge(stage: string): void {
   state.hedgedModelCalls[stage] = (state.hedgedModelCalls[stage] ?? 0) + 1;
 }
 
+function hedgeReserveForSourceAuthor(): number {
+  const raw = Number(process.env.SLACK_SEQUENCES_HEDGE_SOURCE_AUTHOR_RESERVE);
+  return Number.isInteger(raw) && raw >= 0 ? raw : 1;
+}
+
+function isSourceAuthorHedgeStage(stage: string): boolean {
+  return /\bauthor(?:\s|$)|source-author/i.test(stage);
+}
+
+/**
+ * Atomically claim one hedge from a per-run budget. A small source-author
+ * reservation prevents slow planning/storyboard calls from consuming every
+ * duplicate before the expensive author path begins. Calls outside a Sentinel
+ * context (unit helpers/non-create flows) retain the historical behavior.
+ */
+export function claimSentinelHedge(stage: string, maxPerRun: number): boolean {
+  const state = active();
+  if (!state) return true;
+  const used = Object.values(state.hedgedModelCalls).reduce((sum, count) => sum + count, 0);
+  if (used >= maxPerRun) return false;
+  const authorReserve = Math.min(hedgeReserveForSourceAuthor(), maxPerRun);
+  if (authorReserve > 0 && !isSourceAuthorHedgeStage(stage)) {
+    const authorUsed = Object.entries(state.hedgedModelCalls)
+      .filter(([hedgedStage]) => isSourceAuthorHedgeStage(hedgedStage))
+      .reduce((sum, [, count]) => sum + count, 0);
+    const missingAuthorReserve = Math.max(0, authorReserve - authorUsed);
+    if (maxPerRun - used <= missingAuthorReserve) return false;
+  }
+  recordSentinelHedge(stage);
+  return true;
+}
+
+/** Record one scene-slot subcall and how many scenes it re-authored. */
+export function recordSentinelSlotCall(kind: SentinelSlotCallKind, scenes: number): void {
+  const state = active();
+  if (!state || !Number.isFinite(scenes) || scenes <= 0) return;
+  state.slotCalls[kind].calls += 1;
+  state.slotCalls[kind].scenes += Math.floor(scenes);
+}
+
 /**
  * Record that the shipping draft carries a degradation (a demoted moment, a
  * least-bad pick with open polish findings, a quarantined interaction, a
@@ -147,7 +203,9 @@ export function recordSentinelHedge(stage: string): void {
  * never reports a salvaged film as clean.
  */
 export function recordSentinelDegradation(reason: string): void {
-  active()?.degradations.push(reason);
+  const state = active();
+  if (!state || !reason || state.degradations.includes(reason)) return;
+  state.degradations.push(reason);
 }
 
 /** Count a finding caught (or a state made unrepresentable) at a given layer. */
@@ -170,19 +228,29 @@ export function recordSentinelNormalization(tag: string, count = 1): void {
 }
 
 /**
- * Record the number of illegal states the scaffold made unrepresentable this
- * run — the count of host-guaranteed bindings (camera planes/stations,
- * component roots, focal-part carriers) the model no longer authors and so can
- * no longer omit. Unlike the other layer counters this is idempotent-by-max,
- * not additive: the skeleton is re-emitted on every author attempt, so a
- * running sum would inflate — the meaningful figure is "how many bindings did
- * the host guarantee", counted once. It gives L1 a real number instead of the
- * always-0 that made scaffolding invisible in the Carryover A telemetry.
+ * Record shipped scaffold-contract coverage. `guaranteedBindings` is the
+ * number present in the final document; `plannedBindings` is the storyboard
+ * obligation count. Restoration provenance is recorded separately so L2- or
+ * scene-repaired bindings are never mislabeled as surviving L1 unchanged.
  */
-export function recordSentinelScaffold(guaranteedBindings: number): void {
+export function recordSentinelScaffold(guaranteedBindings: number, plannedBindings?: number): void {
   const state = active();
   if (!state || guaranteedBindings <= 0) return;
   state.layerFindings.scaffold = Math.max(state.layerFindings.scaffold, guaranteedBindings);
+  state.scaffoldCoverage = {
+    present: guaranteedBindings,
+    planned: Math.max(guaranteedBindings, plannedBindings ?? guaranteedBindings),
+  };
+}
+
+/** Attribute scaffold-contract restorations without pretending they survived L1 unchanged. */
+export function recordSentinelScaffoldRestoration(
+  source: SentinelScaffoldRestorationSource,
+  count = 1,
+): void {
+  const state = active();
+  if (!state || !Number.isFinite(count) || count <= 0) return;
+  state.scaffoldRestorationEvents[source] += Math.floor(count);
 }
 
 /** Attach the orchestrator's per-stage timings/attempts to the run. */
@@ -250,13 +318,20 @@ export function finalizeSentinelRun(disposition: SentinelDisposition): void {
       wallClock: { tier1Ms: state.tier1Ms ?? null, tier2Ms: state.tier2Ms ?? null },
       stages: state.stages,
       modelCalls: {
+        // `total` remains as the backwards-compatible successful-logical count.
         total: state.modelCalls.length,
+        successfulLogicalTotal: state.modelCalls.length,
         byStage,
         failed: state.failedModelCalls,
         failedTotal: Object.values(state.failedModelCalls).reduce((sum, n) => sum + n, 0),
         hedged: state.hedgedModelCalls,
         hedgedTotal: Object.values(state.hedgedModelCalls).reduce((sum, n) => sum + n, 0),
+        physicalRequestTotal:
+          state.modelCalls.length +
+          Object.values(state.failedModelCalls).reduce((sum, n) => sum + n, 0) +
+          Object.values(state.hedgedModelCalls).reduce((sum, n) => sum + n, 0),
       },
+      slotCalls: state.slotCalls,
       degradations: state.degradations,
       promptChars: {
         maxAuthor: maxAuthorPromptChars,
@@ -264,6 +339,8 @@ export function finalizeSentinelRun(disposition: SentinelDisposition): void {
         totalCompletion: totalCompletionChars,
       },
       layers: state.layerFindings,
+      scaffoldCoverage: state.scaffoldCoverage ?? null,
+      scaffoldRestorationEvents: state.scaffoldRestorationEvents,
       normalizations: state.normalizations,
       at: new Date().toISOString(),
     };

@@ -849,6 +849,10 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
         audience: options.audience,
         lengthSec: options.lengthSec,
         frameMd: frame.frameMd,
+        // Skin the safe film with the plan's own copy when source authoring
+        // failed with a proven storyboard in hand (planned.value is undefined
+        // when the storyboard stage itself failed → the generic proof reel).
+        ...(planned.value ? { plan: planned.value } : {}),
       });
     }
     const mutation = await applyDirectMutation(

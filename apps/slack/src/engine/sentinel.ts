@@ -20,7 +20,7 @@
  *              moving an obligation down a layer is the whole Sentinel thesis.
  * - `blocking` — the enforcement disposition (see `SentinelBlocking`).
  * - `findingPrefixes` — the finding-code prefixes this row owns. A scaffold /
- *              normalize row that makes a class unrepresentable still lists the
+ *              normalize row that prevents or repairs a class still lists the
  *              L3/L4 backstop codes it prevents (the gate is never removed — the
  *              flag-OFF path and brief-required cases still fire them), so the
  *              closed-world test stays green with the flag in either position.
@@ -41,7 +41,7 @@
 /** The Sentinel layer model (SENTINEL_PLAN.md §2). Lower owns more cheaply. */
 export type SentinelLayerName =
   | "schema" // L0 — structured outputs; invalid output can't parse
-  | "scaffold" // L1 — host-emitted chassis; illegal states unrepresentable
+  | "scaffold" // L1 — host-emitted chassis + final shipped binding coverage
   | "normalize" // L2 — deterministic repair/normalization; zero paid attempts
   | "static" // L3 — linkedom / regex / kitMarkupAudit; cheap findings-retry
   | "browser" // L4 — measured browser truth; scene-scoped retry
@@ -72,7 +72,7 @@ export interface SentinelContractRow {
  * without adding/expanding a row here fails `test/sentinel.test.ts`.
  */
 export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
-  // ── L1 scaffold — host emits the chassis; the class is unrepresentable ──────
+  // ── L1 scaffold — host emits the chassis; L2/L3 remain honest backstops ─────
   {
     id: "camera.world-plane",
     group: "camera",
@@ -202,6 +202,153 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "Telemetry tag: camera-move-delay. Visible in STORYBOARD.md.",
   },
   {
+    id: "normalize.dive-window",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/cameraDive.test.ts",
+    addedBecause:
+      "MD5 (2026-07-06): the operator's zoom-in→type→zoom-out ask kept dying on " +
+      "three-segment camera arithmetic GLM cannot do. `dive` collapses it into " +
+      "ONE typed move; deriveDiveWindows (parseStoryboard, unconditional like " +
+      "the timing re-base) derives the in/hold/out legs from the beats and " +
+      "interactions acting on the dive's toPart — including the viewer-time " +
+      "reading floor for typed/swapped copy — and stores them on the move. A " +
+      "dive with NOTHING acting on its target degrades to push-in with a " +
+      "warning (degrade-never-veto). Telemetry tag: dive-window.",
+  },
+  {
+    id: "normalize.fx-plan",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/fxContract.test.ts",
+    addedBecause:
+      "MD2 (2026-07-06): motion-design garnish (payoff sweeps + glow pulses, " +
+      "connector draw-ons, morph-bridge echo) is HOST-derived from data the " +
+      "storyboard already carries (resolveFxPlan) and injected like every " +
+      "contract island — zero planner options beyond highlight.style, zero " +
+      "author paperwork, zero new failure classes. validateFxContract errors " +
+      "are host-plumbing self-checks (island/runtime/compile drift), reachable " +
+      "only if the injection seam breaks; every runtime bind is " +
+      "enhancement-only (missing target compiles to nothing).",
+  },
+  {
+    id: "normalize.auto-pop-style",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/motionAutoStyle.test.ts",
+    addedBecause:
+      "md-audit gap (2026-07-07): MD3/MD4/MD6 shipped correct + tested but were " +
+      "INVISIBLE in production films — the GLM storyboard planner reliably " +
+      "declares the structure yet under-reaches for the OPTIONAL style/gradeShift " +
+      "fields (md-audit-probe-3b/4 shipped ZERO styled beats even when the brief " +
+      "demanded them; the claude-code-cli probe-1 filled them). autoStyleCompactPops " +
+      "(parseStoryboard) fills the field the planner left blank: every style-less " +
+      "`open` beat on a COMPACT_POP_KINDS surface (toast/button/stat-card/…) is " +
+      "styled `pop`. It never overrides an explicit style and adds zero planner " +
+      "surface; the compact-kind + 2/scene discipline stays owned by " +
+      "normalize.open-pop (below), the single governor. Telemetry tag: auto-pop-style.",
+  },
+  {
+    id: "normalize.open-pop",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/componentContract.test.ts",
+    addedBecause:
+      "MD6 (2026-07-06): overshoot is banned as a house style; the `open` pop is " +
+      "the typed exception, and taste is host-owned, not prose-hoped. " +
+      "degradeOpenPopStyles (parseStoryboard) drops the pop to the smooth default " +
+      "open on any non-compact kind (COMPACT_POP_KINDS) and beyond the second pop " +
+      "in a scene — degrade-never-veto, the parse already strips unknown styles. " +
+      "Telemetry tag: open-pop.",
+  },
+  {
+    id: "normalize.auto-headline-style",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/motionAutoStyle.test.ts",
+    addedBecause:
+      "md-audit gap (2026-07-07): the GLM planner declares a `headline` + its " +
+      "`type` beat but leaves `style` blank, so hero copy always arrives as a plain " +
+      "typewriter (md-audit-probe-4). autoStyleHeadlineReveals (parseStoryboard) " +
+      "defaults every style-less headline `type` beat to `rise` and promotes the " +
+      "SINGLE strongest resolve (latest headline type on a primary moment) to " +
+      "`assemble` ONLY when it can prove the assemble lock-hold with auditPacing's " +
+      "own arithmetic (assembleHoldSatisfied) — so it never mints a pacing/assemble " +
+      "finding the model can't fix. The 1/film + headline-only + on-primary cap " +
+      "stays owned by normalize.assemble-cap (below). Telemetry tag: auto-headline-style.",
+  },
+  {
+    id: "normalize.assemble-cap",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/textFx.browser.test.ts",
+    addedBecause:
+      "MD3 (2026-07-06): `assemble` (scattered letters converging into the word) " +
+      "is the film's loudest text gesture — a thesis/logo resolve, and twice is " +
+      "kitsch. degradeExcessAssembles (parseStoryboard) keeps exactly ONE per " +
+      "film, headline-kind only, coinciding with a primary moment, and degrades " +
+      "every other assemble to a `rise` reveal (SENTINEL L2 over an L3 " +
+      "findings-retry: the degrade is unambiguous, so it costs zero paid " +
+      "attempts). Telemetry tag: assemble-cap.",
+  },
+  {
+    id: "normalize.auto-grade-shift",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/motionAutoStyle.test.ts",
+    addedBecause:
+      "md-audit gap (2026-07-07): the GLM planner narrates the temperature turn in " +
+      "a moment ('world turns warm') but leaves the OPTIONAL scene `gradeShift` " +
+      "field blank, so no shift ships even when the brief demanded one " +
+      "(md-audit-probe-4). deriveGradeShifts (parseStoryboard) mechanizes the " +
+      "planner's OWN stated intent: when a scene has no declared gradeShift and a " +
+      "`primary` moment names a temperature (warm/cold/noir) with room to read, it " +
+      "injects a gradeShift AT that moment turning to the named tone — inventing no " +
+      "color decision. The window/aftermath/1-per-scene/2-per-film/moment-coincidence " +
+      "discipline stays owned by normalize.grade-shift (below). Telemetry tag: " +
+      "auto-grade-shift.",
+  },
+  {
+    id: "normalize.grade-shift",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/directComposition.test.ts",
+    addedBecause:
+      "MD4 (2026-07-06): a scene `gradeShift` (animated background temperature " +
+      "turn) is a volunteered garnish, so dropUnusableGradeShifts " +
+      "(parseStoryboard) drops one that breaks the discipline — atSec outside the " +
+      "scene, <1.2s aftermath, over 1/scene or 2/film, or with no declared moment " +
+      "within +/-0.5s to motivate it — with a note instead of vetoing a paid " +
+      "attempt (the dropUnusableVolunteeredTimeRamps precedent). A surviving " +
+      "shift compiles in the fx runtime as an expanding kit panel + grade-class " +
+      "swap, and is bindable `grade-shift` moment evidence. Telemetry tag: " +
+      "grade-shift.",
+  },
+  {
     id: "normalize.timeramp-retime",
     group: "normalize",
     layer: "normalize",
@@ -251,9 +398,12 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "<number>)` call (toVars omitted) makes GSAP treat the position number as " +
       "the to-object and the compile throws 'Cannot create property parent on " +
       "number' — a runtime_bind_exception and a burned paid attempt for a " +
-      "call-shape typo. repairMalformedFromToCalls rewrites the call to " +
-      "`.from(target, vars, position)` — exact, content-free, valid signature; " +
-      "only string-literal targets with a flat vars object match (conservative). " +
+      "call-shape typo. repairMalformedFromToCalls rewrites only a settled `.to` " +
+      "state when the same selector has an earlier opposite-state initialization; " +
+      "hidden/off-position could mean entrance or exit, so it and every mixed, " +
+      "cue-less, or lone-final call stays blocking rather than " +
+      "silently reversing motion. Only string-literal targets with a flat vars " +
+      "object match (conservative). " +
       "It PREVENTS the runtime.invariants row's runtime_bind_exception.",
   },
   {
@@ -275,6 +425,30 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "browser gates. Any other finding still fails the salvage; STORYBOARD.md " +
       "and the moment strip show the true bound set. Telemetry tag: " +
       "moment-demote-last-resort.",
+  },
+
+  {
+    id: "normalize.camera-sparse-zoom",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/framingCoverage.browser.test.ts",
+    addedBecause:
+      "2026-07-07 camera-sparse auto-framing (the live probe's ONLY shipping " +
+      "degradation was least-bad-pick:penalty=7 from camera_framed_sparse on a " +
+      "resolve-scene landing). correctSparseFraming raises a landing the browser " +
+      "measured as a tiny subject adrift back to the 18% coverage floor with a " +
+      "bounded zoom-in (sqrt(0.18/fraction), clamped 1.0..1.8) on exactly the " +
+      "camera move that frames it — a storyboard mutation re-injected through the " +
+      "persistUpgradedStoryboard seam, adopted in authorCompositionLoop ONLY when " +
+      "the sparse finding clears, no new camera_framed_clipped appears, and " +
+      "browserQualityPenalty strictly decreases (enhancement-never-veto). It " +
+      "PREVENTS the camera.framing row's camera_framed_sparse; drift/hold-only " +
+      "and camera-less scenes have no bumpable move and keep the model/least-bad " +
+      "path (a storyboard zoom cannot invent content). Telemetry tag: " +
+      "camera-sparse-zoom.",
   },
 
   // ── L3 static — linkedom / regex / plan-stage audits; cheap findings-retry ──
@@ -454,6 +628,23 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "(normalize.source-bindings); ambiguity and measured invisibility stay here.",
   },
   {
+    id: "interactions.near-miss-normalize",
+    group: "interactions",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: ["cursor_near_miss"],
+    promptCostChars: 0,
+    test: "test/layoutInspector.test.ts",
+    addedBecause:
+      "2026-07-07: a measured cursor endpoint within 3px of its target is " +
+      "sub-perceptual easing drift, not a defect — auditInteractions snaps the " +
+      "evidence to the measured target anchor and labels it " +
+      "normalized:\"cursor_near_miss\" instead of burning a paid retry on an " +
+      "interaction_target_miss. >3px stays a hard blocking miss (the 4px " +
+      "regression test). Recorded as normalization tag cursor-near-miss so the " +
+      "ledger never hides the snap.",
+  },
+  {
     id: "moments.temporal",
     group: "moments",
     layer: "browser",
@@ -500,7 +691,7 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
     id: "layout",
     group: "layout",
     layer: "browser",
-    blocking: "blocking",
+    blocking: "advisory-late",
     findingPrefixes: [
       "layout_",
       "spatial_focal_",
@@ -515,13 +706,14 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "layoutInspector: the placement/spacing/optical audit — safe-area, anchor, " +
       "align, gap, annotation, focal-subject presence/visibility/on-frame, content " +
       "overlap, container overflow, WCAG-AA contrast. Heuristics suppressed during " +
-      "camera transits and for off-frame world stations.",
+      "camera transits and for off-frame world stations. Findings request repair " +
+      "on early attempts but may ship only through the explicitly degraded final rung.",
   },
   {
     id: "layout.hyperframes-spatial",
     group: "layout",
     layer: "browser",
-    blocking: "advisory",
+    blocking: "advisory-late",
     findingPrefixes: [
       "clipped_text",
       "text_box_overflow",
@@ -543,8 +735,9 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "text_box_overflow findings (p7-denseui). The closed world for these is the " +
       "vendored LayoutIssueCode union (vendor/hyperframes/packages/cli/src/utils/" +
       "layoutAudit.ts, now in FINDING_SOURCE_FILES). Disposition: layoutInspector " +
-      "deliberately converts visual severities to non-publication-blocking " +
-      "warnings (resilience policy) — but any run shipping them is recorded " +
+      "converts visual severities to repair-pressure warnings (resilience policy): " +
+      "they block clean acceptance early but may ship on the final rung, where " +
+      "the degradation ledger records " +
       "published-degraded, never clean.",
   },
   {

@@ -12,6 +12,7 @@ import {
 } from "../src/engine/componentContract.ts";
 import { cinemaKitStyleTag } from "../src/engine/cinemaKit.ts";
 import { CAMERA_RUNTIME_FILE } from "../src/engine/cameraContract.ts";
+import { FX_RUNTIME_FILE, resolveFxPlan } from "../src/engine/fxContract.ts";
 
 const roots: string[] = [];
 
@@ -93,11 +94,15 @@ function componentFilm(): { storyboard: DirectScene[]; html: string } {
     },
   ];
   const island = JSON.stringify(resolveComponentPlan(storyboard));
+  // MD2: payoff beats + primary moments resolve host fx effects, so the
+  // fixture carries the fx contract like every live film does.
+  const fxIsland = JSON.stringify(resolveFxPlan(storyboard));
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=1920, height=1080">
 <title>Component runtime smoke</title><script src="gsap.min.js"></script>
 <script src="${CAMERA_RUNTIME_FILE}"></script>
-<script src="${COMPONENT_RUNTIME_FILE}"></script>${componentKitStyleTag()}${cinemaKitStyleTag()}<style>
+<script src="${COMPONENT_RUNTIME_FILE}"></script>
+<script src="${FX_RUNTIME_FILE}"></script>${componentKitStyleTag()}${cinemaKitStyleTag()}<style>
 *{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#0a0f16}
 body{color:#eef2f8;font-family:Inter,Arial,sans-serif}
 #root{--surface:#141b26;--surface-2:#1a2230;--accent:#5eead4;--accent-text:#06231d;--text:#eef2f8;--muted:#94a3b8;position:relative;width:1920px;height:1080px;overflow:hidden}
@@ -142,6 +147,7 @@ h2{margin:0;font-size:64px;letter-spacing:-.04em}
 </section>
 </main>
 <script type="application/json" id="sequences-components">${island}</script>
+<script type="application/json" id="sequences-fx">${fxIsland}</script>
 <script>
 window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
 tl.set("#shot-search",{opacity:1},0).set("#shot-search",{opacity:0},5.99);
@@ -156,6 +162,7 @@ tl.fromTo("#shot-cta .cmp-button",{scale:.9,opacity:0},{scale:1,opacity:1,durati
 tl.fromTo("#shot-cta .cmp-progress",{opacity:0},{opacity:1,duration:.4,ease:"none"},13.3);
 SequencesCamera.compile(tl,document.querySelector("[data-composition-id]"));
 SequencesComponents.compile(tl,document.querySelector("[data-composition-id]"));
+SequencesFx.compile(tl,document.querySelector("[data-composition-id]"));
 window.__timelines["cmp-smoke"]=tl;tl.seek(0);
 </script></body></html>`;
   return { storyboard, html };

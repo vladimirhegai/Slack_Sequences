@@ -9,6 +9,7 @@ import {
 } from "../src/engine/sceneSlots.ts";
 import {
   authorSlotDraft,
+  repairSlotDraftForFindings,
   slotScaffoldViolations,
 } from "../src/engine/compositionRunner.ts";
 import type { AgentProvider } from "@sequences/platform/providers";
@@ -177,6 +178,21 @@ describe("slotScaffoldViolations — only states the L2 reconcilers cannot fix",
     expect(slotScaffoldViolations([componentScene()], slots).size).toBe(0);
   });
 
+  it("does not guess between repeated components of the same kind", () => {
+    const repeated: DirectScene = {
+      ...scene("hero-open", 0),
+      components: [
+        { version: 1, id: "primary-btn", kind: "button", role: "hero" },
+        { version: 1, id: "secondary-btn", kind: "button", role: "support" },
+      ],
+    };
+    const slots = extractSceneSlots(
+      '<scene_html id="hero-open"><button data-component="button" data-part="wrong-name">Deploy</button></scene_html>',
+    );
+    const violations = slotScaffoldViolations([repeated], slots);
+    expect(violations.get("hero-open")).toHaveLength(2);
+  });
+
   it("flags a camera station only when the scene has FEWER stations than required", () => {
     const cameraScene: DirectScene = {
       ...scene("tour", 0, 8),
@@ -320,6 +336,8 @@ describe("authorSlotDraft — script-aware continuation + scene-scoped scaffold 
     expect(repairPrompt).toContain('data-part="deploy-btn"');
     // Minimal-edit baseline: the model's own defective interior rides along.
     expect(repairPrompt).toContain('<previous_scene_html id="hero-open">');
+    expect(repairPrompt).toContain('<previous_scene_script id="hero-open">');
+    expect(repairPrompt).toContain('tl.from(".hero"');
     expect(repairPrompt).not.toContain('<scene_html id="cta-close">');
     expect(result.draft.html).toContain('data-part="deploy-btn"');
   });
@@ -336,6 +354,92 @@ describe("authorSlotDraft — script-aware continuation + scene-scoped scaffold 
     const { provider, complete } = providerOf([clean]);
     await authorSlotDraft(provider, argsOf(sb), "PROMPT", {});
     expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("validation repair re-authors only attributed scenes and carries both baselines", async () => {
+    const sb = storyboard();
+    const original = extractSceneSlots([
+      "<film_style>.hero{color:#fff}</film_style>",
+      htmlSlot("hero-open", '<h1 class="hero">Old hero</h1>'),
+      scriptSlot("hero-open", 'tl.from(".hero", { opacity: 0 }, 0.2);'),
+      htmlSlot("cta-close", '<h2 class="cta">Untouched CTA</h2>'),
+      scriptSlot("cta-close", 'tl.from(".cta", { opacity: 0 }, 4.2);'),
+    ].join("\n"));
+    const response = [
+      htmlSlot("hero-open", '<h1 class="hero">Fixed hero</h1>'),
+      scriptSlot("hero-open", 'tl.from(".hero", { opacity: 0, y: 20 }, 0.2);'),
+    ].join("\n");
+    const { provider, complete } = providerOf([response]);
+    const result = await repairSlotDraftForFindings(
+      provider,
+      argsOf(sb),
+      original,
+      ['layout_overflow:hero-open'],
+      {},
+    );
+    expect(complete).toHaveBeenCalledTimes(1);
+    const prompt = complete.mock.calls[0]![0] as string;
+    expect(prompt).toContain('<previous_scene_html id="hero-open">');
+    expect(prompt).toContain('<previous_scene_script id="hero-open">');
+    expect(prompt).not.toContain('<scene_html id="cta-close">');
+    expect(result?.draft.html).toContain("Fixed hero");
+    expect(result?.draft.html).toContain("Untouched CTA");
+  });
+
+  it("repairs the scene-attributable subset even when a film-level finding is mixed in", async () => {
+    // The s5-interactions probe class: a dense brief mixes ONE film-level finding
+    // (near_blank_film / interaction / eye-trace) into otherwise scene-local
+    // rejections. The repair must still fire on the scenes it CAN fix; the
+    // film-level remainder rides the whole-document ladder.
+    const sb = storyboard();
+    const original = extractSceneSlots([
+      "<film_style>.hero{color:#fff}</film_style>",
+      htmlSlot("hero-open", '<h1 class="hero">Old hero</h1>'),
+      scriptSlot("hero-open", 'tl.from(".hero", { opacity: 0 }, 0.2);'),
+      htmlSlot("cta-close", '<h2 class="cta">Untouched CTA</h2>'),
+      scriptSlot("cta-close", 'tl.from(".cta", { opacity: 0 }, 4.2);'),
+    ].join("\n"));
+    const response = [
+      htmlSlot("hero-open", '<h1 class="hero">Fixed hero</h1>'),
+      scriptSlot("hero-open", 'tl.from(".hero", { opacity: 0, y: 20 }, 0.2);'),
+    ].join("\n");
+    const { provider, complete } = providerOf([response]);
+    const result = await repairSlotDraftForFindings(
+      provider,
+      argsOf(sb),
+      original,
+      ["layout_overflow:hero-open", "near_blank_film: too little visible content"],
+      {},
+    );
+    expect(complete).toHaveBeenCalledTimes(1);
+    // Only the attributable scene is re-requested; the film-level finding does
+    // not mint a bogus scene, and the untouched scene stays byte-stable.
+    expect(result?.sceneIds).toEqual(["hero-open"]);
+    const prompt = complete.mock.calls[0]![0] as string;
+    expect(prompt).toContain('<previous_scene_html id="hero-open">');
+    expect(prompt).not.toContain('<scene_html id="cta-close">');
+    expect(result?.draft.html).toContain("Fixed hero");
+    expect(result?.draft.html).toContain("Untouched CTA");
+  });
+
+  it("does not spend a scene retry when EVERY finding is film-level", async () => {
+    const sb = storyboard();
+    const original = extractSceneSlots([
+      htmlSlot("hero-open", "<h1>a</h1>"),
+      scriptSlot("hero-open", "tl.set('#a', {}, 0);"),
+      htmlSlot("cta-close", "<h1>b</h1>"),
+      scriptSlot("cta-close", "tl.set('#b', {}, 4);"),
+    ].join("\n"));
+    const { provider, complete } = providerOf([]);
+    const result = await repairSlotDraftForFindings(
+      provider,
+      argsOf(sb),
+      original,
+      ["near_blank_film: too little visible content"],
+      {},
+    );
+    expect(result).toBeUndefined();
+    expect(complete).not.toHaveBeenCalled();
   });
 });
 

@@ -45,7 +45,8 @@ export type CameraMoveStyle =
   | "track-to-anchor"
   | "parallax-pass"
   | "orbit-lite"
-  | "orbit";
+  | "orbit"
+  | "dive";
 
 export const CAMERA_MOVES: ReadonlySet<CameraMoveStyle> = new Set<CameraMoveStyle>([
   "hold",
@@ -58,9 +59,13 @@ export const CAMERA_MOVES: ReadonlySet<CameraMoveStyle> = new Set<CameraMoveStyl
   "parallax-pass",
   "orbit-lite",
   "orbit",
+  "dive",
 ]);
 
-/** Moves that visibly re-frame the shot (everything except hold/drift). */
+/** Moves that visibly re-frame the shot (everything except hold/drift).
+ * A `dive` counts as ONE full move against every budget even though it
+ * reframes twice — that is its entire point: it replaces the three-segment
+ * push-in→hold→pull-back choreography the planner reliably fumbles. */
 export const CAMERA_FULL_MOVES: ReadonlySet<CameraMoveStyle> = new Set<CameraMoveStyle>([
   "pan",
   "whip",
@@ -70,7 +75,39 @@ export const CAMERA_FULL_MOVES: ReadonlySet<CameraMoveStyle> = new Set<CameraMov
   "parallax-pass",
   "orbit-lite",
   "orbit",
+  "dive",
 ]);
+
+/** Dive envelope bounds (MD5): the in/out legs and the minimum hold between. */
+export const DIVE_LEG_MAX_SEC = 0.8;
+export const DIVE_LEG_FRACTION = 0.25;
+export const DIVE_MIN_HOLD_FRACTION = 0.2;
+export const DIVE_ZOOM_MIN = 1.0;
+export const DIVE_ZOOM_MAX = 1.4;
+export const DIVE_ZOOM_DEFAULT = 1.18;
+
+/**
+ * A dive's in/out leg durations. The host derives them at parse time from the
+ * overlapping beat windows (`deriveDiveWindows`, an L2 normalizer) and stores
+ * them on the move; absent values (code-built scenes, cached pre-derivation
+ * plans) fall back to the symmetric 25%-of-window legs. Always clamped so at
+ * least DIVE_MIN_HOLD_FRACTION of the window remains held.
+ */
+export function diveWindows(
+  move: Pick<CameraMoveIntentV1, "durationSec" | "inSec" | "outSec">,
+): { inSec: number; outSec: number } {
+  const legCap = Math.min(DIVE_LEG_MAX_SEC, move.durationSec * DIVE_LEG_FRACTION);
+  let inSec = finite(move.inSec) ? move.inSec : legCap;
+  let outSec = finite(move.outSec) ? move.outSec : legCap;
+  const maxLegs = move.durationSec * (1 - DIVE_MIN_HOLD_FRACTION);
+  const total = inSec + outSec;
+  if (total > maxLegs && total > 0) {
+    const scale = maxLegs / total;
+    inSec *= scale;
+    outSec *= scale;
+  }
+  return { inSec: round(Math.max(0.15, inSec)), outSec: round(Math.max(0.15, outSec)) };
+}
 
 /** Orbit arc clamps: enough to read as an arc, never enough to lose the page. */
 export const ORBIT_ARC_MIN_DEG = 8;
@@ -94,6 +131,8 @@ export const SEQUENCES_EASES = [
   "seqDrift", //      near-linear connective motion with softened ends
   "seqAnticipate", // small backward dip, then commit
   "seqMicrobounce", // ~3% single overshoot settle for UI beats (not cameras)
+  "seqPop", //        back-out ~10% overshoot, fast attack — typed compact-pop exception
+  "seqStamp", //      arrive ~4% oversized and settle down — seals/badges landing
 ] as const;
 
 const EASE_PATTERN = new RegExp(
@@ -131,6 +170,10 @@ export interface CameraMoveIntentV1 {
   zoom?: number;
   /** orbit: total arc swept around the framed subject, degrees. */
   arcDeg?: number;
+  /** dive: host-derived push-in leg, seconds (never model-authored). */
+  inSec?: number;
+  /** dive: host-derived pull-back leg, seconds (never model-authored). */
+  outSec?: number;
   /** Optional rack-focus pull attached to this move's window. */
   focus?: CameraFocusIntentV1;
   startSec: number;
@@ -165,6 +208,9 @@ export interface CameraSegmentV1 {
   fromPart?: string;
   /** orbit only: total arc swept, degrees. */
   arcDeg?: number;
+  /** dive only: push-in / pull-back leg durations, seconds. */
+  inSec?: number;
+  outSec?: number;
   /** Rack-focus pull bound to this segment's window. */
   focus?: CameraFocusIntentV1;
 }
@@ -201,6 +247,9 @@ const MOVE_DEFAULTS: Record<CameraMoveStyle, MoveDefaults> = {
   "parallax-pass": { ease: "seqGlide", zoom: 1, minSec: 0.8, maxSec: 6 },
   "orbit-lite": { ease: "seqGlide", zoom: 1.06, minSec: 0.8, maxSec: 6 },
   orbit: { ease: "seqGlide", zoom: 1.06, minSec: 0.8, maxSec: 6 },
+  // durationSec is the TOTAL dive window (in + hold + out), so it earns more
+  // room than a single-leg move.
+  dive: { ease: "seqSettle", zoom: DIVE_ZOOM_DEFAULT, minSec: 1.2, maxSec: 10 },
 };
 
 /**
@@ -313,6 +362,9 @@ export function normalizeStoryboardCameraIntent(
     const fromRegion = stableName(item.fromRegion);
     const fromPart = stableName(item.fromPart);
     if (move === "track-to-anchor" && !toPart) return [];
+    // A dive frames one product surface tightly; without a part to frame it
+    // has no target to work inside — degrade to no move, never a veto.
+    if (move === "dive" && !toPart) return [];
     const ease = typeof item.ease === "string" && EASE_PATTERN.test(item.ease.trim())
       ? item.ease.trim()
       : undefined;
@@ -326,10 +378,18 @@ export function normalizeStoryboardCameraIntent(
       ...(toPart ? { toPart } : {}),
       ...(fromRegion ? { fromRegion } : {}),
       ...(fromPart ? { fromPart } : {}),
-      ...(finite(item.zoom) ? { zoom: clamp(item.zoom, ZOOM_MIN, ZOOM_MAX) } : {}),
+      ...(finite(item.zoom)
+        ? {
+            zoom: move === "dive"
+              ? clamp(item.zoom, DIVE_ZOOM_MIN, DIVE_ZOOM_MAX)
+              : clamp(item.zoom, ZOOM_MIN, ZOOM_MAX),
+          }
+        : {}),
       ...(move === "orbit" && finite(item.arcDeg)
         ? { arcDeg: round(clamp(item.arcDeg, ORBIT_ARC_MIN_DEG, ORBIT_ARC_MAX_DEG)) }
         : {}),
+      // inSec/outSec are HOST-derived (deriveDiveWindows, an L2 normalizer) —
+      // a model-authored value here is arithmetic the host owns; ignore it.
       ...(focus ? { focus } : {}),
       ...(ease ? { ease } : {}),
     }];
@@ -467,6 +527,9 @@ export function resolveCameraPlan(scenes: DirectScene[]): CameraPlanV1 {
         startSec = cursor;
       }
       const isFirst = segments.length === 0;
+      const legs = entry.move.move === "dive"
+        ? diveWindows({ ...entry.move, durationSec: endSec - startSec })
+        : undefined;
       segments.push({
         move: entry.move.move,
         startSec,
@@ -482,6 +545,7 @@ export function resolveCameraPlan(scenes: DirectScene[]): CameraPlanV1 {
         ...(entry.move.move === "orbit"
           ? { arcDeg: entry.move.arcDeg ?? ORBIT_ARC_DEFAULT_DEG }
           : {}),
+        ...(legs ? { inSec: legs.inSec, outSec: legs.outSec } : {}),
         ...(entry.move.focus ? { focus: entry.move.focus } : {}),
       });
       cursor = endSec;
@@ -612,6 +676,9 @@ export function parseCameraPlan(html: string): { plan?: CameraPlanV1; errors: st
         ...(fromPart ? { fromPart } : {}),
         ...(move === "orbit" && finite(segment.arcDeg)
           ? { arcDeg: clamp(segment.arcDeg, ORBIT_ARC_MIN_DEG, ORBIT_ARC_MAX_DEG) }
+          : {}),
+        ...(move === "dive" && finite(segment.inSec) && finite(segment.outSec)
+          ? { inSec: segment.inSec, outSec: segment.outSec }
           : {}),
         ...(focus ? { focus } : {}),
       }];
@@ -781,7 +848,20 @@ const ENERGETIC_CUT_STYLES = new Set([
   "flash-white",
   "object-match",
   "shape-match",
+  // Canonical 3-transition names (MD1): a morph always bridges; match and
+  // swipe are judged with their fields below (bridged / cover only).
+  "morph",
 ]);
+
+/** Whether a scene's cut counts as the film's energetic boundary (MD1-aware).
+ * Local (not imported from cutContract) to avoid a module cycle — cutContract
+ * already imports `sceneScopes` from this module. */
+function energeticCut(cut: NonNullable<DirectScene["cut"]>): boolean {
+  if (ENERGETIC_CUT_STYLES.has(cut.style)) return true;
+  if (cut.style === "match") return Boolean(cut.focalPartOut && cut.focalPartIn);
+  if (cut.style === "swipe") return cut.cover === true;
+  return false;
+}
 
 /**
  * Deterministic camera-energy audit, run at storyboard validation. Films read
@@ -807,14 +887,15 @@ export function auditCameraEnergy(storyboard: DirectScene[]): string[] {
     (move.zoom ?? MOVE_DEFAULTS[move.move].zoom) >= HIGH_ENERGY_PUSH_ZOOM
   );
   const hasEnergeticCut = storyboard.some(
-    (scene) => scene.cut && ENERGETIC_CUT_STYLES.has(scene.cut.style),
+    (scene) => scene.cut && energeticCut(scene.cut),
   );
   if (durationSec >= 12 && !hasHighEnergyMove && !hasEnergeticCut) {
     findings.push(
       `camera/energy: a ${durationSec.toFixed(0)}s film has no high-energy peak — no whip or orbit, ` +
-        `no push-in with zoom >= ${HIGH_ENERGY_PUSH_ZOOM}, and no zoom-through/inverse-zoom/` +
-        `flash-white/object-match/shape-match cut anywhere. Give the energy curve's peak scene one ` +
-        `whip, an orbit, or a push-in with "zoom":1.35, or make one boundary an energetic cut style`,
+        `no push-in with zoom >= ${HIGH_ENERGY_PUSH_ZOOM}, and no morph, bridged match, or ` +
+        `cover swipe boundary anywhere. Give the energy curve's peak scene one ` +
+        `whip, an orbit, or a push-in with "zoom":1.35, or make one boundary an energetic cut ` +
+        `(a morph, a match carrying both focal parts, or a swipe with "cover":true)`,
     );
   }
   if (fullMoves.length >= 4) {
@@ -846,9 +927,24 @@ export function cameraMotionWindows(
   return plan.scenes.flatMap((scene) =>
     scene.segments
       .filter((segment) => CAMERA_FULL_MOVES.has(segment.move))
-      .map((segment) => ({
-        start: segment.startSec - 0.05,
-        end: segment.endSec + 0.05,
-      }))
+      .flatMap((segment) => {
+        // A dive's held middle is a stable framing — layout heuristics stay
+        // live there; only the two legs are camera transit.
+        if (segment.move === "dive") {
+          const legs = diveWindows({
+            durationSec: segment.endSec - segment.startSec,
+            ...(segment.inSec !== undefined ? { inSec: segment.inSec } : {}),
+            ...(segment.outSec !== undefined ? { outSec: segment.outSec } : {}),
+          });
+          return [
+            { start: segment.startSec - 0.05, end: segment.startSec + legs.inSec + 0.05 },
+            { start: segment.endSec - legs.outSec - 0.05, end: segment.endSec + 0.05 },
+          ];
+        }
+        return [{
+          start: segment.startSec - 0.05,
+          end: segment.endSec + 0.05,
+        }];
+      })
   );
 }

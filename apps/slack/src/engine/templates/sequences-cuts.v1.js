@@ -14,6 +14,23 @@
     "cut-down": { axis: "y", sign: 1 },
   };
 
+  // Canonical swipe axes (MD1). "left" = content travels left, incoming
+  // enters from the right — identical mechanics to the legacy cut-left.
+  var SWIPE_AXES = {
+    left: { axis: "x", sign: -1, name: "left" },
+    right: { axis: "x", sign: 1, name: "right" },
+    up: { axis: "y", sign: -1, name: "up" },
+    down: { axis: "y", sign: 1, name: "down" },
+  };
+
+  // Directional motion blur on swipes (the one seam that still read "CSS
+  // slide"): a backdrop-filter lens in the overlay layer, the exact
+  // makeWhipBlur shape from the camera runtime — NEVER a filter on a scene
+  // wrapper, which can host a perspective'd orbit world.
+  var SWIPE_BLUR_PX = 6;
+  // The cover panel fully hides the frame for ~3 frames spanning the swap.
+  var COVER_HOLD_SEC = 0.1;
+
   function sceneOf(root, id) {
     return root.querySelector('[data-scene="' + CSS.escape(id) + '"]');
   }
@@ -86,8 +103,41 @@
     timeline.fromTo(target, fromVars, toVars, at);
   }
 
-  function bindDirectional(timeline, cut, from, to) {
-    var direction = DIRECTIONS[cut.style];
+  // A pointer-transparent backdrop lens inside the overlay layer; its
+  // backdrop-filter smears everything painted beneath it (both scenes mid
+  // swipe) while no world/scene element ever carries a CSS filter.
+  function boundaryLens(root) {
+    var layer = overlayLayer(root);
+    var lens = document.createElement("div");
+    lens.setAttribute("data-sequences-runtime-cut", "lens");
+    lens.setAttribute("data-layout-ignore", "");
+    lens.style.cssText = "position:absolute;inset:0;pointer-events:none";
+    layer.appendChild(lens);
+    var proxy = { b: 0 };
+    return {
+      proxy: proxy,
+      apply: function () {
+        var value = proxy.b > 0.05 ? "blur(" + proxy.b.toFixed(2) + "px)" : "";
+        lens.style.backdropFilter = value;
+        lens.style.webkitBackdropFilter = value;
+      },
+    };
+  }
+
+  function coverPanel(root) {
+    var layer = overlayLayer(root);
+    var panel = document.createElement("div");
+    panel.setAttribute("data-sequences-runtime-cut", "cover");
+    panel.setAttribute("data-layout-ignore", "");
+    // Palette-derived: the accent custom property cascades from the authored
+    // root tokens; the fallback keeps the wipe visible on token-less docs.
+    panel.style.cssText =
+      "position:absolute;inset:-2%;background:var(--accent,#5865f2);opacity:0";
+    layer.appendChild(panel);
+    return panel;
+  }
+
+  function bindDirectional(timeline, cut, from, to, root, direction) {
     var travel = cut.travelPx;
     var exitFrom = {};
     exitFrom[direction.axis] = 0;
@@ -117,6 +167,48 @@
       duration: cut.entrySec * 0.55,
       ease: "power2.out",
     }, cut.atSec);
+    // Directional motion blur across the seam (§1.9): ramps 0 → SWIPE_BLUR_PX
+    // → 0 over exit+entry on the backdrop lens, sine in/out, proxy-driven —
+    // the exact makeWhipBlur shape, in the overlay layer.
+    var lens = boundaryLens(root);
+    tween(timeline, lens.proxy, { b: 0 }, {
+      b: SWIPE_BLUR_PX,
+      duration: cut.exitSec,
+      ease: "sine.in",
+      onUpdate: lens.apply,
+    }, cut.atSec - cut.exitSec);
+    tween(timeline, lens.proxy, { b: SWIPE_BLUR_PX }, {
+      b: 0,
+      duration: cut.entrySec,
+      ease: "sine.out",
+      onUpdate: lens.apply,
+    }, cut.atSec);
+    if (cut.cover) {
+      // Natural-wipe variant: a palette panel sweeps the frame along the
+      // travel axis, fully covering it for a few frames spanning the swap —
+      // the invisible-cut mechanic. Pure transform+opacity on an overlay
+      // child; the scene exit/entry tweens above are what the panel reveals.
+      var panel = coverPanel(root);
+      var prop = direction.axis === "x" ? "xPercent" : "yPercent";
+      var hold = Math.min(COVER_HOLD_SEC, cut.exitSec * 0.5, cut.entrySec * 0.5);
+      var enterFrom = {};
+      enterFrom[prop] = -direction.sign * 110;
+      var enterTo = {};
+      enterTo[prop] = 0;
+      enterTo.duration = Math.max(0.05, cut.exitSec - hold / 2);
+      enterTo.ease = "power3.in";
+      var exitFrom = {};
+      exitFrom[prop] = 0;
+      var exitTo = {};
+      exitTo[prop] = direction.sign * 110;
+      exitTo.duration = Math.max(0.05, cut.entrySec - hold / 2);
+      exitTo.ease = "power3.out";
+      timeline.set(panel, { opacity: 0 }, 0);
+      timeline.set(panel, { opacity: 1 }, cut.atSec - cut.exitSec);
+      tween(timeline, panel, enterFrom, enterTo, cut.atSec - cut.exitSec);
+      tween(timeline, panel, exitFrom, exitTo, cut.atSec + hold / 2);
+      timeline.set(panel, { opacity: 0 }, cut.atSec + cut.entrySec);
+    }
   }
 
   function bindZoom(timeline, cut, from, to) {
@@ -294,9 +386,34 @@
     if (!toPart) fail(cut, 'incoming part "' + cut.focalPartIn + '" is absent');
     var reason = shapeMatchAudit(root, fromPart, toPart);
     if (reason) {
-      // Enhancement-never-veto: the boundary still cuts with committed energy.
-      bindZoom(timeline, cut, from, to);
-      return { degraded: true, reason: reason };
+      // Enhancement-never-veto (MD1 retarget): a degraded morph becomes a
+      // swipe along the axis from the outgoing focal center to the incoming
+      // focal center — the swipe still carries the eye where the morph
+      // promised to take it, and the shipped film stays inside the
+      // 3-transition language.
+      var a = fromPart.getBoundingClientRect();
+      var b = toPart.getBoundingClientRect();
+      var dx = (b.left + b.width / 2) - (a.left + a.width / 2);
+      var dy = (b.top + b.height / 2) - (a.top + a.height / 2);
+      var axisName;
+      if (Math.abs(dx) >= Math.abs(dy)) axisName = dx >= 0 ? "left" : "right";
+      else axisName = dy >= 0 ? "up" : "down";
+      bindDirectional(timeline, cut, from, to, root, SWIPE_AXES[axisName]);
+      return { degraded: true, reason: reason, target: "swipe-" + axisName };
+    }
+    // Echo garnish (MD2 §1.2): ghost clones trail the fast bridge flight,
+    // AE-Echo style. Appended BEFORE the bridges so they paint beneath, and
+    // evaluated inside the same per-frame onUpdate at ease(p − k·δ) — free of
+    // new seeks, deterministic by construction, killed at flight end. This is
+    // host-applied garnish on exactly this fast mover; it is NOT a planner
+    // option.
+    var ECHO_DELAYS = [0.06, 0.12];
+    var ECHO_OPACITIES = [0.35, 0.18];
+    var ghosts = [];
+    for (var g = 0; g < ECHO_DELAYS.length; g += 1) {
+      var ghost = bridgeElement(root, fromPart);
+      ghost.setAttribute("data-sequences-runtime-cut", "echo");
+      ghosts.push(ghost);
     }
     var bridgeA = bridgeElement(root, fromPart);
     var bridgeB = bridgeElement(root, toPart);
@@ -312,6 +429,12 @@
     global.gsap.set(bridgeB, { opacity: 0 });
     timeline.set(bridgeA, { opacity: 0 }, 0);
     timeline.set(bridgeB, { opacity: 0 }, 0);
+    for (var g0 = 0; g0 < ghosts.length; g0 += 1) {
+      global.gsap.set(ghosts[g0], { opacity: 0 });
+      timeline.set(ghosts[g0], { opacity: 0 }, 0);
+      timeline.set(ghosts[g0], { opacity: ECHO_OPACITIES[g0] }, start);
+      timeline.set(ghosts[g0], { opacity: 0 }, cut.atSec + settle);
+    }
     timeline.set(fromPart, { opacity: 0 }, start);
     timeline.set(bridgeA, { opacity: 1 }, start);
     timeline.set(toPart, { opacity: 0 }, Math.max(0, start - 0.001));
@@ -344,6 +467,18 @@
         };
         global.gsap.set(bridgeA, vars);
         global.gsap.set(bridgeB, vars);
+        // Echo ghosts ride the SAME interpolated path a beat behind — a pure
+        // function of the same proxy, so out-of-order seek stays exact.
+        for (var e = 0; e < ghosts.length; e += 1) {
+          var tg = ease(Math.max(0, proxy.p - ECHO_DELAYS[e]));
+          global.gsap.set(ghosts[e], {
+            x: a.x + (b.x - a.x) * tg,
+            y: a.y + (b.y - a.y) * tg,
+            width: a.width + (b.width - a.width) * tg,
+            height: a.height + (b.height - a.height) * tg,
+            borderRadius: (radiusA + (radiusB - radiusA) * tg).toFixed(2) + "px",
+          });
+        }
       },
     }, start);
     timeline.set(bridgeA, { opacity: 0 }, cut.atSec + settle);
@@ -373,15 +508,17 @@
       if (!from) fail(cut, "outgoing scene is absent");
       if (!to) fail(cut, "incoming scene is absent");
       var outcome;
-      if (DIRECTIONS[cut.style]) {
-        bindDirectional(timeline, cut, from, to);
+      if (cut.style === "swipe") {
+        bindDirectional(timeline, cut, from, to, root, SWIPE_AXES[cut.axis || "right"]);
+      } else if (DIRECTIONS[cut.style]) {
+        bindDirectional(timeline, cut, from, to, root, DIRECTIONS[cut.style]);
       } else if (cut.style === "zoom-through" || cut.style === "inverse-zoom") {
         bindZoom(timeline, cut, from, to);
       } else if (cut.style === "flash-white") {
         bindFlash(timeline, cut, from, to, root);
-      } else if (cut.style === "object-match") {
+      } else if (cut.style === "match" || cut.style === "object-match") {
         bindObjectMatch(timeline, cut, from, to, root);
-      } else if (cut.style === "shape-match") {
+      } else if (cut.style === "morph" || cut.style === "shape-match") {
         outcome = bindShapeMatch(timeline, cut, from, to, root);
       } else {
         fail(cut, 'unsupported style "' + cut.style + '"');
@@ -390,6 +527,7 @@
       if (outcome && outcome.degraded) {
         binding.degraded = true;
         binding.reason = outcome.reason;
+        binding.target = outcome.target || "zoom-through";
       }
       bindings.push(binding);
     });

@@ -9,6 +9,7 @@ import {
 import {
   applyCompositionRepair,
   inferStoryboardPlanRequirements,
+  injectLayoutIntentHints,
   normalizeWorldLayout,
   parseCompositionResponse,
   parseStoryboardResponse,
@@ -18,6 +19,10 @@ import {
   requestStoryboardPlan,
   retimeUnmotivatedTimeRamps,
   criticSkippableCleanDraft,
+  earlyLeastBadPublishReason,
+  repairContrastAaIssues,
+  correctSparseFraming,
+  sourceRetryFeedbackForBrowserQa,
   StoryboardValidationError,
 } from "../src/engine/compositionRunner.ts";
 import { resolveTimeRampPlan, timeRampHoldWindow } from "../src/engine/timeRamp.ts";
@@ -32,8 +37,17 @@ import {
   validateDirectComposition,
   type DirectCompositionDraft,
 } from "../src/engine/directComposition.ts";
-import type { StoryboardMomentV1 } from "../src/engine/storyboardMoments.ts";
-import { inspectDirectComposition, type DirectBrowserQaResult } from "../src/engine/layoutInspector.ts";
+import { resolveMomentContract, type StoryboardMomentV1 } from "../src/engine/storyboardMoments.ts";
+import {
+  dropUnusableGradeShifts,
+  normalizeStoryboardGradeShift,
+} from "../src/engine/gradeShift.ts";
+import {
+  inspectDirectComposition,
+  type DirectBrowserQaResult,
+  type DirectLayoutIssue,
+} from "../src/engine/layoutInspector.ts";
+import type { DirectScene } from "../src/engine/directComposition.ts";
 import { initializeProject } from "../src/engine/projectTemplates.ts";
 import { buildJobFrame } from "../src/engine/frameDesign.ts";
 import { injectCinemaKit } from "../src/engine/cinemaKit.ts";
@@ -255,6 +269,77 @@ describe("deterministic direct fallback", () => {
     expect(fallback.html).toContain("data-camera-world");
     expect(fallback.html).toContain("layout-center-stack");
     expect(fallback.html).not.toContain("<script>alert");
+  });
+
+  it("skins the safe film with the locked plan's own copy on a source-author failure", async () => {
+    const dir = projectDir();
+    const plan: DirectScene[] = [
+      {
+        id: "s1",
+        title: "The incident hits at 02:14",
+        purpose: "Open on the alert storm",
+        startSec: 0,
+        durationSec: 7,
+        moments: [{
+          version: 1,
+          sceneId: "s1",
+          id: "m1",
+          atSec: 2,
+          title: "PagerDuty lights up",
+          visualState: "Alerts cascade across the board",
+          change: "Every service goes red at once",
+          motionIntent: "reveal",
+          importance: "primary",
+        }],
+      },
+      { id: "s2", title: "One-click rollback", purpose: "Land the payoff", startSec: 7, durationSec: 8 },
+      {
+        id: "s3",
+        title: "Back to green <in seconds>",
+        purpose: "Resolve to calm",
+        startSec: 15,
+        durationSec: 7,
+      },
+    ];
+    const skinned = buildFallbackComposition({
+      product: "PulseDeck",
+      whatShipped: "one-click rollback from any deploy",
+      audience: "SREs",
+      lengthSec: 22,
+      plan,
+    });
+    // Hook line = first scene's primary-moment title; proof caption = its
+    // declared change; promise = the last scene's title. Generic filler is gone.
+    expect(skinned.html).toContain("PagerDuty lights up");
+    expect(skinned.html).toContain("Every service goes red at once");
+    expect(skinned.html).not.toContain("Live in your workspace today");
+    expect(skinned.html).not.toContain("From shipped to shown");
+    // Untrusted plan copy is escaped just like the brief fields.
+    expect(skinned.html).toContain("Back to green &lt;in seconds&gt;");
+    expect(skinned.html).not.toContain("Back to green <in seconds>");
+    // The proven 3-shot structure and its bespoke brief anchors are unchanged.
+    const validation = await validateDirectComposition(dir, skinned);
+    expect(validation.errors).toEqual([]);
+    expect(skinned.html).toContain("layout-editorial-left");
+    expect(skinned.html).toContain("data-camera-world");
+    expect(skinned.html).toContain("layout-center-stack");
+    expect(skinned.html).toContain(">PulseDeck<");
+  });
+
+  it("stays byte-identical to the generic reel when no usable plan is passed", () => {
+    const base = {
+      product: "PulseDeck",
+      whatShipped: "one-click rollback from any deploy",
+      audience: "SREs",
+      lengthSec: 22,
+    };
+    const noPlan = buildFallbackComposition(base);
+    const emptyPlan = buildFallbackComposition({ ...base, plan: [] });
+    // The plan param is a pure no-op when empty: same bytes, generic filler intact.
+    expect(emptyPlan.html).toBe(noPlan.html);
+    expect(noPlan.html).toContain("Live in your workspace today");
+    expect(noPlan.html).toContain("Shipped &middot; verified &middot; in the channel");
+    expect(noPlan.html).toContain("From shipped to shown");
   });
 });
 
@@ -576,32 +661,32 @@ describe("unsupported component beats degrade at parse (fallback-elimination)", 
   });
 
   it("keeps a load-bearing NON-text unsupported beat blocking (a moment anchors on it)", () => {
-    // A non-text analog (highlight) changes the visual channel, so evidence a
-    // declared moment binds to is never silently rewritten — the findings-retry
-    // stays the delivery mechanism there.
+    // A non-text/non-numeric analog (highlight) changes the visual channel, so
+    // evidence a declared moment binds to is never silently rewritten — the
+    // findings-retry stays the delivery mechanism there.
     expect(() =>
       planWith(
         [{
           version: 1,
-          id: "bad-open",
+          id: "bad-chart",
           sceneId: "product-proof",
           component: "latency-stat",
-          kind: "open",
+          kind: "chart",
           atSec: 3.5,
         }],
         [{
           version: 1,
-          id: "m-opened",
+          id: "m-charted",
           sceneId: "product-proof",
           atSec: 3.8,
-          title: "Panel opens",
-          visualState: "panel visible",
-          change: "the panel opens",
+          title: "Chart grows",
+          visualState: "bars visible",
+          change: "the chart draws",
           motionIntent: "ui-state",
           importance: "primary",
         }],
       )
-    ).toThrow(/uses "open" on a stat-card component/);
+    ).toThrow(/uses "chart" on a stat-card component/);
   });
 
   it("accepts a plan clean except for pacing on late attempts (degrade-never-veto)", () => {
@@ -751,6 +836,70 @@ describe("Sentinel Phase 3 — storyboard normalization is wired into parseStory
     // new boundary — the plan stays contiguous.
     expect(middle.durationSec).toBeGreaterThan(3);
     expect(closer.startSec).toBeCloseTo(middle.startSec + middle.durationSec, 3);
+  });
+});
+
+describe("MD4 grade shift — normalization, discipline governor, moment evidence", () => {
+  const primaryMoment = (id: string, sceneId: string, atSec: number): StoryboardMomentV1 => ({
+    version: 1, id, sceneId, atSec, title: id, visualState: "x", change: "y",
+    motionIntent: "resolve", importance: "primary",
+  });
+  const gradeScene = (
+    id: string,
+    startSec: number,
+    shift: { atSec: number; toGrade: "cold" | "neutral" | "warm" | "noir" } | undefined,
+    momentAt: number | undefined,
+  ): DirectCompositionDraft["storyboard"][number] => ({
+    id, title: id, purpose: "test", startSec, durationSec: 4,
+    ...(shift ? { gradeShift: { version: 1 as const, ...shift } } : {}),
+    ...(momentAt !== undefined ? { moments: [primaryMoment(`${id}-m`, id, momentAt)] } : {}),
+  });
+
+  it("shape-normalizes toGrade/atSec and drops unknown grades", () => {
+    expect(normalizeStoryboardGradeShift(
+      { atSec: 1.4, toGrade: "WARM", fromPart: "hero" }, { startSec: 0, durationSec: 4 },
+    )).toEqual({ version: 1, atSec: 1.4, toGrade: "warm", fromPart: "hero" });
+    expect(normalizeStoryboardGradeShift(
+      { atSec: 1, toGrade: "teal" }, { startSec: 0, durationSec: 4 },
+    )).toBeUndefined();
+    // A scene-relative atSec authored from zero lifts into composition time.
+    expect(normalizeStoryboardGradeShift(
+      { atSec: 1, toGrade: "cold" }, { startSec: 5, durationSec: 4 },
+    )?.atSec).toBe(6);
+  });
+
+  it("keeps a disciplined shift and drops the undisciplined cases", () => {
+    const good = dropUnusableGradeShifts([gradeScene("s1", 0, { atSec: 1.2, toGrade: "warm" }, 1.2)]);
+    expect(good.storyboard[0]?.gradeShift?.toGrade).toBe("warm");
+    expect(good.dropped).toEqual([]);
+
+    // <1.2s of aftermath (atSec 3.2 in a 4s scene) → dropped.
+    expect(dropUnusableGradeShifts([gradeScene("s1", 0, { atSec: 3.2, toGrade: "warm" }, 3.2)])
+      .storyboard[0]?.gradeShift).toBeUndefined();
+    // No declared moment within ±0.5s → dropped.
+    expect(dropUnusableGradeShifts([gradeScene("s1", 0, { atSec: 1.2, toGrade: "warm" }, undefined)])
+      .storyboard[0]?.gradeShift).toBeUndefined();
+    // Outside the scene window → dropped.
+    expect(dropUnusableGradeShifts([gradeScene("s1", 0, { atSec: 9, toGrade: "warm" }, 1.2)])
+      .storyboard[0]?.gradeShift).toBeUndefined();
+  });
+
+  it("caps grade shifts at two per film", () => {
+    const board = [
+      gradeScene("s1", 0, { atSec: 1, toGrade: "cold" }, 1),
+      gradeScene("s2", 4, { atSec: 5, toGrade: "neutral" }, 5),
+      gradeScene("s3", 8, { atSec: 9, toGrade: "warm" }, 9),
+    ];
+    const result = dropUnusableGradeShifts(board);
+    expect(result.storyboard.filter((scene) => scene.gradeShift)).toHaveLength(2);
+    expect(result.dropped.some((line) => line.includes("per-film cap"))).toBe(true);
+  });
+
+  it("binds a moment to grade-shift evidence", () => {
+    const scenes = [gradeScene("hero", 0, { atSec: 1.6, toGrade: "warm" }, 1.6)];
+    const contract = resolveMomentContract("<main></main>", scenes, 4);
+    const moment = contract.moments.find((entry) => entry.id === "hero-m");
+    expect(moment?.evidence?.kind).toBe("grade-shift");
   });
 });
 
@@ -1046,6 +1195,340 @@ describe("Sentinel Phase 3 — criticSkippableCleanDraft (critic gating predicat
     // critic can improve — the least-bad penalty weights these, so the skip
     // predicate must too (Phase-5 audit item S3a).
     expect(criticSkippableCleanDraft(base, ["frame: hero contrast repaired"])).toBe(false);
+  });
+
+  it("allows the attempt-2 broker to publish low-penalty advisory layout polish", () => {
+    const browserQa: DirectBrowserQaResult = {
+      ...base,
+      strictOk: false,
+      issues: [{
+        code: "layout_intent_missing",
+        severity: "warning",
+        time: 2,
+        selector: "#scene",
+        message: "Visible scene declares no relational layout intent.",
+        source: "sequences",
+      }],
+      warnings: ["layout_intent_missing #scene (t=2.00s): Visible scene declares no relational layout intent."],
+    };
+    const reason = earlyLeastBadPublishReason({
+      draft: draft(),
+      raw: "<index_html></index_html>",
+      attempts: 1,
+      browserQa,
+      qualityPenalty: 1,
+    });
+    expect(reason).toContain("early-least-bad-pick:penalty=1");
+  });
+
+  it("keeps high-visibility browser findings out of the early broker", () => {
+    const browserQa: DirectBrowserQaResult = {
+      ...base,
+      strictOk: false,
+      issues: [{
+        code: "camera_framed_clipped",
+        severity: "error",
+        time: 6,
+        selector: "[data-part=\"hero\"]",
+        message: "clipped",
+        source: "sequences",
+      }],
+      warnings: ["camera_framed_clipped [data-part=\"hero\"] (t=6.00s): clipped"],
+    };
+    expect(earlyLeastBadPublishReason({
+      draft: draft(),
+      raw: "<index_html></index_html>",
+      attempts: 1,
+      browserQa,
+      qualityPenalty: 10,
+    })).toBeUndefined();
+  });
+
+  it("removes moment_static_frame from source retry feedback unless the film is blank", () => {
+    const qa: DirectBrowserQaResult = {
+      ...base,
+      strictOk: false,
+      warnings: [
+        "moment_static_frame moment:m-ghost (t=6.00s): invisible change",
+        "layout_intent_missing #scene (t=2.00s): Visible scene declares no relational layout intent.",
+      ],
+    };
+    expect(sourceRetryFeedbackForBrowserQa(qa)).toEqual([
+      "layout_intent_missing #scene (t=2.00s): Visible scene declares no relational layout intent.",
+    ]);
+    expect(sourceRetryFeedbackForBrowserQa({
+      ...qa,
+      errors: ["near_blank_film: 1 scene renders as blank frames"],
+    })).toContain("moment_static_frame moment:m-ghost (t=6.00s): invisible change");
+  });
+
+  it("injects deterministic selector-scoped contrast repairs from browser QA metadata", () => {
+    const repaired = repairContrastAaIssues(draft(), {
+      ...base,
+      strictOk: false,
+      issues: [{
+        code: "contrast_aa",
+        severity: "warning",
+        time: 2,
+        selector: "#sell-btn-el",
+        text: "Sell it",
+        message: "Contrast is 2.57:1; needs 3:1.",
+        fixHint: "Adjust the existing semantic color.",
+        source: "hyperframes",
+        contrast: {
+          ratio: 2.57,
+          required: 3,
+          foreground: "rgb(120,120,120)",
+          background: "rgb(210,210,210)",
+          suggestedColor: "rgb(80,80,80)",
+        },
+      }, {
+        code: "contrast_aa",
+        severity: "warning",
+        time: 2,
+        selector: "div",
+        text: "Too broad",
+        message: "Contrast is 2.57:1; needs 3:1.",
+        fixHint: "Adjust the existing semantic color.",
+        source: "hyperframes",
+        contrast: {
+          ratio: 2.57,
+          required: 3,
+          foreground: "rgb(120,120,120)",
+          background: "rgb(210,210,210)",
+          suggestedColor: "rgb(80,80,80)",
+        },
+      }],
+      warnings: ["contrast_aa #sell-btn-el (t=2.00s): Contrast is 2.57:1; needs 3:1."],
+    });
+    expect(repaired.repaired).toEqual(["#sell-btn-el"]);
+    expect(repaired.draft.html).toContain("data-sequences-contrast-repair");
+    expect(repaired.draft.html).toContain("#sell-btn-el{color:rgb(80,80,80) !important;}");
+    expect(repaired.draft.html).not.toContain("div{color:");
+  });
+
+  it("contrast repair neutralizes replace-pattern and style-closing text in the comment", () => {
+    const before = draft();
+    const repaired = repairContrastAaIssues(before, {
+      ...base,
+      strictOk: false,
+      issues: [{
+        code: "contrast_aa",
+        severity: "warning",
+        time: 2,
+        selector: "#sell-btn-el",
+        // On-screen copy is untrusted: `$'` / `$&` are special in String.replace
+        // replacement strings and `</style>` would end the injected block.
+        text: "$' $& </style> $$9",
+        message: "Contrast is 2.57:1; needs 3:1.",
+        fixHint: "Adjust the existing semantic color.",
+        source: "hyperframes",
+        contrast: {
+          ratio: 2.57,
+          required: 3,
+          suggestedColor: "rgb(80,80,80)",
+        },
+      }],
+      warnings: ["contrast_aa #sell-btn-el (t=2.00s): Contrast is 2.57:1; needs 3:1."],
+    });
+    expect(repaired.repaired).toEqual(["#sell-btn-el"]);
+    expect(repaired.draft.html).toContain("#sell-btn-el{color:rgb(80,80,80) !important;}");
+    // The style block closes exactly once and no replacement pattern expanded.
+    const styleBlock = repaired.draft.html.match(
+      /<style data-sequences-contrast-repair>[\s\S]*?<\/style>/,
+    )?.[0] ?? "";
+    expect(styleBlock).not.toContain("$");
+    expect(styleBlock).not.toContain("</style> ");
+    const headCloses = repaired.draft.html.match(/<\/head>/gi) ?? [];
+    expect(headCloses.length).toBeLessThanOrEqual(1);
+  });
+
+  it("injects missing layout intent from storyboard spatial intent", () => {
+    const value = draft();
+    const scenes = [{
+      ...value.storyboard[0]!,
+      spatialIntent: {
+        version: 1 as const,
+        focalPart: "hero-copy",
+        composition: "centered hero claim",
+        relationships: [],
+        frameAnchor: "frame:left-third" as const,
+      },
+    }];
+    const source = value.html
+      .replace('data-layout-important data-layout-anchor="frame:center"', "")
+      .replace('<h1 id="hook-title">', '<h1 id="hook-title" data-part="hero-copy">');
+
+    const repaired = injectLayoutIntentHints(source, scenes);
+
+    expect(repaired.repaired).toEqual(["hook"]);
+    expect(repaired.html).toContain(
+      '<h1 id="hook-title" data-part="hero-copy" data-layout-important="1" ' +
+        'data-layout-anchor="frame:left-third" data-layout-tolerance="48">',
+    );
+  });
+
+  it("injects a scene-level layout anchor when spatial intent has no authored focal part", () => {
+    const value = draft();
+    const scenes = [{
+      ...value.storyboard[0]!,
+      spatialIntent: {
+        version: 1 as const,
+        focalPart: "absent-copy",
+        composition: "centered hero claim",
+        relationships: [],
+      },
+    }];
+    const source = value.html.replace('data-layout-important data-layout-anchor="frame:center"', "");
+
+    const repaired = injectLayoutIntentHints(source, scenes);
+
+    expect(repaired.repaired).toEqual(["hook"]);
+    expect(repaired.html).toContain(
+      '<section id="hook" class="scene clip" data-scene="hook" data-start="0" ' +
+        'data-duration="4" data-track-index="1" data-layout-anchor="frame:center" ' +
+        'data-layout-tolerance="48">',
+    );
+  });
+
+  it("leaves existing authored layout intent unchanged", () => {
+    const value = draft();
+    const scenes = [{
+      ...value.storyboard[0]!,
+      spatialIntent: {
+        version: 1 as const,
+        focalPart: "hero-copy",
+        composition: "centered hero claim",
+        relationships: [],
+        frameAnchor: "frame:left-third" as const,
+      },
+    }];
+
+    const repaired = injectLayoutIntentHints(value.html, scenes);
+
+    expect(repaired.repaired).toEqual([]);
+    expect(repaired.html).toBe(value.html);
+  });
+});
+
+describe("correctSparseFraming (camera-sparse auto-framing, L2-at-L4)", () => {
+  const cameraScene = (
+    id: string,
+    region: string,
+    move: "pan" | "drift" = "pan",
+    zoom?: number,
+  ): DirectScene => ({
+    id,
+    title: id,
+    purpose: `land on ${region}`,
+    startSec: 0,
+    durationSec: 4,
+    camera: {
+      version: 1,
+      path: [{
+        version: 1,
+        move,
+        toRegion: region,
+        startSec: 0.5,
+        durationSec: 1.2,
+        ...(zoom !== undefined ? { zoom } : {}),
+      }],
+    },
+  });
+
+  const sparseIssue = (
+    sceneId: string,
+    fraction: number,
+    target: { region?: string; part?: string } = {},
+  ): DirectLayoutIssue => ({
+    code: "camera_framed_sparse",
+    severity: "warning",
+    time: 2,
+    selector: target.part
+      ? `[data-part="${target.part}"]`
+      : target.region
+        ? `[data-region="${target.region}"]`
+        : `[data-scene="${sceneId}"]`,
+    framing: { sceneId, fraction, ...target },
+    message: `fills only ${Math.round(fraction * 100)}% of the frame`,
+    source: "sequences",
+  });
+
+  const qa = (issues: DirectLayoutIssue[]): DirectBrowserQaResult => ({
+    ok: true,
+    strictOk: false,
+    samples: [],
+    issues,
+    errors: [],
+    warnings: [],
+  });
+
+  it("zooms the framing move to raise coverage back to the audit floor", () => {
+    const storyboard = [cameraScene("lonely", "lonely")];
+    const result = correctSparseFraming(
+      storyboard,
+      qa([sparseIssue("lonely", 0.1, { region: "lonely" })]),
+    );
+    expect(result.corrected).toEqual(["lonely"]);
+    // sqrt(0.18/0.1) = 1.3416…, base 1 → ~1.342, safely past the 1.05 skip.
+    const zoom = result.storyboard[0]!.camera!.path[0]!.zoom!;
+    expect(zoom).toBeCloseTo(1.342, 2);
+    expect(zoom).toBeGreaterThan(1.05);
+    // The input storyboard is never mutated in place.
+    expect(storyboard[0]!.camera!.path[0]!.zoom).toBeUndefined();
+  });
+
+  it("clamps the zoom factor at 1.8 for an extremely sparse landing", () => {
+    const result = correctSparseFraming(
+      [cameraScene("tiny", "tiny")],
+      qa([sparseIssue("tiny", 0.02, { region: "tiny" })]),
+    );
+    // sqrt(0.18/0.02) = 3.0 → clamped to the 1.8 ceiling.
+    expect(result.storyboard[0]!.camera!.path[0]!.zoom).toBeCloseTo(1.8, 5);
+  });
+
+  it("bumps the last targeted full move for a scene-level [data-scene] finding", () => {
+    const scene: DirectScene = {
+      ...cameraScene("multi", "second"),
+      camera: {
+        version: 1,
+        path: [
+          { version: 1, move: "pan", toRegion: "first", startSec: 0.5, durationSec: 1 },
+          { version: 1, move: "pan", toRegion: "second", startSec: 2, durationSec: 1 },
+        ],
+      },
+    };
+    const result = correctSparseFraming([scene], qa([sparseIssue("multi", 0.08)]));
+    expect(result.corrected).toEqual(["multi"]);
+    expect(result.storyboard[0]!.camera!.path[0]!.zoom).toBeUndefined();
+    expect(result.storyboard[0]!.camera!.path[1]!.zoom).toBeGreaterThan(1.05);
+  });
+
+  it("leaves drift/hold-only and camera-less scenes to the model (no bumpable move)", () => {
+    const drift = cameraScene("drifter", "adrift", "drift");
+    const staticScene: DirectScene = {
+      id: "static",
+      title: "static",
+      purpose: "no camera path at all",
+      startSec: 0,
+      durationSec: 3,
+    };
+    const result = correctSparseFraming(
+      [drift, staticScene],
+      qa([
+        sparseIssue("drifter", 0.05, { region: "adrift" }),
+        sparseIssue("static", 0.05),
+      ]),
+    );
+    expect(result.corrected).toEqual([]);
+    expect(result.storyboard[0]!.camera!.path[0]!.zoom).toBeUndefined();
+  });
+
+  it("ignores findings without measured framing metadata", () => {
+    const issue = sparseIssue("lonely", 0.1, { region: "lonely" });
+    delete (issue as { framing?: unknown }).framing;
+    const result = correctSparseFraming([cameraScene("lonely", "lonely")], qa([issue]));
+    expect(result.corrected).toEqual([]);
   });
 });
 
@@ -1368,19 +1851,24 @@ describe("direct HyperFrames composition", () => {
     expect(requirements.minRequestedComponentKinds).toBe(3);
   });
 
-  it("keeps typed boundary cuts and degrades unusable ones before source authoring", () => {
+  it("keeps typed boundary cuts and canonicalizes legacy names before source authoring", () => {
     const plan = storyboard();
     plan[0]!.cut = { version: 1, style: "cut-left", travelPx: 9999 };
     plan[1]!.cut = {
       version: 1,
       style: "object-match",
       focalPartOut: "the-action-button",
-      // focalPartIn missing → unusable, must degrade to no cut, not fail
+      // focalPartIn missing → the hard-form match promise (QA enforces the
+      // tightened eye-trace budget); it resolves to no runtime bridge.
     };
     plan[2]!.cut = { version: 1, style: "hard" };
     const parsed = parseStoryboardResponse(JSON.stringify(plan));
-    expect(parsed[0]?.cut).toEqual({ version: 1, style: "cut-left", travelPx: 420 });
-    expect(parsed[1]?.cut).toBeUndefined();
+    expect(parsed[0]?.cut).toEqual({ version: 1, style: "swipe", axis: "left", travelPx: 420 });
+    expect(parsed[1]?.cut).toEqual({
+      version: 1,
+      style: "match",
+      focalPartOut: "the-action-button",
+    });
     expect(parsed[2]?.cut).toEqual({ version: 1, style: "hard" });
   });
 
@@ -2523,14 +3011,6 @@ describe("direct HyperFrames composition", () => {
         issues: [],
         errors: ["browser runtime failed"],
         warnings: [],
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        strictOk: false,
-        samples: [],
-        issues: [],
-        errors: ["browser runtime still failed"],
-        warnings: [],
       });
     const provider: AgentProvider = {
       id: "openrouter-api",
@@ -2545,7 +3025,7 @@ describe("direct HyperFrames composition", () => {
       skills: skills(),
       lockedStoryboard: initial.storyboard,
     });
-    expect(result.attempts).toBe(3);
+    expect(result.attempts).toBe(2);
     expect(result.draft.html).toBe(withHostInjections(initial.html));
   });
 
@@ -2588,9 +3068,9 @@ describe("direct HyperFrames composition", () => {
       lockedStoryboard: initial.storyboard,
     });
 
-    expect(result.attempts).toBe(3);
+    expect(result.attempts).toBe(2);
     expect(result.draft.html).toBe(withHostInjections(initial.html));
-    expect(complete).toHaveBeenCalledTimes(3);
+    expect(complete).toHaveBeenCalledTimes(2);
   });
 
   it("mechanically replaces unseeded randomness before spending a model repair", async () => {

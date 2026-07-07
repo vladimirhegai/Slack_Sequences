@@ -36,12 +36,17 @@ interface SentinelRun {
   stages?: StageTiming[];
   modelCalls?: {
     total?: number;
+    successfulLogicalTotal?: number;
+    physicalRequestTotal?: number;
     byStage?: Record<string, number>;
     failed?: Record<string, number>;
     failedTotal?: number;
     hedged?: Record<string, number>;
     hedgedTotal?: number;
   };
+  slotCalls?: Record<string, { calls?: number; scenes?: number }>;
+  scaffoldCoverage?: { planned?: number; present?: number } | null;
+  scaffoldRestorationEvents?: Record<string, number>;
   promptChars?: { maxAuthor?: number; totalPrompt?: number; totalCompletion?: number };
   layers?: Record<string, number>;
   normalizations?: Record<string, number>;
@@ -122,6 +127,17 @@ function avg(values: number[]): number | undefined {
   return finite.reduce((sum, value) => sum + value, 0) / finite.length;
 }
 
+function successfulLogicalCalls(run: SentinelRun): number {
+  return run.modelCalls?.successfulLogicalTotal ?? run.modelCalls?.total ?? 0;
+}
+
+function physicalRequests(run: SentinelRun): number {
+  return run.modelCalls?.physicalRequestTotal ??
+    successfulLogicalCalls(run) +
+      (run.modelCalls?.failedTotal ?? 0) +
+      (run.modelCalls?.hedgedTotal ?? 0);
+}
+
 function fmt(value: number | undefined, digits = 2): string {
   if (value === undefined) return "—";
   return value.toFixed(digits);
@@ -161,6 +177,9 @@ function main(): void {
   // the aggregate away from exactly the failures the mission table exists to
   // measure. Runs with no recorded stage data still drop out naturally.
   const cleanRuns = runs.filter((run) => run.disposition === "published");
+  const publishedRuns = runs.filter(
+    (run) => run.disposition === "published" || run.disposition === "published-degraded",
+  );
 
   const metrics = {
     runs: runs.length,
@@ -196,11 +215,24 @@ function main(): void {
     authorPromptCharsAvg: avg(
       runs.map((run) => run.promptChars?.maxAuthor ?? 0).filter((v) => v > 0),
     ),
-    modelCallsPerCleanRunAvg: avg(
-      cleanRuns.map((run) => run.modelCalls?.total ?? 0).filter((v) => v > 0),
+    logicalCallsPerCleanRunAvg: avg(
+      cleanRuns.map(successfulLogicalCalls).filter((v) => v > 0),
     ),
-    modelCallsPerRunAvg: avg(
-      runs.map((run) => run.modelCalls?.total ?? 0).filter((v) => v > 0),
+    physicalRequestsPerCleanRunAvg: avg(
+      cleanRuns.map(physicalRequests).filter((v) => v > 0),
+    ),
+    physicalRequestsPerPublishedRunAvg: avg(
+      publishedRuns.map(physicalRequests).filter((v) => v > 0),
+    ),
+    physicalRequestsPerRunAvg: avg(
+      runs.map(physicalRequests).filter((v) => v > 0),
+    ),
+    physicalRequestsTotal: runs.reduce((sum, run) => sum + physicalRequests(run), 0),
+    slotSubcallsTotal: runs.reduce(
+      (sum, run) =>
+        sum +
+        Object.values(run.slotCalls ?? {}).reduce((slotSum, entry) => slotSum + (entry.calls ?? 0), 0),
+      0,
     ),
   };
 
@@ -236,7 +268,8 @@ function main(): void {
   lines.push(`| Wall-clock to tier-1 (avg) | ≤ 8 min | ${fmtMs(metrics.tier1MsAvg)} |`);
   lines.push(`| Wall-clock to tier-2 (avg) | ≤ 14 min | ${fmtMs(metrics.tier2MsAvg)} |`);
   lines.push(`| Author prompt size (max chars) | ≤ 45,000 | ${metrics.authorPromptCharsMax.toLocaleString("en-US")} |`);
-  lines.push(`| Model calls / clean run (avg) | ≤ 5 | ${fmt(metrics.modelCallsPerCleanRunAvg, 1)} |`);
+  lines.push(`| Physical model requests / clean run (avg) | ≤ 5 | ${fmt(metrics.physicalRequestsPerCleanRunAvg, 1)} |`);
+  lines.push(`| Physical model requests / any published run (avg) | — | ${fmt(metrics.physicalRequestsPerPublishedRunAvg, 1)} |`);
   lines.push("");
   lines.push("## Dispositions");
   lines.push("");
@@ -249,7 +282,8 @@ function main(): void {
   lines.push("");
   lines.push(
     `failed model calls ${metrics.failedModelCallsTotal} · hedge duplicates ` +
-      `${metrics.hedgedModelCallsTotal} · shipped degradations ${metrics.degradationsTotal}`,
+      `${metrics.hedgedModelCallsTotal} · physical request launches ${metrics.physicalRequestsTotal} · ` +
+      `slot subcalls ${metrics.slotSubcallsTotal} · shipped degradations ${metrics.degradationsTotal}`,
   );
   lines.push("");
   lines.push("## Findings by layer (L0→L5)");
@@ -268,14 +302,20 @@ function main(): void {
   lines.push("");
   lines.push("## Per-run detail");
   lines.push("");
-  lines.push("| Run | Disposition | Skel | Slots | SB att | Src att | Model calls | Author chars | Tier1 | Tier2 |");
-  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("| Run | Disposition | Skel | Slots | SB att | Src att | Logical / physical requests | Slot subcalls | L1 present / planned | Author chars | Tier1 | Tier2 |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const run of runs) {
     const id = run.__projectDir ? path.basename(run.__projectDir) : "?";
+    const slotSubcalls = Object.values(run.slotCalls ?? {})
+      .reduce((sum, entry) => sum + (entry.calls ?? 0), 0);
+    const scaffold = run.scaffoldCoverage
+      ? `${run.scaffoldCoverage.present ?? "—"} / ${run.scaffoldCoverage.planned ?? "—"}`
+      : "—";
     lines.push(
       `| ${id} | ${run.disposition} | ${flag(run.skeletonEnabled)} | ${flag(run.slotsEnabled)} | ` +
         `${stageAttempts(run, "storyboard-plan") ?? "—"} | ${sourceAttempts(run) ?? "—"} | ` +
-        `${run.modelCalls?.total ?? "—"} | ${(run.promptChars?.maxAuthor ?? 0).toLocaleString("en-US")} | ` +
+        `${successfulLogicalCalls(run)} / ${physicalRequests(run)} | ${slotSubcalls || "—"} | ${scaffold} | ` +
+        `${(run.promptChars?.maxAuthor ?? 0).toLocaleString("en-US")} | ` +
         `${fmtMs(run.wallClock?.tier1Ms ?? undefined)} | ${fmtMs(run.wallClock?.tier2Ms ?? undefined)} |`,
     );
   }

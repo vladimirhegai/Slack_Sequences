@@ -669,3 +669,34 @@
   background: var(--surface-2, #1b212c);
   color: var(--muted, #9aa5b4);
 }
+
+/* ── headline (MD3) ───────────────────────────────────────────────────────
+ * Hero copy as a first-class object. The kit owns only the display type; the
+ * author owns the copy and the composition. `.cmp-text` is the split slot: the
+ * runtime replaces it with per-word/per-letter inline-block spans for rise/pop/
+ * assemble reveals (transforms only — the authored copy is the final state).
+ * The .cmp base rule pins font-size to 24px; a headline sizes itself in em, so
+ * override once here (authors restyle with their own font-size).
+ */
+.cmp-headline {
+  display: inline-block;
+  margin: 0;
+  font-family: var(--font-display, inherit);
+  font-size: 3.4em;
+  font-weight: 850;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  color: var(--text, #edf0f6);
+}
+.cmp-headline .cmp-text {
+  display: inline-block;
+  min-height: 0;
+  overflow: visible;
+  white-space: normal;
+}
+/* Split units the runtime injects — inline-block so transforms never reflow. */
+.cmp-headline .cmp-split {
+  display: inline-block;
+  white-space: pre;
+  will-change: transform, opacity;
+}

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DirectScene } from "../src/engine/directComposition.ts";
 import { inspectDirectComposition } from "../src/engine/layoutInspector.ts";
+import { correctSparseFraming } from "../src/engine/compositionRunner.ts";
 import { initializeProject } from "../src/engine/projectTemplates.ts";
 import { CAMERA_RUNTIME_FILE, resolveCameraPlan } from "../src/engine/cameraContract.ts";
 
@@ -170,5 +171,50 @@ describe("framing coverage browser audit (camera_framed_sparse)", () => {
     // Sparse framings are polish findings: they block strictOk (the repair
     // loop gets a chance) but never publication.
     expect(qa.strictOk).toBe(false);
+  }, 45_000);
+
+  it("clears the landing sparse finding after the deterministic zoom correction", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-coverage-repair-"));
+    roots.push(dir);
+    initializeProject(dir, { name: "Smoke", brandName: "Smoke", seedScreenshot: false });
+    const draft = coverageFilm();
+    const qa = await inspectDirectComposition(dir, draft, { captureGuide: false });
+    expect(qa.infraError).toBeUndefined();
+    const sparseBefore = qa.issues.filter((issue) => issue.code === "camera_framed_sparse");
+    // Sanity: the lonely camera landing is present and carries measured coverage.
+    const landing = sparseBefore.find((issue) => issue.selector === '[data-region="lonely"]');
+    expect(landing?.framing?.sceneId).toBe("sparse-cam");
+    expect(landing!.framing!.fraction).toBeGreaterThan(0);
+
+    // The pure correction bumps ONLY the bumpable landing (the drift-only and
+    // camera-less sparse scenes have no full move to zoom).
+    const fix = correctSparseFraming(draft.storyboard, qa);
+    expect(fix.corrected).toEqual(["sparse-cam"]);
+    const bumped = fix.storyboard[0]!.camera!.path[0]!.zoom!;
+    expect(bumped).toBeGreaterThan(1.05);
+
+    // Re-inject the camera island from the mutated storyboard (the seam
+    // applyDeterministicSourceRepairs / cut-discovery use) and re-measure.
+    const island = JSON.stringify(resolveCameraPlan(fix.storyboard));
+    const repairedHtml = draft.html.replace(
+      /(<script type="application\/json" id="sequences-camera">)[\s\S]*?(<\/script>)/,
+      `$1${island}$2`,
+    );
+    const qa2 = await inspectDirectComposition(
+      dir,
+      { storyboard: fix.storyboard, html: repairedHtml },
+      { captureGuide: false },
+    );
+    expect(qa2.infraError).toBeUndefined();
+    expect(qa2.errors).toEqual([]);
+    const sparseAfter = qa2.issues.filter((issue) => issue.code === "camera_framed_sparse");
+    // The corrected landing no longer reads as sparse…
+    expect(sparseAfter.some((issue) => issue.framing?.sceneId === "sparse-cam")).toBe(false);
+    // …the correction introduced no new clipping…
+    const clippedBefore = qa.issues.filter((issue) => issue.code === "camera_framed_clipped").length;
+    const clippedAfter = qa2.issues.filter((issue) => issue.code === "camera_framed_clipped").length;
+    expect(clippedAfter).toBeLessThanOrEqual(clippedBefore);
+    // …and the overall sparse count strictly dropped.
+    expect(sparseAfter.length).toBeLessThan(sparseBefore.length);
   }, 45_000);
 });

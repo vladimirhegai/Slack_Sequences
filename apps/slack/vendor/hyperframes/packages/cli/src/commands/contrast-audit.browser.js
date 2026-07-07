@@ -23,6 +23,101 @@ window.__contrastAudit = async function (imgBase64, time) {
     return (hi + 0.05) / (lo + 0.05);
   }
 
+  function rgbToHsl(r, g, b) {
+    r /= 255;
+    g /= 255;
+    b /= 255;
+    var max = Math.max(r, g, b);
+    var min = Math.min(r, g, b);
+    var h = 0;
+    var s = 0;
+    var l = (max + min) / 2;
+    if (max !== min) {
+      var d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r:
+          h = (g - b) / d + (g < b ? 6 : 0);
+          break;
+        case g:
+          h = (b - r) / d + 2;
+          break;
+        default:
+          h = (r - g) / d + 4;
+      }
+      h /= 6;
+    }
+    return [h, s, l];
+  }
+
+  function hueToRgb(p, q, t) {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  }
+
+  function hslToRgb(h, s, l) {
+    var r;
+    var g;
+    var b;
+    if (s === 0) {
+      r = g = b = l;
+    } else {
+      var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      var p = 2 * l - q;
+      r = hueToRgb(p, q, h + 1 / 3);
+      g = hueToRgb(p, q, h);
+      b = hueToRgb(p, q, h - 1 / 3);
+    }
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+  }
+
+  function contrastRepairColor(fgR, fgG, fgB, bgR, bgG, bgB, required) {
+    var hsl = rgbToHsl(fgR, fgG, fgB);
+    var originalL = hsl[2];
+    var candidates = [];
+    function test(direction) {
+      var low = direction < 0 ? 0 : originalL;
+      var high = direction < 0 ? originalL : 1;
+      var best = null;
+      for (var i = 0; i < 18; i++) {
+        var mid = (low + high) / 2;
+        var rgb = hslToRgb(hsl[0], hsl[1], mid);
+        var ratio = wcagRatio(rgb[0], rgb[1], rgb[2], bgR, bgG, bgB);
+        if (ratio >= required) {
+          best = { rgb: rgb, ratio: ratio, delta: Math.abs(mid - originalL) };
+          if (direction < 0) low = mid;
+          else high = mid;
+        } else if (direction < 0) {
+          high = mid;
+        } else {
+          low = mid;
+        }
+      }
+      if (best) candidates.push(best);
+    }
+    test(-1);
+    test(1);
+    var blackRatio = wcagRatio(0, 0, 0, bgR, bgG, bgB);
+    if (blackRatio >= required) {
+      candidates.push({ rgb: [0, 0, 0], ratio: blackRatio, delta: originalL });
+    }
+    var whiteRatio = wcagRatio(255, 255, 255, bgR, bgG, bgB);
+    if (whiteRatio >= required) {
+      candidates.push({ rgb: [255, 255, 255], ratio: whiteRatio, delta: 1 - originalL });
+    }
+    candidates.sort(function (a, b) {
+      return a.delta - b.delta || b.ratio - a.ratio;
+    });
+    var picked = candidates[0];
+    return picked
+      ? "rgb(" + picked.rgb[0] + "," + picked.rgb[1] + "," + picked.rgb[2] + ")"
+      : undefined;
+  }
+
   function parseColor(c) {
     var m = c.match(/rgba?\(([^)]+)\)/);
     if (!m) return [0, 0, 0, 1];
@@ -153,16 +248,19 @@ window.__contrastAudit = async function (imgBase64, time) {
     var fontSize = parseFloat(cs.fontSize);
     var fontWeight = Number(cs.fontWeight) || 400;
     var large = fontSize >= 24 || (fontSize >= 19 && fontWeight >= 700);
+    var required = large ? 3 : 4.5;
 
     out.push({
       time: time,
       selector: selectorOf(el),
       text: (el.textContent || "").trim().slice(0, 50),
       ratio: ratio,
-      wcagAA: large ? ratio >= 3 : ratio >= 4.5,
+      required: required,
+      wcagAA: ratio >= required,
       large: large,
       fg: "rgb(" + compR + "," + compG + "," + compB + ")",
       bg: "rgb(" + bgR + "," + bgG + "," + bgB + ")",
+      suggestedColor: contrastRepairColor(compR, compG, compB, bgR, bgG, bgB, required),
     });
   }
   return out;

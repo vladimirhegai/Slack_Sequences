@@ -249,6 +249,37 @@ describe("auditPacing introduction development", () => {
   });
 });
 
+describe("auditPacing assemble lock hold (MD3)", () => {
+  const assembleScene = (endLoad: number) =>
+    scene({
+      id: "hero",
+      startSec: 0,
+      durationSec: 4,
+      components: [{ version: 1 as const, id: "hero-copy", kind: "headline" as const }],
+      beats: [beat("hero", {
+        id: "name-assembles",
+        component: "hero-copy",
+        kind: "type",
+        atSec: endLoad - 1.8,
+        durationSec: 1.8,
+        text: "SHIPFAST",
+        style: "assemble",
+      })],
+    });
+
+  it("flags an assemble whose lock the reframe steals before it can rest", () => {
+    // Locks at 3.2s in a 4s scene → 0.8s of hold < 1.2s required.
+    const findings = auditPacing([assembleScene(3.2)]);
+    expect(findings.some((finding) => finding.startsWith("pacing/assemble:"))).toBe(true);
+  });
+
+  it("passes an assemble that locks early enough to hold", () => {
+    // Locks at 2.0s → 2.0s of hold ≥ 1.2s.
+    const findings = auditPacing([assembleScene(2.0)]);
+    expect(findings.filter((finding) => finding.startsWith("pacing/assemble:"))).toEqual([]);
+  });
+});
+
 describe("auditPacing reading floor", () => {
   const searchScene = (typeBeat: ComponentBeatIntentV1, camera?: DirectScene["camera"]) =>
     scene({
@@ -875,6 +906,32 @@ describe("Sentinel Phase 3 — stretchMarginalPacingMisses (normalize-before-ret
     expect(auditPacing(result.storyboard).some((f) => f.startsWith("pacing/reading:"))).toBe(false);
     // The note is carried on the stretched scene for STORYBOARD.md visibility.
     expect(stretchedOpener!.sentinelNormalizations?.length).toBe(1);
+  });
+
+  it("cascade-shifts a later scene's gradeShift with its scene (MD4 desync guard)", () => {
+    // Same stretchable opener as above; the later scene carries a mid-scene
+    // grade shift whose atSec must ride the cascade — a shift left behind
+    // would fire before its scene, breaking the moment coincidence and the
+    // AA sample alignment.
+    const early = scene({
+      id: "opener",
+      startSec: 0,
+      durationSec: 2.5,
+      components: [{ version: 1 as const, id: "query", kind: "search" as const }],
+      beats: [beat("opener", { id: "b1", component: "query", kind: "type", atSec: 1.5, text: "ship it" })],
+    });
+    const later = scene({
+      id: "closer",
+      startSec: 2.5,
+      durationSec: 4,
+      gradeShift: { version: 1, atSec: 3.5, toGrade: "warm" },
+    });
+    const result = stretchMarginalPacingMisses([early, later]);
+    expect(result.normalized).toHaveLength(1);
+    const shifted = result.storyboard[1]!;
+    const delta = shifted.startSec - 2.5;
+    expect(delta).toBeGreaterThan(0);
+    expect(shifted.gradeShift!.atSec).toBeCloseTo(3.5 + delta, 5);
   });
 
   it("never stretches by more than MAX_PACING_STRETCH_SEC — a larger deficit stays a real finding", () => {

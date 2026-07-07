@@ -22,6 +22,7 @@
  * Everything here is a pure function of measured rects + the storyboard, so
  * thresholds are unit-testable without a browser.
  */
+import { canonicalCutStyle } from "./cutContract.ts";
 import { resolveTimeRampPlan, warpInverseOf } from "./timeRamp.ts";
 import type { DirectScene } from "./directComposition.ts";
 import type {
@@ -31,6 +32,13 @@ import type {
 
 /** Displacement (fraction of the frame diagonal) above which a jump breaks eye trace. */
 export const EYE_TRACE_JUMP_FRACTION = 0.38;
+/**
+ * Tightened budget for a declared `match` cut that compiled as a hard cut
+ * (MD1): "match" is a promise that the incoming subject lands where the eye
+ * already is — the eye-trace audit is what makes that promise real, so the
+ * allowed displacement is roughly half the ordinary hard-cut budget.
+ */
+export const MATCH_EYE_TRACE_JUMP_FRACTION = 0.2;
 /** Both endpoints must be at least this on-frame for their centers to mean anything. */
 export const EYE_TRACE_MIN_ON_FRAME = 0.3;
 /** Within-scene: consecutive beat targets further apart than this ping-pong. */
@@ -53,6 +61,8 @@ export const PING_PONG_MAX_PAIRS = 6;
  * styles this audit judges.
  */
 const EYE_CARRYING_CUT_STYLES = new Set([
+  "swipe",
+  "morph",
   "cut-left",
   "cut-right",
   "cut-up",
@@ -113,6 +123,8 @@ export interface EyeTraceJumpFinding {
   inCenter: { x: number; y: number };
   /** Gaze displacement as a fraction of the frame diagonal. */
   displacementFraction: number;
+  /** The budget this boundary was judged against (match cuts are tighter). */
+  budgetFraction: number;
 }
 
 function measuredCenter(
@@ -151,8 +163,17 @@ export function scoreEyeTraceBoundaries(args: {
     const from = sceneById.get(boundary.fromScene);
     const to = sceneById.get(boundary.toScene);
     if (!from || !to) continue;
-    const cutStyle = from.cut?.style ?? "hard";
+    const cut = from.cut;
+    const cutStyle = cut ? canonicalCutStyle(cut.style, cut.axis).style : "hard";
     if (EYE_CARRYING_CUT_STYLES.has(cutStyle)) continue;
+    // A bridged match flies a real object-match bridge — the bridge carries
+    // the eye. A hard-form match (either part missing) compiled as a hard cut
+    // whose promise this audit enforces at the tightened budget.
+    const bridgedMatch =
+      cutStyle === "match" && Boolean(cut?.focalPartOut && cut?.focalPartIn);
+    if (bridgedMatch) continue;
+    const budgetFraction =
+      cutStyle === "match" ? MATCH_EYE_TRACE_JUMP_FRACTION : EYE_TRACE_JUMP_FRACTION;
     const attention = resolveBoundaryAttention(from, to);
     if (!attention.outPart || !attention.inPart) continue;
     const outCenter = measuredCenter(
@@ -170,7 +191,7 @@ export function scoreEyeTraceBoundaries(args: {
     if (!outCenter || !inCenter) continue;
     const displacementFraction =
       Math.hypot(inCenter.x - outCenter.x, inCenter.y - outCenter.y) / diagonal;
-    if (displacementFraction <= EYE_TRACE_JUMP_FRACTION) continue;
+    if (displacementFraction <= budgetFraction) continue;
     findings.push({
       fromScene: boundary.fromScene,
       toScene: boundary.toScene,
@@ -181,6 +202,7 @@ export function scoreEyeTraceBoundaries(args: {
       outCenter: { x: Math.round(outCenter.x), y: Math.round(outCenter.y) },
       inCenter: { x: Math.round(inCenter.x), y: Math.round(inCenter.y) },
       displacementFraction: Math.round(displacementFraction * 1000) / 1000,
+      budgetFraction,
     });
   }
   return findings;

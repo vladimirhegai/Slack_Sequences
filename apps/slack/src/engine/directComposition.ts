@@ -35,6 +35,11 @@ import {
   type SceneCutIntentV1,
 } from "./cutContract.ts";
 import {
+  FX_RUNTIME_FILE,
+  fxRuntimeSource,
+  validateFxContract,
+} from "./fxContract.ts";
+import {
   CAMERA_RUNTIME_FILE,
   CAMERA_RUNTIME_VERSION,
   cameraRuntimeHash,
@@ -54,6 +59,7 @@ import {
   warpInverseOf,
   type SceneTimeRampIntentV1,
 } from "./timeRamp.ts";
+import type { SceneGradeShiftV1 } from "./gradeShift.ts";
 import {
   COMPONENT_RUNTIME_FILE,
   COMPONENT_RUNTIME_VERSION,
@@ -113,6 +119,8 @@ export interface DirectScene {
   camera?: SceneCameraIntentV1;
   /** Typed net-zero speed-ramp dip inside this scene (time remapping). */
   timeRamp?: SceneTimeRampIntentV1;
+  /** Typed mid-scene animated grade shift (background temperature turn). */
+  gradeShift?: SceneGradeShiftV1;
   /** Optional station map: which data-region sits in which world grid cell. */
   worldLayout?: WorldLayoutCellV1[];
   /** Declared motion-native components (each authored as one data-part element). */
@@ -332,6 +340,7 @@ function normalizeStoryboard(
       ...(proposed?.cut ? { cut: proposed.cut } : {}),
       ...(proposed?.camera ? { camera: proposed.camera } : {}),
       ...(proposed?.timeRamp ? { timeRamp: proposed.timeRamp } : {}),
+      ...(proposed?.gradeShift ? { gradeShift: proposed.gradeShift } : {}),
       ...(proposed?.components?.length ? { components: proposed.components } : {}),
       ...(proposed?.beats?.length ? { beats: proposed.beats } : {}),
       ...(proposed?.spatialIntent ? { spatialIntent: proposed.spatialIntent } : {}),
@@ -508,6 +517,8 @@ export async function validateDirectComposition(
   errors.push(...timeRampValidation.errors);
   const componentValidation = validateComponentContract(html, normalized.scenes);
   errors.push(...componentValidation.errors);
+  const fxValidation = validateFxContract(html, normalized.scenes);
+  errors.push(...fxValidation.errors);
   // Bind failures abort the whole browser compile behind an opaque timeout;
   // re-run the runtimes' bind queries against a parsed DOM here so they
   // surface as named findings the repair loop can act on.
@@ -548,6 +559,7 @@ export async function validateDirectComposition(
       ref !== CAMERA_RUNTIME_FILE &&
       ref !== COMPONENT_RUNTIME_FILE &&
       ref !== TIME_RUNTIME_FILE &&
+      ref !== FX_RUNTIME_FILE &&
       !fs.existsSync(resolved)
     ) {
       const staged = path.resolve(projectDir, ref);
@@ -638,6 +650,11 @@ function copyRuntimeAndAssets(projectDir: string, targetDir: string): void {
   fs.writeFileSync(
     path.join(targetDir, TIME_RUNTIME_FILE),
     timeRampRuntimeSource(),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(targetDir, FX_RUNTIME_FILE),
+    fxRuntimeSource(),
     "utf8",
   );
   const sourceAssets = path.join(projectDir, "assets");
@@ -921,6 +938,10 @@ export async function commitDirectComposition(
     path.join(target, TIME_RUNTIME_FILE),
     path.join(checkpoint, TIME_RUNTIME_FILE),
   );
+  fs.copyFileSync(
+    path.join(target, FX_RUNTIME_FILE),
+    path.join(checkpoint, FX_RUNTIME_FILE),
+  );
   fs.cpSync(path.join(target, "qa"), path.join(checkpoint, "qa"), { recursive: true });
   return { manifest, validation };
 }
@@ -944,6 +965,7 @@ export function undoDirectComposition(projectDir: string): boolean {
     CAMERA_RUNTIME_FILE,
     COMPONENT_RUNTIME_FILE,
     TIME_RUNTIME_FILE,
+    FX_RUNTIME_FILE,
   ]) {
     const source = path.join(checkpoint, sidecar);
     const destination = path.join(target, sidecar);
@@ -1121,8 +1143,16 @@ function thumbnailCaptures(manifest: DirectCompositionManifest): ThumbnailCaptur
       ].slice(0, MAX_MOMENT_THUMBNAILS);
   // The outgoing cut's exit window animates the scene wrapper off; capturing
   // inside it produces a mid-transition frame.
+  const resolvedCuts = resolveCutPlan(manifest.scenes).cuts;
   const cutExitByScene = new Map(
-    resolveCutPlan(manifest.scenes).cuts.map((cut) => [cut.fromScene, cut.exitSec]),
+    resolvedCuts.map((cut) => [cut.fromScene, cut.exitSec]),
+  );
+  // A cover swipe's panel is still wiping off through the incoming scene's
+  // entry window — a capture there shows the palette panel, not the moment.
+  const entryCoverByScene = new Map(
+    resolvedCuts
+      .filter((cut) => cut.style === "swipe" && cut.cover)
+      .map((cut) => [cut.toScene, cut.entrySec]),
   );
   return selected
     .map(({ moment, scene }, index) => {
@@ -1136,10 +1166,14 @@ function thumbnailCaptures(manifest: DirectCompositionManifest): ThumbnailCaptur
         scene.startSec,
         scene.startSec + scene.durationSec - 0.05 - (cutExitByScene.get(scene.id) ?? 0),
       );
+      const earliestSec = Math.min(
+        latestSec,
+        scene.startSec + (entryCoverByScene.get(scene.id) ?? 0),
+      );
       const subjectPart = momentSubjectPart(moment);
       return {
         key: `m${String(index + 1).padStart(2, "0")}-${moment.id}`,
-        atSec: Math.min(Math.max(settledSec, scene.startSec), latestSec),
+        atSec: Math.min(Math.max(settledSec, earliestSec), latestSec),
         sceneId: scene.id,
         latestSec,
         ...(subjectPart ? { subjectPart } : {}),

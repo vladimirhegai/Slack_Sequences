@@ -73,9 +73,188 @@
     timeline.set(el, { attr: { "data-state": state } }, at);
   }
 
+  // Deterministic 32-bit string hash + seeded [0,1) generator — the assemble
+  // scatter is a pure function of (beat.id, letter index), so two compiles of
+  // the same storyboard produce byte-identical positions (no clocks, no random).
+  function hashCode(str) {
+    var h = 0;
+    for (var i = 0; i < str.length; i += 1) {
+      h = (Math.imul(h, 31) + str.charCodeAt(i)) | 0;
+    }
+    return h;
+  }
+  function seededUnit(seed) {
+    var t = (seed + 0x6d2b79f5) | 0;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  // Split the slot's copy into inline-block per-word or per-letter spans WITHOUT
+  // reflowing the measured layout (transforms only; whitespace stays as text
+  // nodes so line-wrapping and width are unchanged; the authored text is the
+  // final state). Returns the animatable unit spans in reading order.
+  function makeUnitSpan(text) {
+    var span = document.createElement("span");
+    span.className = "cmp-split";
+    span.style.display = "inline-block";
+    span.style.whiteSpace = "pre";
+    span.textContent = text;
+    return span;
+  }
+  function splitSlot(slot, full, perWord) {
+    slot.textContent = "";
+    slot.style.position = "relative";
+    slot.style.overflow = "visible";
+    var units = [];
+    if (perWord) {
+      var parts = full.split(/(\s+)/);
+      for (var i = 0; i < parts.length; i += 1) {
+        var part = parts[i];
+        if (!part) continue;
+        if (/^\s+$/.test(part)) {
+          slot.appendChild(document.createTextNode(part));
+        } else {
+          var wordSpan = makeUnitSpan(part);
+          slot.appendChild(wordSpan);
+          units.push(wordSpan);
+        }
+      }
+    } else {
+      for (var j = 0; j < full.length; j += 1) {
+        var ch = full.charAt(j);
+        if (ch === " " || ch === "\t" || ch === "\n") {
+          slot.appendChild(document.createTextNode(ch));
+        } else {
+          var letterSpan = makeUnitSpan(ch);
+          slot.appendChild(letterSpan);
+          units.push(letterSpan);
+        }
+      }
+    }
+    return units;
+  }
+
   /* ------------------------------------------------------------- beats */
 
+  // MD3 kinetic headline reveals. `rise` (staggered fade + lift), `pop`
+  // (staggered scale-from-small with the seqPop overshoot), and `assemble` (the
+  // echo word-split: seeded rectilinear scatter converging with echo trails and
+  // a whole-word glow at lock). Every value is a pure function of timeline time.
+  function compileSplitType(timeline, el, beat, style) {
+    var slot = textSlot(el);
+    var full = beat.text != null ? String(beat.text) : (slot.textContent || "");
+    if (!full) return;
+    var duration = beat.endSec - beat.startSec;
+    var wordCount = full.split(/\s+/).filter(Boolean).length;
+    // rise: per-word for a sentence (>6 words), else per-letter; pop: per-word;
+    // assemble: per-letter (the scatter is a letter gesture).
+    var perWord = style === "pop" || (style === "rise" && wordCount > 6);
+    var units = splitSlot(slot, full, perWord);
+    if (!units.length) { slot.textContent = full; return; }
+    var stagger = style === "pop" ? 0.055 : 0.045;
+    var span = Math.max(0.2, duration - stagger * (units.length - 1));
+    var unitDur = Math.min(style === "assemble" ? 0.6 : 0.5, span);
+
+    if (style === "rise") {
+      for (var r = 0; r < units.length; r += 1) {
+        reveal(timeline, units[r], { opacity: 0, y: "0.35em" }, {
+          opacity: 1, y: 0, duration: unitDur, ease: "power3.out",
+        }, beat.startSec + stagger * r);
+      }
+      return;
+    }
+    if (style === "pop") {
+      for (var p = 0; p < units.length; p += 1) {
+        reveal(timeline, units[p], { opacity: 0, scale: 0.6 }, {
+          opacity: 1, scale: 1, duration: unitDur, ease: "seqPop",
+        }, beat.startSec + stagger * p);
+      }
+      return;
+    }
+    // assemble — seeded rectilinear scatter + echo trail on the 3 longest travels.
+    var scatter = 96; // px displacement scale (video coordinates)
+    var travels = [];
+    for (var a = 0; a < units.length; a += 1) {
+      var seed = hashCode(beat.id + ":" + a);
+      var mag = (seededUnit(seed) * 2 - 1) * scatter;
+      var horizontal = seededUnit(seed ^ 0x9e3779b9) < 0.5;
+      travels.push({ span: units[a], index: a, axis: horizontal ? "x" : "y", offset: mag });
+    }
+    var echoRank = travels.slice().sort(function (m, n) {
+      return Math.abs(n.offset) - Math.abs(m.offset);
+    }).slice(0, 3);
+    var echoSet = {};
+    for (var e = 0; e < echoRank.length; e += 1) echoSet[echoRank[e].index] = true;
+    for (var t = 0; t < travels.length; t += 1) {
+      var travel = travels[t];
+      var at = beat.startSec + stagger * t;
+      var fromVars = { opacity: 0 };
+      var toVars = { opacity: 1, duration: unitDur, ease: "seqSettle" };
+      fromVars[travel.axis] = travel.offset;
+      toVars[travel.axis] = 0;
+      reveal(timeline, travel.span, fromVars, toVars, at);
+      if (echoSet[travel.index]) addEchoTrail(timeline, slot, travel, at, unitDur);
+    }
+    // Whole-word glow at lock: a kit bloom behind the slot swells and settles.
+    addLockGlow(timeline, el, slot, beat.endSec);
+  }
+
+  // Two decaying ghost clones trail a fast-moving letter along its own axis,
+  // lagged so they always sit where the letter just was (the AE Echo idiom).
+  // Visibility discipline: the ghost is CSS-hidden at rest AND pinned hidden by
+  // a t=0 set, because its flight is a `move` (immediateRender:false) whose
+  // from-state carries a visible opacity — without the pin, a fresh forward
+  // render shows stray duplicate letters before the assemble, and a backward
+  // seek re-renders the flight's from-state. GSAP renders children in reverse
+  // order on backward seeks, so the t=0 set wins for every pre-flight frame.
+  function addEchoTrail(timeline, slot, travel, at, unitDur) {
+    var restX = travel.span.offsetLeft;
+    var restY = travel.span.offsetTop;
+    var opacities = [0.32, 0.16];
+    for (var k = 0; k < opacities.length; k += 1) {
+      var ghost = document.createElement("span");
+      ghost.className = "cmp-split";
+      ghost.setAttribute("data-sequences-fx", "echo");
+      ghost.setAttribute("data-layout-ignore", "");
+      ghost.setAttribute("aria-hidden", "true");
+      ghost.textContent = travel.span.textContent;
+      ghost.style.cssText =
+        "position:absolute;display:inline-block;white-space:pre;pointer-events:none;" +
+        "margin:0;opacity:0;left:" + restX + "px;top:" + restY + "px";
+      slot.appendChild(ghost);
+      timeline.set(ghost, { opacity: 0 }, 0);
+      var lag = (k + 1) * 0.05;
+      var from = { opacity: opacities[k] };
+      var to = { opacity: 0, duration: unitDur, ease: "seqSettle" };
+      from[travel.axis] = travel.offset;
+      to[travel.axis] = 0;
+      move(timeline, ghost, from, to, at + lag);
+    }
+  }
+
+  function addLockGlow(timeline, el, slot, atSec) {
+    if (getComputedStyle(el).position === "static") el.style.position = "relative";
+    var bloom = document.createElement("span");
+    bloom.className = "bloom";
+    bloom.setAttribute("data-sequences-fx", "assemble-glow");
+    bloom.setAttribute("data-layout-ignore", "");
+    bloom.setAttribute("aria-hidden", "true");
+    bloom.style.cssText = "position:absolute;inset:-25%;z-index:0;pointer-events:none;opacity:0";
+    el.insertBefore(bloom, el.firstChild);
+    move(timeline, bloom, { opacity: 0 }, {
+      opacity: 0.7, duration: 0.28, ease: "sine.in",
+    }, atSec - 0.14);
+    move(timeline, bloom, { opacity: 0.7 }, {
+      opacity: 0, duration: 0.5, ease: "sine.out",
+    }, atSec + 0.14);
+  }
+
   function compileType(timeline, el, beat) {
+    if (beat.style && HEADLINE_SPLIT_STYLES[beat.style]) {
+      compileSplitType(timeline, el, beat, beat.style);
+      return;
+    }
     var slot = textSlot(el);
     var full = beat.text != null ? String(beat.text) : (slot.textContent || "");
     slot.textContent = "";
@@ -93,6 +272,8 @@
     timeline.set(caret, { opacity: 1 }, Math.max(0, beat.startSec - 0.15));
     timeline.set(caret, { opacity: 0 }, beat.endSec + 0.35);
   }
+
+  var HEADLINE_SPLIT_STYLES = { rise: true, pop: true, assemble: true };
 
   function compileStream(timeline, el, beat) {
     var bubble = firstMatch(el, ["[data-cmp-stream]", ".cmp-msg.cmp-ai"]) || textSlot(el);
@@ -230,6 +411,17 @@
   }
 
   function compileOpen(timeline, el, beat) {
+    // MD6 pop entrance for compact acknowledgment surfaces: scale-from-small
+    // with the seqPop overshoot, replacing the smooth default panel open. The
+    // compact-kind + 2/scene rule is enforced deterministically at plan time.
+    if (beat.style === "pop") {
+      var popDur = beat.endSec - beat.startSec;
+      setState(timeline, el, "open", beat.startSec);
+      reveal(timeline, el, { opacity: 0, scale: 0.6 }, {
+        opacity: 1, scale: 1, duration: popDur, ease: "seqPop",
+      }, beat.startSec);
+      return;
+    }
     var target = openTargets(el);
     var duration = beat.endSec - beat.startSec;
     setState(timeline, el, "open", beat.startSec);
@@ -340,6 +532,9 @@
   }
 
   function compileHighlight(timeline, el, beat) {
+    // Style variants beyond the default ring (sweep, underline) are compiled
+    // by the host fx runtime (sequences-fx) — one owner per visual channel.
+    if (beat.style && beat.style !== "ring") return;
     var ring = el.querySelector(".cmp-highlight-ring");
     if (!ring) {
       ring = document.createElement("span");

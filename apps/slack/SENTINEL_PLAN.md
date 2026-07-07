@@ -17,7 +17,7 @@ Targets (measured, not vibes):
 | Wall-clock to tier-1 (thumbnails posted) | ~15–25 min | ≤ 8 min |
 | Wall-clock to tier-2 (MP4) | ~30 min | ≤ 14 min |
 | Author prompt size | ~60–90k chars/attempt | ≤ 45k chars, enforced by test |
-| Model calls per clean run | 6–8 (frame, concept, shape, storyboard, author, critic, patch) | ≤ 5 |
+| Physical model requests per clean run | successful logical calls + failed calls + hedge launches | ≤ 5 |
 
 ---
 
@@ -68,8 +68,10 @@ repair* half. Nobody has shrunk the *surface the model can get wrong*. Evidence:
 
 **The Sentinel thesis: move every mechanically-decidable obligation OFF the
 model.** Detection stays (the gates are the quality moat); what changes is that
-whole classes become *unrepresentable* instead of *detected*, and retries become
-*scene-scoped* instead of *document-scoped*.
+whole classes become host-owned or mechanically repairable instead of merely
+detected, and attributable retries become *scene-scoped* instead of
+*document-scoped*. Interior bindings remain representable as missing, so L2/L3
+stay as explicit backstops.
 
 ---
 
@@ -81,7 +83,7 @@ new feature must be placed at the **lowest-numbered layer that can own it**:
 | Layer | Name | Mechanism | Failure cost |
 | --- | --- | --- | --- |
 | L0 | **Schema** | Structured outputs / response formats; typed enums | zero — invalid output can't parse |
-| L1 | **Scaffold** | Host-generated chassis the model fills; illegal states unrepresentable | zero — host code, unit-tested |
+| L1 | **Scaffold** | Host-generated chassis the model fills; shipped binding coverage measured explicitly | zero — host code, unit-tested |
 | L2 | **Normalize** | Deterministic repair/normalization (`applyDeterministicSourceRepairs`, storyboard top-ups) | zero paid attempts |
 | L3 | **Static gate** | linkedom / regex / kitMarkupAudit — named findings before any browser | cheap findings-retry |
 | L4 | **Browser gate** | measured truth (layout, temporal judge, eye-trace) | expensive; scene-scoped retry |

@@ -20,7 +20,13 @@ import type { DirectScene } from "./directComposition.ts";
 
 export type MomentImportance = "primary" | "supporting";
 
-export type MomentEvidenceKind = "cut" | "camera" | "interaction" | "component" | "tween";
+export type MomentEvidenceKind =
+  | "cut"
+  | "camera"
+  | "interaction"
+  | "component"
+  | "grade-shift"
+  | "tween";
 
 export interface StoryboardMomentV1 {
   version: 1;
@@ -264,6 +270,7 @@ function evidenceKind(activity: MotionActivity): MomentEvidenceKind {
   if (activity.source.startsWith("camera:")) return "camera";
   if (activity.source.startsWith("interaction:")) return "interaction";
   if (activity.source.startsWith("component:")) return "component";
+  if (activity.source.startsWith("gradeShift:")) return "grade-shift";
   return "tween";
 }
 
@@ -319,6 +326,9 @@ function synthesizedTitle(activity: MotionActivity, scene: DirectScene): string 
   if (activity.source.startsWith("component:")) {
     const beat = activity.source.slice(10);
     return activity.target ? `Component ${beat}: ${activity.target}` : `Component ${beat}`;
+  }
+  if (activity.source.startsWith("gradeShift:")) {
+    return `Grade shifts to ${activity.source.slice(11)}`;
   }
   const target = activity.target?.replace(/^[#.]/, "").replace(/[[\]"'=]/g, " ").trim();
   return target ? `Reveal: ${target}` : "Authored beat";

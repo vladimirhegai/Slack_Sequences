@@ -113,6 +113,13 @@ Add `--temporal` when Chrome is available and you want pixel evidence, or
 not call Slack hosted MCP and does not post to Slack; use the sandbox flow for
 OAuth, hosted-MCP, Socket Mode, and Slack upload verification.
 
+> ⚠️ **A local paid probe MUST pass `--provider openrouter-api` explicitly.**
+> `apps/slack/.env` deliberately does **not** set `SLACK_SEQUENCES_PROVIDER`, so
+> the code default is `claude-code-cli`, which is not wired for headless probes
+> and **stalls** the storyboard/author stage (the run hangs, then times out).
+> The `--provider openrouter-api` flag (plus a valid `OPENROUTER_API_KEY`, which
+> `sequence:check` loads from `.env`) is what makes a local probe actually run.
+
 The regression fixture for the July 2 Relay incident preserves the exact modal
 brief and its component/camera direction:
 

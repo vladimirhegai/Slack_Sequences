@@ -410,3 +410,156 @@ describe("camera depth level 2 (preserve-3d layers + whip lens)", () => {
     }
   }, 45_000);
 });
+
+/**
+ * MD5 `dive` browser contract: one typed move pushes into the palette part,
+ * holds while its beat would develop it, and returns EXACTLY to the saved
+ * pre-dive camera state — byte-identical transforms under out-of-order seek,
+ * so the surrounding path is provably undisturbed.
+ */
+function diveFilm(): { storyboard: DirectScene[]; html: string } {
+  const storyboard: DirectScene[] = [
+    {
+      id: "workbench",
+      title: "Dense workbench",
+      purpose: "Dive into the palette, type, return",
+      startSec: 0,
+      durationSec: 8,
+      camera: {
+        version: 1,
+        path: [
+          { version: 1, move: "hold", toRegion: "bench", startSec: 0, durationSec: 2 },
+          {
+            // Flush with the hold so no connective gap-fill drift shifts the
+            // saved state — the return-to-state assertion is then exact.
+            version: 1,
+            move: "dive",
+            toPart: "palette-input",
+            startSec: 2,
+            durationSec: 5,
+            zoom: 1.3,
+            // Host-derived legs (deriveDiveWindows) — fixed here so the test
+            // asserts exact times: push-in 2→2.7, hold 2.7→6.3, out 6.3→7.
+            inSec: 0.7,
+            outSec: 0.7,
+          },
+        ],
+      },
+    },
+  ];
+  const island = JSON.stringify(resolveCameraPlan(storyboard));
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>Dive smoke</title><script src="gsap.min.js"></script>
+<script src="${CAMERA_RUNTIME_FILE}"></script><style>
+*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#0a0f16}
+#root{position:relative;width:1920px;height:1080px;overflow:hidden}
+.scene{position:absolute;inset:0;opacity:0}
+.world{position:relative;width:2400px;height:1400px}
+.station{position:absolute;display:grid;place-items:center}
+.palette{width:640px;height:88px;border-radius:14px;background:#182338;color:#dbe7ff;display:grid;place-items:center;font:500 28px Arial}
+</style></head><body>
+<main id="root" data-composition-id="dive-smoke" data-width="1920" data-height="1080" data-duration="8">
+<section id="workbench" class="scene clip" data-scene="workbench" data-start="0" data-duration="8" data-track-index="1">
+<div class="world" data-camera-world>
+<div class="station" data-region="bench" style="left:240px;top:160px;width:1600px;height:900px">
+<div class="palette" data-part="palette-input">deploy checkout service</div>
+</div>
+</div>
+</section>
+</main>
+<script type="application/json" id="sequences-camera">${island}</script>
+<script>
+window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
+tl.set("#workbench",{opacity:1},0).set("#workbench",{opacity:0},8);
+SequencesCamera.compile(tl,document.getElementById("root"));
+window.__timelines["dive-smoke"]=tl;tl.seek(0);
+</script></body></html>`;
+  return { storyboard, html };
+}
+
+describe("dive camera browser contract (MD5)", () => {
+  it("dives to the part, holds, and returns exactly to the saved state", async () => {
+    const browserPath = findBrowserExecutable();
+    expect(browserPath, "a Chromium/Chrome/Edge executable is required").toBeTruthy();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-dive-smoke-"));
+    roots.push(dir);
+    const draft = diveFilm();
+    expect(validateCameraContract(draft.html, draft.storyboard).errors).toEqual([]);
+    fs.writeFileSync(path.join(dir, "index.html"), draft.html, "utf8");
+    const require = createRequire(import.meta.url);
+    fs.copyFileSync(require.resolve("gsap/dist/gsap.min.js"), path.join(dir, "gsap.min.js"));
+    fs.writeFileSync(path.join(dir, CAMERA_RUNTIME_FILE), cameraRuntimeSource(), "utf8");
+    const server = await serveDir(dir);
+    const puppeteer = (await import("puppeteer-core")).default;
+    const browser = await puppeteer.launch({
+      executablePath: browserPath!,
+      headless: true,
+      args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+      const consoleErrors: string[] = [];
+      page.on("console", (message) => {
+        if (message.type() === "error" && !message.text().startsWith("Failed to load resource")) {
+          consoleErrors.push(message.text());
+        }
+      });
+      page.on("pageerror", (error) => consoleErrors.push(String(error)));
+      await page.goto(server.url, { waitUntil: "networkidle0", timeout: 30_000 });
+      await page.waitForFunction(
+        () => Object.keys((window as unknown as { __timelines?: object }).__timelines ?? {}).length > 0,
+        { timeout: 10_000 },
+      );
+      const worldTransformAt = async (time: number): Promise<string> =>
+        page.evaluate((at: number) => {
+          const timelines = (window as unknown as {
+            __timelines: Record<string, { pause: () => void; seek: (t: number, s?: boolean) => void }>;
+          }).__timelines;
+          for (const timeline of Object.values(timelines)) {
+            timeline.pause();
+            timeline.seek(at, false);
+          }
+          return document.querySelector<HTMLElement>("[data-camera-world]")!.style.transform;
+        }, time);
+
+      // Pre-dive state (the bench framing, settled).
+      const before = await worldTransformAt(1.0);
+      // Push-in complete at 2.7s; mid-hold the palette is framed tighter.
+      const midHold = await worldTransformAt(4.5);
+      expect(midHold).not.toBe(before);
+      // The hold is static: the framing must not drift between hold samples.
+      const midHoldLater = await worldTransformAt(6.0);
+      expect(midHoldLater).toBe(midHold);
+      const numbers = (transform: string): number[] =>
+        (transform.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+      const expectSubPixelEqual = (actual: string, expected: string): void => {
+        const actualNumbers = numbers(actual);
+        const expectedNumbers = numbers(expected);
+        expect(actualNumbers).toHaveLength(expectedNumbers.length);
+        for (const [index, value] of actualNumbers.entries()) {
+          expect(Math.abs(value - expectedNumbers[index]!)).toBeLessThan(0.01);
+        }
+      };
+      // At the pull-back's landing (7.0s) the camera is home: the same saved
+      // state to sub-pixel precision (GSAP's ease evaluation at the seam can
+      // differ by a float-formatting hair, never by geometry).
+      const after = await worldTransformAt(7.0);
+      expectSubPixelEqual(after, before);
+      // Out-of-order seek: the held framing reproduces byte-identically (a
+      // tween actively renders it); the tween-less leading hold window is
+      // last-render residue — a pre-existing hold property — so it gets the
+      // same sub-pixel bar as the homecoming.
+      await worldTransformAt(7.9);
+      await worldTransformAt(0.1);
+      expect(await worldTransformAt(4.5)).toBe(midHold);
+      await worldTransformAt(6.9);
+      expectSubPixelEqual(await worldTransformAt(1.0), before);
+      expect(consoleErrors).toEqual([]);
+    } finally {
+      await browser.close();
+      await server.close();
+    }
+  }, 45_000);
+});

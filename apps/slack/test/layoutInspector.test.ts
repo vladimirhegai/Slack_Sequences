@@ -504,6 +504,22 @@ describe("direct layout inspector", () => {
   );
 
   it.skipIf(!findBrowserExecutable())(
+    "normalizes tiny cursor endpoint drift to the measured target anchor",
+    async () => {
+      const result = await inspectDirectComposition(projectDir(), interactionDraft(2.6));
+      expect(
+        result.ok,
+        JSON.stringify({ errors: result.errors, issues: result.issues, evidence: result.interactions }),
+      ).toBe(true);
+      expect(result.issues.some((issue) => issue.code === "interaction_target_miss")).toBe(false);
+      expect(result.interactions?.some((entry) =>
+        entry.phase === "press" && entry.normalized === "cursor_near_miss"
+      )).toBe(true);
+    },
+    60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
     "hard-fails a four-pixel endpoint regression after interaction compilation",
     async () => {
       const result = await inspectDirectComposition(projectDir(), interactionDraft(4));

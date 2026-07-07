@@ -34,14 +34,19 @@ import {
   CUT_SHAPE_HINTS,
   CUT_STYLES,
   auditCutCoherence,
+  canonicalCutStyle,
   normalizeStoryboardCutIntent,
   resolveCutPlan,
   shapeHintsRhyme,
+  type CutAxis,
 } from "./cutContract.ts";
 import {
   CAMERA_FULL_MOVES,
   CAMERA_MOVES,
   CAMERA_RUNTIME_FILE,
+  type CameraMoveIntentV1,
+  DIVE_LEG_FRACTION,
+  DIVE_LEG_MAX_SEC,
   SEQUENCES_EASES,
   auditCameraEnergy,
   injectCameraRuntimeTag,
@@ -60,8 +65,10 @@ import {
   normalizeStoryboardTimeRamp,
   resolveTimeRampPlan,
   timeRampHoldWindow,
+  warpInverseOf,
 } from "./timeRamp.ts";
 import { discoverShapeMatchUpgrade } from "./cutDiscovery.ts";
+import { FX_RUNTIME_FILE, resolveFxPlan } from "./fxContract.ts";
 import {
   COMPONENT_BEAT_KINDS,
   COMPONENT_KINDS,
@@ -70,11 +77,14 @@ import {
   COMPONENT_RUNTIME_FILE,
   auditComponentComplexity,
   auditSurfaceExits,
+  autoStyleCompactPops,
   componentAuthoringReference,
   componentPlanningVocabulary,
   componentSkeletonMarkup,
   componentSupportsBeat,
   dedupeRedundantBeats,
+  degradeExcessAssembles,
+  degradeOpenPopStyles,
   injectComponentKit,
   injectComponentRuntimeTag,
   morphPartnerKinds,
@@ -85,6 +95,11 @@ import {
   type ComponentKind,
 } from "./componentContract.ts";
 import {
+  deriveGradeShifts,
+  dropUnusableGradeShifts,
+  normalizeStoryboardGradeShift,
+} from "./gradeShift.ts";
+import {
   normalizeStoryboardMoments,
   plannedMomentFloor,
   resolveMomentContract,
@@ -94,23 +109,36 @@ import {
 } from "./storyboardMoments.ts";
 import { analyzeMotionDensity } from "./motionDensity.ts";
 import {
+  ASSEMBLE_HOLD_SEC,
+  PACING_TOLERANCE_SEC,
+  READING_MAX_SEC,
+  READING_MIN_SEC,
+  READING_SEC_PER_WORD,
   auditPacing,
   delayConflictingCameraMoves,
+  framingChangeEvents,
+  nextFramingChangeAfter,
   normalizeCameraBudget,
   stretchMarginalPacingMisses,
   withNormalizationNotes,
 } from "./pacingAudit.ts";
-import { readFrameMeta } from "./frameDesign.ts";
+import { frameCapsule, readFrameMeta } from "./frameDesign.ts";
 import {
+  claimSentinelHedge,
   recordSentinelDegradation,
-  recordSentinelHedge,
   recordSentinelLayerFinding,
   recordSentinelModelCall,
   recordSentinelModelCallFailure,
   recordSentinelNormalization,
   recordSentinelScaffold,
+  recordSentinelScaffoldRestoration,
+  recordSentinelSlotCall,
 } from "./sentinelTelemetry.ts";
 import { criticSkipCleanEnabled, sentinelSkeletonEnabled, sentinelSlotsEnabled } from "./sentinelFlags.ts";
+import {
+  SENTINEL_CONTRACT,
+  type SentinelBlocking,
+} from "./sentinel.ts";
 import {
   assembleSlotComposition,
   attributeFindingsToScenes,
@@ -150,6 +178,7 @@ export interface CompositionRunResult {
 
 const COMPOSITION_SOURCE_BUDGET_CHARS = 38_000;
 const COMPACT_SKILL_BUDGET_CHARS = 16_000;
+const SLOT_SKILL_BUDGET_CHARS = 5_000;
 const REPAIR_MAX_TOKENS = 4_096;
 const MAX_REPAIR_PATCHES = 16;
 // Camera-era storyboards carry typed camera paths and more shots, so the
@@ -1058,13 +1087,22 @@ export function reconcileCameraWorldPlanes(
 export function reconcileContractBindings(
   source: string,
   scenes: DirectScene[],
-): { html: string; repairs: number } {
+): { html: string; repairs: number; regionRepairs: number } {
   let html = source;
   let repairs = 0;
+  let regionRepairs = 0;
   const partBindings: ScenePartBinding[] = [];
   for (const cut of resolveCutPlan(scenes).cuts) {
     if (cut.focalPartOut) partBindings.push({ sceneId: cut.fromScene, part: cut.focalPartOut });
     if (cut.focalPartIn) partBindings.push({ sceneId: cut.toScene, part: cut.focalPartIn });
+  }
+  // MD4: a gradeShift's fromPart is locked-storyboard paperwork like a cut focal
+  // part — reconcile a near-miss id deterministically so a paid repair is never
+  // spent on it (an absent/ambiguous fromPart just centers the wash — harmless).
+  for (const scene of scenes) {
+    if (scene.gradeShift?.fromPart) {
+      partBindings.push({ sceneId: scene.id, part: scene.gradeShift.fromPart });
+    }
   }
   const regionBindings: ScenePartBinding[] = [];
   for (const scenePlan of resolveCameraPlan(scenes).scenes) {
@@ -1086,8 +1124,9 @@ export function reconcileContractBindings(
     const regions = reconcileCameraRegionStations(html, regionBindings);
     html = regions.html;
     repairs += regions.repairs;
+    regionRepairs += regions.repairs;
   }
-  return { html, repairs };
+  return { html, repairs, regionRepairs };
 }
 
 /**
@@ -1499,6 +1538,69 @@ export function topUpRowsMarkup(
   return { html, repaired };
 }
 
+/** The kit `.fx-underline` SVG the MD3 draw effect animates (a trim-path rule). */
+const FX_UNDERLINE_MARKUP =
+  `<span class="fx-underline" data-sequences-fx="underline" data-layout-ignore aria-hidden="true" ` +
+  `style="display:block;height:0.14em;margin-top:0.12em;pointer-events:none">` +
+  `<svg viewBox="0 0 100 4" preserveAspectRatio="none" ` +
+  `style="display:block;width:100%;height:100%;overflow:visible">` +
+  `<line x1="0" y1="2" x2="100" y2="2" stroke="var(--accent,#6ea8ff)" stroke-width="3" ` +
+  `stroke-linecap="round"/></svg></span>`;
+
+/**
+ * MD3 deterministic underline top-up: a `highlight` beat with style "underline"
+ * draws a trim-path rule under its target through the fx runtime's `.fx-underline`
+ * SVG. When the author placed no such markup, inject the kit pattern host-side —
+ * exactly the rows-style philosophy (a paid attempt must never die on fx
+ * paperwork, and the effect is enhancement-only so a stray inject is harmless).
+ * Only the mechanically certain case is repaired: exactly one target root with
+ * no existing `.fx-underline` inside it.
+ */
+export function topUpUnderlineMarkup(
+  html: string,
+  scenes: DirectScene[],
+): { html: string; repaired: string[] } {
+  const repaired: string[] = [];
+  const targets = new Set<string>();
+  for (const scene of scenes) {
+    for (const beat of scene.beats ?? []) {
+      if (beat.kind === "highlight" && beat.style === "underline") targets.add(beat.component);
+    }
+  }
+  for (const component of targets) {
+    const openPattern = new RegExp(
+      `<([a-z][\\w-]*)\\b[^>]*\\bdata-part\\s*=\\s*(["'])${regexpEscape(component)}\\2[^>]*>`,
+      "gi",
+    );
+    const opens = [...html.matchAll(openPattern)];
+    if (opens.length !== 1) continue;
+    const open = opens[0]!;
+    const tag = open[1]!.toLowerCase();
+    const contentStart = (open.index ?? 0) + open[0].length;
+    const walker = new RegExp(`<${tag}\\b[^>]*>|</${tag}\\s*>`, "gi");
+    walker.lastIndex = contentStart;
+    let depth = 1;
+    let contentEnd = -1;
+    for (let step = walker.exec(html); step; step = walker.exec(html)) {
+      if (step[0].startsWith("</")) {
+        depth -= 1;
+        if (depth === 0) {
+          contentEnd = step.index;
+          break;
+        }
+      } else if (!/\/>$/.test(step[0])) {
+        depth += 1;
+      }
+    }
+    if (contentEnd < 0) continue;
+    const content = html.slice(contentStart, contentEnd);
+    if (/\bclass\s*=\s*(["'])[^"']*\bfx-underline\b/i.test(content)) continue;
+    html = `${html.slice(0, contentEnd)}${FX_UNDERLINE_MARKUP}${html.slice(contentEnd)}`;
+    repaired.push(component);
+  }
+  return { html, repaired };
+}
+
 function normalizeJsonIsland(
   source: string,
   id: string,
@@ -1587,6 +1689,7 @@ export const HOST_PLAN_ISLAND_IDS = [
   "sequences-camera",
   "sequences-components",
   "sequences-time",
+  "sequences-fx",
 ] as const;
 
 /**
@@ -1625,6 +1728,112 @@ function ensureTagAttr(tag: string, name: string, value: string): string {
     return tag.replace(pattern, `${name}="${value}"`);
   }
   return tag.replace(/>$/, ` ${name}="${value}">`);
+}
+
+// The intersection of the storyboard schema's `frameAnchor` enum and the
+// anchors the layout QA's data-layout-anchor audit understands. The schema's
+// corner anchors (frame:top-left/…) have no QA equivalent and are deliberately
+// NOT forwarded — the focal part still gets data-layout-important, which
+// satisfies layout_intent_missing without minting layout_anchor_invalid.
+const SUPPORTED_LAYOUT_ANCHORS = new Set([
+  "frame:center",
+  "frame:left-third",
+  "frame:right-third",
+]);
+
+/**
+ * Tolerance (px) for a HOST-injected data-layout-anchor. The audit's 12px
+ * default assumes the author placed the element while declaring the intent;
+ * here the host forwards storyboard intent onto placement the author made
+ * without knowing an anchor audit would run, so a repair meant to satisfy
+ * layout_intent_missing must not mint layout_anchor_mismatch on a hand-placed
+ * hero that honors the intent loosely.
+ */
+const INJECTED_ANCHOR_TOLERANCE = "48";
+
+function hasDeclaredLayoutIntent(scope: string): boolean {
+  return /\bdata-layout-(?:important|anchor|align|attach|gap)\b/i.test(scope);
+}
+
+function addLayoutAttrsToFirstTag(
+  scope: string,
+  pattern: RegExp,
+  attrs: Record<string, string>,
+): { scope: string; changed: boolean } {
+  const match = pattern.exec(scope);
+  if (!match?.[0] || match.index === undefined) return { scope, changed: false };
+  let tag = match[0];
+  for (const [name, value] of Object.entries(attrs)) {
+    tag = ensureTagAttr(tag, name, value);
+  }
+  if (tag === match[0]) return { scope, changed: false };
+  return {
+    scope: scope.slice(0, match.index) + tag + scope.slice(match.index + match[0].length),
+    changed: true,
+  };
+}
+
+export function injectLayoutIntentHints(
+  source: string,
+  scenes: DirectScene[],
+): { html: string; repaired: string[] } {
+  let html = source;
+  const repaired: string[] = [];
+  for (const scene of scenes) {
+    const scopeMeta = sceneScopeLocations(html).find((entry) => entry.id === scene.id);
+    if (!scopeMeta) continue;
+    let scope = html.slice(scopeMeta.openStart, scopeMeta.closeEnd);
+    if (hasDeclaredLayoutIntent(scope)) continue;
+
+    let nextScope = scope;
+    let changed = false;
+    const anchor = scene.spatialIntent?.frameAnchor &&
+        SUPPORTED_LAYOUT_ANCHORS.has(scene.spatialIntent.frameAnchor)
+      ? scene.spatialIntent.frameAnchor
+      : undefined;
+    if (scene.spatialIntent?.focalPart) {
+      const focalPattern = new RegExp(
+        `<[a-z][\\w:-]*\\b[^>]*\\bdata-part\\s*=\\s*(["'])${
+          regexpEscape(scene.spatialIntent.focalPart)
+        }\\1[^>]*>`,
+        "i",
+      );
+      const result = addLayoutAttrsToFirstTag(nextScope, focalPattern, {
+        "data-layout-important": "1",
+        ...(anchor
+          ? {
+              "data-layout-anchor": anchor,
+              "data-layout-tolerance": INJECTED_ANCHOR_TOLERANCE,
+            }
+          : {}),
+      });
+      nextScope = result.scope;
+      changed = result.changed;
+    }
+    if (!changed && scene.spatialIntent) {
+      const sceneOpenPattern =
+        /<[a-z][\w:-]*\b[^>]*\bdata-scene\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)[^>]*>/i;
+      const result = addLayoutAttrsToFirstTag(nextScope, sceneOpenPattern, {
+        "data-layout-anchor": anchor ?? "frame:center",
+        "data-layout-tolerance": INJECTED_ANCHOR_TOLERANCE,
+      });
+      nextScope = result.scope;
+      changed = result.changed;
+    }
+    if (!changed) {
+      const knownLayoutPattern =
+        /<[a-z][\w:-]*\b(?=[^>]*\bclass\s*=\s*(["'])[^"']*\b(?:zone|panel|card|hero|stack|grid|cluster|lockup|metric|surface|frame)\b[^"']*\1)(?![^>]*\bdata-scene\s*=)[^>]*>/i;
+      const result = addLayoutAttrsToFirstTag(nextScope, knownLayoutPattern, {
+        "data-layout-important": "1",
+      });
+      nextScope = result.scope;
+      changed = result.changed;
+    }
+    if (!changed) continue;
+    html = html.slice(0, scopeMeta.openStart) + nextScope + html.slice(scopeMeta.closeEnd);
+    repaired.push(scene.id);
+  }
+  return { html, repaired };
 }
 
 /**
@@ -1900,6 +2109,165 @@ function cssString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+function cssCommentSafe(value: string): string {
+  // `*/` would close the comment; `<`/`>` could smuggle `</style>` past the
+  // HTML parser (a style element ends at the literal tag regardless of CSS
+  // comment state); `$` is special in String.replace replacement strings.
+  return value.replace(/\*\//g, "* /").replace(/[<>$]/g, "");
+}
+
+function safeContrastSelector(selector: string): boolean {
+  return /^(?:#[A-Za-z_][\w-]*|[a-z][\w-]*(?:\.[A-Za-z_][\w-]*){1,3})$/.test(selector);
+}
+
+function safeCssColor(value: string | undefined): value is string {
+  return typeof value === "string" &&
+    /^rgb\(\s*(?:\d|[1-9]\d|1\d\d|2[0-4]\d|25[0-5])\s*,\s*(?:\d|[1-9]\d|1\d\d|2[0-4]\d|25[0-5])\s*,\s*(?:\d|[1-9]\d|1\d\d|2[0-4]\d|25[0-5])\s*\)$/i
+      .test(value);
+}
+
+export function repairContrastAaIssues(
+  draft: DirectCompositionDraft,
+  browserQa: DirectBrowserQaResult,
+): { draft: DirectCompositionDraft; repaired: string[] } {
+  const bySelector = new Map<string, DirectLayoutIssue>();
+  for (const issue of browserQa.issues ?? []) {
+    if (
+      issue.code !== "contrast_aa" ||
+      !safeContrastSelector(issue.selector) ||
+      !safeCssColor(issue.contrast?.suggestedColor)
+    ) {
+      continue;
+    }
+    const existing = bySelector.get(issue.selector);
+    if (!existing || (issue.contrast?.ratio ?? 999) < (existing.contrast?.ratio ?? 999)) {
+      bySelector.set(issue.selector, issue);
+    }
+  }
+  if (!bySelector.size) return { draft, repaired: [] };
+
+  const rules = [...bySelector.values()].map((issue) =>
+    `${issue.selector}{color:${issue.contrast!.suggestedColor} !important;}` +
+    `/* contrast ${issue.contrast!.ratio}:1 -> ${issue.contrast!.required}:1` +
+    `${issue.text ? ` ${cssCommentSafe(issue.text.slice(0, 32))}` : ""} */`
+  );
+  const style = `<style data-sequences-contrast-repair>\n${rules.join("\n")}\n</style>`;
+  let html = draft.html.replace(
+    /\n?\s*<style\b[^>]*\bdata-sequences-contrast-repair\b[^>]*>[\s\S]*?<\/style>/gi,
+    "",
+  );
+  // Function replacer: the style block carries audited on-screen text, and a
+  // string replacement would interpret `$&`/`$'`-style patterns inside it.
+  html = /<\/head>/i.test(html)
+    ? html.replace(/<\/head>/i, () => `${style}</head>`)
+    : `${style}\n${html}`;
+  return html === draft.html
+    ? { draft, repaired: [] }
+    : { draft: { ...draft, html }, repaired: [...bySelector.keys()] };
+}
+
+/** Coverage floor the sparse framing audit enforces (layoutInspector SPARSE_COVERAGE_MIN). */
+const SPARSE_FRAMING_TARGET_COVERAGE = 0.18;
+/** Never magnify a sparse landing past this fit multiplier (well under camera ZOOM_MAX 2.8). */
+const SPARSE_FRAMING_ZOOM_MAX = 1.8;
+/** A correction must clear the audit's 1.05 zoom-skip threshold to actually take effect. */
+const SPARSE_FRAMING_ZOOM_FLOOR = 1.08;
+
+/**
+ * Choose the camera move a sparse finding should zoom in on. A finding that
+ * names a station gets the LAST full move that lands on exactly that station; a
+ * scene-level (`[data-scene]`) finding with no station gets the scene's last
+ * targeted full move. `-1` = nothing bumpable (drift/hold-only or camera-less):
+ * a storyboard zoom cannot invent content there, so the model / least-bad pick
+ * keeps ownership.
+ */
+function pickSparseMoveIndex(
+  path: CameraMoveIntentV1[],
+  finding: { part?: string; region?: string },
+): number {
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    const move = path[index]!;
+    if (!CAMERA_FULL_MOVES.has(move.move)) continue;
+    if (finding.part) {
+      if (move.toPart === finding.part) return index;
+    } else if (finding.region) {
+      if (move.toRegion === finding.region) return index;
+    } else if (move.toRegion || move.toPart) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Deterministic L2-at-L4 framing correction (the camera analogue of
+ * `repairContrastAaIssues`): browser QA measured a camera landing — or a
+ * camera-less mid-window — as a tiny subject adrift, so raise its coverage to
+ * the audit floor with a bounded zoom-in on exactly the move that frames it.
+ * The zoom factor `sqrt(0.18 / fraction)` (clamped 1.0..1.8) magnifies the
+ * measured coverage back toward the 18% floor without ever cropping past it.
+ * Pure: returns the mutated storyboard + the scene ids corrected. The caller
+ * re-injects the camera island from the mutated storyboard (the
+ * `persistUpgradedStoryboard` seam cut-discovery uses), re-inspects, and adopts
+ * the result ONLY when the sparse finding clears, no new `camera_framed_clipped`
+ * appears, and the quality penalty strictly decreases (enhancement-never-veto).
+ */
+export function correctSparseFraming(
+  storyboard: DirectScene[],
+  browserQa: DirectBrowserQaResult,
+): { storyboard: DirectScene[]; corrected: string[] } {
+  // Smallest measured coverage per (scene, station) → one bump per framing move.
+  const wanted = new Map<string, { fraction: number; part?: string; region?: string }>();
+  for (const issue of browserQa.issues ?? []) {
+    if (issue.code !== "camera_framed_sparse" || !issue.framing) continue;
+    const { sceneId, fraction, part, region } = issue.framing;
+    if (!(fraction > 0)) continue;
+    const key = `${sceneId} ${part ?? ""} ${region ?? ""}`;
+    const existing = wanted.get(key);
+    if (!existing || fraction < existing.fraction) {
+      wanted.set(key, { fraction, part, region });
+    }
+  }
+  if (!wanted.size) return { storyboard, corrected: [] };
+
+  const corrected: string[] = [];
+  const mutated = storyboard.map((scene) => {
+    const path = scene.camera?.path;
+    if (!path?.length) return scene;
+    const findings = [...wanted.entries()]
+      .filter(([key]) => key.startsWith(`${scene.id} `))
+      .map(([, value]) => value)
+      .sort((a, b) => a.fraction - b.fraction);
+    if (!findings.length) return scene;
+    const nextPath = path.map((move) => ({ ...move }));
+    let changed = false;
+    for (const finding of findings) {
+      const index = pickSparseMoveIndex(nextPath, finding);
+      if (index < 0) continue;
+      const move = nextPath[index]!;
+      const factor = Math.min(
+        Math.max(Math.sqrt(SPARSE_FRAMING_TARGET_COVERAGE / finding.fraction), 1),
+        SPARSE_FRAMING_ZOOM_MAX,
+      );
+      if (factor <= 1.0001) continue;
+      const base = move.zoom ?? 1;
+      const nextZoom = Math.round(
+        Math.min(
+          Math.max(base * factor, SPARSE_FRAMING_ZOOM_FLOOR),
+          SPARSE_FRAMING_ZOOM_MAX,
+        ) * 1000,
+      ) / 1000;
+      if (nextZoom <= base + 0.0001) continue;
+      move.zoom = nextZoom;
+      changed = true;
+    }
+    if (!changed) return scene;
+    corrected.push(scene.id);
+    return { ...scene, camera: { ...scene.camera!, path: nextPath } };
+  });
+  return corrected.length ? { storyboard: mutated, corrected } : { storyboard, corrected: [] };
+}
+
 function decorativeLivenessName(value: string): boolean {
   return /(?:^|[#.\s_\[\]-])(?:accent-?)?(?:underline|rule|divider|hairline|bloom|glow|grain|vignette|keylight|atmosphere|ambient|decor(?:ation|ative)?|particle|spark|noise)(?:$|[#.\s_\[\]-])/i
     .test(value);
@@ -2052,6 +2420,7 @@ const HOST_STAGED_RUNTIME_FILES = new Set<string>([
   CAMERA_RUNTIME_FILE,
   COMPONENT_RUNTIME_FILE,
   TIME_RUNTIME_FILE,
+  FX_RUNTIME_FILE,
 ]);
 
 /**
@@ -2098,6 +2467,7 @@ const RUNTIME_SCRIPT_GLOBALS: ReadonlyArray<{ file: string; global: string }> = 
   { file: CAMERA_RUNTIME_FILE, global: "SequencesCamera" },
   { file: COMPONENT_RUNTIME_FILE, global: "SequencesComponents" },
   { file: TIME_RUNTIME_FILE, global: "SequencesTime" },
+  { file: FX_RUNTIME_FILE, global: "SequencesFx" },
 ];
 
 /** Match a runtime `<script src="…vN.js">` tag plus one leading newline/indent (so
@@ -2170,25 +2540,102 @@ export function ensureRuntimeScriptOrdering(source: string): { html: string; cha
  * receives the position NUMBER as the to-object and the compile throws
  * "Cannot create property 'parent' on number '…'" — a runtime_bind_exception
  * (and the whole paid attempt) spent on a call-shape typo (the
- * sentinel-s5-interactions probe class, 2026-07-06). Rewriting the call to
- * `.from(target, vars, position)` is exact and content-free: same target,
- * same authored vars, same position, valid signature. Conservative by
- * construction: only a string-literal target and a FLAT vars object match.
+ * sentinel-s5-interactions probe class, 2026-07-06). The remaining vars do not
+ * reveal which object was omitted. The only safe rewrite currently proven is
+ * `.to`: visible/settled vars after the same selector was explicitly initialized
+ * to an opposite state. Hidden/off-position could be either an entrance `.from`
+ * or an exit `.to`, so it stays blocking too. Only a string-literal target and
+ * a flat vars object are considered.
  */
 export function repairMalformedFromToCalls(
   source: string,
-): { html: string; repairs: number } {
+): { html: string; repairs: number; fromRepairs: number; toRepairs: number; ambiguous: number } {
   let repairs = 0;
+  let fromRepairs = 0;
+  let toRepairs = 0;
+  let ambiguous = 0;
+  const classifyState = (vars: string): "from" | "to" | undefined => {
+    const cues: Array<"from" | "to"> = [];
+    const body = vars.slice(1, -1);
+    const numericCue = (
+      property: string,
+      classify: (value: number) => "from" | "to" | undefined,
+    ): void => {
+      const match = new RegExp(`(?:^|[,\\s])${property}\\s*:\\s*(-?\\d*\\.?\\d+)`, "i")
+        .exec(body);
+      if (!match) return;
+      const cue = classify(Number(match[1]));
+      if (cue) cues.push(cue);
+    };
+    numericCue("(?:opacity|autoAlpha)", (value) =>
+      value <= 0.05 ? "from" : value >= 0.95 ? "to" : undefined
+    );
+    for (const property of ["scale", "scaleX", "scaleY"]) {
+      numericCue(property, (value) =>
+        Math.abs(value - 1) <= 0.02 ? "to" : Math.abs(value - 1) >= 0.08 ? "from" : undefined
+      );
+    }
+    for (const property of ["x", "y", "xPercent", "yPercent", "rotation", "rotationX", "rotationY"]) {
+      numericCue(property, (value) =>
+        Math.abs(value) <= 0.01 ? "to" : Math.abs(value) >= 1 ? "from" : undefined
+      );
+    }
+    const visibility = /(?:^|[,\s])visibility\s*:\s*["'](visible|hidden)["']/i.exec(body)
+      ?.[1]?.toLowerCase();
+    if (visibility) cues.push(visibility === "visible" ? "to" : "from");
+    const display = /(?:^|[,\s])display\s*:\s*["']([^"']+)["']/i.exec(body)
+      ?.[1]?.toLowerCase();
+    if (display) cues.push(display === "none" ? "from" : "to");
+    return cues.length && cues.every((cue) => cue === cues[0]) ? cues[0] : undefined;
+  };
   const pattern =
     /\.fromTo\(\s*((["'])(?:\\.|(?!\2).)*\2)\s*,\s*(\{[^{}]*\})\s*,\s*(-?\d+(?:\.\d+)?)\s*\)/g;
   const html = source.replace(
     pattern,
-    (_match, target: string, _quote: string, vars: string, position: string) => {
+    (
+      _match,
+      target: string,
+      _quote: string,
+      vars: string,
+      position: string,
+      offset: number,
+    ) => {
+      const state = classifyState(vars);
+      let direction: "from" | "to" | undefined;
+      if (state === "to") {
+        // A settled state is safe as `.to` only when this same selector was
+        // explicitly initialized earlier to an opposite state. This is the
+        // exact s5 failure shape; a lone opacity:1 object remains ambiguous.
+        const before = source.slice(0, offset);
+        const escapedTarget = regexpEscape(target);
+        const candidates: Array<{ index: number; vars: string }> = [];
+        for (const match of before.matchAll(
+          new RegExp(`\\.(?:set|to)\\(\\s*${escapedTarget}\\s*,\\s*(\\{[^{}]*\\})`, "g"),
+        )) {
+          candidates.push({ index: match.index, vars: match[1]! });
+        }
+        for (const match of before.matchAll(
+          new RegExp(
+            `\\.fromTo\\(\\s*${escapedTarget}\\s*,\\s*\\{[^{}]*\\}\\s*,\\s*(\\{[^{}]*\\})`,
+            "g",
+          ),
+        )) {
+          candidates.push({ index: match.index, vars: match[1]! });
+        }
+        const prior = candidates.sort((a, b) => b.index - a.index)[0];
+        if (prior && classifyState(prior.vars) === "from") direction = "to";
+      }
+      if (!direction) {
+        ambiguous += 1;
+        return _match;
+      }
       repairs += 1;
-      return `.from(${target}, ${vars}, ${position})`;
+      if (direction === "from") fromRepairs += 1;
+      else toRepairs += 1;
+      return `.${direction}(${target}, ${vars}, ${position})`;
     },
   );
-  return { html, repairs };
+  return { html, repairs, fromRepairs, toRepairs, ambiguous };
 }
 
 export function applyDeterministicSourceRepairs(
@@ -2210,7 +2657,14 @@ export function applyDeterministicSourceRepairs(
     recordSentinelNormalization("gsap-call-shape", fromToShape.repairs);
     process.stderr.write(
       `[author] rewrote ${fromToShape.repairs} malformed fromTo(target, vars, <position>) ` +
-        `call(s) to from(...) — a missing toVars crashes GSAP compile\n`,
+        `call(s) (${fromToShape.fromRepairs} to from, ${fromToShape.toRepairs} to to) — ` +
+        `a missing vars object crashes GSAP compile\n`,
+    );
+  }
+  if (fromToShape.ambiguous) {
+    process.stderr.write(
+      `[author] left ${fromToShape.ambiguous} malformed fromTo call(s) blocking because ` +
+        `their intended from/to direction is ambiguous\n`,
     );
   }
   if (lockedStoryboard?.length) {
@@ -2331,6 +2785,17 @@ export function applyDeterministicSourceRepairs(
       );
     }
   }
+  {
+    const layoutHints = injectLayoutIntentHints(html, lockedStoryboard ?? draft.storyboard);
+    if (layoutHints.repaired.length) {
+      html = layoutHints.html;
+      recordSentinelNormalization("layout-intent", layoutHints.repaired.length);
+      process.stderr.write(
+        `[author] injected minimal layout intent hint(s) for scene(s): ` +
+          `${layoutHints.repaired.join(", ")}\n`,
+      );
+    }
+  }
   const interactions = lockedStoryboard?.flatMap((scene) => scene.interactions ?? []) ?? [];
   if (interactions.length) {
     let repairedBindings = 0;
@@ -2430,6 +2895,7 @@ export function applyDeterministicSourceRepairs(
     if (contractBindings.repairs) {
       html = contractBindings.html;
       recordSentinelNormalization("contract-binding", contractBindings.repairs);
+      recordSentinelScaffoldRestoration("l2-normalize", contractBindings.regionRepairs);
       process.stderr.write(
         `[author] reconciled ${contractBindings.repairs} cut/camera contract binding(s)\n`,
       );
@@ -2440,6 +2906,7 @@ export function applyDeterministicSourceRepairs(
     if (cameraWorlds.repairs) {
       html = cameraWorlds.html;
       recordSentinelNormalization("camera-world-plane", cameraWorlds.repairs);
+      recordSentinelScaffoldRestoration("l2-normalize", cameraWorlds.repairs);
       process.stderr.write(
         `[author] wrapped ${cameraWorlds.repairs} scene(s) in deterministic camera world plane(s)\n`,
       );
@@ -2453,6 +2920,7 @@ export function applyDeterministicSourceRepairs(
     if (componentBindings.repairs) {
       html = componentBindings.html;
       recordSentinelNormalization("component-binding", componentBindings.repairs);
+      recordSentinelScaffoldRestoration("l2-normalize", componentBindings.repairs);
       process.stderr.write(
         `[author] reconciled ${componentBindings.repairs} component binding(s)\n`,
       );
@@ -2481,6 +2949,19 @@ export function applyDeterministicSourceRepairs(
       process.stderr.write(
         `[author] injected neutral revealable children for childless rows target(s): ` +
           `${rowsTopUp.repaired.join(", ")}\n`,
+      );
+    }
+  }
+  // MD3 underline paperwork: a style:"underline" highlight draws the kit
+  // `.fx-underline` SVG; inject it when the author left the slot empty so the
+  // paid attempt never dies on fx markup (enhancement-only, like rows).
+  {
+    const underlineTopUp = topUpUnderlineMarkup(html, lockedStoryboard ?? draft.storyboard);
+    if (underlineTopUp.repaired.length) {
+      html = underlineTopUp.html;
+      process.stderr.write(
+        `[author] injected kit fx-underline markup for highlight underline target(s): ` +
+          `${underlineTopUp.repaired.join(", ")}\n`,
       );
     }
   }
@@ -2617,6 +3098,7 @@ export function applyDeterministicSourceRepairs(
     if (componentBindings.repairs) {
       html = componentBindings.html;
       recordSentinelNormalization("component-binding", componentBindings.repairs);
+      recordSentinelScaffoldRestoration("l2-normalize", componentBindings.repairs);
       process.stderr.write(
         `[author] reconciled ${componentBindings.repairs} component binding(s)\n`,
       );
@@ -2669,6 +3151,68 @@ export function applyDeterministicSourceRepairs(
         `[author] injected ${repairedComponents} deterministic component binding(s) for ` +
           `${componentPlan.scenes.reduce((count, scene) => count + scene.beats.length, 0)} typed beat(s)\n`,
       );
+    }
+  }
+  // The FX plan (MD2) is host-derived garnish — sweeps at payoffs, glow
+  // pulses, connector draws — injected exactly like the other contracts and
+  // BEFORE the time-wrap (which must stay the last injection).
+  {
+    const fxPlan = resolveFxPlan(lockedStoryboard ?? draft.storyboard);
+    if (fxPlan.effects.length) {
+      let repairedFx = 0;
+      if (
+        !html.includes(`src="${FX_RUNTIME_FILE}"`) &&
+        !html.includes(`src='${FX_RUNTIME_FILE}'`)
+      ) {
+        const withRuntime = html.replace(
+          /(<script\b[^>]*\bsrc\s*=\s*(["'])gsap\.min\.js\2[^>]*>\s*<\/script>)/i,
+          `$1\n<script src="${FX_RUNTIME_FILE}"></script>`,
+        );
+        if (withRuntime !== html) {
+          html = withRuntime;
+          repairedFx += 1;
+        }
+      }
+      const payload = JSON.stringify(fxPlan);
+      const fxIslandPattern =
+        /(<script\b[^>]*\bid\s*=\s*(["'])sequences-fx\2[^>]*>)([\s\S]*?)(<\/script>)/i;
+      if (fxIslandPattern.test(html)) {
+        const updated = html.replace(fxIslandPattern, `$1${payload}$4`);
+        if (updated !== html) {
+          html = updated;
+          repairedFx += 1;
+        }
+      } else {
+        const timelineScript =
+          /<script\b(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?gsap\.timeline\s*\(/i.exec(html);
+        if (timelineScript?.index !== undefined) {
+          html = html.slice(0, timelineScript.index) +
+            `<script type="application/json" data-sequences-host="1" id="sequences-fx">${payload}</script>\n` +
+            html.slice(timelineScript.index);
+          repairedFx += 1;
+        }
+      }
+      if (!/\bSequencesFx\.compile\s*\(/.test(html)) {
+        const timelineName = html.match(
+          /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*gsap\.timeline\s*\(/,
+        )?.[1];
+        if (timelineName) {
+          const registration = timelineRegistrationAnchor(timelineName);
+          if (registration.test(html)) {
+            html = html.replace(
+              registration,
+              `SequencesFx.compile(${timelineName}, document.querySelector("[data-composition-id]"));\n$1`,
+            );
+            repairedFx += 1;
+          }
+        }
+      }
+      if (repairedFx) {
+        process.stderr.write(
+          `[author] injected ${repairedFx} deterministic fx binding(s) for ` +
+            `${fxPlan.effects.length} host-derived effect(s)\n`,
+        );
+      }
     }
   }
   {
@@ -2835,9 +3379,9 @@ function isTransientProviderError(error: unknown): boolean {
  * 2. Hedged requests: after HEDGE_DELAY_MS a duplicate of the same request is
  *    launched and the first completion wins (the loser is aborted). Both draws
  *    come from the identical model/prompt/params distribution; selection by
- *    arrival time does not change what the QA gates accept. Costs up to 2×
- *    tokens on slow calls — accepted policy is quality > price, and speed is
- *    the judged demo constraint. Kill switch: SLACK_SEQUENCES_HEDGED_REQUESTS=0.
+ *    arrival time does not change what the QA gates accept. A per-run budget
+ *    (default 2, `SLACK_SEQUENCES_HEDGE_MAX_PER_RUN`) prevents a slow run from
+ *    duplicating every stage. Kill switch: SLACK_SEQUENCES_HEDGED_REQUESTS=0.
  */
 const STREAM_IDLE_TIMEOUT_MS = (() => {
   const raw = Number(process.env.SLACK_SEQUENCES_STREAM_IDLE_TIMEOUT_MS);
@@ -2847,6 +3391,11 @@ const STREAM_IDLE_TIMEOUT_MS = (() => {
 const HEDGE_DELAY_MS = (() => {
   const raw = Number(process.env.SLACK_SEQUENCES_HEDGE_DELAY_MS);
   return Number.isFinite(raw) && raw >= 0 ? raw : 25_000;
+})();
+
+const HEDGE_MAX_PER_RUN = (() => {
+  const raw = Number(process.env.SLACK_SEQUENCES_HEDGE_MAX_PER_RUN);
+  return Number.isInteger(raw) && raw >= 0 ? raw : 2;
 })();
 
 export function hedgingEnabled(provider: AgentProvider): boolean {
@@ -2946,8 +3495,14 @@ export async function hedgedCompletion(
     };
     const startBackup = (): void => {
       if (settled || backupStarted || !inFlight.primary) return;
+      if (!claimSentinelHedge(label, HEDGE_MAX_PER_RUN)) {
+        process.stderr.write(
+          `[${label}] slow response — per-run hedge budget (${HEDGE_MAX_PER_RUN}) exhausted; ` +
+            `letting the primary continue\n`,
+        );
+        return;
+      }
       backupStarted = true;
-      recordSentinelHedge(label);
       process.stderr.write(
         `[${label}] slow response — hedging with a parallel duplicate request\n`,
       );
@@ -3100,11 +3655,13 @@ async function completeReasoningWithRetry(
   throw lastError;
 }
 
-function compactSkillText(text: string): string {
-  return text
+function compactSkillText(text: string, budgetChars = COMPACT_SKILL_BUDGET_CHARS): string {
+  const compacted = text
     .replace(/<(blueprint|motion-rule)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .slice(0, COMPACT_SKILL_BUDGET_CHARS);
+    .replace(/\n{3,}/g, "\n\n");
+  if (compacted.length <= budgetChars) return compacted;
+  const paragraphEnd = compacted.lastIndexOf("\n\n", budgetChars);
+  return compacted.slice(0, paragraphEnd >= Math.floor(budgetChars * 0.8) ? paragraphEnd : budgetChars);
 }
 
 /**
@@ -3196,6 +3753,7 @@ function parseStoryboard(raw: string): DirectScene[] {
     // silently re-times the choreography inside it.
     const authoredFrame = { startSec: authoredStart, durationSec };
     const timeRamp = normalizeStoryboardTimeRamp(scene.timeRamp, authoredFrame);
+    const gradeShift = normalizeStoryboardGradeShift(scene.gradeShift, authoredFrame);
     const camera = normalizeStoryboardCameraIntent(scene.camera, authoredFrame);
     const worldLayout = normalizeWorldLayout(scene.worldLayout, Boolean(camera?.path.length));
     const components = normalizeStoryboardComponents(scene.components);
@@ -3220,6 +3778,7 @@ function parseStoryboard(raw: string): DirectScene[] {
       const shift = (value: number): number =>
         Math.round((value + rebaseDelta) * 1000) / 1000;
       if (timeRamp) timeRamp.atSec = shift(timeRamp.atSec);
+      if (gradeShift) gradeShift.atSec = shift(gradeShift.atSec);
       for (const move of camera?.path ?? []) move.startSec = shift(move.startSec);
       for (const beat of beats) beat.atSec = shift(beat.atSec);
       for (const interaction of interactions) {
@@ -3271,6 +3830,7 @@ function parseStoryboard(raw: string): DirectScene[] {
       ...(typeof scene.outgoingCut === "string" ? { outgoingCut: scene.outgoingCut } : {}),
       ...(cut ? { cut } : {}),
       ...(timeRamp ? { timeRamp } : {}),
+      ...(gradeShift ? { gradeShift } : {}),
       ...(camera ? { camera } : {}),
       ...(worldLayout.length ? { worldLayout } : {}),
       ...(components.length ? { components } : {}),
@@ -3281,7 +3841,7 @@ function parseStoryboard(raw: string): DirectScene[] {
     };
   });
   const usedInteractionIds = new Set<string>();
-  return scenes.map((scene) => ({
+  const deduped = scenes.map((scene) => ({
     ...scene,
     ...(scene.interactions?.length
       ? {
@@ -3298,6 +3858,270 @@ function parseStoryboard(raw: string): DirectScene[] {
         }
       : {}),
   }));
+  // Dive legs are host arithmetic (MD5, lever-10 philosophy): the model
+  // declares only the intent + total window; the in/hold/out split is derived
+  // here from the overlapping beat windows and stored on the move.
+  const dives = deriveDiveWindows(deduped);
+  for (const line of dives.normalized) {
+    process.stderr.write(`[storyboard] dive-window derived: ${line}\n`);
+  }
+  if (dives.normalized.length) {
+    recordSentinelNormalization("dive-window", dives.normalized.length);
+  }
+  // MD6 + MD3 + MD4 host auto-derivations, then their taste governors — all
+  // deterministic degrade-never-veto normalizers (SENTINEL L2), run last at
+  // parse so the shipped plan already carries the styled fields AND obeys the
+  // caps. Each derivation FILLS the optional field a production planner (GLM)
+  // under-reaches for, from data the storyboard already carries; the governor
+  // that runs immediately after stays the single owner of the discipline. This
+  // is the fix for the md-audit-probe gap: GLM lays down the structure
+  // (headline, compact opens, "world turns warm" moments) but never the styles.
+  const autoPops = autoStyleCompactPops(dives.storyboard);
+  for (const line of autoPops.applied) {
+    process.stderr.write(`[storyboard] auto-pop styled: ${line}\n`);
+  }
+  if (autoPops.applied.length) recordSentinelNormalization("auto-pop-style", autoPops.applied.length);
+  const pops = degradeOpenPopStyles(autoPops.scenes);
+  for (const line of pops.dropped) {
+    process.stderr.write(`[storyboard] open-pop degraded: ${line}\n`);
+  }
+  if (pops.dropped.length) recordSentinelNormalization("open-pop", pops.dropped.length);
+  const autoHeadlines = autoStyleHeadlineReveals(pops.scenes);
+  for (const line of autoHeadlines.applied) {
+    process.stderr.write(`[storyboard] auto-headline styled: ${line}\n`);
+  }
+  if (autoHeadlines.applied.length) {
+    recordSentinelNormalization("auto-headline-style", autoHeadlines.applied.length);
+  }
+  const assembles = degradeExcessAssembles(autoHeadlines.storyboard);
+  for (const line of assembles.dropped) {
+    process.stderr.write(`[storyboard] assemble degraded: ${line}\n`);
+  }
+  if (assembles.dropped.length) {
+    recordSentinelNormalization("assemble-cap", assembles.dropped.length);
+  }
+  const autoGrades = deriveGradeShifts(assembles.scenes);
+  for (const line of autoGrades.derived) {
+    process.stderr.write(`[storyboard] ${line}\n`);
+  }
+  if (autoGrades.derived.length) {
+    recordSentinelNormalization("auto-grade-shift", autoGrades.derived.length);
+  }
+  const grades = dropUnusableGradeShifts(autoGrades.storyboard);
+  for (const line of grades.dropped) {
+    process.stderr.write(`[storyboard] ${line}\n`);
+  }
+  if (grades.dropped.length) recordSentinelNormalization("grade-shift", grades.dropped.length);
+  return grades.storyboard;
+}
+
+/** Content time at which the viewer has experienced `span` seconds past `fromSec`
+ * (identity without a time ramp; monotone binary search through the warp). */
+function contentTimeAfterViewerSpan(
+  toViewer: (time: number) => number,
+  fromSec: number,
+  span: number,
+  capSec: number,
+): number {
+  const target = toViewer(fromSec) + span;
+  if (toViewer(capSec) <= target) return capSec;
+  let low = fromSec;
+  let high = capSec;
+  for (let index = 0; index < 24; index += 1) {
+    const mid = (low + high) / 2;
+    if (toViewer(mid) < target) low = mid;
+    else high = mid;
+  }
+  return high;
+}
+
+/**
+ * MD5 L2 normalizer: derive each dive's push-in/pull-back legs so the held
+ * window exactly covers the beats/interactions acting on the dive's target —
+ * plus the reading floor for any typed/swapped copy among them (judged in
+ * viewer time, like `auditPacing`). The clamp guaranteeing a real hold
+ * (`diveWindows`) is shared with the resolver, so audits, island, and runtime
+ * all see one arithmetic. A dive with NOTHING acting on its target during the
+ * window is a zoom to a surface where nothing happens — it degrades to a
+ * plain push-in with a warning (degrade-never-veto), never a rejection.
+ */
+export function deriveDiveWindows(
+  storyboard: DirectScene[],
+): { storyboard: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  if (!storyboard.some((scene) => scene.camera?.path.some((move) => move.move === "dive"))) {
+    return { storyboard, normalized };
+  }
+  const toViewer = warpInverseOf(resolveTimeRampPlan(storyboard));
+  const resolvedBeats = new Map(
+    resolveComponentPlan(storyboard).scenes.map((scene) => [scene.sceneId, scene.beats]),
+  );
+  const scenes = storyboard.map((scene) => {
+    const path = scene.camera?.path;
+    if (!path?.some((move) => move.move === "dive")) return scene;
+    const beats = resolvedBeats.get(scene.id) ?? [];
+    const notes: string[] = [];
+    const newPath = path.map((move) => {
+      if (move.move !== "dive" || !move.toPart) return move;
+      const start = move.startSec;
+      const end = move.startSec + move.durationSec;
+      const overlappingBeats = beats.filter((beat) =>
+        beat.component === move.toPart &&
+        beat.endSec > start + 0.01 && beat.startSec < end - 0.01
+      );
+      const interactionEnd = (interaction: NonNullable<DirectScene["interactions"]>[number]): number =>
+        interaction.holdUntilSec ?? interaction.releaseSec ?? interaction.arriveSec;
+      const overlappingInteractions = (scene.interactions ?? []).filter((interaction) =>
+        interaction.targetPart === move.toPart &&
+        interactionEnd(interaction) > start + 0.01 && interaction.startSec < end - 0.01
+      );
+      if (!overlappingBeats.length && !overlappingInteractions.length) {
+        const note =
+          `dive at ${start.toFixed(2)}s targets "${move.toPart}" but no beat/interaction ` +
+          `acts on it inside the window — degraded to push-in`;
+        notes.push(note);
+        normalized.push(`scene "${scene.id}": ${note}`);
+        const { inSec: _inSec, outSec: _outSec, ...rest } = move;
+        return { ...rest, move: "push-in" as const };
+      }
+      let holdStart = Math.min(
+        ...overlappingBeats.map((beat) => beat.startSec),
+        ...overlappingInteractions.map((interaction) => interaction.startSec),
+      );
+      let holdEnd = Math.max(
+        ...overlappingBeats.map((beat) => beat.endSec),
+        ...overlappingInteractions.map(interactionEnd),
+      );
+      // Typed/swapped copy inside the dive needs its reading floor before the
+      // pull-back — the whole reason the operator wanted the camera to wait.
+      for (const beat of overlappingBeats) {
+        if ((beat.kind === "type" || beat.kind === "swap") && beat.text) {
+          const wordCount = beat.text.trim() ? beat.text.trim().split(/\s+/).length : 0;
+          const floor = Math.min(
+            READING_MAX_SEC,
+            Math.max(READING_MIN_SEC, READING_SEC_PER_WORD * wordCount),
+          );
+          holdEnd = Math.max(
+            holdEnd,
+            contentTimeAfterViewerSpan(toViewer, beat.endSec, floor, end),
+          );
+        }
+      }
+      holdStart = Math.max(start, Math.min(holdStart, end));
+      holdEnd = Math.max(holdStart, Math.min(holdEnd, end));
+      const legCap = Math.min(DIVE_LEG_MAX_SEC, move.durationSec * DIVE_LEG_FRACTION);
+      const inSec = Math.round(Math.max(0.15, Math.min(legCap, holdStart - start)) * 1000) / 1000;
+      const outSec = Math.round(Math.max(0.15, Math.min(legCap, end - holdEnd)) * 1000) / 1000;
+      const note =
+        `dive on "${move.toPart}": in ${inSec.toFixed(2)}s / hold ` +
+        `${(move.durationSec - inSec - outSec).toFixed(2)}s / out ${outSec.toFixed(2)}s ` +
+        `covering ${overlappingBeats.length} beat(s) + ${overlappingInteractions.length} interaction(s)`;
+      notes.push(note);
+      normalized.push(`scene "${scene.id}": ${note}`);
+      return { ...move, inSec, outSec };
+    });
+    return withNormalizationNotes(
+      { ...scene, camera: { ...scene.camera!, path: newPath } },
+      notes,
+    );
+  });
+  return { storyboard: scenes, normalized };
+}
+
+/**
+ * True when a headline `assemble` at `resolvedEndSec` would clear auditPacing's
+ * `pacing/assemble` lock-hold — computed with the EXACT gate arithmetic
+ * (framing-change events + viewer-time warp) so the host only ever promotes to
+ * assemble when it can prove the hold, never minting a pacing finding the model
+ * cannot fix (it did not author the style).
+ */
+function assembleHoldSatisfied(
+  scene: DirectScene,
+  resolvedEndSec: number,
+  toViewer: (time: number) => number,
+): boolean {
+  const sceneEnd = scene.startSec + scene.durationSec;
+  const fullMoves = (scene.camera?.path ?? []).filter((move) => CAMERA_FULL_MOVES.has(move.move));
+  const holdUntil = nextFramingChangeAfter(framingChangeEvents(fullMoves), resolvedEndSec, sceneEnd);
+  const hold = Math.max(0, toViewer(holdUntil) - toViewer(resolvedEndSec));
+  return hold + PACING_TOLERANCE_SEC >= ASSEMBLE_HOLD_SEC;
+}
+
+/**
+ * MD3 host auto-derivation (the taste ladder, MOTION_DESIGN_PLAN §0): hero copy
+ * on a `headline` component wants a refined reveal, but a production planner
+ * (GLM z-ai/glm-5.2) declares the `headline` + its `type` beat and leaves the
+ * OPTIONAL `style` blank, so the wordmark always arrives as a plain typewriter
+ * (md-audit-probe-4). The HOST fills it from data the storyboard already
+ * carries: every style-less headline `type` beat defaults to `rise` (the
+ * refined staggered reveal), and the SINGLE strongest resolve — the latest
+ * headline type beat that coincides with a `primary` moment AND can prove the
+ * assemble lock-hold ([[assembleHoldSatisfied]]) — is promoted to `assemble`,
+ * the film's loudest text gesture. The 1-per-film / headline-only / on-primary
+ * cap stays owned by [[degradeExcessAssembles]], which runs immediately after
+ * (SENTINEL L2, degrade-never-veto). Never overrides an explicit style; adds
+ * zero planner surface.
+ */
+export function autoStyleHeadlineReveals(
+  storyboard: DirectScene[],
+): { storyboard: DirectScene[]; applied: string[] } {
+  const applied: string[] = [];
+  const headlineIdsByScene = storyboard.map(
+    (scene) =>
+      new Set(
+        (scene.components ?? [])
+          .filter((component) => component.kind === "headline")
+          .map((component) => component.id),
+      ),
+  );
+  const isCandidate = (
+    beat: NonNullable<DirectScene["beats"]>[number],
+    sceneIndex: number,
+  ): boolean =>
+    beat.kind === "type" && !beat.style && headlineIdsByScene[sceneIndex]!.has(beat.component);
+  if (!storyboard.some((scene, index) => (scene.beats ?? []).some((beat) => isCandidate(beat, index)))) {
+    return { storyboard, applied };
+  }
+
+  const resolvedBeats = new Map(
+    resolveComponentPlan(storyboard).scenes.map((scene) => [scene.sceneId, scene.beats]),
+  );
+  const toViewer = warpInverseOf(resolveTimeRampPlan(storyboard));
+
+  // First pass: the single strongest assemble candidate across the film — the
+  // latest lock among headline type beats on a primary moment with a provable hold.
+  let best: { sceneIndex: number; beatId: string; endSec: number } | undefined;
+  storyboard.forEach((scene, index) => {
+    const resolved = resolvedBeats.get(scene.id) ?? [];
+    const primaries = (scene.moments ?? []).filter((moment) => moment.importance === "primary");
+    for (const beat of scene.beats ?? []) {
+      if (!isCandidate(beat, index)) continue;
+      const window = resolved.find((entry) => entry.id === beat.id);
+      if (!window) continue;
+      const onPrimary = primaries.some(
+        (moment) => moment.atSec >= window.startSec - 0.6 && moment.atSec <= window.endSec + 0.6,
+      );
+      if (!onPrimary || !assembleHoldSatisfied(scene, window.endSec, toViewer)) continue;
+      if (!best || window.endSec > best.endSec) {
+        best = { sceneIndex: index, beatId: beat.id, endSec: window.endSec };
+      }
+    }
+  });
+
+  // Second pass: style every style-less headline type beat — `assemble` for the
+  // one winner, `rise` for the rest.
+  const scenes = storyboard.map((scene, index) => {
+    if (!(scene.beats ?? []).some((beat) => isCandidate(beat, index))) return scene;
+    const beats = scene.beats!.map((beat) => {
+      if (!isCandidate(beat, index)) return beat;
+      const style =
+        best && best.sceneIndex === index && best.beatId === beat.id ? "assemble" : "rise";
+      applied.push(`scene "${scene.id}": headline type "${beat.id}" on "${beat.component}" → ${style}`);
+      return { ...beat, style };
+    });
+    return { ...scene, beats };
+  });
+  return { storyboard: scenes, applied };
 }
 
 export interface StoryboardPlanRequirements {
@@ -3429,7 +4253,7 @@ export function validateStoryboardPlan(
     errors.push(
       `the brief explicitly requests spatial camera choreography; plan at least ` +
         `${requirements.minCameraMoves} FULL typed camera moves ` +
-        `(pan/whip/push-in/pull-back/track-to-anchor/parallax-pass/orbit — drift and ` +
+        `(pan/whip/push-in/pull-back/track-to-anchor/parallax-pass/orbit/dive — drift and ` +
         `hold do NOT count), not ${cameraMoves}`,
     );
   }
@@ -3442,7 +4266,7 @@ export function validateStoryboardPlan(
     errors.push(
       "the brief requests one large spatial UI world; at least one shot must travel through " +
         "multiple stations with two or more FULL typed camera moves in its own path. " +
-        "Full moves are pan/whip/push-in/pull-back/track-to-anchor/parallax-pass/orbit — " +
+        "Full moves are pan/whip/push-in/pull-back/track-to-anchor/parallax-pass/orbit/dive — " +
         "drift and hold are connective and do NOT count. Recipe: give one 5s+ shot " +
         "worldLayout cells for 2-3 regions, then pan to the second region at ~1s and " +
         "track-to-anchor a part in the third at ~3s",
@@ -3450,15 +4274,20 @@ export function validateStoryboardPlan(
   }
   if (
     requirements.requireObjectMatch &&
-    !storyboard.some((scene) => scene.cut?.style === "object-match")
+    !storyboard.some((scene) =>
+      scene.cut?.style === "match" && scene.cut.focalPartOut && scene.cut.focalPartIn
+    )
   ) {
-    errors.push("the brief explicitly requests an object-match cut, but none is planned");
+    errors.push(
+      "the brief explicitly requests a match cut that carries an object across the " +
+        "boundary, but none is planned with both focal part names",
+    );
   }
   if (
     requirements.requireShapeMatch &&
-    !storyboard.some((scene) => scene.cut?.style === "shape-match")
+    !storyboard.some((scene) => scene.cut?.style === "morph")
   ) {
-    errors.push("the brief explicitly requests a shape-match cut, but none is planned");
+    errors.push("the brief explicitly requests a morph transition, but none is planned");
   }
   if (
     requirements.requireRackFocus &&
@@ -3577,6 +4406,12 @@ export function validateStoryboardPlan(
   // time, typed copy needs reading time, payoffs need outcome holds, and
   // camera density has a ceiling as well as a floor.
   errors.push(...auditPacing(storyboard));
+  // MD5: a dive re-frames twice inside its window; a cursor working a
+  // DIFFERENT surface through that window aims at a moving frame. Both
+  // windows are typed, so refuse the combination here where a retry costs
+  // one storyboard call (the dive-on-its-own-target pattern is designed-for
+  // and never flagged).
+  errors.push(...auditDiveInteractions(storyboard));
   // Exit discipline (WS4): a scene that opens a second content surface over a
   // still-live one in the same station stacks clutter — retire the outgoing
   // surface or give the incoming one its own station.
@@ -3598,16 +4433,53 @@ export function auditShapeMatchHints(storyboard: DirectScene[]): string[] {
   for (const [index, scene] of storyboard.entries()) {
     const next = storyboard[index + 1];
     const cut = scene.cut;
-    if (!next || cut?.style !== "shape-match" || !cut.shapeOut || !cut.shapeIn) continue;
+    // Canonicalize so cached storyboards still carrying "shape-match" get the
+    // same plan-time sanity as fresh morph declarations.
+    const style = cut ? canonicalCutStyle(cut.style).style : undefined;
+    if (!next || !cut || style !== "morph" || !cut.shapeOut || !cut.shapeIn) continue;
     if (shapeHintsRhyme(cut.shapeOut, cut.shapeIn)) continue;
     findings.push(
-      `shape-match ${scene.id}->${next.id} declares silhouette hints ` +
+      `morph ${scene.id}->${next.id} declares silhouette hints ` +
         `${cut.shapeOut}->${cut.shapeIn}, which cannot rhyme (a ${cut.shapeOut} and a ` +
         `${cut.shapeIn} differ beyond the runtime's 2.5x aspect cap at any plausible size, ` +
-        `so the cut would degrade to zoom-through at bind time) — re-point the cut at ` +
+        `so the cut would degrade to a swipe at bind time) — re-point the morph at ` +
         `endpoints whose silhouettes match (pill<->bar, or card<->window<->circle), fix the ` +
-        `hints if the real parts do rhyme, or declare zoom-through instead`,
+        `hints if the real parts do rhyme, or declare a swipe instead`,
     );
+  }
+  return findings;
+}
+
+/**
+ * MD5 plan-stage guard: a dive window may not overlap a cursor interaction's
+ * screen-space approach unless the interaction targets the dived surface —
+ * the hold then covers the interaction window by construction
+ * (`deriveDiveWindows` includes interaction windows on the dive target).
+ */
+export function auditDiveInteractions(storyboard: DirectScene[]): string[] {
+  const findings: string[] = [];
+  for (const scene of storyboard) {
+    const dives = (scene.camera?.path ?? []).filter((move) => move.move === "dive");
+    if (!dives.length || !scene.interactions?.length) continue;
+    for (const interaction of scene.interactions) {
+      const end =
+        interaction.holdUntilSec ?? interaction.releaseSec ?? interaction.arriveSec;
+      for (const dive of dives) {
+        if (dive.toPart === interaction.targetPart) continue;
+        if (
+          interaction.startSec < dive.startSec + dive.durationSec + 0.001 &&
+          end > dive.startSec - 0.001
+        ) {
+          findings.push(
+            `interaction "${interaction.id}" overlaps the dive on "${dive.toPart}" in scene ` +
+              `"${scene.id}" (${dive.startSec.toFixed(1)}s-` +
+              `${(dive.startSec + dive.durationSec).toFixed(1)}s) while targeting ` +
+              `"${interaction.targetPart}" — a cursor cannot work one surface while the camera ` +
+              `dives into another; aim the interaction at the dived surface, or retime one of them`,
+          );
+        }
+      }
+    }
   }
   return findings;
 }
@@ -3626,23 +4498,28 @@ export function degradeMismatchedShapeHintCuts(
   const scenes = storyboard.map((scene, index) => {
     const next = storyboard[index + 1];
     const cut = scene.cut;
-    if (!next || cut?.style !== "shape-match" || !cut.shapeOut || !cut.shapeIn) return scene;
+    const style = cut ? canonicalCutStyle(cut.style).style : undefined;
+    if (!next || !cut || style !== "morph" || !cut.shapeOut || !cut.shapeIn) return scene;
     if (shapeHintsRhyme(cut.shapeOut, cut.shapeIn)) return scene;
     degraded.push(`${scene.id}->${next.id} (${cut.shapeOut}->${cut.shapeIn})`);
     return {
       ...scene,
       // Keep any authored boundary timing so the executed window stays put —
       // the same policy as the QA-time rewrite (rewriteDegradedCutStoryboard);
-      // only the style and its focal/hint paperwork change.
+      // only the style and its focal/hint paperwork change. The degrade target
+      // is a swipe (MD1): no focal geometry exists at plan time, so the axis
+      // falls back to right-travel — the shipped film stays inside the
+      // 3-transition language either way.
       cut: {
         version: 1 as const,
-        style: "zoom-through" as const,
+        style: "swipe" as const,
+        axis: "right" as const,
         ...(cut.travelPx !== undefined ? { travelPx: cut.travelPx } : {}),
         ...(cut.exitSec !== undefined ? { exitSec: cut.exitSec } : {}),
         ...(cut.entrySec !== undefined ? { entrySec: cut.entrySec } : {}),
       },
       outgoingCut:
-        `Zoom-through into the next shot (a declared shape-match with non-rhyming ` +
+        `Swipe into the next shot (a declared morph with non-rhyming ` +
         `silhouette hints ${cut.shapeOut}->${cut.shapeIn} was degraded at plan time).`,
     };
   });
@@ -3899,6 +4776,8 @@ export class StoryboardValidationError extends Error {
   }
 }
 
+const acceptedStoryboardDegradations = new WeakMap<DirectScene[], string[]>();
+
 export function parseStoryboardResponse(
   raw: string,
   requirements: StoryboardPlanRequirements = {},
@@ -3908,6 +4787,7 @@ export function parseStoryboardResponse(
     degradePacingFindings?: boolean;
   } = {},
 ): DirectScene[] {
+  const degradations: string[] = [];
   const knownCapabilities = new Set(
     loadCapabilityIndex().capabilities.map((capability) => capability.id),
   );
@@ -3931,7 +4811,15 @@ export function parseStoryboardResponse(
     recordSentinelNormalization("timeramp-retime", rampRetime.normalized.length);
   }
   if (!requirements.requireTimeRamp) {
+    const beforeRampScenes = new Set(
+      storyboard.filter((scene) => scene.timeRamp).map((scene) => scene.id),
+    );
     storyboard = dropUnusableVolunteeredTimeRamps(storyboard);
+    for (const sceneId of beforeRampScenes) {
+      if (!storyboard.find((scene) => scene.id === sceneId)?.timeRamp) {
+        degradations.push(`storyboard-time-ramp-dropped:${sceneId}`);
+      }
+    }
   }
   // Support-map beat violations degrade to the nearest supported analog
   // (load-bearing beats keep their blocking finding) — see
@@ -3941,20 +4829,22 @@ export function parseStoryboardResponse(
     storyboard = beatDegradation.scenes;
     for (const line of beatDegradation.degraded) {
       process.stderr.write(`[storyboard] ${line}\n`);
+      degradations.push(`storyboard-component-beat-degraded:${findingSignature(line)}`);
     }
   }
   // Early attempts keep the hint-mismatch finding blocking so a cheap
   // findings-retry fixes the pair; the FINAL attempt degrades a volunteered
-  // hopeless shape-match to zoom-through instead of blocking the film
-  // (degrade-never-veto). Brief-required shape-match never degrades here.
+  // hopeless morph to a swipe instead of blocking the film
+  // (degrade-never-veto). Brief-required morph never degrades here.
   if (options.degradeShapeHintMismatches && !requirements.requireShapeMatch) {
     const degradation = degradeMismatchedShapeHintCuts(storyboard);
     if (degradation.degraded.length) {
       storyboard = degradation.scenes;
       for (const line of degradation.degraded) {
         process.stderr.write(
-          `[storyboard] degraded hint-mismatched shape-match to zoom-through: ${line}\n`,
+          `[storyboard] degraded hint-mismatched morph to swipe: ${line}\n`,
         );
+        degradations.push(`storyboard-shape-cut-degraded:${findingSignature(line)}`);
       }
     }
   }
@@ -3966,6 +4856,7 @@ export function parseStoryboardResponse(
     storyboard = deduped.scenes;
     for (const line of deduped.dropped) {
       process.stderr.write(`[storyboard] ${line}\n`);
+      degradations.push(`storyboard-redundant-beat-dropped:${findingSignature(line)}`);
     }
   }
   // Sentinel Phase 3: mechanical pacing fixes (delete/degrade/retime, never
@@ -4035,6 +4926,7 @@ export function parseStoryboardResponse(
           process.stderr.write(
             `[storyboard] polish finding accepted as advisory on a final attempt: ${line}\n`,
           );
+          degradations.push(`storyboard-polish-advisory:${findingSignature(line)}`);
         }
       }
     }
@@ -4088,6 +4980,7 @@ export function parseStoryboardResponse(
     }
   }
   if (errors.length) throw new StoryboardValidationError(errors, storyboard);
+  acceptedStoryboardDegradations.set(storyboard, [...new Set(degradations)]);
   return storyboard;
 }
 
@@ -4277,7 +5170,7 @@ async function requestConceptDirectionUncached(
     args.brief,
     "",
     args.frameMd
-      ? `## Job frame.md (art direction system)\n${args.frameMd.slice(0, 4_000)}`
+      ? `## Job frame capsule (art direction system)\n${frameCapsule(args.frameMd)}`
       : "",
     "",
     "## Response contract",
@@ -4644,8 +5537,17 @@ export async function requestStoryboardPlan(
     // unsupported-beat degrade at parse; v10: the re-base shifts nested
     // beat/camera/interaction/moment/ramp times with their scene, the
     // final-resolve pacing exemption covers only compact resolve surfaces,
-    // and headline detection no longer misreads "prototype").
-    contract: 10,
+    // and headline detection no longer misreads "prototype"; v11 persists the
+    // accepted storyboard's degradation ledger beside the cached plan; v12:
+    // the MOTION_DESIGN_PLAN schema fields land together — the 3-transition
+    // cut language (swipe+axis+cover / morph / match, legacy names
+    // canonicalized), the `dive` camera move, scene `gradeShift`, and the
+    // optional `style` enums on type/open/highlight beats); v13: the host now
+    // AUTO-DERIVES the MD3/MD4/MD6 styles a production planner under-reaches for
+    // — compact `open`→pop, headline `type`→rise/assemble, and a scene
+    // `gradeShift` from a primary moment naming a temperature — so the same raw
+    // plan parses to a styled storyboard (the md-audit-probe gap fix).
+    contract: 13,
     provider: provider.id,
     model: model ?? null,
     brief: args.brief,
@@ -4661,11 +5563,14 @@ export async function requestStoryboardPlan(
   const sharedFile = sharedPlanningCacheFile(args.projectDir, "storyboard", cacheKey);
   for (const candidate of [cacheFile, sharedFile]) {
     const cached = readPlanningArtifact(candidate, cacheKey) as
-      | { storyboard?: DirectScene[] }
+      | { storyboard?: DirectScene[]; degradations?: string[] }
       | undefined;
     if (cached?.storyboard) {
       const errors = validateStoryboardPlan(cached.storyboard, requirements);
       if (!errors.length) {
+        for (const degradation of cached.degradations ?? []) {
+          recordSentinelDegradation(degradation);
+        }
         if (candidate === sharedFile) {
           process.stderr.write(
             "[storyboard] reusing already-paid storyboard from the shared planning cache\n",
@@ -4674,6 +5579,7 @@ export async function requestStoryboardPlan(
             version: 1,
             key: cacheKey,
             storyboard: cached.storyboard,
+            degradations: cached.degradations ?? [],
           });
         }
         return cached.storyboard;
@@ -4739,7 +5645,7 @@ export async function requestStoryboardPlan(
     "Use it only in scenes the author will build with 2+ depth layers.",
     "CAMERA ENERGY — camera verbs must track the film's energy curve, never",
     "distribute one verb evenly. Peak scenes get a whip, a hard push-in",
-    '("zoom":1.35+), or a zoom-through/inverse-zoom cut INTO them; valleys get',
+    '("zoom":1.35+), or a morph/cover-swipe cut INTO them; valleys get',
     "a short hold or slow drift so the claim can breathe. A 12s+ film with no",
     "whip, no 1.3+ push-in, and no energetic cut is rejected deterministically.",
     "Rhythm pattern that works: whip to a region, drift while its content",
@@ -4747,6 +5653,15 @@ export async function requestStoryboardPlan(
     "Give a camera path to any shot longer than ~4 seconds; name 2-4 regions",
     "per world using stable kebab-case (hero-claim, metric-wall, ui-demo,",
     "cta-station). track-to-anchor requires a toPart the author will create.",
+    "DIVE — to work inside a dense frame, declare ONE move:",
+    '{"move":"dive","toPart":"<the surface you are about to change>",',
+    '"startSec":…,"durationSec":<the TOTAL in+hold+out window>,"zoom":1.0-1.4}.',
+    "The host times the hold to your typed beats/interactions on that surface",
+    "(including reading time for typed copy) and returns the camera itself,",
+    "exactly to its pre-dive framing. Never choreograph push-in + hold +",
+    "pull-back yourself — dive replaces all three and counts as ONE full move.",
+    "A dive needs a beat or interaction on its toPart inside the window;",
+    "without one it degrades to a plain push-in.",
     "WORLD LAYOUT — for any shot whose camera visits 2+ stations, also declare",
     '"worldLayout": pin each region to a distinct viewport-sized grid cell of',
     "the world plane. [0,0] is the entry framing; [1,0] is one full screen",
@@ -4782,22 +5697,29 @@ export async function requestStoryboardPlan(
     "cursor interaction is pressing at the same time — the cursor's press",
     "feedback already animates the target, and the doubled pulse reads as a",
     "stutter.",
-    "Every shot's boundary is a typed, machine-executed cut. Choose cut.style from:",
-    "hard (intentional register break), cut-left/right/up/down (velocity-matched",
-    "directional carry — the default for scene-to-scene motion), zoom-through",
-    "(progressing deeper), inverse-zoom (arriving at a payoff), flash-white (one",
-    "energetic reset at most), object-match (a focal element visibly travels to a",
-    "matching element in the next shot; requires focalPartOut/focalPartIn data-part",
-    "names the author will create), shape-match (two DIFFERENT elements whose",
-    "silhouettes rhyme — a search pill lands as a status bar, a window becomes a",
-    "card, an avatar circle becomes a chart dot — swap across the boundary through",
-    "a crossfading bridge; requires focalPartOut/focalPartIn, plus optional",
-    'shapeOut/shapeIn hints from pill|bar|card|circle|window as your own',
-    "silhouette self-check. Declare shape-match only when the two silhouettes",
-    "genuinely rhyme; a >2.5x aspect mismatch degrades to zoom-through at bind",
-    "time. Silhouette families: pill and bar rhyme with each other; card,",
-    "window, and circle rhyme with each other; a cross-family pair like",
-    "pill->card is rejected deterministically at plan time).",
+    "Every shot's boundary is a typed, machine-executed cut. The transition",
+    "language is THREE transitions plus hard — pick ONE signature transition and",
+    "repeat it; morph/match are premium, at most one or two per film:",
+    "- swipe (movement/continuation — the default for scene-to-scene motion):",
+    '  requires "axis":"left|right|up|down" (the direction the outgoing content',
+    '  travels); optional "cover":true sends a palette panel wiping across the',
+    "  frame so the cut hides under full cover (loud — use at a register turn).",
+    "  The host adds directional motion blur; you never author it.",
+    "- morph (one thing BECOMES another): two DIFFERENT elements whose",
+    "  silhouettes rhyme — a search pill lands as a status bar, a window becomes",
+    "  a card — swap across the boundary through a crossfading bridge. Requires",
+    "  focalPartOut/focalPartIn data-part names the author will create, plus",
+    "  optional shapeOut/shapeIn hints from pill|bar|card|circle|window as your",
+    "  own silhouette self-check. pill<->bar rhyme; card<->window<->circle",
+    "  rhyme; a cross-family pair like pill->card is rejected at plan time, and",
+    "  a >2.5x measured aspect mismatch degrades to a swipe at bind time.",
+    "- match (the SAME subject on both sides of the seam): with BOTH",
+    "  focalPartOut/focalPartIn the element visibly travels to its counterpart;",
+    "  with only focalPartIn it is a hard cut whose incoming subject MUST land",
+    "  where the eye already is — QA enforces a tightened eye-trace budget, so",
+    "  declare match only when the two frames genuinely align.",
+    "- hard (punctuation, not a transition): the intentional register break.",
+    "  A film with zero plain cuts is its own tell.",
     "The host compiles the cut deterministically;",
     "the prose outgoingCut must describe the same editorial idea as cut.style.",
     "SPEED RAMP — time itself may bend for emphasis. A shot may declare ONE",
@@ -4832,7 +5754,7 @@ export async function requestStoryboardPlan(
           "BRIEF-SPECIFIC CAMERA COVERAGE — this brief explicitly asks for a",
           `spatial camera world. Plan at least ${requirements.minCameraMoves} FULL typed camera`,
           "moves. Full moves are pan/whip/push-in/pull-back/track-to-anchor/",
-          "parallax-pass/orbit — drift and hold are connective travel and do NOT",
+          "parallax-pass/orbit/dive — drift and hold are connective travel and do NOT",
           "count toward this coverage. A set of static shots or a single minor",
           "pan does not satisfy the request.",
           ...(requirements.requireMultiStationWorld
@@ -4847,14 +5769,14 @@ export async function requestStoryboardPlan(
       : []),
     ...(requirements.requireObjectMatch
       ? [
-          "The brief explicitly asks for object-match cuts; plan at least one typed",
-          "object-match boundary with both focal part names.",
+          "The brief explicitly asks for an object-carrying cut; plan at least one typed",
+          "match boundary with both focal part names.",
         ]
       : []),
     ...(requirements.requireShapeMatch
       ? [
-          "The brief explicitly asks for a shape-match transition; plan at least one",
-          "typed shape-match boundary with both focal part names and shapeOut/shapeIn",
+          "The brief explicitly asks for a morph transition; plan at least one",
+          "typed morph boundary with both focal part names and shapeOut/shapeIn",
           "silhouette hints, at the story beat where the two elements' meanings connect.",
         ]
       : []),
@@ -4918,7 +5840,7 @@ export async function requestStoryboardPlan(
     args.brief,
     "",
     args.frameMd
-      ? `## Job frame.md\nUse its visual thesis, palette/type constraints, and spatial character without constraining motion.\n<frame_md>\n${args.frameMd}\n</frame_md>`
+      ? `## Job frame capsule\nUse its visual thesis, palette/type constraints, and spatial character without constraining motion.\n<frame_capsule>\n${frameCapsule(args.frameMd)}\n</frame_capsule>`
       : "",
     "",
     "## Available project-local assets",
@@ -4937,13 +5859,19 @@ export async function requestStoryboardPlan(
     '"rules":["known rule"],"capabilityIds":["zero or more exact index ids"],',
     '"continuityAnchor":"what the eye tracks across this boundary",',
     '"outgoingCut":"cut mechanism and destination",',
-    '"cut":{"version":1,"style":"cut-left|cut-right|cut-up|cut-down|zoom-through|inverse-zoom|flash-white|object-match|shape-match|hard",',
-    '"focalPartOut":"for object-match/shape-match","focalPartIn":"for object-match/shape-match",',
-    '"shapeOut":"optional shape-match hint: pill|bar|card|circle|window","shapeIn":"same"},',
+    '"cut":{"version":1,"style":"swipe|morph|match|hard",',
+    '"axis":"swipe only: left|right|up|down","cover":true,',
+    '"focalPartOut":"for morph/match","focalPartIn":"for morph (and match when bridged)",',
+    '"shapeOut":"optional morph hint: pill|bar|card|circle|window","shapeIn":"same"},',
     '"timeRamp":{"version":1,"atSec":17.2,"slowTo":0.35,"holdSec":0.6,"recoverSec":0.9} for the',
     'one motivated slow-motion dip; use "timeRamp":{"version":1} for no ramp (the default).',
     "timeRamp atSec is absolute composition seconds where the dip begins.",
-    '"camera":{"version":1,"depth3d":true,"path":[{"version":1,"move":"hold|drift|pan|whip|push-in|pull-back|track-to-anchor|parallax-pass|orbit-lite|orbit",',
+    '"gradeShift":{"version":1,"atSec":12.4,"toGrade":"cold|neutral|warm|noir","fromPart":"optional"}',
+    "for one mid-scene temperature turn — the story warming/cooling AT a payoff.",
+    "atSec is absolute composition seconds; it needs >=1.2s of scene after it and",
+    "must coincide with a declared moment. fromPart is the element the wash expands",
+    "from (default: frame center). At most one per scene, two per film; omit it otherwise.",
+    '"camera":{"version":1,"depth3d":true,"path":[{"version":1,"move":"hold|drift|pan|whip|push-in|pull-back|track-to-anchor|parallax-pass|orbit-lite|orbit|dive",',
     '"toRegion":"region name (or toPart for track-to-anchor)","zoom":1,"startSec":0,"durationSec":1.2,',
     '"arcDeg":28,"focus":{"part":"data-part to pull focus onto","depth":0.35,"blurMaxPx":6},',
     "arcDeg only for orbit; focus is an optional rack-focus modifier on any move,",
@@ -4962,7 +5890,8 @@ export async function requestStoryboardPlan(
     '"region":"optional camera region it lives at","role":"hero|support"}],',
     '"beats":[{"version":1,"id":"kebab-case","component":"declared component id","kind":"type|open|close|select|press|set-state|count|progress|chart|rows|stream|highlight|morph|swap",',
     '"atSec":2.4,"durationSec":1.1,"text":"for type/stream/swap","value":40,"item":2,',
-    '"toState":"for set-state/press","morphTo":"for morph","ease":"optional"}],',
+    '"toState":"for set-state/press","morphTo":"for morph","ease":"optional",',
+    '"style":"optional: type→typewriter|rise|pop|assemble, open→pop (compact kinds), highlight→ring|sweep|underline"}],',
     "Beat atSec values are absolute composition seconds inside the shot window.",
     'Use "components":[] and "beats":[] when a shot has no product surface.',
     "A component id doubles as its data-part: cameras can track-to-anchor it,",
@@ -5227,8 +6156,12 @@ export async function requestStoryboardPlan(
         lastError = error;
         break attempts;
       }
-      writePlanningArtifact(cacheFile, { version: 1, key: cacheKey, storyboard });
-      writePlanningArtifact(sharedFile, { version: 1, key: cacheKey, storyboard });
+      const degradations = acceptedStoryboardDegradations.get(storyboard) ?? [];
+      for (const degradation of degradations) {
+        recordSentinelDegradation(degradation);
+      }
+      writePlanningArtifact(cacheFile, { version: 1, key: cacheKey, storyboard, degradations });
+      writePlanningArtifact(sharedFile, { version: 1, key: cacheKey, storyboard, degradations });
       return storyboard;
     }
   }
@@ -5602,6 +6535,99 @@ function browserQualityPenalty(
     );
 }
 
+const SENTINEL_BLOCKING_BY_PREFIX = SENTINEL_CONTRACT.flatMap((row) =>
+  row.findingPrefixes.map((prefix) => ({ prefix, blocking: row.blocking }))
+);
+
+const EARLY_LEAST_BAD_MAX_PENALTY = (() => {
+  const raw = Number(process.env.SLACK_SEQUENCES_EARLY_LEAST_BAD_MAX_PENALTY);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 4;
+})();
+
+function sentinelBlockingForFinding(finding: string): SentinelBlocking | undefined {
+  const normalized = finding.trim();
+  return SENTINEL_BLOCKING_BY_PREFIX.find((entry) =>
+    normalized.startsWith(entry.prefix)
+  )?.blocking;
+}
+
+function isMomentStaticFrameFinding(finding: string): boolean {
+  return finding.trim().startsWith("moment_static_frame");
+}
+
+function hasHardLivenessOrBlankIssue(browserQa: DirectBrowserQaResult): boolean {
+  return (browserQa.errors ?? []).some((entry) =>
+    entry.startsWith("near_blank_film:") ||
+    entry.startsWith("motion/liveness") ||
+    entry.includes("motion/liveness")
+  );
+}
+
+/**
+ * Browser feedback for paid source retries. `moment_static_frame` is rendered
+ * temporal-judge polish: useful operator evidence, but not a source retry
+ * cause unless the same draft has a hard liveness/blank-frame defect.
+ */
+export function sourceRetryFeedbackForBrowserQa(
+  browserQa: DirectBrowserQaResult,
+  staticRepairWarnings: string[] = [],
+): string[] {
+  const keepMomentStatic = hasHardLivenessOrBlankIssue(browserQa);
+  return dedupeFeedbackBySignature([
+    ...staticRepairWarnings,
+    ...(browserQa.errors ?? []),
+    ...(browserQa.warnings ?? []).filter((warning) =>
+      keepMomentStatic || !isMomentStaticFrameFinding(warning)
+    ),
+  ]);
+}
+
+function staticWarningBlocksEarlyLeastBad(warning: string): boolean {
+  const blocking = sentinelBlockingForFinding(warning);
+  return blocking !== "advisory" && blocking !== "advisory-late";
+}
+
+function browserIssueBlocksEarlyLeastBad(issue: DirectLayoutIssue): boolean {
+  if (issue.severity === "info") return false;
+  if (issue.code === "moment_static_frame") return false;
+  if (HIGH_VISIBILITY_ISSUE_WEIGHTS[issue.code] !== undefined) return true;
+  const blocking = sentinelBlockingForFinding(issue.code);
+  if (blocking === "advisory" || blocking === "advisory-late") return false;
+  return true;
+}
+
+/**
+ * Attempt-2 budget broker: publish a banked browser-valid draft early only
+ * when the remaining findings are low-penalty advisory/polish classes. This
+ * saves the third paid author pass without weakening hard runtime, blank-film,
+ * interaction, or high-visibility visual gates.
+ */
+export function earlyLeastBadPublishReason(
+  candidate: CompositionRunResult & { qualityPenalty: number },
+): string | undefined {
+  const browserQa = candidate.browserQa;
+  if (!browserQa || !browserQa.ok || browserQa.infraError) return undefined;
+  if (candidate.qualityPenalty > EARLY_LEAST_BAD_MAX_PENALTY) return undefined;
+  if ((browserQa.warnings ?? []).some((warning) => warning.startsWith("browser_warning:"))) {
+    return undefined;
+  }
+  if ((candidate.staticRepairWarnings ?? []).some(staticWarningBlocksEarlyLeastBad)) {
+    return undefined;
+  }
+  if ((browserQa.issues ?? []).some(browserIssueBlocksEarlyLeastBad)) return undefined;
+  const codes = [
+    ...new Set([
+      ...(browserQa.issues ?? []).map((issue) => issue.code),
+      ...(candidate.staticRepairWarnings ?? []).map((warning) =>
+        warning.split(/\s+/, 1)[0] ?? "static-warning"
+      ),
+    ]),
+  ];
+  return `early-least-bad-pick:penalty=${candidate.qualityPenalty};findings=${
+    codes.length ? codes.join(",") : "polish"
+  }`;
+}
+
 /**
  * Sentinel Phase 3 critic gating: a draft the deterministic gates already
  * love has nothing for the continuity critic to repair, so its 1-2 paid
@@ -5706,15 +6732,16 @@ function lockedLayoutGuidance(scenes: DirectScene[]): string {
     );
   }
   const shapePairs = scenes.flatMap((scene) =>
-    scene.cut?.style === "shape-match" && scene.cut.focalPartOut && scene.cut.focalPartIn
+    (scene.cut?.style === "morph" || scene.cut?.style === "shape-match") &&
+      scene.cut.focalPartOut && scene.cut.focalPartIn
       ? [`${scene.cut.focalPartOut}→${scene.cut.focalPartIn}`]
       : []
   );
   if (shapePairs.length) {
     lines.push(
-      `- Shape-match focal parts (${[...new Set(shapePairs)].join(", ")}) must keep`,
+      `- Morph focal parts (${[...new Set(shapePairs)].join(", ")}) must keep`,
       "  comparable aspect ratios and border radii (within ~2.5×) and light",
-      "  subtrees (≤60 nodes) or the boundary degrades to zoom-through at bind",
+      "  subtrees (≤60 nodes) or the boundary degrades to a swipe at bind",
       "  time. Keep both parts on-frame at their scene's entry framing.",
     );
   }
@@ -6198,6 +7225,7 @@ export function adaptDirectorPromptForSlots(
     adapted = adapted.replace(find, replace);
   }
   if (missed) {
+    recordSentinelDegradation("slot-director-rewrite-fallback");
     adapted += [
       "",
       "",
@@ -6210,6 +7238,68 @@ export function adaptDirectorPromptForSlots(
     ].join("\n");
   }
   return adapted;
+}
+
+/**
+ * Slot mode does not need the base prompt's whole-document architecture/runtime
+ * chapters: the host emits and validates that machinery. Remove those chapters
+ * after anchor-checked contradiction surgery, retaining all creative, motion,
+ * camera, component, cut, typography, color, and spatial-direction guidance.
+ */
+export function slotDirectorPrompt(prompt: string, misses?: string[]): string {
+  const adapted = adaptDirectorPromptForSlots(prompt, misses);
+  const precedenceMarker = "## SLOT-MODE PRECEDENCE";
+  const precedenceAt = adapted.indexOf(precedenceMarker);
+  const precedence = precedenceAt >= 0 ? adapted.slice(precedenceAt) : "";
+  const body = precedenceAt >= 0 ? adapted.slice(0, precedenceAt) : adapted;
+  const compact = body
+    .replace(
+      /## Storyboard moments[\s\S]*?(?=## Typed boundary cuts)/,
+      [
+        "## Storyboard moments",
+        "Make every locked moment visibly true at its exact atSec using an interior",
+        "state change, typed component beat, camera arrival, or cut. Do not retime it.",
+        "",
+      ].join("\n"),
+    )
+    .replace(
+      /## Typed boundary cuts[\s\S]*?(?=## Continuous spatial world)/,
+      [
+        "## Typed boundary cuts",
+        "The host compiles the locked cut graph. Preserve every named data-part",
+        "endpoint and design matched silhouettes when the cut style asks for one.",
+        "",
+      ].join("\n"),
+    )
+    .replace(
+      /## The Sequences ease library[\s\S]*?(?=## Cinematography)/,
+      [
+        "## Sequences easing",
+        "Use the supplied seq* eases or standard GSAP eases; never invent an ease name.",
+        "",
+      ].join("\n"),
+    )
+    .replace(
+      /## Architecture laws[\s\S]*?(?=## Spatial intent)/,
+      "",
+    )
+    .replace(
+      /## Spatial intent[\s\S]*?(?=## Hard runtime contract)/,
+      [
+        "## Spatial intent",
+        "Treat locked worldLayout cells and camera stations as composition guides.",
+        "Keep named data-region/data-part/data-component bindings intact. Animate",
+        "interior elements only; the host owns camera, cuts, components, interactions,",
+        "scene windows, runtime compilation, and the shared timeline.",
+        "",
+      ].join("\n"),
+    )
+    .replace(
+      /## Hard runtime contract[\s\S]*$/,
+      "",
+    )
+    .trim();
+  return precedence ? `${compact}\n\n${precedence}` : compact;
 }
 
 export function creationPrompt(args: {
@@ -6254,8 +7344,8 @@ export function creationPrompt(args: {
       "in an empty frame: enlarge the station's content, tighten its data-region rect so",
       "the fit zoom lands closer, or move more of that scene's content into the framed",
       "station — the viewer should never study a mostly-empty frame.",
-      "For cut_degraded findings, a declared shape-match/object-match compiled as",
-      "zoom-through because the endpoint silhouettes do not rhyme. Use the measured",
+      "For cut_degraded findings, a declared morph/match compiled as a plain",
+      "swipe because the endpoint silhouettes do not rhyme. Use the measured",
       "numbers in the finding: restyle one endpoint, or move its data-part attribute",
       "onto a sub-element whose box does rhyme (e.g. a condensed header band matching",
       "the outgoing pill), so both parts sit within a 2.5x aspect ratio, under 60 nodes,",
@@ -6398,14 +7488,14 @@ export function creationPrompt(args: {
     : "";
   const frame = args.frameMd
     ? [
-        "## Frame design system (art direction + deterministic constraints)",
-        "Start from this system. Preserve its committed brand hue/font families,",
+        "## Frame design capsule (art direction + deterministic constraints)",
+        "Start from this capsule. Preserve its committed brand hue/font families,",
         "embedded-font requirement, contrast thresholds, and one-accent hierarchy.",
         "Its recommended tints and spatial tokens may be adjusted deliberately as",
         "the document allows; your motion, composition, and rhythm stay free.",
-        "<frame_md>",
-        args.frameMd,
-        "</frame_md>",
+        "<frame_capsule>",
+        frameCapsule(args.frameMd),
+        "</frame_capsule>",
       ].join("\n")
     : "";
   const componentReference = componentReferenceFor(
@@ -6413,9 +7503,13 @@ export function creationPrompt(args: {
   );
   return [
     "SYSTEM:",
-    args.slots ? adaptDirectorPromptForSlots(DIRECTOR_PROMPT) : DIRECTOR_PROMPT,
+    args.slots ? slotDirectorPrompt(DIRECTOR_PROMPT) : DIRECTOR_PROMPT,
     "",
-    args.compact ? compactSkillText(args.skills.text) : args.skills.text,
+    args.slots
+      ? compactSkillText(args.skills.text, SLOT_SKILL_BUDGET_CHARS)
+      : args.compact
+      ? compactSkillText(args.skills.text)
+      : args.skills.text,
     "",
     componentReference,
     "## Job brief and trusted evidence",
@@ -6638,6 +7732,11 @@ export function volunteeredCutBoundaries(
     const next = storyboard[index + 1];
     if (!next || !scene.cut) continue;
     const volunteered =
+      (scene.cut.style === "morph" && !requirements.requireShapeMatch) ||
+      (scene.cut.style === "match" &&
+        Boolean(scene.cut.focalPartOut && scene.cut.focalPartIn) &&
+        !requirements.requireObjectMatch) ||
+      // Legacy names survive in cached storyboards.
       (scene.cut.style === "shape-match" && !requirements.requireShapeMatch) ||
       (scene.cut.style === "object-match" && !requirements.requireObjectMatch);
     if (volunteered) boundaries.add(`${scene.id}->${next.id}`);
@@ -6679,14 +7778,14 @@ interface CutDegradationResult {
 
 /**
  * Volunteered bridged cuts must never sink an otherwise valid film. When a
- * shape-match/object-match endpoint binding persists across two consecutive
+ * morph/match endpoint binding persists across two consecutive
  * static rejections (so it survived at least one model repair that was told
  * to fix it) and the brief did not explicitly request that cut style, degrade
- * the boundary to zoom-through — a typed, energetic, non-bridged cut that
- * preserves the boundary beat, the energy audit's peak, and every moment
- * bound to the cut landing — then re-run the deterministic injections so the
- * shipped island matches the shipped storyboard. Explicitly requested bridged
- * cuts are never degraded here; they stay blocking and fall back honestly.
+ * the boundary to a swipe — a typed, non-bridged cut that preserves the
+ * boundary beat and every moment bound to the cut landing — then re-run the
+ * deterministic injections so the shipped island matches the shipped
+ * storyboard. Explicitly requested bridged cuts are never degraded here; they
+ * stay blocking and fall back honestly.
  */
 export function degradeVolunteeredBridgedCuts(args: {
   draft: DirectCompositionDraft;
@@ -6711,7 +7810,17 @@ export function degradeVolunteeredBridgedCuts(args: {
     const next = args.storyboard[index + 1];
     if (!next || !scene.cut || !stuck.has(`${scene.id}->${next.id}`)) return scene;
     degraded.push(`${scene.id}->${next.id} (${scene.cut.style})`);
-    return { ...scene, cut: { version: 1 as const, style: "zoom-through" as const } };
+    // MD1 retarget: the degrade target is a swipe (right-travel — the static
+    // gate has no measured focal geometry to derive an axis from), keeping the
+    // boundary typed, energetic enough to hold the beat, and inside the
+    // 3-transition language.
+    return {
+      ...scene,
+      cut: { version: 1 as const, style: "swipe" as const, axis: "right" as const },
+      outgoingCut:
+        `Swipe into "${next.title}" (a volunteered ${scene.cut.style} with persistently ` +
+        `unbindable focal parts was retired at repair time).`,
+    };
   });
   if (!degraded.length) return undefined;
   const draft = applyDeterministicSourceRepairs(
@@ -6790,6 +7899,7 @@ function slotContinuationPrompt(
   missing: DirectScene[],
   repairNotes?: Map<string, string[]>,
   previousSlots?: ParsedSceneSlots,
+  repairPurpose: "scaffold" | "validation" = "scaffold",
 ): string {
   const interiors = buildSceneSlotInteriors(args.lockedStoryboard ?? []);
   const templates = missing.flatMap((scene) => {
@@ -6798,7 +7908,12 @@ function slotContinuationPrompt(
     return [
       "",
       ...(notes.length
-        ? [`Host-contract findings for scene "${scene.id}" (restore these bindings):`, ...notes.map((note) => `- ${note}`)]
+        ? [
+            repairPurpose === "scaffold"
+              ? `Host-contract findings for scene "${scene.id}" (restore these bindings):`
+              : `Validation findings for scene "${scene.id}" (make the smallest correction):`,
+            ...notes.map((note) => `- ${note}`),
+          ]
         : []),
       ...(previous?.html?.trim()
         ? [
@@ -6809,16 +7924,29 @@ function slotContinuationPrompt(
             "</previous_scene_html>",
           ]
         : []),
+      ...(previous?.script?.trim()
+        ? [
+            "Your previous scene script (keep its motion unless a finding requires a change):",
+            `<previous_scene_script id="${scene.id}">`,
+            previous.script,
+            "</previous_scene_script>",
+          ]
+        : []),
       `<scene_html id="${scene.id}">`,
       interiors.get(scene.id) ?? "…compose this scene's interior…",
       "</scene_html>",
     ];
   });
   const intro = repairNotes
-    ? "Some scenes came back without host-contract bindings the template carried. The" +
-      "\nother scenes are kept; re-author ONLY the scenes below, keeping each template's" +
-      "\ndata-camera-world plane, data-region stations, and component roots" +
-      "\n(data-part/data-component) exactly as given."
+    ? repairPurpose === "scaffold"
+      ? "Some scenes came back without host-contract bindings the template carried. The" +
+        "\nother scenes are kept; re-author ONLY the scenes below, keeping each template's" +
+        "\ndata-camera-world plane, data-region stations, and component roots" +
+        "\n(data-part/data-component) exactly as given."
+      : "The assembled film has scene-local validation findings. Every unlisted scene is" +
+        "\nlocked and kept byte-for-byte. Re-author ONLY the listed scenes as minimal edits;" +
+        "\npreserve their copy, visual thesis, host bindings, and motion unless a finding" +
+        "\nexplicitly requires a change."
     : "The previous response was cut off. The completed scenes are kept; author ONLY" +
       "\nthe missing scenes below, matching the established film style exactly.";
   return [
@@ -6888,6 +8016,12 @@ export function slotScaffoldViolations(
         }
       }
     }
+    const componentsByKind = new Map<string, NonNullable<DirectScene["components"]>>();
+    for (const component of scene.components ?? []) {
+      const group = componentsByKind.get(component.kind) ?? [];
+      group.push(component);
+      componentsByKind.set(component.kind, group);
+    }
     for (const component of scene.components ?? []) {
       const rootRe = new RegExp(
         `\\bdata-part\\s*=\\s*["']${regexpEscape(component.id)}["']`,
@@ -6897,10 +8031,13 @@ export function slotScaffoldViolations(
         `\\bdata-component\\s*=\\s*["']${regexpEscape(component.kind)}["']`,
         "i",
       );
-      // A kind-marked element without the right data-part is the near-miss
-      // reconcileComponentBindings claims for free; only a component with NO
-      // trace at all needs the model again.
-      if (!rootRe.test(html) && !kindRe.test(html)) {
+      // A kind-marked element is a safe L2 near-miss only when the storyboard
+      // declares exactly ONE component of that kind. With repeated buttons,
+      // cards, etc. the kind marker cannot identify which missing id it meant;
+      // guessing there can bind motion to the wrong object.
+      const uniqueKindCandidate =
+        (componentsByKind.get(component.kind)?.length ?? 0) === 1 && kindRe.test(html);
+      if (!rootRe.test(html) && !uniqueKindCandidate) {
         notes.push(
           `component root data-part="${component.id}" data-component="${component.kind}" ` +
             "is missing from this scene",
@@ -6942,7 +8079,10 @@ export async function authorSlotDraft(
   const requestScenes = async (
     scenes: DirectScene[],
     repairNotes?: Map<string, string[]>,
+    callKind: "truncation-continuation" | "scaffold-repair" | "validation-repair" =
+      "truncation-continuation",
   ): Promise<void> => {
+    recordSentinelSlotCall(callKind, scenes.length);
     const contRaw = await completeSourceWithContinuation(
       provider,
       slotContinuationPrompt(args, slots.filmStyle, scenes, repairNotes, repairNotes ? slots : undefined),
@@ -6977,7 +8117,18 @@ export async function authorSlotDraft(
       `[author] slot scaffold repair: ${violations.size} scene(s) dropped host-contract ` +
         `bindings (${offenders.map((s) => s.id).join(", ")}); re-requesting only those scenes\n`,
     );
-    await requestScenes(offenders, violations);
+    const violationCount = [...violations.values()].reduce((sum, notes) => sum + notes.length, 0);
+    await requestScenes(offenders, violations, "scaffold-repair");
+    const remaining = slotScaffoldViolations(storyboard, slots);
+    const remainingCount = [...remaining.values()].reduce((sum, notes) => sum + notes.length, 0);
+    const restored = Math.max(0, violationCount - remainingCount);
+    if (restored) recordSentinelScaffoldRestoration("scene-repair", restored);
+    if (remaining.size) {
+      process.stderr.write(
+        `[author] slot scaffold repair left ${remaining.size} scene(s) unresolved; ` +
+          `assembling for the unchanged L3 gate: ${[...remaining.keys()].join(", ")}\n`,
+      );
+    }
   }
   const { html, missingHtml, missingScript } = assembleSlotComposition({
     storyboard,
@@ -7004,10 +8155,111 @@ export async function authorSlotDraft(
 }
 
 /**
+ * One bounded scene-scoped validation retry. It repairs the scene-attributable
+ * SUBSET of findings: findings that map to named scenes are re-authored per
+ * scene, while any film/shared-level findings (eye-trace, cross-cut framing, a
+ * bare interaction/moment id) ride the whole-document ladder untouched. It
+ * declines only when NO finding maps to a scene. The atomic acceptance at each
+ * call site (finding-class count for static, quality penalty for browser — both
+ * measured over the WHOLE film) rejects any subset repair that leaves or worsens
+ * a film-level finding, so fixing part is never a regression, and the improved
+ * draft is banked as the next attempt's scratch. Both the previous HTML and
+ * script are sent as the minimal-edit baseline, and untouched scenes stay
+ * byte-stable. (This previously declined whenever ANY finding was film-level,
+ * which made it inert on dense briefs — the s5-interactions probe class always
+ * mixes one film-level finding into otherwise scene-local rejections, so the
+ * repair never fired on exactly the runs it exists to rescue.)
+ */
+export async function repairSlotDraftForFindings(
+  provider: AgentProvider,
+  args: DirectCompositionArgs,
+  slots: ParsedSceneSlots,
+  findings: string[],
+  completeOptions: CompleteOptions,
+): Promise<
+  | {
+      draft: DirectCompositionDraft;
+      slots: ParsedSceneSlots;
+      raw: string;
+      sceneIds: string[];
+    }
+  | undefined
+> {
+  const storyboard = args.lockedStoryboard;
+  if (!storyboard?.length || !findings.length) return undefined;
+  const attributed = attributeFindingsToScenes(
+    findings,
+    storyboard.map((scene) => scene.id),
+  );
+  // Repair the scene-attributable subset. Film/shared-level findings (the
+  // "__film__" bucket) are never sent to the scene author — they stay on the
+  // whole-document ladder — but their presence no longer cancels a scene repair
+  // that CAN help: declining only when NOTHING maps to a scene keeps the repair
+  // effective on dense briefs, where a lone film-level finding used to veto it.
+  const sceneIds = storyboard
+    .map((scene) => scene.id)
+    .filter((id) => attributed.has(id));
+  if (!sceneIds.length) return undefined;
+  const scenes = storyboard.filter((scene) => sceneIds.includes(scene.id));
+  recordSentinelSlotCall("validation-repair", scenes.length);
+  const raw = await completeSourceWithContinuation(
+    provider,
+    slotContinuationPrompt(
+      args,
+      slots.filmStyle,
+      scenes,
+      attributed,
+      slots,
+      "validation",
+    ),
+    { ...completeOptions, maxTokens: Math.min(authorMaxTokens(), 8_192) },
+  );
+  const repaired = extractSceneSlots(raw);
+  // A partial response must not look successful merely because merge fallback
+  // retained the old half of a scene. Require both requested blocks explicitly.
+  if (
+    scenes.some((scene) =>
+      !repaired.scenes.get(scene.id)?.html?.trim() ||
+      !repaired.scenes.get(scene.id)?.script?.trim()
+    )
+  ) {
+    process.stderr.write(
+      `[author] scene validation repair returned incomplete slots; keeping the previous draft\n`,
+    );
+    return undefined;
+  }
+  const merged: ParsedSceneSlots = {
+    filmStyle: slots.filmStyle,
+    scenes: new Map(slots.scenes),
+    order: [...slots.order],
+    truncated: slots.truncated || repaired.truncated,
+  };
+  for (const scene of scenes) {
+    merged.scenes.set(scene.id, {
+      ...merged.scenes.get(scene.id),
+      ...repaired.scenes.get(scene.id),
+    });
+  }
+  const assembled = assembleSlotComposition({
+    storyboard,
+    slots: merged,
+    compositionId: slotCompositionId(args.projectDir),
+  });
+  if (assembled.missingHtml.length || assembled.missingScript.length) return undefined;
+  return {
+    draft: { storyboard, html: assembled.html },
+    slots: merged,
+    raw,
+    sceneIds,
+  };
+}
+
+/**
  * Slot-scoped validation attribution (Sentinel Phase 2): report which scene
- * each rejection finding belongs to, so the failure is diagnosed per scene
- * (and, once slot-scoped retries land, re-requested per scene) instead of as
- * one opaque document rejection.
+ * each rejection finding belongs to, so the failure is diagnosed and the
+ * scene-attributable findings are re-requested per scene (any film-level
+ * remainder keeps the whole-document ladder) instead of as one opaque document
+ * rejection.
  */
 function logSlotFindingAttribution(findings: string[], storyboard: DirectScene[]): void {
   const byScene = attributeFindingsToScenes(
@@ -7076,6 +8328,29 @@ async function authorCompositionLoop(
   let lastBrowserValid:
     | (CompositionRunResult & { qualityPenalty: number })
     | undefined;
+  // Sentinel slot persistence (2026-07-07): the slot map that assembled the
+  // current retry baseline (`scratch`). Attempt 1's scene-addressable state
+  // used to die with its loop iteration — persisted ledgers showed slotCalls:0
+  // on retry-heavy runs — so every recovery attempt re-gambled the whole
+  // document. While the baseline is still slot-assembled, a rejected attempt
+  // first re-authors ONLY the failing scenes (one bounded call) before any
+  // whole-document patch; adopting a non-slot draft invalidates the map.
+  let persistedSlots: ParsedSceneSlots | undefined;
+  let slotRetryUsed = false;
+  const publishBrowserValidCandidate = (
+    candidate: CompositionRunResult & { qualityPenalty: number },
+    attempts: number,
+    reason: string,
+  ): CompositionRunResult => {
+    process.stderr.write(
+      `[author] ${reason}; publishing browser-valid attempt ${candidate.attempts}/3 ` +
+        `after ${attempts} attempt(s)\n`,
+    );
+    summary.strategyChanges.push(reason);
+    recordSentinelDegradation(reason);
+    const { qualityPenalty: _qualityPenalty, ...best } = candidate;
+    return { ...best, attempts };
+  };
   // The most recent draft whose ONLY static blockers were declared-moment
   // paperwork (`storyboard/moments:` findings) — the last-resort salvage
   // candidate if the whole ladder exhausts (see the pre-throw salvage below).
@@ -7146,24 +8421,72 @@ async function authorCompositionLoop(
         ...(patchMode && structuredPatches ? { responseFormat: PATCH_RESPONSE_FORMAT } : {}),
         ...(selectedTier ? { model: selectedTier } : {}),
       };
-      let raw: string;
-      let parsedDraft: DirectCompositionDraft;
-      if (useSlots) {
-        const slotResult = await authorSlotDraft(provider, args, prompt, completeOptions);
-        raw = slotResult.raw;
-        parsedDraft = slotResult.draft;
-      } else {
-        raw = patchMode
-          ? await completeWithRetry(provider, prompt, completeOptions, "author patch")
-          : await completeSourceWithContinuation(provider, prompt, completeOptions);
-        parsedDraft = patchMode
-          ? applyCompositionRepair(raw, scratch!)
-          : args.lockedStoryboard
-            ? {
-                storyboard: args.lockedStoryboard,
-                html: extractIndexHtmlSource(raw),
-              }
-            : parseCompositionResponse(raw);
+      let raw = "";
+      let parsedDraft: DirectCompositionDraft | undefined;
+      let activeSlots: ParsedSceneSlots | undefined;
+      let sceneValidationRepairUsed = false;
+      // True while THIS attempt's draft is a host assembly of `activeSlots` —
+      // the precondition for every scene-scoped repair seam below.
+      let draftFromSlots = false;
+      if (
+        patchMode &&
+        !slotRetryUsed &&
+        persistedSlots &&
+        args.lockedStoryboard &&
+        validationFeedback?.length
+      ) {
+        // Scene-slot retry rung: while the retry baseline is still the slot
+        // assembly, repair ONLY the scenes the findings name (one bounded
+        // call) instead of gambling a whole-document patch. Findings that
+        // attribute to no scene fall through to the ladder unchanged.
+        try {
+          const sceneRepair = await repairSlotDraftForFindings(
+            provider,
+            args,
+            persistedSlots,
+            validationFeedback,
+            completeOptions,
+          );
+          if (sceneRepair) {
+            slotRetryUsed = true;
+            raw = sceneRepair.raw;
+            parsedDraft = sceneRepair.draft;
+            activeSlots = sceneRepair.slots;
+            draftFromSlots = true;
+            summary.strategyChanges.push(`slot-retry:${sceneRepair.sceneIds.join(",")}`);
+            process.stderr.write(
+              `[author] attempt ${attempt}/3 scene-slot retry re-authored only: ` +
+                `${sceneRepair.sceneIds.join(", ")}\n`,
+            );
+          }
+        } catch (slotRetryError) {
+          process.stderr.write(
+            `[author] scene-slot retry failed; falling back to the whole-document ladder: ${
+              slotRetryError instanceof Error ? slotRetryError.message : String(slotRetryError)
+            }\n`,
+          );
+        }
+      }
+      if (!parsedDraft) {
+        if (useSlots) {
+          const slotResult = await authorSlotDraft(provider, args, prompt, completeOptions);
+          raw = slotResult.raw;
+          parsedDraft = slotResult.draft;
+          activeSlots = slotResult.slots;
+          draftFromSlots = true;
+        } else {
+          raw = patchMode
+            ? await completeWithRetry(provider, prompt, completeOptions, "author patch")
+            : await completeSourceWithContinuation(provider, prompt, completeOptions);
+          parsedDraft = patchMode
+            ? applyCompositionRepair(raw, scratch!)
+            : args.lockedStoryboard
+              ? {
+                  storyboard: args.lockedStoryboard,
+                  html: extractIndexHtmlSource(raw),
+                }
+              : parseCompositionResponse(raw);
+        }
       }
       attemptRaw = raw;
       process.stderr.write(`[author] attempt ${attempt}/3 response ${raw.length} chars\n`);
@@ -7192,9 +8515,54 @@ async function authorCompositionLoop(
           validation = await validateDirectComposition(args.projectDir, draft);
         }
       }
+      if (!validation.ok && draftFromSlots && activeSlots && args.lockedStoryboard) {
+        try {
+          const sceneRepair = await repairSlotDraftForFindings(
+            provider,
+            args,
+            activeSlots,
+            validation.errors,
+            completeOptions,
+          );
+          sceneValidationRepairUsed = Boolean(sceneRepair);
+          if (sceneRepair) {
+            const candidate = applyDeterministicSourceRepairs(
+              sceneRepair.draft,
+              args.projectDir,
+              args.lockedStoryboard,
+            );
+            const candidateValidation = await validateDirectComposition(args.projectDir, candidate);
+            const beforeCount = new Set(validation.errors.map(findingSignature)).size;
+            const afterCount = new Set(candidateValidation.errors.map(findingSignature)).size;
+            if (candidateValidation.ok || afterCount < beforeCount) {
+              process.stderr.write(
+                `[author] scene-scoped static repair improved ${sceneRepair.sceneIds.join(", ")}: ` +
+                  `${beforeCount} -> ${afterCount} finding class(es)\n`,
+              );
+              summary.strategyChanges.push(
+                `scene-static-repair:${sceneRepair.sceneIds.join(",")}`,
+              );
+              draft = candidate;
+              validation = candidateValidation;
+              activeSlots = sceneRepair.slots;
+              raw = `${raw}\n<!-- scene validation repair -->\n${sceneRepair.raw}`;
+              attemptRaw = raw;
+            } else {
+              process.stderr.write(
+                `[author] scene-scoped static repair did not reduce findings; keeping the previous draft\n`,
+              );
+            }
+          }
+        } catch (sceneRepairError) {
+          process.stderr.write(
+            `[author] scene-scoped static repair failed; keeping the previous draft: ` +
+              `${sceneRepairError instanceof Error ? sceneRepairError.message : String(sceneRepairError)}\n`,
+          );
+        }
+      }
       // Degradation rung: a volunteered bridged cut whose endpoint binding
       // survived a model repair (same signature across consecutive static
-      // rejections) is provably stuck — retire the boundary to zoom-through
+      // rejections) is provably stuck — retire the boundary to a swipe
       // deterministically instead of burning the remaining budget on it. Only
       // a fully valid degraded draft is accepted (atomic, like every other
       // recovery); attempt 1 never degrades so the author always gets one
@@ -7213,7 +8581,7 @@ async function authorCompositionLoop(
           if (revalidated.ok) {
             process.stderr.write(
               `[author] degraded ${degradation.degraded.length} volunteered bridged cut(s) with ` +
-                `persistently unbindable focal parts to zoom-through: ` +
+                `persistently unbindable focal parts to swipe: ` +
                 `${degradation.degraded.join(", ")}\n`,
             );
             summary.strategyChanges.push(
@@ -7283,7 +8651,11 @@ async function authorCompositionLoop(
           args.lockedStoryboard &&
           lockedSceneGraphError(draft.html, args.lockedStoryboard),
         );
-        if (!patchMode && !graphBroken) scratch = draft;
+        if (!patchMode && !graphBroken) {
+          scratch = draft;
+          // Bank (or invalidate) the slot map alongside the baseline it built.
+          persistedSlots = draftFromSlots ? activeSlots : undefined;
+        }
         compact = true;
         // Non-convergence switch: a structural signature that survived the
         // very patch asked to fix it will not yield to a second identical
@@ -7306,16 +8678,23 @@ async function authorCompositionLoop(
           );
           summary.strategyChanges.push("full-reauthor-after-stalled-patch");
           scratch = undefined;
+          persistedSlots = undefined;
         }
         previousStaticSignatures = signatures;
         lastError = new Error(validationFeedback.join("; "));
+        if (attempt === 2 && lastBrowserValid) {
+          const earlyReason = earlyLeastBadPublishReason(lastBrowserValid);
+          if (earlyReason) {
+            return publishBrowserValidCandidate(lastBrowserValid, attempt, earlyReason);
+          }
+        }
         continue;
       }
       // Static validation passed, so every tracked structural binding is now
       // proven bindable; a later rejection would be a fresh patch regression,
       // not a persistent defect. Reset the persistence window accordingly.
       previousStaticSignatures = new Set();
-      const browserQa = await inspectDirectComposition(args.projectDir, draft, {
+      let browserQa = await inspectDirectComposition(args.projectDir, draft, {
         captureGuide: false,
       });
       if (browserQa.infraError) {
@@ -7325,6 +8704,182 @@ async function authorCompositionLoop(
         );
         recordSentinelDegradation("browser-qa-infra-bypass");
         return { draft, raw, attempts: attempt, browserQa };
+      }
+      if (
+        !browserQa.strictOk &&
+        draftFromSlots &&
+        activeSlots &&
+        args.lockedStoryboard &&
+        !sceneValidationRepairUsed
+      ) {
+        const browserFindings = sourceRetryFeedbackForBrowserQa(browserQa, [
+          ...validation.frameWarnings,
+          ...validation.motionWarnings,
+        ]);
+        try {
+          const sceneRepair = await repairSlotDraftForFindings(
+            provider,
+            args,
+            activeSlots,
+            browserFindings,
+            completeOptions,
+          );
+          sceneValidationRepairUsed = Boolean(sceneRepair);
+          if (sceneRepair) {
+            const candidate = applyDeterministicSourceRepairs(
+              sceneRepair.draft,
+              args.projectDir,
+              args.lockedStoryboard,
+            );
+            const candidateValidation = await validateDirectComposition(args.projectDir, candidate);
+            if (candidateValidation.ok) {
+              const candidateQa = await inspectDirectComposition(args.projectDir, candidate, {
+                captureGuide: false,
+              });
+              const beforePenalty = browserQualityPenalty(browserQa, [
+                ...validation.frameWarnings,
+                ...validation.motionWarnings,
+              ]);
+              const afterPenalty = browserQualityPenalty(candidateQa, [
+                ...candidateValidation.frameWarnings,
+                ...candidateValidation.motionWarnings,
+              ]);
+              if (
+                !candidateQa.infraError &&
+                ((candidateQa.ok && !browserQa.ok) || afterPenalty < beforePenalty)
+              ) {
+                process.stderr.write(
+                  `[author] scene-scoped browser repair improved ${sceneRepair.sceneIds.join(", ")}: ` +
+                    `penalty ${beforePenalty} -> ${afterPenalty}\n`,
+                );
+                summary.strategyChanges.push(
+                  `scene-browser-repair:${sceneRepair.sceneIds.join(",")}`,
+                );
+                draft = candidate;
+                validation = candidateValidation;
+                browserQa = candidateQa;
+                activeSlots = sceneRepair.slots;
+                raw = `${raw}\n<!-- scene validation repair -->\n${sceneRepair.raw}`;
+                attemptRaw = raw;
+              } else {
+                process.stderr.write(
+                  `[author] scene-scoped browser repair did not improve quality; keeping the previous draft\n`,
+                );
+              }
+            } else {
+              process.stderr.write(
+                `[author] scene-scoped browser repair failed static validation; keeping the previous draft\n`,
+              );
+            }
+          }
+        } catch (sceneRepairError) {
+          process.stderr.write(
+            `[author] scene-scoped browser repair failed; keeping the previous draft: ` +
+              `${sceneRepairError instanceof Error ? sceneRepairError.message : String(sceneRepairError)}\n`,
+          );
+        }
+      }
+      let staticRepairWarnings = [
+        ...validation.frameWarnings,
+        ...validation.motionWarnings,
+      ];
+      if (browserQa.ok && browserQa.issues?.some((issue) => issue.code === "contrast_aa")) {
+        const contrastRepair = repairContrastAaIssues(draft, browserQa);
+        if (contrastRepair.repaired.length) {
+          const candidateValidation = await validateDirectComposition(
+            args.projectDir,
+            contrastRepair.draft,
+          );
+          if (candidateValidation.ok) {
+            const candidateQa = await inspectDirectComposition(args.projectDir, contrastRepair.draft, {
+              captureGuide: false,
+            });
+            const beforePenalty = browserQualityPenalty(browserQa, staticRepairWarnings);
+            const afterStaticWarnings = [
+              ...candidateValidation.frameWarnings,
+              ...candidateValidation.motionWarnings,
+            ];
+            const afterPenalty = browserQualityPenalty(candidateQa, afterStaticWarnings);
+            if (!candidateQa.infraError && candidateQa.ok && afterPenalty < beforePenalty) {
+              process.stderr.write(
+                `[author] deterministically repaired contrast for ` +
+                  `${contrastRepair.repaired.join(", ")}: penalty ${beforePenalty} -> ${afterPenalty}\n`,
+              );
+              recordSentinelNormalization("contrast-aa", contrastRepair.repaired.length);
+              summary.strategyChanges.push(`contrast-aa:${contrastRepair.repaired.join(",")}`);
+              draft = contrastRepair.draft;
+              validation = candidateValidation;
+              browserQa = candidateQa;
+              staticRepairWarnings = afterStaticWarnings;
+            }
+          }
+        }
+      }
+      // Camera-sparse auto-framing (L2-at-L4): a landing the browser measured as
+      // a tiny subject adrift is repaired by a bounded zoom-in on that exact
+      // camera move — a storyboard mutation re-injected through the same seam
+      // cut-discovery uses. Adopt only when the sparse finding clears, no new
+      // camera_framed_clipped appears, and the quality penalty strictly drops.
+      if (
+        browserQa.ok &&
+        args.lockedStoryboard &&
+        browserQa.issues?.some((issue) => issue.code === "camera_framed_sparse")
+      ) {
+        const sparseFix = correctSparseFraming(draft.storyboard, browserQa);
+        if (sparseFix.corrected.length) {
+          const candidate = applyDeterministicSourceRepairs(
+            { storyboard: sparseFix.storyboard, html: draft.html },
+            args.projectDir,
+            sparseFix.storyboard,
+          );
+          const candidateValidation = await validateDirectComposition(args.projectDir, candidate);
+          if (candidateValidation.ok) {
+            const candidateQa = await inspectDirectComposition(args.projectDir, candidate, {
+              captureGuide: false,
+            });
+            const afterStaticWarnings = [
+              ...candidateValidation.frameWarnings,
+              ...candidateValidation.motionWarnings,
+            ];
+            const beforePenalty = browserQualityPenalty(browserQa, staticRepairWarnings);
+            const afterPenalty = browserQualityPenalty(candidateQa, afterStaticWarnings);
+            const correctedScenes = new Set(sparseFix.corrected);
+            const sparseCleared = !(candidateQa.issues ?? []).some((issue) =>
+              issue.code === "camera_framed_sparse" &&
+              issue.framing !== undefined &&
+              correctedScenes.has(issue.framing.sceneId)
+            );
+            const clippedBefore = (browserQa.issues ?? [])
+              .filter((issue) => issue.code === "camera_framed_clipped").length;
+            const clippedAfter = (candidateQa.issues ?? [])
+              .filter((issue) => issue.code === "camera_framed_clipped").length;
+            if (
+              !candidateQa.infraError &&
+              candidateQa.ok &&
+              sparseCleared &&
+              clippedAfter <= clippedBefore &&
+              afterPenalty < beforePenalty
+            ) {
+              process.stderr.write(
+                `[author] camera-sparse auto-framing zoomed ${sparseFix.corrected.join(", ")}: ` +
+                  `penalty ${beforePenalty} -> ${afterPenalty}\n`,
+              );
+              recordSentinelNormalization("camera-sparse-zoom", sparseFix.corrected.length);
+              summary.strategyChanges.push(`camera-sparse-zoom:${sparseFix.corrected.join(",")}`);
+              draft = candidate;
+              validation = candidateValidation;
+              browserQa = candidateQa;
+              staticRepairWarnings = afterStaticWarnings;
+              persistUpgradedStoryboard(args.projectDir, candidate.storyboard);
+            } else {
+              process.stderr.write(
+                `[author] camera-sparse auto-framing did not clear cleanly ` +
+                  `(sparseCleared=${sparseCleared}, clipped ${clippedBefore}->${clippedAfter}, ` +
+                  `penalty ${beforePenalty}->${afterPenalty}); keeping the previous draft\n`,
+              );
+            }
+          }
+        }
       }
       if (
         !browserQa.ok &&
@@ -7337,10 +8892,6 @@ async function authorCompositionLoop(
         interactionFallbacks.push({ draft, raw, browserQa });
       }
       if (browserQa.ok) {
-        const staticRepairWarnings = [
-          ...validation.frameWarnings,
-          ...validation.motionWarnings,
-        ];
         const qualityPenalty = browserQualityPenalty(browserQa, staticRepairWarnings);
         if (!lastBrowserValid || qualityPenalty < lastBrowserValid.qualityPenalty) {
           lastBrowserValid = {
@@ -7362,7 +8913,21 @@ async function authorCompositionLoop(
         validation.frameWarnings.length === 0 &&
         validation.motionWarnings.length === 0
       ) {
+        // moment_static_frame no longer blocks strictOk (temporal-judge polish
+        // is advisory), but a film shipping moments its own rendered frames
+        // can't prove is not a CLEAN publish — keep the honesty ledger exact.
+        const staticMomentCount = (browserQa.temporalJudge ?? [])
+          .filter((entry) => entry.verdict === "static").length;
+        if (staticMomentCount > 0) {
+          recordSentinelDegradation(`moment_static_frame:${staticMomentCount}`);
+        }
         return { draft, raw, attempts: attempt, browserQa };
+      }
+      if (attempt === 2 && lastBrowserValid) {
+        const earlyReason = earlyLeastBadPublishReason(lastBrowserValid);
+        if (earlyReason) {
+          return publishBrowserValidCandidate(lastBrowserValid, attempt, earlyReason);
+        }
       }
       if (attempt === 3 && browserQa.ok && lastBrowserValid) {
         // The least-bad pick: browser-valid but with open polish findings /
@@ -7375,11 +8940,9 @@ async function authorCompositionLoop(
         const { qualityPenalty: _qualityPenalty, ...best } = lastBrowserValid;
         return { ...best, attempts: attempt };
       }
-      validationFeedback = dedupeFeedbackBySignature([
+      validationFeedback = sourceRetryFeedbackForBrowserQa(browserQa, [
         ...validation.frameWarnings,
         ...validation.motionWarnings,
-        ...browserQa.errors,
-        ...browserQa.warnings,
       ]).slice(0, 20);
       process.stderr.write(
         `[author] attempt ${attempt}/3 browser QA requested repair: ` +
@@ -7417,9 +8980,12 @@ async function authorCompositionLoop(
             : "full-reauthor-after-runtime-bind-exception",
         );
         scratch = undefined;
+        persistedSlots = undefined;
         compact = false;
       } else {
         scratch = draft;
+        // Bank (or invalidate) the slot map alongside the baseline it built.
+        persistedSlots = draftFromSlots ? activeSlots : undefined;
         compact = true;
       }
       lastError = new Error(validationFeedback.join("; "));
@@ -7466,10 +9032,19 @@ async function authorCompositionLoop(
       if (truncated) {
         // A truncated full composition cannot be repaired because it never
         // parsed. A truncated patch can retry safely against the same scratch.
-        if (!patchMode) scratch = undefined;
+        if (!patchMode) {
+          scratch = undefined;
+          persistedSlots = undefined;
+        }
         compact = true;
       }
       lastError = error;
+      if (attempt === 2 && lastBrowserValid) {
+        const earlyReason = earlyLeastBadPublishReason(lastBrowserValid);
+        if (earlyReason) {
+          return publishBrowserValidCandidate(lastBrowserValid, attempt, earlyReason);
+        }
+      }
     }
   }
   if (lastBrowserValid) {
@@ -7961,13 +9536,13 @@ async function applyShapeMatchUpgrade(
           // outgoingCut prose — rewrite it so paperwork matches the executed
           // boundary instead of describing the pre-upgrade cut.
           outgoingCut:
-            `Shape-match: "${upgrade.focalPartOut}" carries into ` +
+            `Morph: "${upgrade.focalPartOut}" becomes ` +
             `"${upgrade.focalPartIn}" (measured silhouette rhyme, discovered at QA).`,
         }
       : scene
   );
   process.stderr.write(
-    `[cut-discovery] upgrading ${upgrade.fromScene}->${upgrade.toScene} to shape-match ` +
+    `[cut-discovery] upgrading ${upgrade.fromScene}->${upgrade.toScene} to morph ` +
       `(${upgrade.focalPartOut} → ${upgrade.focalPartIn}, score ${upgrade.score.toFixed(2)})\n`,
   );
   try {
@@ -7997,7 +9572,7 @@ async function applyShapeMatchUpgrade(
       throw new Error("the runtime bind-time audit degraded the upgraded boundary");
     }
     persistUpgradedStoryboard(args.projectDir, storyboard);
-    process.stderr.write("[cut-discovery] upgrade validated; shipping the shape-match boundary\n");
+    process.stderr.write("[cut-discovery] upgrade validated; shipping the morph boundary\n");
     return { result: { ...result, draft, browserQa }, storyboard };
   } catch (error) {
     process.stderr.write(
@@ -8009,47 +9584,64 @@ async function applyShapeMatchUpgrade(
   }
 }
 
-/** The raw runtime-degradation warning emitted by browser QA. */
+/** The raw runtime-degradation warning emitted by browser QA. The degrade
+ * target is measured at bind time: `swipe-<axis>` for a retargeted morph
+ * (MD1), `zoom-through` for legacy runtimes replaying cached islands. */
 const RAW_DEGRADED_CUT_WARNING =
-  /^cut_degraded: \S+ ([\w-]+)->([\w-]+) compiled as zoom-through: (.*)$/;
+  /^cut_degraded: \S+ ([\w-]+)->([\w-]+) compiled as ([\w-]+): (.*)$/;
 
 /**
  * Pure half of the paperwork reconciler: rewrite every runtime-degraded
- * declared bridged cut in the SHIPPED storyboard as the zoom-through that
- * actually executed, with honest advertising prose. Exported for tests.
+ * declared bridged cut in the SHIPPED storyboard as the cut that actually
+ * executed (an axis-derived swipe, or zoom-through on legacy runtimes), with
+ * honest advertising prose. Exported for tests.
  */
 export function rewriteDegradedCutStoryboard(
   shipped: DirectScene[],
   qaWarnings: string[],
 ): { storyboard: DirectScene[]; rewritten: string[] } {
-  const degradedReasons = new Map<string, string>();
+  const degraded = new Map<string, { target: string; reason: string }>();
   for (const warning of qaWarnings) {
     const match = warning.match(RAW_DEGRADED_CUT_WARNING);
-    if (match) degradedReasons.set(`${match[1]}->${match[2]}`, match[3] ?? "");
+    if (match) {
+      degraded.set(`${match[1]}->${match[2]}`, {
+        target: match[3] ?? "zoom-through",
+        reason: match[4] ?? "",
+      });
+    }
   }
   const rewritten: string[] = [];
-  if (!degradedReasons.size) return { storyboard: shipped, rewritten };
+  if (!degraded.size) return { storyboard: shipped, rewritten };
   const storyboard = shipped.map((scene, index) => {
     const next = shipped[index + 1];
     const cut = scene.cut;
     if (!next || !cut) return scene;
-    if (cut.style !== "shape-match" && cut.style !== "object-match") return scene;
-    const reason = degradedReasons.get(`${scene.id}->${next.id}`);
-    if (reason === undefined) return scene;
+    if (
+      cut.style !== "morph" && cut.style !== "match" &&
+      cut.style !== "shape-match" && cut.style !== "object-match"
+    ) return scene;
+    const outcome = degraded.get(`${scene.id}->${next.id}`);
+    if (outcome === undefined) return scene;
     rewritten.push(`${scene.id}->${next.id} (${cut.style})`);
+    const swipeAxis = outcome.target.match(/^swipe-(left|right|up|down)$/)?.[1] as
+      | CutAxis
+      | undefined;
+    const executed = swipeAxis
+      ? { style: "swipe" as const, axis: swipeAxis }
+      : { style: "zoom-through" as const };
     return {
       ...scene,
       cut: {
         version: 1 as const,
-        style: "zoom-through" as const,
+        ...executed,
         // Keep any authored boundary timing so the executed window stays put.
         ...(cut.travelPx !== undefined ? { travelPx: cut.travelPx } : {}),
         ...(cut.exitSec !== undefined ? { exitSec: cut.exitSec } : {}),
         ...(cut.entrySec !== undefined ? { entrySec: cut.entrySec } : {}),
       },
       outgoingCut:
-        `Zoom-through into "${next.title}" (a declared ${cut.style} was degraded at ` +
-        `bind time: ${reason}).`,
+        `${swipeAxis ? `Swipe ${swipeAxis}` : "Zoom-through"} into "${next.title}" ` +
+        `(a declared ${cut.style} was degraded at bind time: ${outcome.reason}).`,
     };
   });
   return { storyboard, rewritten };
@@ -8094,8 +9686,8 @@ async function reconcileDegradedCutPaperwork(
     }
     persistUpgradedStoryboard(args.projectDir, storyboard);
     process.stderr.write(
-      `[cut-honesty] rewrote ${rewritten.length} runtime-degraded boundary/ies as executed ` +
-        `zoom-through in the shipped storyboard: ${rewritten.join(", ")}\n`,
+      `[cut-honesty] rewrote ${rewritten.length} runtime-degraded boundary/ies as the cut ` +
+        `that actually executed in the shipped storyboard: ${rewritten.join(", ")}\n`,
     );
     recordSentinelDegradation(`cut-degraded-shipped:${rewritten.join(",")}`);
     return { ...result, draft, browserQa };
@@ -8132,6 +9724,7 @@ export async function requestDirectComposition(
   if (sentinelSkeletonEnabled() || sentinelSlotsEnabled()) {
     recordSentinelScaffold(
       countScaffoldBindingsPresent(final.draft.storyboard, final.draft.html),
+      countScaffoldedBindings(final.draft.storyboard),
     );
   }
   // Publish-time honesty scan: host-invented neutral placeholder children

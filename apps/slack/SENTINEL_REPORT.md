@@ -41,7 +41,7 @@ baseline numbers deferred to the probe step (see Open items).
   paid re-authors as `model-retry` (L5).
 - **`src/orchestrator.ts`** — `createVideo` enters a Sentinel run at the top of
   both the model-authoring branch and the preset/demo branch, records tier-1
-  (authoring→submit) and tier-2 (incl. MP4) wall-clock, attaches the stage
+  (thumbnails exist) and tier-2 (MP4 exists) wall-clock, attaches the stage
   receipts, and finalizes the disposition — including `fail-loud` on both throw
   paths. Reuses the existing `stages`/`performance.now()` timings; **ETA
   behavior (`stageTimings.ts`) is untouched.**
@@ -52,14 +52,10 @@ baseline numbers deferred to the probe step (see Open items).
 
 ### Deviations from the plan
 
-- **Tier wall-clock basis.** The plan lists "wall-clock to tier-1 (thumbnails
-  posted)" and "tier-2 (MP4)". `createVideo` returns after tier-1 in the live
-  two-tier flow, and `render_preview`/`render` live inside `buildPreviews`, so
-  `tier1Ms` is measured as **authoring→submit** (the model-bound portion that
-  dominates tier-1 wall-clock; the thumbnail `render_preview` is fast and
-  infra-bound, already timed in `stage-timings.json`). `tier2Ms` is the full
-  elapsed including MP4 when a run renders in one call (as `sequence:check`
-  does). This is labeled in the report and is honest about what it measures.
+- **Tier wall-clock basis.** Tier 1 is stamped inside `buildPreviews` only after
+  thumbnails exist; tier 2 only after the MP4 exists. Both use elapsed time from
+  the Sentinel run start. Historical artifacts created before this correction
+  may retain the earlier authoring→submit tier-1 interpretation.
 - The plan suggested `scripts/sentinel-report.mjs`; implemented as a `tsx`
   script (`sentinelReport.ts`) to match the repo's script convention and reuse
   `SLACK_SEQUENCES_DATA_DIR` resolution.
@@ -1666,3 +1662,118 @@ What the probes proved live:
   published.
 - L1 scaffold now reads a REAL number per run (11 / 17 bindings preserved in
   the shipped document).
+
+---
+
+## 2026-07-06 post-audit implementation — correctness, cost, and scene retries
+
+This section supersedes the open-item statements immediately above. It records
+code/test evidence only; **no new paid probe was used for these changes**.
+
+1. **GSAP call-shape repair is semantic-safe.** The stored
+   `sentinel-s5-interactions` failure (`opacity:1, scale:1`) is replayed as
+   `.to(...)`, not the previously implemented `.from(...)`. The rewrite requires
+   the same selector's earlier opposite-state initialization; entrance-looking
+   (which could instead be an exit), mixed, cue-less, and lone-final calls stay
+   blocking.
+2. **Scene validation retry landed.** One bounded retry can re-author only the
+   scenes named by static or browser findings. It carries prior HTML + script,
+   requires both replacement blocks, keeps untouched scenes byte-stable, accepts
+   a static repair only when finding classes fall, accepts a browser repair only
+   when its quality penalty falls, and never spends the scene call when any
+   finding is film-level.
+3. **Slot scaffold repair tightened.** Repeated components of the same kind are
+   no longer guessed as L2 near-misses; the repair response is rechecked and
+   unresolved scenes continue into the unchanged L3 gate.
+4. **Telemetry now distinguishes actual work.**
+   `physicalRequestTotal = successfulLogicalTotal + failedTotal + hedgedTotal`;
+   `slotCalls` reports truncation/scaffold/validation subcalls; L1 reports
+   present/planned coverage plus scene/L2 restoration events. Degradation
+   reasons are deduplicated and storyboard ramp/beat/shape/polish demotions join
+   the ledger.
+5. **Hedging is bounded.** OpenRouter hedging remains enabled, but a run may
+   launch at most two duplicates by default
+   (`SLACK_SEQUENCES_HEDGE_MAX_PER_RUN`; configurable, `0` disables duplicates
+   while retaining the main hedge feature flag).
+6. **The 45k slot-prompt target is now met by test.** The deterministic fixture
+   measures **44,773 chars**. Slot mode condenses host-owned director chapters
+   and caps its skills projection at 5,000 chars; non-slot paths retain the full
+   prompt.
+7. **Registry semantics match runtime.** Main layout and HyperFrames spatial
+   findings are `advisory-late`: they exert repair pressure before the final rung
+   and force `published-degraded` when shipped.
+
+Deterministic verification at implementation time:
+
+- `npm run typecheck` — clean.
+- Full Vitest invocation after promotion — **564 passed, 0 todo**; the prompt
+  fixture passed at 44,773 chars.
+- Stored report replay shows historical Session-5 runs launched 17, 17, and 18
+  physical requests respectively (successful + failed + hedge duplicates),
+  exposing why the two-hedge budget matters.
+
+Remaining external acceptance: Docker → Railway → sandbox/Slack, with
+`SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=1` before judges. A paid probe is
+still required to measure quality after prompt compaction and to live-trigger the
+new scene-validation and direction-aware GSAP paths.
+
+---
+
+## 2026-07-06 independent audit (Opus 4.8) — two paid probes + one follow-up fix
+
+A separate auditor (Claude Opus 4.8) re-verified the whole uncommitted tree and
+ran the paid probes the section above says were still required. All static claims
+reproduced exactly (typecheck clean; 564 passed / 0 todo; focused Sentinel suite
+111 passed; assembled slot prompt 44,773 chars; `git diff --check` clean; report
+replays 17 / 18 physical requests). Two **fresh, fail-loud** probes (flags ON):
+
+| Probe | Brief shape | Disposition | SB att | Src att | Calls (fail/hedge) | Physical | Tier1 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sentinel-audit-denseui` | Cursorflow palette+modal+stat-card+terminal+button | **published-degraded** (10 thumbs, 17 moments, 0 unbound) | 3 | 3 | 10 (1/2) | 13 | 24.5 min |
+| `sentinel-audit-interactions` | chat+toast+kanban+ring+2 cursors+timeRamp | **fail-loud** (honest; `FAILURE.md` written) | 1 | 4 | 6 (1/2) | 9 | — |
+
+What the probes proved live on the current tree:
+
+- **Reliability holds on the hardest UI brief.** The dense-console brief that
+  historically kills source-author published a real `hyperframes-direct` film,
+  zero fallback, under fail-loud — with honest degradations (2 pacing advisories,
+  1 shape-cut→zoom-through, 1 interaction quarantine), deduped, auto-downgrading
+  the disposition to `published-degraded`; scaffold coverage read 9/9.
+- **The two-hedge budget works live** — capped at exactly 2 both runs (vs 6–8 in
+  session 5), cutting physical requests to 13 / 9. Its cost/latency tradeoff is
+  now visible too: the global counter spent both hedges on the concept/storyboard
+  stages, leaving the slow author stage un-raced (denseui tier-1 rose to 24.5 min).
+- **Fail-loud is honest.** The interactions brief exhausted the ladder (full →
+  patch → full → rescue) on a *cascade of different* minor polish findings
+  (2px cursor miss, contrast 4.25:1-vs-4.5:1, `content_overlap`,
+  `camera_framed_sparse`), ending on the rescue model's `kit_markup_incomplete`.
+  A complete `FAILURE.md` was written at
+  `.data/projects/sentinel-audit-interactions/FAILURE.md`. This is the same
+  stochastic frontier session 5 saw (s5-interactions failed, then `-b` published);
+  it is **not** caused by the uncommitted changes (unrelated to gsap/hedge).
+
+Key finding — and the follow-up fix:
+
+- **The scene-scoped validation repair was inert on both runs** (`slotCalls: 0`,
+  including the fail-loud it exists to rescue). Root cause: it declined whenever
+  ANY finding attributed to `__film__`, and dense briefs always mix one
+  film-level finding (`interaction_target_miss [cursor-*]`,
+  `moment_static_frame moment:*`, `eye_trace_pingpong [data-part=*]`) into
+  otherwise scene-local rejections — so the all-or-nothing guard tripped every
+  attempt.
+- **Fix applied (this commit):** `repairSlotDraftForFindings` now repairs the
+  **scene-attributable subset** — it fires whenever at least one finding maps to
+  a named scene, re-authors those scenes, and lets any film-level remainder ride
+  the whole-document ladder (which banks the improved draft as the next attempt's
+  scratch). The atomic acceptance (finding-class count for static, whole-film
+  quality penalty for browser) already rejects any subset repair that leaves or
+  worsens a film-level finding, so partial repair is never a regression. New
+  regression test in `test/sceneSlots.test.ts` proves the mixed case fires on the
+  subset and the all-film-level case still declines; full suite green after.
+
+Remaining acceptance for THIS change: a paid probe to live-trigger the relaxed
+scene-repair on a dense brief was **deliberately deferred** (the owner is
+completing MOTION_DESIGN_PLAN with another agent before the next live run). The
+efficiency targets (attempts ≤1.5, ≤5 physical requests, ≤8 min tier-1, ≤45k live
+prompt) remain **unmet** on hard briefs and are the real open work — unchanged by
+this pass.

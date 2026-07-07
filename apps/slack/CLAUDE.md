@@ -138,10 +138,26 @@ gets a per-job `frame.md` design system — curated SaaS mood DNA plus one bound
 art-direction decision over harmony, type, and spatial character. **Deterministic
 design tools** extract brand truth, derive and validate semantic tokens, repair
 unsafe contrast/unavailable fonts, and expose which values are committed versus
-tunable without limiting motion; the chosen frame.md is
-shown in the result and attached to the thread
+tunable without limiting motion. The art director also picks one **curated type
+system** — a display/body/mono trio from `engine/typeSystems.ts` (the integrated,
+**embedded-only** successor to the old `vendor/font-pairing/` sandbox: every
+family is one the renderer actually draws, deterministic keyword scorer + display
+diversity guard), so type variety is real, not five hardcoded trios. Every frame
+also renders a brand-informed **Forbidden defaults** block (one accent, no H.264-
+banding gradient washes, no chrome shadows, tinted never-pure-black/white canvas,
+tabular numerals — distilled from how Apple/Linear/Claude/Stripe restrain
+themselves). **Frame-as-artifact, capsule-to-author (Sentinel):** the full
+frame.md stays the on-disk artifact + the sole `frameValidation.ts` source (shown
+in the result, attached to the thread), but the concept/storyboard/author model
+calls receive `frameCapsule()` — a ~45% smaller projection of just the design
+decisions (thesis, tokens, type, the spatial scaffold the author must define,
+restraints, forbidden defaults, exceptions), dropping the cinematography-kit
+description (host-injected + already in `planning-director.md` — its presence made
+authors redundantly re-declare `.material`), the verbose prose, and the tool
+report. Fewer tokens, fewer distractions, gates unchanged
 ([src/engine/frameDesign.ts](src/engine/frameDesign.ts) +
 [framePresets.ts](src/engine/framePresets.ts) /
+[typeSystems.ts](src/engine/typeSystems.ts) /
 [brandTokens.ts](src/engine/brandTokens.ts) / [frameTools.ts](src/engine/frameTools.ts) /
 [brandCapture.ts](src/engine/brandCapture.ts)). Direct shots may also carry
 typed spatial/focal intent and semantic cursor interactions. A versioned local
@@ -409,9 +425,12 @@ persistent volunteered cut degrades, required cut never does).
 Browser QA also runs the **rendered temporal judge**
 (`SLACK_SEQUENCES_TEMPORAL_JUDGE=0` to disable): before/mid/after frame
 triples around every evidence-bound moment, pixel-diffed in-page; an
-invisible claimed change becomes a `moment_static_frame` polish finding
-(strictOk-blocking repair guidance, never unpublishes a runnable draft),
-with per-moment evidence persisted as `temporalJudge` in the QA result.
+invisible claimed change becomes a `moment_static_frame` **advisory** polish
+finding (it does NOT block `strictOk` and never unpublishes a runnable draft) —
+but a draft that is otherwise clean and still ships static-verdict moments
+records a `moment_static_frame:<n>` degradation, so that publish is
+`published-degraded`, never clean. Per-moment evidence is persisted as
+`temporalJudge` in the QA result.
 Wall-clock is defended without touching quality (2026-07-04 performance
 pass): every streaming model call carries a 90s no-token idle watchdog; slow
 OpenRouter calls hedge with one delayed duplicate request whose first

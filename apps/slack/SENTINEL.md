@@ -30,11 +30,25 @@ plan island/runtime/compile seam. The model still authors scene INTERIORS, so an
 interior-level binding (camera station, component root) remains *representable* as
 missing — its ladder is: host template → **scene-scoped slot repair**
 (`slotScaffoldViolations`: a scene that dropped a station/root with no trace is
-re-requested ALONE, with findings + its own previous interior as the minimal-edit
+re-requested ALONE, with findings + its own previous interior/script as the minimal-edit
 baseline) → free L2 reconciliation for near-misses → the L3 gate. Retry
-scope today: slot **truncation and scaffold repair are scene-scoped**; a
-validation-stage rejection still retries the document (findings are attributed
-per scene in the logs; per-scene validation retries remain future work).
+scope today: slot **truncation, scaffold repair, and one bounded validation
+repair are scene-scoped**. The validation repair fixes the **scene-attributable
+subset** — it fires whenever at least one finding maps to a named scene,
+re-authoring those scenes and banking the improved draft; any film/shared-level
+remainder keeps the whole-document ladder. (It formerly declined whenever ANY
+finding was film-level, which left it inert on dense briefs — the s5-interactions
+class always mixes one film-level finding into otherwise scene-local rejections.)
+
+**Slots persist across paid attempts (2026-07-07).** The slot map that assembled
+the retry baseline (`scratch`) now survives the loop iteration. While the
+baseline is still slot-assembled, a rejected attempt first runs the
+**scene-slot retry rung**: `repairSlotDraftForFindings` re-authors ONLY the
+scenes the findings name (one bounded ≤8k-token call, at most once per run,
+`strategyChanges: slot-retry:<scenes>`) instead of gambling a whole-document
+patch. Findings that attribute to no scene fall through to the ladder unchanged;
+adopting any non-slot draft (a whole-doc patch, a compact/full re-author, a
+structural escalation) invalidates the map. Proof: `test/slotRetry.test.ts`.
 
 ## The layer model
 
@@ -44,7 +58,7 @@ the **lowest-numbered layer that can own it**.
 | Layer | Name | Mechanism | Failure cost |
 | --- | --- | --- | --- |
 | **L0** | Schema | Structured outputs / typed enums | zero — invalid output can't parse |
-| **L1** | Scaffold | Host-emitted chassis; illegal states unrepresentable | zero — host code, unit-tested |
+| **L1** | Scaffold | Host-emitted chassis + shipped binding coverage | zero — host code, unit-tested |
 | **L2** | Normalize | Deterministic repair/normalization (`applyDeterministicSourceRepairs`, storyboard normalizers) | zero paid attempts |
 | **L3** | Static gate | linkedom / regex / `kitMarkupAudit` — named findings before any browser | cheap findings-retry |
 | **L4** | Browser gate | measured truth (layout, temporal judge, eye-trace, framing) | expensive; scene-scoped retry |
@@ -113,9 +127,18 @@ rung) · **advisory** (never blocks).
 | normalize | `normalize.pacing-stretch` | L2 normalize | det-repair | — (prevents `pacing/reading`,`/outcome`) | pacingAudit |
 | normalize | `normalize.camera-move-delay` | L2 normalize | det-repair | — (prevents `pacing/outcome` "0.0s later") | pacingAudit |
 | normalize | `normalize.timeramp-retime` | L2 normalize | det-repair | — (prevents ramp motivation/solvability vetoes) | directComposition |
+| normalize | `normalize.dive-window` | L2 normalize | det-repair | — (derives `dive` in/hold/out legs from the beats on its target; a beat-less dive degrades to push-in) | cameraDive |
+| normalize | `normalize.fx-plan` | L2 normalize | det-repair | — (host-derives the sequences-fx garnish plan; every runtime bind is enhancement-only) | fxContract |
+| normalize | `normalize.auto-pop-style` | L2 normalize | det-repair | — (HOST-fills the MD6 `open`→pop style GLM under-reaches for on COMPACT_POP_KINDS; feeds normalize.open-pop) | motionAutoStyle |
+| normalize | `normalize.open-pop` | L2 normalize | det-repair | — (drops MD6 `open` style:pop to the default open on non-compact kinds / beyond 2/scene) | componentContract |
+| normalize | `normalize.auto-headline-style` | L2 normalize | det-repair | — (HOST-fills the MD3 headline `type`→rise, promotes the one strongest resolve to `assemble` only with a proven lock-hold; feeds normalize.assemble-cap) | motionAutoStyle |
+| normalize | `normalize.assemble-cap` | L2 normalize | det-repair | — (keeps ONE headline `assemble` per film on a primary moment; degrades the rest to `rise`) | textFx.browser |
+| normalize | `normalize.auto-grade-shift` | L2 normalize | det-repair | — (HOST-derives ONE MD4 scene `gradeShift`/film from a primary moment naming a temperature GLM narrates but leaves untyped; feeds normalize.grade-shift) | motionAutoStyle |
+| normalize | `normalize.grade-shift` | L2 normalize | det-repair | — (drops an undisciplined MD4 scene `gradeShift`; a surviving one is `grade-shift` moment evidence) | directComposition |
 | normalize | `normalize.morph-twin-reconcile` | L2 normalize | det-repair | — (prevents morph-to-undeclared-twin vetoes) | directComposition |
-| normalize | `normalize.gsap-call-shape` | L2 normalize | det-repair | — (rewrites `fromTo(t, vars, <number>)` → `from(...)`; prevents a `runtime_bind_exception` compile crash) | authorReliability |
+| normalize | `normalize.gsap-call-shape` | L2 normalize | det-repair | — (rewrites malformed `fromTo(t, vars, <number>)` to `.to` only after an earlier opposite-state initialization; entrance-looking, mixed, and cue-less direction stays blocking) | authorReliability |
 | normalize | `normalize.moment-demote-last-resort` | L2 normalize | det-repair | — (pre-throw salvage: unbound PRIMARY moments demote to supporting; run records `published-degraded`) | directComposition |
+| normalize | `normalize.camera-sparse-zoom` | L2 normalize | det-repair | — (repairs `camera_framed_sparse`: bounded zoom-in `sqrt(0.18/fraction)` on the framing move; adopted only if the finding clears, no new `camera_framed_clipped`, penalty strictly drops) | framingCoverage.browser |
 | camera | `camera.energy` | L3 static | blocking | `camera/energy` | cameraContract |
 | components | `components.complexity` | L3 static | blocking | `components/complexity` | componentContract |
 | coherence | `cuts.coherence` | L3 static | advisory-late | `cuts/coherence` | cutContract |
@@ -131,9 +154,9 @@ rung) · **advisory** (never blocks).
 | moments | `moments.temporal` | L4 browser | advisory | `moment_static_frame` | temporalJudge.browser |
 | eye-trace | `eye-trace` | L4 browser | advisory-late | `eye_trace_jump`, `eye_trace_pingpong` | eyeTrace.browser |
 | exits | `exits.stale-asset` | L4 browser | advisory | `stale_asset_lingers` | layoutInspector |
-| layout | `layout` | L4 browser | blocking | `layout_`, `spatial_focal_`, `important_safe_area`, `content_overlap`, `container_overflow`, `contrast_aa` | layoutInspector |
+| layout | `layout` | L4 browser | advisory-late | `layout_`, `spatial_focal_`, `important_safe_area`, `content_overlap`, `container_overflow`, `contrast_aa` | layoutInspector |
 | runtime | `runtime.invariants` | L4 browser | blocking | `runtime_bind_exception`, `near_blank_film`, `near_blank_scene`, `browser_warning`, `browser_runtime`, `invalid_inline_script_syntax`, `overlapping_clips_same_track` | directComposition |
-| layout | `layout.hyperframes-spatial` | L4 browser | advisory | `clipped_text`, `text_box_overflow`, `canvas_overflow`, `text_occluded`, `motion_*` (the vendored `LayoutIssueCode` union) | layoutInspector |
+| layout | `layout.hyperframes-spatial` | L4 browser | advisory-late | `clipped_text`, `text_box_overflow`, `canvas_overflow`, `text_occluded`, `motion_*` (the vendored `LayoutIssueCode` union) | layoutInspector |
 
 The `normalize.*` rows deliberately carry NO finding prefixes because they
 PREVENT another row's findings rather than emitting their own. The scaffold rows
@@ -219,30 +242,27 @@ ladder count ever changes, that boundary and all attempt accounting move with it
 - **`planning-director.md` ≤ 40,711 bytes** (its post-Phase-1 count 37,010 + 10%).
   ENFORCED + passing. Adding prose now means raising a tested number a reviewer
   sees.
-- **Assembled author prompt ≤ 45,000 chars — the TARGET, marked `.todo`.** It is
-  structurally unreachable this phase: the base director prompt (~37k) plus the
-  `create` RAG budget (28k, `retrieveHyperframesSkillContext`) already exceed 45k
-  before the storyboard JSON, frame.md, component reference, and skeleton (the
-  fixture measures ~81k; live probes 107–114k). A `proves the structural floor`
-  test documents this in code. **The ceiling was NOT silently raised** — an
-  anti-growth regression guard holds the current level while the target stays a
-  todo. **Reduction plan (in priority order):**
-  1. **Phase-5 scaffold-prose deletion** — with `SENTINEL_SKELETON` default ON,
-     the world-building / component-root / island-authoring prose in
-     `planning-director.md` is dead (the host emits those structures). Delete it
-     in the flip diff. Saves ~3–5k.
-  2. **`create` RAG budget diet** — `retrieveHyperframesSkillContext("create")`
-     ships up to 28k of blueprints/rules. Trim the per-recipe budget or the
-     always-included foundation once probes confirm no motion-craft regression
-     (a `skillContext.ts` change, quality-gated, not a Phase-4 move).
-  3. **Storyboard-JSON diet** — the locked storyboard is sent verbatim (~6–15k).
-     Send only the fields the author needs (ids/timings/kinds), not the full
-     resolved beat/camera/moment graph the host already owns.
-  4. **Director-prompt split** — the largest single block (37k). Only creative
-     judgment belongs in the paid prompt; move the reference-grade prose to the
-     RAG foundation so it is retrieved, not always-sent. This is the structural
-     move that actually crosses 45k, and the highest-risk — do it last, behind a
-     probe.
+- **Assembled slot-author prompt ≤ 45,000 chars — ENFORCED + passing.** The
+  deterministic fixture is **44,773 chars**. `slotDirectorPrompt` removes or
+  condenses host-owned architecture, runtime, moment, cut, easing, and spatial
+  reference chapters after the CI-anchored contradiction rewrite; slot mode also
+  projects the create-skills context to 5,000 chars. Creative posture, layout,
+  typography, motion, camera, components, cinematography, color, and anti-pattern
+  guidance remain. Whole-document/revision paths retain the full prompt.
+- **Frame-as-artifact, capsule-to-author.** The full per-job `frame.md` stays the
+  on-disk artifact and the **sole `frameValidation.ts` source** (the `frame` gate
+  is unchanged — same L3 `frame/` findings). But the concept, storyboard, and
+  author model calls receive `frameCapsule(frameMd)` (`engine/frameDesign.ts`), a
+  ~45% smaller projection of just the design decisions: thesis, semantic tokens,
+  type, the spatial scaffold the author must define, restraints, forbidden
+  defaults, exceptions. It drops what the model already gets elsewhere or should
+  never re-author — the cinematography-kit description (host-injected + taught in
+  `planning-director.md`; its presence made authors redundantly re-declare
+  `.material`), the verbose spatial/attribute prose, and the tool report. This is
+  the same principle as `slotDirectorPrompt`: prose the model doesn't need to
+  internalize is projected out of the prompt, WHERE the obligation is enforced is
+  unchanged. No new finding class; `frameCapsule` round-trips under
+  `test/frameDesign.test.ts`.
 
 ### Wall-clock targets (from the mission table; measured by `sentinel:report`)
 
@@ -252,8 +272,8 @@ ladder count ever changes, that boundary and all attempt accounting move with it
 | Source-author attempts / run (avg) | ≤ 1.5 whole-doc equivalents | slot retries make attempts cheap |
 | Wall-clock to tier-1 (thumbnails) | ≤ 8 min | Carryover A: 12–22 min at storyboard |
 | Wall-clock to tier-2 (MP4) | ≤ 14 min | — |
-| Author prompt size | ≤ 45,000 chars | tracked by `promptBudget.test.ts` (todo) |
-| Model calls / clean run | ≤ 5 | critic gating removes 1–2 on clean drafts |
+| Author prompt size | ≤ 45,000 chars | enforced by `promptBudget.test.ts` (fixture 44,773) |
+| Physical model requests / clean run | ≤ 5 | successful + failed + hedge launches |
 
 ## Telemetry (the before/after instrument)
 
@@ -271,7 +291,9 @@ The 2026-07-06 final audit made the instrument honest end-to-end:
   findings; BOTH least-bad seams), `interaction-quarantine-shipped`,
   `rows-neutral-children-shipped` (host placeholder "Item 1…" copy on frame),
   `degraded-volunteered-cut`, `cut-degraded-shipped`,
-  `rescue-published-with-polish-findings`, `browser-qa-infra-bypass` — is
+  storyboard time-ramp/beat/shape/polish demotions,
+  `rescue-published-with-polish-findings`, `browser-qa-infra-bypass`, and a
+  slot-director runtime precedence fallback — is
   recorded (`recordSentinelDegradation`), and `finalizeSentinelRun("published")`
   auto-downgrades to `published-degraded` when any exists. Draft-embedded
   degradations (quarantine's style tag, neutral children's
@@ -282,6 +304,9 @@ The 2026-07-06 final audit made the instrument honest end-to-end:
   failed logical calls (transport faults, stalls, truncations) and
   `modelCalls.hedged`/`hedgedTotal` the hedge duplicates launched — previously
   only successes were counted, hiding the most expensive runs.
+  `physicalRequestTotal = successfulLogicalTotal + failedTotal + hedgedTotal`;
+  `slotCalls` separates truncation continuation, scaffold repair, and validation
+  repair hidden inside an outer source-author attempt.
 - **Layer counters count findings, not attempts** (author stage) and the
   **storyboard stage now participates** (a rejected plan's findings land in L3
   static; every persisted failed attempt lands in L5 model-retry).
@@ -294,7 +319,10 @@ The 2026-07-06 final audit made the instrument honest end-to-end:
 - **The L1 scaffold counter** (`recordSentinelScaffold`) counts host-guaranteed
   bindings **actually present in the shipped document**
   (`countScaffoldBindingsPresent` — camera planes, stations, component roots),
-  not the bindings the templates planned. Idempotent-by-max across revisions.
+  not the bindings the templates planned. `scaffoldCoverage.present/planned`
+  exposes the denominator; `scaffoldRestorationEvents.scene-repair/l2-normalize`
+  separately reports repair work across attempts rather than pretending those
+  bindings survived L1 untouched.
 
 `npm run sentinel:report --workspace @sequences/slack -- <dir>` aggregates every
 `sentinel-run.json` (+ sibling `author-run.json`) into the mission metric table
@@ -316,7 +344,7 @@ the existing kill-switch culture.
 | Flag | Default | Effect |
 | --- | --- | --- |
 | `SLACK_SEQUENCES_SENTINEL_SKELETON` | **ON** (flipped 2026-07-06; `=0` reverts for one release) | Host emits scene skeletons carrying the camera-world plane + stations, component roots, and focal-part carriers so those paperwork classes are unrepresentable. `=0` force-reverts to bare shells. |
-| `SLACK_SEQUENCES_SENTINEL_SLOTS` | **ON** (flipped 2026-07-06; `=0` reverts for one release) | Scene-addressable authoring (`film_style` + per-scene `scene_html`/`scene_script`). Truncation recovery is script-aware (a scene missing its `scene_script` re-requests, not just missing html); a scene that dropped host-contract bindings gets ONE scene-scoped repair round (`slotScaffoldViolations`); the director prompt's whole-doc contract bullets are surgically rewritten for slot mode (`SLOT_MODE_DIRECTOR_REWRITES`, anchors CI-tested). Validation-stage retries remain document-scoped. `=0` force-reverts to whole-doc. |
+| `SLACK_SEQUENCES_SENTINEL_SLOTS` | **ON** (flipped 2026-07-06; `=0` reverts for one release) | Scene-addressable authoring (`film_style` + per-scene `scene_html`/`scene_script`). Truncation is script-aware; scaffold omissions get one scene repair; static/browser findings get one bounded validation repair over their scene-attributable subset (carrying previous HTML + script) whenever at least one finding maps to a named scene. Any film-level remainder retains the whole-doc ladder. The director prompt is anchor-rewritten and slot-compacted. `=0` force-reverts to whole-doc. |
 | `SLACK_SEQUENCES_CRITIC_SKIP_CLEAN` | **ON** | Skip the continuity critic when the banked draft is already pristine (`strictOk` + `browserQualityPenalty == 0`). `=0` restores always-run. |
 
 ### The kill-switch family it joins
@@ -334,7 +362,7 @@ the existing kill-switch culture.
 | `SLACK_SEQUENCES_EYE_TRACE` | ON (`block`) | `audit` observes, `0` disables eye-trace continuity. |
 | `SLACK_SEQUENCES_QA_CACHE` | ON | `=0` disables the content-hash browser-QA cache. |
 | `SLACK_SEQUENCES_INTERACTION_QA` | ON | `=0` disables interaction-time browser QA. |
-| `SLACK_SEQUENCES_HEDGED_REQUESTS` | ON | `=0` disables the delayed-duplicate hedge; `SLACK_SEQUENCES_HEDGE_DELAY_MS` / `_STREAM_IDLE_TIMEOUT_MS` tune it. |
+| `SLACK_SEQUENCES_HEDGED_REQUESTS` | ON | `=0` disables the delayed-duplicate hedge; `SLACK_SEQUENCES_HEDGE_DELAY_MS`, `SLACK_SEQUENCES_HEDGE_MAX_PER_RUN` (default **2**), and `_STREAM_IDLE_TIMEOUT_MS` tune it. |
 | `SLACK_SEQUENCES_STORYBOARD_RESCUE_MODEL` / `_SOURCE_RESCUE_MODEL` | `tencent/hy3-preview` | `none` disables the rescue rung; override to pick another model. |
 | `SLACK_SEQUENCES_PROVIDER` | (Railway: `openrouter-api`) | the authoring provider. |
 

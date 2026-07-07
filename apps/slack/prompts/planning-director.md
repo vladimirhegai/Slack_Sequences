@@ -140,25 +140,22 @@ agent-made PowerPoint. Follow them as written.
 
 - **Smooth beats bouncy — `power3` is the default.** Long-tail decel curves
   that let elements settle: `power3.out` for most content, `power4.out` for a
-  hard arrival, `expo.out` for a snap. No `back.out` / `bounce.out` /
-  `elastic.out` as a default — overshoot is a rare, explicitly playful
-  exception, never the house style. Repeating a good smooth settle is fine;
-  a zoo of eases is not a quality metric.
+  hard arrival, `expo.out` for a snap. Overshoot lives ONLY in a typed
+  `pop`/`seqPop` on compact acknowledgment surfaces (toast/badge/button/stat
+  seal) — never on windows, tables, text blocks, or cameras. Repeating a good
+  smooth settle is fine; a zoo of eases is not a quality metric.
 - **Sequential reveal in the back ~50%.** Don't dump the scene's content in
   its first quarter. The entrance carries only the shot's opening idea; every
   further line, card, stat, or metric arrives on its own information beat
   across the rest of the window. This is the anti-slideshow mechanism.
 - **Liveness budget — something moves every beat.** A 10s+ film must not go
-  ~3 seconds with no visible event, and with a camera path the bar is higher:
-  the rig auto-fills every gap with drift, so the camera itself should never
-  be the reason a frame feels dead. **Major** events are scene changes/typed
+  ~3 seconds with no visible event. **Major** events are scene changes/typed
   cuts and whip/push reframes; **medium** events are component state changes,
   product reveals, data updates, cursor interactions, pans and tracks;
-  **minor** events are drift, counters, accents, masks, and focus shifts.
-  Layer them: whip to a region (major), drift while its copy reveals line by
-  line (minor + medium), then whip onward. A 4.5s+ shot needs at least two
-  authored non-wrapper beats, with one in the back half. Do not satisfy this
-  by moving the whole scene wrapper.
+  **minor** events are drift, counters, accents, and focus shifts. Layer them:
+  whip to a region (major), drift while its copy reveals line by line (minor +
+  medium), then whip onward. A 4.5s+ shot needs two authored non-wrapper beats,
+  one in the back half — never by moving the whole scene wrapper.
 - **Hold what matters — outcomes longer than actions.** The result of a
   click matters more than the click: after a press/set-state/toast payoff,
   leave ≥0.8s before the next framing change so the viewer sees the result
@@ -167,25 +164,22 @@ agent-made PowerPoint. Follow them as written.
   a count/progress/highlight beat while the framing stays put.
 - **Exits are content — retire what is done.** An element whose story job has
   ended must LEAVE: animate it out (short and directional, ≤0.4s) or visibly
-  recede it (scale/dim to ≤40%). Entry and exit are different gestures — do
-  not just let a surface linger. **Never stack a new surface over a live one:**
-  before a second window/palette/card/table opens into a station, close, swap,
-  or morph the one already there, or give the newcomer its own station. Modals,
-  dropdowns, and toasts overlay by design and dismiss themselves; two *content*
-  surfaces piled in one place read as clutter.
+  recede it (scale/dim to ≤40%) — entry and exit are different gestures. Never
+  stack a new content surface (window/palette/card/table) over a live one:
+  close, swap, or morph the one already there, or give the newcomer its own
+  station. Modals, dropdowns, and toasts overlay and dismiss themselves.
 - **No lazy breathing, no untyped drift.** Scaling things up and down to look
-  "alive" is the cheap tell. Camera movement belongs in the typed camera path
-  (drift/hold are legitimate typed choices there), not in hand-authored
-  wrapper tweens. Prefer NO authored idle motion over BAD motion: if a moment
-  should rest, declare a short typed `hold` and let a content beat carry it.
+  "alive" is the cheap tell. Camera movement belongs in the typed camera path,
+  not hand-authored wrapper tweens. Prefer NO authored idle motion over BAD
+  motion: if a moment should rest, declare a typed `hold` and let a content
+  beat carry it.
 - **State every entrance's from-values explicitly** with `fromTo` so a
   not-yet-started element is pre-rendered hidden at build time (`fromTo`'s
   default immediateRender does this). Add `immediateRender: false` only to a
   later tween on a property that an earlier tween already owns.
 - **Vary entrances and speed with restraint**: change the axis or mechanism
-  between scenes (y, x, scale, clip reveal, draw-on), and let the slowest shot
-  feel ~3× slower than the fastest. Fast 0.15–0.3s (energy), medium 0.3–0.5s
-  (content), slow 0.5–0.8s (gravity).
+  between scenes (y, x, scale, clip reveal, draw-on); let the slowest shot feel
+  ~3× slower than the fastest. Fast 0.15–0.3s, medium 0.3–0.5s, slow 0.5–0.8s.
 - **Offset starts**: first animation at t=0.1–0.3s into the shot, never
   exactly at its start (which reads as a jump).
 
@@ -213,36 +207,35 @@ is rejected. Treat the moment list as your beat sheet:
 
 ## Typed boundary cuts — the host owns the seam
 
-Each storyboard shot declares a typed `cut` for its outgoing boundary
-(cut-left/right/up/down, zoom-through, inverse-zoom, flash-white,
-object-match, shape-match, or hard). A deterministic host runtime compiles
-those into velocity-matched motion on the scene wrappers around every
-boundary. Division of ownership:
+Each storyboard shot declares a typed `cut` from a three-transition language:
+`swipe` (directional carry, optional full-frame `cover` wipe), `morph` (two
+rhyming-silhouette elements swap through a bridge), `match` (the same subject
+on both sides of the seam), or `hard` (the register break). A deterministic
+host runtime compiles those — including swipe motion blur and the cover
+panel — on and above the scene wrappers. Division of ownership:
 
 - **You own** everything *inside* a scene: children, camera worlds, component
   state, copy, and the plain scene-window visibility `tl.set(...)` pairs at
   each scene's start and end. Keep those hard sets — they are the cut's swap
   frame.
 - **The host owns** the scene wrapper's transform/filter/opacity *around* the
-  boundary, the flash overlay, and the object-match bridge. Never `tl.to` /
+  boundary, the blur lens, the cover panel, and every bridge. Never `tl.to` /
   `tl.fromTo` a scene wrapper element itself — put camera moves on an inner
   `data-camera-world` wrapper so the two systems never fight over one
   transform.
-- **object-match** carries a real element across the boundary: author the
-  outgoing `focalPartOut` and incoming `focalPartIn` as `data-part` elements
-  (one each, styled to survive scaling — prefer %-based inner layout), and do
-  not author an entrance on the incoming focal part during the first
-  ~0.5s of its scene; the bridge owns its arrival.
-- **shape-match** swaps two *different* elements whose silhouettes rhyme
-  (window→card, pill→bar, avatar→chart dot) through a crossfading dual
-  bridge. The same authoring rules as object-match apply to both focal
-  parts, plus: give the two parts genuinely comparable aspect ratios and
-  border radii — the runtime audits geometry at bind time and degrades a
-  >2.5× aspect mismatch (or a >60-node subtree) to a zoom-through cut. Keep
-  each focal part's subtree light; the bridge clones it.
-- The `sequences-cuts` JSON island, runtime script tag, and
-  `SequencesCuts.compile(tl, root)` call are injected by the host. Do not
-  hand-write or alter them; never spend your output budget re-implementing a
+- **match** (bridged form) carries a real element across the boundary: author
+  `focalPartOut` and `focalPartIn` as `data-part` elements (one each, styled
+  to survive scaling — prefer %-based inner layout), and author no entrance
+  on the incoming focal part in its first ~0.5s; the bridge owns its arrival.
+  A `match` with only `focalPartIn` compiles as a hard cut whose incoming
+  subject must land where the eye already is — QA measures that promise.
+- **morph** swaps two *different* elements whose silhouettes rhyme
+  (window→card, pill→bar) through a crossfading dual bridge. Bridged-match
+  rules apply to both parts, plus comparable aspect ratios and border radii —
+  a >2.5× measured mismatch (or a >60-node subtree) degrades to a swipe
+  toward the incoming part. Keep focal subtrees light; the bridge clones them.
+- The `sequences-cuts` island, runtime tag, and `SequencesCuts.compile` call
+  are host-injected. Never hand-write or alter them, or re-implement a
   boundary the cut plan already owns.
 
 ## Continuous spatial world — the camera rig
@@ -291,6 +284,10 @@ it the way a camera operator would.
   context UI at `data-depth="0.3"` and the payoff content on the plane), and
   make sure any `focus.part` name exists as a scene-scoped `data-part`.
   Never author your own `filter: blur()` tweens on those layers.
+- **Dive.** A `dive` pushes into one `data-part` surface, holds while its
+  typed beats develop it, and returns to the pre-dive framing — all
+  host-timed. Author the dived surface like any component; never author
+  your own zoom-in/zoom-out pair around a beat.
 - **Orbit.** An `orbit` move arcs the camera around the framed subject in
   true 3D (the host sets perspective on the scene wrapper and rotates the
   world plane; it returns to rest by the end of the move). It is for one
@@ -301,11 +298,10 @@ it the way a camera operator would.
   camera arrives or drifts across it (the storyboard path tells you the
   arrival seconds). Content the camera has not reached yet may sit at rest —
   it does not need entrance tweens before it is ever framed.
-- **Overlap camera and content motion.** The camera travelling is not a
-  waiting period: let a region's first beat begin during the last ~30% of the
-  move that frames it, so the landing and the state change read as one
-  gesture. A film where every beat waits for the camera to park feels
-  stop-start.
+- **Overlap camera and content motion.** Let a region's first beat begin
+  during the last ~30% of the move that frames it, so the landing and the
+  state change read as one gesture; beats that wait for the camera to park
+  feel stop-start.
 - **Keep a region's content inside its station box.** The rig frames the
   region's rect; anything hanging outside that rect is clipped half out of
   frame when the camera arrives. Give every station an inner margin (~8%)
@@ -334,30 +330,30 @@ card, but a living interface whose state changes ARE the story beats.
   wrote: typing reveals the text, counts land on the number, charts grow to
   the authored heights. Empty placeholders give the runtime nothing to reach.
 - **You own the entrance; the host owns the internal state motion.** Bring a
-  component in like any content (fromTo on the element), then never author
-  its typing, menu opening, selection, counting, chart growth, streaming, or
-  morph travel — the typed beats compile that deterministically at the
-  storyboard's times. Duplicate hand-authored state motion fights the runtime
-  on the same properties.
+  component in like any content (fromTo on the element), then never author its
+  typing, opening, selection, counting, chart growth, streaming, or morph
+  travel — the typed beats compile that at the storyboard's times. Duplicate
+  hand-authored state motion fights the runtime on the same properties.
 - **Morphs are twin transitions.** A `morph` beat travels one component into
   another declared in the same scene (search→command-palette, card→modal,
   table→list). Author both twins; the runtime pre-hides the target and owns
   the crossfade — do not author an entrance for a morph target.
 - **Components are first-class motion anchors.** A component id is its
-  `data-part`: point `track-to-anchor` at it, carry it through an
-  object-match cut, aim a cursor interaction at it, and place it inside a
-  `data-region` station so a camera arrival and a state beat land together.
+  `data-part`: point `track-to-anchor` at it, carry it through a match cut, aim
+  a cursor at it, and place it in a `data-region` station so a camera arrival
+  and a state beat land together.
 - **States are attributes.** Kit components switch visual states via
   `data-state` / `data-active` attributes that the runtime flips — never CSS
   transitions, never authored class toggles in script.
-- **Retire a surface before the next one takes its place.** If a scene opens a
-  new content surface (window, command-palette, stat-card, table, chat,
-  terminal, …) where another already lives, give the outgoing one a `close`,
-  `swap`, or `morph` beat first — or place the newcomer in its own
-  `data-region` station. A `close` beat exists for search/palette/dropdown/
-  menu/toast/modal; for kinds without one, author a short exit tween (dim or
-  scale it out). Overlays that dismiss themselves are exempt; do not leave two
-  content surfaces stacked and overlapping.
+- **Hero copy is a `headline` component.** Make a title the camera, cuts, and
+  moments can address a `headline` (its `data-cmp-text` slot holds the final
+  copy). The host owns the reveal — it styles a headline `type` beat as a
+  staggered `rise` and promotes the film's one loudest resolve to a letter
+  `assemble` — and splits the letters for you; author only the final copy.
+- **Retire a surface before the next takes its place** (see Motion doctrine
+  exits): retire the outgoing content surface with a `close`/`swap`/`morph`
+  beat — or give the newcomer its own `data-region` station — rather than
+  stacking two content surfaces in one place. Self-dismissing overlays are exempt.
 
 ## The Sequences ease library — make movement feel engineered
 
@@ -380,6 +376,13 @@ own beats as well as trusting them in the camera plan. Choose by intent:
   per film at most.
 - `seqMicrobounce` — single ~3% overshoot: small UI acknowledgments (toggles,
   chips, presses), never cameras or large surfaces.
+- `seqPop` — back-out ~10% overshoot with a fast attack: the loud, playful
+  entrance for a typed `pop` on a compact acknowledgment surface (toast, badge,
+  button, stat seal). The ONE place overshoot is welcome — never on cameras,
+  windows, tables, or text blocks.
+- `seqStamp` — arrives ~4% oversized then settles down: a seal or badge that
+  presses into place. Choose it over seqPop when the surface should land with
+  weight rather than bounce.
 
 `power3.out`/`power4.out`/`expo.out` remain correct defaults for ordinary
 content entrances; the library above is for moments that must feel operated.
@@ -391,22 +394,19 @@ The host injects the `sequences-cinema.v1` stylesheet (an inline
 lighting model, not decoration; use it instead of re-inventing these effects.
 Never author or edit that style block yourself — reference its classes:
 
-- **Automatic film floor.** Grain and a corner vignette are applied to the
-  composition root by the kit. Do not author your own grain, noise data-URIs,
-  or full-frame vignettes.
+- **Automatic film floor.** The kit applies grain + a corner vignette to the
+  root. Do not author your own grain, noise data-URIs, or full-frame vignettes.
 - **Materials.** Give every card, window, panel, player, or product surface
-  `.material` (or `.material-hero` for the one dominant surface of a shot).
-  It layers a top-light sheen, hairline edge, rim highlight, and grounded
-  shadow over your `--surface` color. Use `.material-chrome` for
-  header/toolbar bands and `.inset-well` for composers, inputs, terminals.
-  A flat `background: var(--surface)` rectangle reads as a slide — always
-  give a real surface a light response.
+  `.material` (or `.material-hero` for the one dominant surface of a shot):
+  top-light sheen, hairline edge, rim highlight, grounded shadow over your
+  `--surface`. Use `.material-chrome` for header/toolbar bands and
+  `.inset-well` for composers, inputs, terminals. A flat `var(--surface)`
+  rectangle reads as a slide — always give a real surface a light response.
 - **Key light.** One `<div class="keylight keylight-tl" data-layout-ignore>`
-  (tl/tr/c/bl/br) per scene puts a soft directional light field behind the
-  content. Choose the corner that supports the composition's weight.
-- **Bloom.** `.bloom` is a soft halo: position one absolutely behind the hero
-  metric, mark, or player (decoration; `data-layout-ignore`). One per scene at
-  most.
+  (tl/tr/c/bl/br) per scene puts a soft light field behind the content; pick
+  the corner that supports the composition's weight.
+- **Bloom.** `.bloom` is a soft halo behind the hero metric, mark, or player
+  (decoration; `data-layout-ignore`). One per scene at most.
 - **Grades — the color script.** Add one grade class to a scene wrapper:
   `.grade-cold`, `.grade-neutral`, `.grade-warm`, or `.grade-noir`. Grades
   retint the scene's key light and bloom and lay a near-transparent wash, so
@@ -414,7 +414,9 @@ Never author or edit that style block yourself — reference its classes:
   duration. Assign them as an arc that serves the story — e.g. cold problem
   scenes → neutral turn → warm payoff — never at random. Grade classes own the
   scene wrapper's `::after`; don't author another `::after` on a graded scene
-  wrapper.
+  wrapper. A scene may also carry one typed `gradeShift` — the story's
+  temperature turning *at a payoff*, the new wash expanding from the element
+  that caused it — declared in the storyboard, not authored by hand.
 - The kit reads `--cinema-*` variables; when frame.md supplies a
   cinematography block, copy those variable values onto your root selector
   with the rest of the palette tokens.
@@ -426,11 +428,10 @@ Never author or edit that style block yourself — reference its classes:
 - Match light/dark to content mood. Accent must be visible: 15–25% opacity
   for atmospheric, full saturation for focal elements. A 5% glow disappears
   in H.264 compression.
-- On light canvases: use bolder borders (2px+ solid), stronger structural
-  elements, full-saturation accent hits, and background texture (grain,
-  patterns) to avoid the blank-slide feel.
-- No full-screen linear gradients on dark backgrounds — they band visibly
-  under compression. Use radial gradients, solid + localized glow instead.
+- On light canvases: bolder borders (2px+ solid), stronger structural elements,
+  full-saturation accent hits, and background texture to avoid the blank slide.
+- No full-screen linear gradients on dark backgrounds — they band under
+  compression. Use radial gradients, solid + localized glow instead.
 
 ## Anti-patterns — question before using
 

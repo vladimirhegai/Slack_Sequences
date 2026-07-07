@@ -34,9 +34,11 @@ const AREA_RATIO_CAP = 6;
 /** Minimum blended rhyme score for an upgrade to fire at all. */
 const MIN_UPGRADE_SCORE = 0.55;
 
-/** Cut styles a discovery upgrade may replace. */
+/** Cut styles a discovery upgrade may replace. `swipe` is the canonical
+ * directional family (MD1); legacy names survive in cached storyboards. */
 const UPGRADABLE_STYLES: ReadonlySet<string> = new Set([
   "hard",
+  "swipe",
   "cut-left",
   "cut-right",
   "cut-up",

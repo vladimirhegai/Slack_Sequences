@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   EYE_TRACE_JUMP_FRACTION,
+  MATCH_EYE_TRACE_JUMP_FRACTION,
   PING_PONG_MAX_PAIRS,
   pingPongCandidates,
   resolveBoundaryAttention,
@@ -161,13 +162,49 @@ describe("scoreEyeTraceBoundaries", () => {
   });
 
   it("exempts directional, zoom, bridged, and flash cuts — they carry or reset the eye", () => {
-    for (const style of ["cut-right", "zoom-through", "inverse-zoom", "flash-white"] as const) {
+    for (const style of ["cut-right", "swipe", "zoom-through", "inverse-zoom", "flash-white"] as const) {
       expect(scoreEyeTraceBoundaries({
         scenes: hardCutScenes({ version: 1, style }),
         boundaries: farApart,
         ...FRAME,
       })).toEqual([]);
     }
+  });
+
+  it("judges a hard-form match at the tightened budget and exempts a bridged match", () => {
+    // ~24% of the diagonal: inside the ordinary 38% hard-cut budget, but well
+    // past the 20% budget the match promise is judged against.
+    const midDistance = [boundary(
+      "a",
+      "b",
+      [part("out-part", 500, 400)],
+      [part("in-part", 980, 620)],
+    )];
+    const hardFindings = scoreEyeTraceBoundaries({
+      scenes: hardCutScenes({ version: 1, style: "hard" }),
+      boundaries: midDistance,
+      ...FRAME,
+    });
+    expect(hardFindings).toEqual([]);
+    const matchFindings = scoreEyeTraceBoundaries({
+      scenes: hardCutScenes({ version: 1, style: "match", focalPartIn: "in-part" }),
+      boundaries: midDistance,
+      ...FRAME,
+    });
+    expect(matchFindings).toHaveLength(1);
+    expect(matchFindings[0]!.cutStyle).toBe("match");
+    expect(matchFindings[0]!.budgetFraction).toBe(MATCH_EYE_TRACE_JUMP_FRACTION);
+    // A bridged match flies a real bridge — the bridge carries the eye.
+    expect(scoreEyeTraceBoundaries({
+      scenes: hardCutScenes({
+        version: 1,
+        style: "match",
+        focalPartOut: "out-part",
+        focalPartIn: "in-part",
+      }),
+      boundaries: farApart,
+      ...FRAME,
+    })).toEqual([]);
   });
 
   it("stays silent when the targets already share a neighborhood", () => {

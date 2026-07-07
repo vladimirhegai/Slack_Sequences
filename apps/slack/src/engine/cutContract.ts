@@ -26,30 +26,85 @@ const RUNTIME_SOURCE_PATH = path.join(
   CUT_RUNTIME_FILE,
 );
 
+/**
+ * The planner-facing transition language is THREE named transitions plus
+ * `hard` (MD1, 2026-07-06): `swipe` (directional family, optional full-frame
+ * `cover` wipe), `morph` (the shape-match dual bridge), and `match`
+ * (object-match when both focal parts bind; otherwise a disciplined hard cut
+ * whose eye-trace budget QA tightens). Every legacy name stays *executable* —
+ * old cached storyboards, the fallback film, and degrade paths keep compiling
+ * — but is canonicalized at parse/resolve, so the shipped film speaks the
+ * 3-transition language and the planner schema never sees ten styles again.
+ */
 export type CutStyle =
   | "hard"
+  | "swipe"
+  | "morph"
+  | "match"
+  // Legacy executable styles: compile targets and degrade paths only — they
+  // left the planner prompt and schema enum with the 3-transition language.
+  | "zoom-through"
+  | "inverse-zoom"
+  | "flash-white"
+  // Legacy aliases, canonicalized away at parse/resolve (never seen post-parse).
   | "cut-left"
   | "cut-right"
   | "cut-up"
   | "cut-down"
-  | "zoom-through"
-  | "inverse-zoom"
-  | "flash-white"
   | "object-match"
   | "shape-match";
 
+export type CutAxis = "left" | "right" | "up" | "down";
+
+export const CUT_AXES: ReadonlySet<CutAxis> = new Set<CutAxis>([
+  "left",
+  "right",
+  "up",
+  "down",
+]);
+
 export const CUT_STYLES: ReadonlySet<CutStyle> = new Set<CutStyle>([
   "hard",
+  "swipe",
+  "morph",
+  "match",
+  "zoom-through",
+  "inverse-zoom",
+  "flash-white",
   "cut-left",
   "cut-right",
   "cut-up",
   "cut-down",
-  "zoom-through",
-  "inverse-zoom",
-  "flash-white",
   "object-match",
   "shape-match",
 ]);
+
+/** Directional legacy names → their canonical swipe axis. */
+const LEGACY_DIRECTIONAL_AXIS: Partial<Record<CutStyle, CutAxis>> = {
+  "cut-left": "left",
+  "cut-right": "right",
+  "cut-up": "up",
+  "cut-down": "down",
+};
+
+/**
+ * Canonicalize a cut style into the 3-transition language. Legacy directional
+ * names become `swipe` + axis, `shape-match` becomes `morph`, `object-match`
+ * becomes `match`; zoom/flash styles stay as-is (accepted-but-undocumented
+ * compile targets). Also applied at resolve time so cached storyboards and
+ * code-built scenes (fallback film, golden film) speak one language downstream.
+ */
+export function canonicalCutStyle(
+  style: CutStyle,
+  axis?: CutAxis,
+): { style: CutStyle; axis?: CutAxis } {
+  const legacyAxis = LEGACY_DIRECTIONAL_AXIS[style];
+  if (legacyAxis) return { style: "swipe", axis: legacyAxis };
+  if (style === "shape-match") return { style: "morph" };
+  if (style === "object-match") return { style: "match" };
+  if (style === "swipe") return { style: "swipe", axis: axis ?? "right" };
+  return { style };
+}
 
 /**
  * Planner-side silhouette hints for shape-match. They carry no runtime
@@ -66,11 +121,42 @@ export const CUT_SHAPE_HINTS: ReadonlySet<CutShapeHint> = new Set<CutShapeHint>(
   "window",
 ]);
 
-/** Cut styles that carry a focal element across the boundary via a bridge. */
+/** Cut styles that carry a focal element across the boundary via a bridge.
+ * `match` is bridged only when BOTH focal parts are declared — with one or
+ * zero it compiles as a disciplined hard cut whose eye-trace budget QA
+ * tightens (the "match promise"). */
 const BRIDGED_STYLES: ReadonlySet<CutStyle> = new Set<CutStyle>([
+  "morph",
   "object-match",
   "shape-match",
 ]);
+
+/** Whether an intent resolves to a real bridge flight across its boundary. */
+export function isBridgedCutIntent(
+  cut: Pick<SceneCutIntentV1, "style" | "focalPartOut" | "focalPartIn"> | undefined,
+): boolean {
+  if (!cut) return false;
+  const { style } = canonicalCutStyle(cut.style);
+  if (style === "morph") return true;
+  return style === "match" && Boolean(cut.focalPartOut && cut.focalPartIn);
+}
+
+/**
+ * Cut intents that count as an energetic boundary for the camera-energy
+ * audit: a real bridge flight, a full-frame cover wipe, or one of the legacy
+ * zoom/flash registers. A plain swipe and a hard-form match are quiet seams.
+ */
+export function isEnergeticCutIntent(cut: SceneCutIntentV1 | undefined): boolean {
+  if (!cut) return false;
+  if (isBridgedCutIntent(cut)) return true;
+  const canonical = canonicalCutStyle(cut.style);
+  if (canonical.style === "swipe") return cut.cover === true;
+  return (
+    canonical.style === "zoom-through" ||
+    canonical.style === "inverse-zoom" ||
+    canonical.style === "flash-white"
+  );
+}
 
 /**
  * Silhouette families for plan-time sanity: strips (pill, bar) rhyme with
@@ -110,8 +196,13 @@ export function shapeHintsRhyme(shapeOut: CutShapeHint, shapeIn: CutShapeHint): 
  */
 export function auditCutCoherence(scenes: Array<Pick<DirectScene, "cut">>): string[] {
   // Only inter-scene boundaries carry a cut; the final scene declares none.
+  // Count canonical names so the whole swipe family (four axes, cover or not)
+  // is ONE language, and legacy names in cached plans dedupe with their
+  // canonical successors.
   const styles = scenes
-    .map((scene) => scene.cut?.style)
+    .map((scene) =>
+      scene.cut?.style ? canonicalCutStyle(scene.cut.style, scene.cut.axis).style : undefined
+    )
     .filter((style): style is CutStyle => Boolean(style));
   const distinctNonHard = new Set(styles.filter((style) => style !== "hard"));
   // Signature budget: four is always fine (the golden film's own count);
@@ -132,19 +223,23 @@ export function auditCutCoherence(scenes: Array<Pick<DirectScene, "cut">>): stri
 export interface SceneCutIntentV1 {
   version: 1;
   style: CutStyle;
+  /** swipe: travel direction (required; legacy directional names imply it). */
+  axis?: CutAxis;
+  /** swipe: a palette panel wipes the frame, hiding the cut under full cover. */
+  cover?: true;
   /** Wrapper travel for directional cuts, px. */
   travelPx?: number;
   /** Exit acceleration window before the boundary, seconds. */
   exitSec?: number;
   /** Entry deceleration window after the boundary, seconds. */
   entrySec?: number;
-  /** object-match/shape-match: data-part carried out of this scene. */
+  /** morph/match: data-part carried out of this scene. */
   focalPartOut?: string;
-  /** object-match/shape-match: data-part it lands on in the next scene. */
+  /** morph/match: data-part it lands on in the next scene. */
   focalPartIn?: string;
-  /** shape-match: silhouette hint for the outgoing part (planner self-check). */
+  /** morph: silhouette hint for the outgoing part (planner self-check). */
   shapeOut?: CutShapeHint;
-  /** shape-match: silhouette hint for the incoming part (planner self-check). */
+  /** morph: silhouette hint for the incoming part (planner self-check). */
   shapeIn?: CutShapeHint;
 }
 
@@ -156,6 +251,8 @@ export interface CutIntentV1 extends Required<Pick<SceneCutIntentV1, "version" |
   travelPx: number;
   exitSec: number;
   entrySec: number;
+  axis?: CutAxis;
+  cover?: true;
   focalPartOut?: string;
   focalPartIn?: string;
   shapeOut?: CutShapeHint;
@@ -168,6 +265,9 @@ export interface CutPlanV1 {
 }
 
 const STYLE_DEFAULTS: Record<Exclude<CutStyle, "hard">, { exitSec: number; entrySec: number }> = {
+  swipe: { exitSec: 0.3, entrySec: 0.42 },
+  morph: { exitSec: 0.22, entrySec: 0.5 },
+  match: { exitSec: 0.22, entrySec: 0.5 },
   "cut-left": { exitSec: 0.3, entrySec: 0.42 },
   "cut-right": { exitSec: 0.3, entrySec: 0.42 },
   "cut-up": { exitSec: 0.3, entrySec: 0.42 },
@@ -178,6 +278,23 @@ const STYLE_DEFAULTS: Record<Exclude<CutStyle, "hard">, { exitSec: number; entry
   "object-match": { exitSec: 0.22, entrySec: 0.5 },
   "shape-match": { exitSec: 0.22, entrySec: 0.5 },
 };
+
+/**
+ * The swipe axis that carries the eye from the outgoing focal center toward
+ * the incoming one: a target to the RIGHT means the incoming scene should
+ * enter from the right, which is leftward content travel (`axis: "left"`),
+ * and so on. Screen coordinates (y grows downward). Fallback: right-travel.
+ */
+export function swipeAxisTowards(
+  outCenter: { x: number; y: number } | undefined,
+  inCenter: { x: number; y: number } | undefined,
+): CutAxis {
+  if (!outCenter || !inCenter) return "right";
+  const dx = inCenter.x - outCenter.x;
+  const dy = inCenter.y - outCenter.y;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "left" : "right";
+  return dy >= 0 ? "up" : "down";
+}
 
 function finite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
@@ -198,31 +315,47 @@ function shapeHint(value: unknown): CutShapeHint | "" {
 }
 
 /**
- * Normalize a storyboard scene's typed cut declaration. Unknown styles,
- * malformed params, or a bridged style (object-match/shape-match) without
+ * Normalize a storyboard scene's typed cut declaration into the canonical
+ * 3-transition language. Unknown styles, malformed params, or a morph without
  * both parts degrade to no cut rather than failing the storyboard — the film
- * stays buildable.
+ * stays buildable. Legacy names (cut-right, shape-match, object-match) are
+ * accepted and canonicalized, so cached storyboards keep parsing.
+ *
+ * `match` is the one style that survives with incomplete focal parts: with
+ * both it bridges like object-match; with one/zero it compiles as a hard cut
+ * whose incoming target must land where the eye already is (QA enforces the
+ * tightened eye-trace budget), so the declaration is a promise, not paperwork.
  */
 export function normalizeStoryboardCutIntent(value: unknown): SceneCutIntentV1 | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const object = value as Record<string, unknown>;
-  const style = typeof object.style === "string" ? object.style.trim() as CutStyle : "";
-  if (!style || !CUT_STYLES.has(style)) return undefined;
+  const rawStyle = typeof object.style === "string" ? object.style.trim() as CutStyle : "";
+  if (!rawStyle || !CUT_STYLES.has(rawStyle)) return undefined;
+  const declaredAxis = typeof object.axis === "string" &&
+      CUT_AXES.has(object.axis.trim() as CutAxis)
+    ? object.axis.trim() as CutAxis
+    : undefined;
+  const canonical = canonicalCutStyle(rawStyle, declaredAxis);
+  const style = canonical.style;
   if (style === "hard") return { version: 1, style };
   const focalPartOut = stablePart(object.focalPartOut);
   const focalPartIn = stablePart(object.focalPartIn);
-  if (BRIDGED_STYLES.has(style) && (!focalPartOut || !focalPartIn)) return undefined;
+  if (style === "morph" && (!focalPartOut || !focalPartIn)) return undefined;
   const shapeOut = shapeHint(object.shapeOut);
   const shapeIn = shapeHint(object.shapeIn);
   return {
     version: 1,
     style,
+    ...(style === "swipe" ? { axis: canonical.axis ?? "right" } : {}),
+    ...(style === "swipe" && object.cover === true ? { cover: true as const } : {}),
     ...(finite(object.travelPx) ? { travelPx: clamp(object.travelPx, 80, 420) } : {}),
     ...(finite(object.exitSec) ? { exitSec: clamp(object.exitSec, 0.12, 0.6) } : {}),
     ...(finite(object.entrySec) ? { entrySec: clamp(object.entrySec, 0.2, 0.9) } : {}),
-    ...(BRIDGED_STYLES.has(style) ? { focalPartOut, focalPartIn } : {}),
-    ...(style === "shape-match" && shapeOut ? { shapeOut } : {}),
-    ...(style === "shape-match" && shapeIn ? { shapeIn } : {}),
+    ...(style === "morph" ? { focalPartOut, focalPartIn } : {}),
+    ...(style === "match" && focalPartOut ? { focalPartOut } : {}),
+    ...(style === "match" && focalPartIn ? { focalPartIn } : {}),
+    ...(style === "morph" && shapeOut ? { shapeOut } : {}),
+    ...(style === "morph" && shapeIn ? { shapeIn } : {}),
   };
 }
 
@@ -239,7 +372,16 @@ export function resolveCutPlan(scenes: DirectScene[]): CutPlanV1 {
     const next = scenes[index + 1]!;
     const intent = scene.cut;
     if (!intent || intent.style === "hard") continue;
-    const defaults = STYLE_DEFAULTS[intent.style];
+    // Canonicalize here too: cached plans and code-built scenes (fallback
+    // film, golden film) may still carry legacy names, and the runtime speaks
+    // only the canonical language.
+    const canonical = canonicalCutStyle(intent.style, intent.axis);
+    // A hard-form match (either focal part missing) IS a hard cut at runtime;
+    // its promise is enforced by the tightened eye-trace budget, not motion.
+    if (canonical.style === "match" && !(intent.focalPartOut && intent.focalPartIn)) {
+      continue;
+    }
+    const defaults = STYLE_DEFAULTS[canonical.style as Exclude<CutStyle, "hard">];
     const atSec = scene.startSec + scene.durationSec;
     const exitSec = clamp(
       intent.exitSec ?? defaults.exitSec,
@@ -253,13 +395,15 @@ export function resolveCutPlan(scenes: DirectScene[]): CutPlanV1 {
     );
     cuts.push({
       version: 1,
-      style: intent.style,
+      style: canonical.style,
       fromScene: scene.id,
       toScene: next.id,
       atSec,
       travelPx: clamp(intent.travelPx ?? 230, 80, 420),
       exitSec,
       entrySec,
+      ...(canonical.style === "swipe" ? { axis: canonical.axis ?? "right" } : {}),
+      ...(canonical.style === "swipe" && intent.cover ? { cover: true as const } : {}),
       ...(intent.focalPartOut ? { focalPartOut: intent.focalPartOut } : {}),
       ...(intent.focalPartIn ? { focalPartIn: intent.focalPartIn } : {}),
       ...(intent.shapeOut ? { shapeOut: intent.shapeOut } : {}),
@@ -323,13 +467,25 @@ export function parseCutPlan(html: string): { plan?: CutPlanV1; errors: string[]
     if (!finite(cut.atSec) || !finite(cut.travelPx) || !finite(cut.exitSec) || !finite(cut.entrySec)) {
       errors.push(`cut[${index}] needs finite atSec/travelPx/exitSec/entrySec`);
     }
+    const axis = typeof cut.axis === "string" && CUT_AXES.has(cut.axis as CutAxis)
+      ? cut.axis as CutAxis
+      : undefined;
+    if (style === "swipe" && !axis) {
+      errors.push(`cut[${index}] swipe needs an axis (left|right|up|down)`);
+    }
     const focalPartOut = stablePart(cut.focalPartOut);
     const focalPartIn = stablePart(cut.focalPartIn);
-    if (BRIDGED_STYLES.has(style) && (!focalPartOut || !focalPartIn)) {
+    // Every match in a resolved island is bridged (hard-form matches resolve
+    // to no runtime cut), so both parts are required exactly like morph.
+    if (
+      (BRIDGED_STYLES.has(style) || style === "match") &&
+      (!focalPartOut || !focalPartIn)
+    ) {
       errors.push(`cut[${index}] ${style} needs focalPartOut and focalPartIn`);
     }
     const shapeOut = shapeHint(cut.shapeOut);
     const shapeIn = shapeHint(cut.shapeIn);
+    const hintStyle = style === "shape-match" || style === "morph";
     // Compare counts, not prefixes: `cut[1]` is a prefix of `cut[10]`, so a
     // startsWith check would drop cut 1 whenever a later entry erred.
     if (errors.length > errorsBefore) return [];
@@ -342,10 +498,12 @@ export function parseCutPlan(html: string): { plan?: CutPlanV1; errors: string[]
       travelPx: cut.travelPx as number,
       exitSec: cut.exitSec as number,
       entrySec: cut.entrySec as number,
+      ...(style === "swipe" && axis ? { axis } : {}),
+      ...(style === "swipe" && cut.cover === true ? { cover: true as const } : {}),
       ...(focalPartOut ? { focalPartOut } : {}),
       ...(focalPartIn ? { focalPartIn } : {}),
-      ...(style === "shape-match" && shapeOut ? { shapeOut } : {}),
-      ...(style === "shape-match" && shapeIn ? { shapeIn } : {}),
+      ...(hintStyle && shapeOut ? { shapeOut } : {}),
+      ...(hintStyle && shapeIn ? { shapeIn } : {}),
     }];
   });
   return errors.length ? { errors } : { plan: { version: 1, cuts }, errors: [] };
@@ -399,7 +557,7 @@ export function validateCutContract(
     // is the likeliest field failure for bridged cuts: the flight lands on a
     // point outside the viewport. Both sides are typed (component region vs
     // the first camera segment's entry framing), so warn deterministically.
-    if (BRIDGED_STYLES.has(cut.style) && cut.focalPartIn) {
+    if ((BRIDGED_STYLES.has(cut.style) || cut.style === "match") && cut.focalPartIn) {
       const toScene = scenesById.get(cut.toScene);
       const firstMove = toScene?.camera?.path[0];
       const entryFraming =

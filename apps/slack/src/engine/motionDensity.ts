@@ -318,6 +318,18 @@ function contractActivities(scenes: DirectScene[], durationSec: number): MotionA
       startSec: round(scene.startSec),
       endSec: round(Math.min(scene.startSec + 0.08, durationSec)),
     });
+    // MD4: a grade shift is a host-compiled story state change (temperature
+    // turn), so it is medium information motion — enough to prove the moment it
+    // coincides with (`grade-shift` evidence) without hiding a quiet stretch.
+    if (scene.gradeShift) {
+      activities.push({
+        kind: "medium",
+        source: `gradeShift:${scene.gradeShift.toGrade}`,
+        sceneId: scene.id,
+        startSec: round(scene.gradeShift.atSec),
+        endSec: round(Math.min(scene.gradeShift.atSec + 0.9, durationSec)),
+      });
+    }
     for (const interaction of scene.interactions ?? []) {
       const end = interaction.holdUntilSec ?? interaction.releaseSec ?? interaction.arriveSec;
       activities.push({

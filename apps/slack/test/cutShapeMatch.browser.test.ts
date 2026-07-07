@@ -103,13 +103,14 @@ window.__timelines["shape-smoke"]=tl;tl.seek(0);
 }
 
 describe("shape-match cut runtime browser contract", () => {
-  it("flies the matched bridge and degrades the mismatched pair to zoom-through", async () => {
+  it("flies the matched bridge and degrades the mismatched pair to an axis-derived swipe", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-shape-smoke-"));
     roots.push(dir);
     initializeProject(dir, { name: "Smoke", brandName: "Smoke", seedScreenshot: false });
     const draft = shapeMatchFilm();
     // The static gate accepts both declared boundaries (existence is proven
-    // scene-scoped; silhouette geometry is the runtime's decision).
+    // scene-scoped; silhouette geometry is the runtime's decision). The
+    // legacy shape-match declarations canonicalize to morph in the island.
     const contract = validateCutContract(draft.html, draft.storyboard);
     expect(contract.errors).toEqual([]);
     const qa = await inspectDirectComposition(dir, draft, { captureGuide: false });
@@ -118,7 +119,10 @@ describe("shape-match cut runtime browser contract", () => {
     const degraded = qa.warnings.filter((warning) => warning.startsWith("cut_degraded:"));
     expect(degraded).toHaveLength(1);
     expect(degraded[0]).toContain("two->three");
-    expect(degraded[0]).toContain("zoom-through");
+    // MD1: the degrade target is a swipe whose axis is measured from the two
+    // focal centers, never a zoom — the shipped film speaks the 3-transition
+    // language even on its degrade paths.
+    expect(degraded[0]).toMatch(/compiled as swipe-(left|right|up|down):/);
     expect(degraded[0]).toContain("aspect ratio");
     expect(qa.ok).toBe(true);
     // WS1: the degradation of a planner-DECLARED cut is also a repairable
@@ -127,7 +131,8 @@ describe("shape-match cut runtime browser contract", () => {
     const findings = qa.issues.filter((issue) => issue.code === "cut_degraded");
     expect(findings).toHaveLength(1);
     expect(findings[0]!.severity).toBe("warning");
-    expect(findings[0]!.message).toContain("shape-match cut two->three");
+    expect(findings[0]!.message).toContain("morph cut two->three");
+    expect(findings[0]!.message).toMatch(/degraded it to swipe-(left|right|up|down)/);
     // Measured numbers, not vibes: both endpoints' px boxes appear.
     expect(findings[0]!.message).toMatch(/"wide-banner" \d+x\d+px/);
     expect(findings[0]!.message).toMatch(/"tall-card" \d+x\d+px/);
@@ -135,5 +140,61 @@ describe("shape-match cut runtime browser contract", () => {
     expect(qa.strictOk).toBe(false);
     // The healthy one->two bridge earns no finding.
     expect(findings[0]!.message).not.toContain("one->two");
+  }, 30_000);
+
+  it("keeps a cover swipe invisible to layout/near-blank audits", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-cover-smoke-"));
+    roots.push(dir);
+    initializeProject(dir, { name: "Cover", brandName: "Cover", seedScreenshot: false });
+    const storyboard: DirectScene[] = [
+      {
+        id: "one",
+        title: "Claim",
+        purpose: "The claim lands",
+        startSec: 0,
+        durationSec: 3,
+        cut: { version: 1, style: "swipe", axis: "left", cover: true },
+      },
+      { id: "two", title: "Proof", purpose: "The proof lands", startSec: 3, durationSec: 3 },
+    ];
+    const island = JSON.stringify(resolveCutPlan(storyboard));
+    const html = `<!doctype html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>Cover swipe smoke</title><script src="gsap.min.js"></script>
+<script src="${CAMERA_RUNTIME_FILE}"></script>
+<script src="${CUT_RUNTIME_FILE}"></script><style>
+*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#101622}
+body{color:#eef2f8;font-family:Arial,sans-serif}
+#root{position:relative;width:1920px;height:1080px;overflow:hidden;--accent:#f59e0b}
+.scene{position:absolute;inset:0;padding:120px;display:grid;place-items:center;opacity:0}
+.claim{font-size:96px;font-weight:800}
+</style></head><body>
+<main id="root" data-composition-id="cover-smoke" data-width="1920" data-height="1080" data-duration="6">
+<section id="one" class="scene clip" data-scene="one" data-start="0" data-duration="3" data-track-index="1">
+<div class="claim" data-part="hero-claim" data-layout-important>Ship the launch film</div>
+</section>
+<section id="two" class="scene clip" data-scene="two" data-start="3" data-duration="3" data-track-index="1">
+<div class="claim" data-part="proof-claim" data-layout-important>In one Slack thread</div>
+</section>
+</main>
+<script type="application/json" id="sequences-cuts">${island}</script>
+<script>
+window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
+tl.set("#one",{opacity:1},0).set("#one",{opacity:0},2.999);
+tl.set("#two",{opacity:1},3).set("#two",{opacity:0},6);
+tl.fromTo("#one [data-part=hero-claim]",{y:40,opacity:0},{y:0,opacity:1,duration:.6,ease:"power3.out"},0.2);
+tl.fromTo("#two [data-part=proof-claim]",{y:40,opacity:0},{y:0,opacity:1,duration:.6,ease:"power3.out"},3.6);
+SequencesCuts.compile(tl,document.getElementById("root"));
+window.__timelines["cover-smoke"]=tl;tl.seek(0);
+</script></body></html>`;
+    const draft = { storyboard, html };
+    expect(validateCutContract(draft.html, draft.storyboard).errors).toEqual([]);
+    const qa = await inspectDirectComposition(dir, draft, { captureGuide: false });
+    expect(qa.infraError).toBeUndefined();
+    // The panel and blur lens are runtime overlay artifacts
+    // (data-layout-ignore + data-sequences-runtime-cut): no near-blank,
+    // overlap, or coverage finding may fire because a wipe crossed the frame.
+    expect(qa.errors).toEqual([]);
+    expect(qa.ok).toBe(true);
   }, 30_000);
 });

@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  COMPACT_POP_KINDS,
   COMPONENT_CATALOG,
   COMPONENT_KIT_STYLE_ID,
   COMPONENT_RUNTIME_FILE,
+  MAX_POP_OPENS_PER_SCENE,
   auditComponentComplexity,
   auditSurfaceExits,
   componentAuthoringReference,
   dedupeRedundantBeats,
+  degradeOpenPopStyles,
   componentKitSource,
   componentMotionWindows,
   componentPlanningVocabulary,
@@ -234,6 +237,39 @@ describe("validateComponentContract", () => {
     expect(result.errors.some((error) => error.includes("differs from the storyboard"))).toBe(true);
   });
 
+  it("round-trips a beat's style so a styled film's island stays byte-equal (md-audit-probe-1)", () => {
+    // resolveComponentPlan emits the MD3/MD6 `style` variant and the runtime
+    // reads it; parseComponentPlan MUST parse it back or the island-equality
+    // check rejects every styled film — the exact defect md-audit-probe-1 hit
+    // (wordmark-slam pop, subline rise, cta pop, cta underline all dropped).
+    const styledScene = scene({
+      id: "hero",
+      startSec: 0,
+      durationSec: 6,
+      components: declared(["hero-copy", "headline"], ["cta", "button"]),
+      beats: [
+        { version: 1, id: "name", sceneId: "hero", component: "hero-copy", kind: "type", atSec: 0.6, durationSec: 1.6, text: "SHIPFAST", style: "assemble" },
+        { version: 1, id: "cta-pop", sceneId: "hero", component: "cta", kind: "open", atSec: 3.5, style: "pop" },
+      ],
+    });
+    const resolved = resolveComponentPlan([styledScene]);
+    expect(resolved.scenes[0]?.beats.map((entry) => entry.style)).toEqual(["assemble", "pop"]);
+    const island = JSON.stringify(resolved);
+    const parsed = parseComponentPlan(
+      `<script type="application/json" id="sequences-components">${island}</script>`,
+    );
+    expect(parsed.errors).toEqual([]);
+    expect(JSON.stringify(parsed.plan)).toBe(island);
+    const html =
+      `<main data-composition-id="x"><section data-scene="hero">` +
+      `<h1 class="cmp cmp-headline" data-component="headline" data-part="hero-copy"><span class="cmp-text" data-cmp-text>SHIPFAST</span></h1>` +
+      `<button class="cmp cmp-button" data-component="button" data-part="cta"><span class="cmp-label">Go</span></button></section>` +
+      `<script src="${COMPONENT_RUNTIME_FILE}"></script>` +
+      `<script type="application/json" id="sequences-components">${island}</script>` +
+      `<script>SequencesComponents.compile(tl, root);</script></main>`;
+    expect(validateComponentContract(html, [styledScene]).errors).toEqual([]);
+  });
+
   it("requires every declared component to bind to exactly one kind-marked element", () => {
     const scenes = [componentScene()];
     const missingPart = validateComponentContract(
@@ -286,8 +322,28 @@ describe("validateComponentContract", () => {
 describe("component motion windows and density evidence", () => {
   it("exposes morph/open windows for layout-QA suppression", () => {
     const windows = componentMotionWindows(resolveComponentPlan([componentScene()]));
-    expect(windows).toHaveLength(1); // the morph; type does not suppress QA
+    expect(windows).toHaveLength(1); // the morph; plain typewriter type does not suppress QA
     expect(windows[0]!.start).toBeCloseTo(3.95, 2);
+  });
+
+  it("suppresses layout QA during a split-style headline entrance (MD3 scatter)", () => {
+    // A plain typewriter type stays audited; a rise/pop/assemble type displaces
+    // letters transiently (assemble scatters ~96px) before converging to the
+    // authored copy, so its entrance window is a designed-motion suppression.
+    const styledScene = scene({
+      id: "hero",
+      startSec: 0,
+      durationSec: 6,
+      components: declared(["hero-copy", "headline"]),
+      beats: [
+        { version: 1, id: "plain", sceneId: "hero", component: "hero-copy", kind: "type", atSec: 0.5, durationSec: 1, text: "hi" },
+        { version: 1, id: "assemble", sceneId: "hero", component: "hero-copy", kind: "type", atSec: 2, durationSec: 1.5, text: "SHIPFAST", style: "assemble" },
+      ],
+    });
+    const windows = componentMotionWindows(resolveComponentPlan([styledScene]));
+    // Only the assemble window is exposed — the plain type is still audited.
+    expect(windows).toHaveLength(1);
+    expect(windows[0]!.start).toBeCloseTo(1.95, 2);
   });
 
   it("counts typed beats as medium activities that satisfy scene liveness", () => {
@@ -561,6 +617,78 @@ describe("dedupeRedundantBeats", () => {
     const result = dedupeRedundantBeats(input);
     expect(result.scenes[0]).toBe(input[0]);
     expect(result.dropped).toEqual([]);
+  });
+
+  it("keeps a popped open under a cursor press — press ≠ open (MD6)", () => {
+    // A compact surface pops IN (open) at the same time a cursor presses it.
+    // The pop is the entrance; the press is the acknowledgment — they are
+    // different gestures on different frames, so the open must survive dedupe.
+    const interaction = {
+      version: 1 as const,
+      id: "tap-toast",
+      sceneId: "s1",
+      cursorId: "cursor",
+      targetPart: "toast",
+      action: "click" as const,
+      startSec: 1,
+      arriveSec: 1.8,
+      pressSec: 2,
+      releaseSec: 2.2,
+      from: "frame:center" as const,
+      path: "direct" as const,
+      aimX: 0.5,
+      aimY: 0.5,
+      feedback: "press" as const,
+    };
+    const result = dedupeRedundantBeats([scene({
+      id: "s1",
+      startSec: 0,
+      durationSec: 5,
+      components: declared(["toast", "toast"]),
+      beats: [beat("toast-open", "toast", "open", 2, { style: "pop" })],
+      interactions: [interaction],
+    })]);
+    expect(result.scenes[0]?.beats).toHaveLength(1);
+    expect(result.scenes[0]?.beats?.[0]).toMatchObject({ kind: "open", style: "pop" });
+    expect(result.dropped).toEqual([]);
+  });
+});
+
+describe("degradeOpenPopStyles (MD6 compact-pop governor)", () => {
+  const popBeat = (id: string, component: string, atSec: number): ComponentBeatIntentV1 => ({
+    version: 1, id, sceneId: "s1", component, kind: "open", atSec, style: "pop",
+  });
+
+  it("targets exactly the compact acknowledgment kinds", () => {
+    expect([...COMPACT_POP_KINDS].sort()).toEqual(
+      ["avatar-stack", "button", "progress", "progress-ring", "stat-card", "toast", "toggle"].sort(),
+    );
+  });
+
+  it("drops a pop on a non-compact kind to the default open", () => {
+    const result = degradeOpenPopStyles([scene({
+      id: "s1",
+      startSec: 0,
+      durationSec: 5,
+      components: declared(["hero-modal", "modal"]),
+      beats: [popBeat("modal-open", "hero-modal", 1)],
+    })]);
+    expect(result.scenes[0]?.beats?.[0]?.style).toBeUndefined();
+    expect(result.dropped[0]).toContain("compact-surface only");
+  });
+
+  it("caps pop opens at two per scene and degrades the excess", () => {
+    const result = degradeOpenPopStyles([scene({
+      id: "s1",
+      startSec: 0,
+      durationSec: 6,
+      components: declared(["a", "toast"], ["b", "button"], ["c", "stat-card"]),
+      beats: [popBeat("p1", "a", 1), popBeat("p2", "b", 2), popBeat("p3", "c", 3)],
+    })]);
+    const styles = result.scenes[0]?.beats?.map((entry) => entry.style);
+    expect(styles).toEqual(["pop", "pop", undefined]);
+    expect(MAX_POP_OPENS_PER_SCENE).toBe(2);
+    expect(result.dropped).toHaveLength(1);
   });
 });
 

@@ -45,6 +45,13 @@ import {
   creativeModel,
   creativeThinkingMode,
 } from "./modelPolicy.ts";
+import {
+  TYPE_SYSTEMS,
+  pickTypeSystems,
+  typeSystemById,
+  typeSystemLine,
+  typeSystemToFrameType,
+} from "./typeSystems.ts";
 
 export type FrameTone = "crisp-saas" | "warm-startup" | "bold-launch";
 
@@ -57,6 +64,8 @@ export interface FrameChoice {
   contrast?: ContrastCharacter;
   accentUsage?: AccentUsage;
   palette?: Partial<FrameColors> & { accentSoft?: string; atmosphere?: string };
+  /** A chosen curated type system id; supplies the trio when no brand font is committed. */
+  typeSystemId?: string;
   typography?: Partial<FrameType>;
   density?: Density;
   spacing?: SpacingRhythm;
@@ -177,6 +186,7 @@ function frameChoiceResponseFormat(): NonNullable<CompleteOptions["responseForma
           temperature: { type: "string", enum: TEMPERATURES },
           contrast: { type: "string", enum: CONTRASTS },
           accentUsage: { type: "string", enum: ACCENT_USAGES },
+          typeSystemId: { type: "string", enum: TYPE_SYSTEMS.map((system) => system.id) },
           palette: {
             type: "object",
             properties: Object.fromEntries([
@@ -205,8 +215,8 @@ function frameChoiceResponseFormat(): NonNullable<CompleteOptions["responseForma
         },
         required: [
           "presetId", "thesis", "basis", "harmony", "temperature", "contrast",
-          "accentUsage", "palette", "typography", "density", "spacing", "corners",
-          "depth", "background", "rules", "exceptions",
+          "accentUsage", "typeSystemId", "palette", "typography", "density", "spacing",
+          "corners", "depth", "background", "rules", "exceptions",
         ],
         additionalProperties: false,
       },
@@ -259,11 +269,12 @@ async function chooseFrame(
   const catalog = FRAME_PRESETS.map((preset) =>
     `- ${preset.id} (${preset.basis}, ${preset.tones.join("/")}): ${preset.thesis}`,
   ).join("\n");
+  const typeMenu = pickTypeSystems(brief, 5).map(typeSystemLine).join("\n");
   const shape = [
     '{"presetId":"one id","thesis":"one sentence","basis":"light|dark",',
     '"harmony":"monochromatic|analogous|complementary|split-complementary",',
     '"temperature":"cool|neutral|warm","contrast":"soft|balanced|crisp",',
-    '"accentUsage":"restrained|balanced|bold",',
+    '"accentUsage":"restrained|balanced|bold","typeSystemId":"one type-system id",',
     '"palette":{"bg":"optional hex","surface":"optional hex","text":"optional hex",',
     '"textMuted":"optional hex","accentSoft":"optional hex","atmosphere":"optional hex","border":"optional hex"},',
     '"typography":{"display":"embedded family","body":"embedded family","mono":"embedded family","note":"rationale"},',
@@ -283,6 +294,11 @@ async function chooseFrame(
     "## Mood boards",
     catalog,
     "",
+    "## Type systems (pick one id for typeSystemId; every family is embedded)",
+    "These are curated display/body/mono trios. Choose the one whose voice fits",
+    "the concept; its trio becomes the default type unless a brand font is committed.",
+    typeMenu,
+    "",
     "## Brief",
     brief.slice(0, 1_500),
     tone ? `Requested tone: ${tone}` : "",
@@ -295,9 +311,13 @@ async function chooseFrame(
     "",
     "Use the preset for attitude, restraint, and compositional instinct—not literal",
     "hex values. Brand accent hue and mapped brand fonts are committed when present.",
-    "You control harmony, temperature, contrast, accent intensity, uncommitted type",
-    "roles, spatial rhythm, corners, depth, and background treatment. Optional exact",
-    "palette values let you push the derivation; omit roles where derivation is better.",
+    "You control harmony, temperature, contrast, accent intensity, the type system,",
+    "uncommitted type roles, spatial rhythm, corners, depth, and background treatment.",
+    "Optional exact palette values let you push the derivation; omit roles where",
+    "derivation is better. Learn from how great product brands restrain themselves:",
+    "one committed accent, a tinted (never pure-black, never pure-white) canvas, a",
+    "clear surface + hairline depth step instead of drop shadows, and tabular-crisp",
+    "numerals where metrics matter.",
   ].filter(Boolean).join("\n");
 
   try {
@@ -342,6 +362,9 @@ async function chooseFrame(
       temperature: oneOf(parsed.temperature, TEMPERATURES),
       contrast: oneOf(parsed.contrast, CONTRASTS),
       accentUsage: oneOf(parsed.accentUsage, ACCENT_USAGES),
+      ...(typeof parsed.typeSystemId === "string" && typeSystemById(parsed.typeSystemId.trim())
+        ? { typeSystemId: parsed.typeSystemId.trim() }
+        : {}),
       palette: cleanPalette(parsed.palette),
       typography: cleanTypography(parsed.typography),
       density: oneOf(parsed.density, DENSITIES),
@@ -398,7 +421,12 @@ export function remapPreset(
     accentUsage,
     proposed: choice?.palette,
   });
-  const typographyResult = validateTypography(choice?.typography ?? {}, preset.type, {
+  // A chosen curated type system supplies the default trio (its families are all
+  // embedded). The preset's own trio is the fallback. Committed brand fonts and an
+  // explicit typography override still win over both, in that order.
+  const chosenTypeSystem = choice?.typeSystemId ? typeSystemById(choice.typeSystemId) : undefined;
+  const typeBase = chosenTypeSystem ? typeSystemToFrameType(chosenTypeSystem) : preset.type;
+  const typographyResult = validateTypography(choice?.typography ?? {}, typeBase, {
     display: brandDisplay,
     body: brandBody,
   });
@@ -414,7 +442,7 @@ export function remapPreset(
       : `seed hue ${preset.colors.accent} from ${preset.id} mood DNA`,
     brandDisplay || brandBody
       ? `committed brand type ${[brandDisplay, brandBody].filter(Boolean).join("/")}`
-      : `art-directed embedded type ${typographyResult.value.display}/${typographyResult.value.body}/${typographyResult.value.mono}`,
+      : `${chosenTypeSystem ? `type system ${chosenTypeSystem.id}` : "art-directed"} embedded type ${typographyResult.value.display}/${typographyResult.value.body}/${typographyResult.value.mono}`,
     `palette ${harmony}/${temperature}/${contrast}/${accentUsage}`,
     `layout ${layout.density}`,
   ].join("; ");
@@ -456,6 +484,46 @@ function cinemaLightHex(hex: string, basis: "light" | "dark"): string {
   if (basis === "dark" && y < 0.22) return shade(hex, 0.6, "white");
   if (basis === "light" && y > 0.72) return shade(hex, 0.35, "black");
   return hex;
+}
+
+/**
+ * Brand-informed anti-patterns — the "forbidden defaults" that separate crafted
+ * SaaS design from the generic model default. Distilled from how the reference
+ * product brands restrain themselves (Apple's single accent + product-only
+ * shadow; Linear's tinted near-black + surface ladder, never pure #000; Claude's
+ * warm neutrals; the H.264 banding rule already in the dev preset). Deterministic
+ * from basis + accent so the frame commits to them without a model call.
+ */
+export function forbiddenDefaults(design: FrameDesign): string[] {
+  const dark = design.basis === "dark";
+  const rules: string[] = [
+    "No second competing accent — one committed hue carries every highlight; " +
+      "positive/negative are inline directional data only, never a rival CTA.",
+    "No full-frame linear gradient washes — they band under H.264. Depth is a " +
+      "localized radial glow, grain, or a tinted surface step, never a flat ramp.",
+    "No drop shadows on chrome, cards, buttons, or text — separate surfaces with " +
+      "a tint step + hairline border (the accentSoft/border roles), not blur.",
+  ];
+  if (dark) {
+    rules.push(
+      "Never a pure #000 canvas — hold the tinted near-black above; the warmth/" +
+        "coolness is the premium signal.",
+      "No neon cyan-on-dark, no gradient-filled headline text — both cheapen the " +
+        "dark stage instantly.",
+    );
+  } else {
+    rules.push(
+      "Don't wash the frame to edge-to-edge pure #FFF with no surface step — keep " +
+        "the tinted canvas and a raised surface so hierarchy reads.",
+      "No gradient headline fills or drop-shadowed type — the accent is a mark, " +
+        "not a wash; let scale and one color do the work.",
+    );
+  }
+  rules.push(
+    "Don't default every metric to proportional figures — set numerals tabular " +
+      "so counts, prices, and stats stay aligned as they animate.",
+  );
+  return rules;
 }
 
 export function renderFrameMd(design: FrameDesign, brandName?: string): string {
@@ -665,6 +733,9 @@ resolution/payoff scenes neutral or warm, in service of the story.
 ## Mood-board restraints (≤5)
 ${design.rules.map((rule) => `- ${rule}`).join("\n")}
 
+## Forbidden defaults
+${forbiddenDefaults(design).map((rule) => `- ${rule}`).join("\n")}
+
 ## Brand exceptions
 ${exceptions}
 
@@ -673,6 +744,29 @@ ${repairs}
 
 <!-- provenance: ${design.provenance} -->
 `;
+}
+
+/**
+ * Capture the body under a `## <heading>` line, up to the next `## ` heading, an
+ * HTML comment, or end of document. `headingPattern` is a regex fragment (so
+ * callers can escape parentheses, e.g. `Typography \\(embedded fonts only\\)`).
+ *
+ * A manual line scan — not a single lookahead regex — because a multiline `$` in
+ * a lazy `(?=…|$)` lookahead matches every line-end and truncates the capture to
+ * its first line (the bug that silently emptied the reader-facing palette table).
+ */
+function extractSection(frameMd: string, headingPattern: string): string {
+  const lines = frameMd.split(/\r?\n/);
+  const headRe = new RegExp(`^## ${headingPattern}\\s*$`);
+  let i = lines.findIndex((line) => headRe.test(line));
+  if (i < 0) return "";
+  const body: string[] = [];
+  for (i += 1; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    if (/^## /.test(line) || /^<!--/.test(line)) break;
+    body.push(line);
+  }
+  return body.join("\n").trim();
 }
 
 export function frameFilePath(projectDir: string): string {
@@ -696,8 +790,7 @@ export function publicFrameMd(frameMd: string): string {
     .replace(/^>\s*Art-directed starting system[\s\S]*?(?=\n## Visual thesis)/m, "")
     .trim();
   const title = clean.match(/^# .+$/m)?.[0] ?? "# frame.md";
-  const section = (heading: string): string =>
-    clean.match(new RegExp(`^## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |$)`, "m"))?.[1]?.trim() ?? "";
+  const section = (heading: string): string => extractSection(clean, heading);
   const visual = section("Visual thesis");
   const visualParts = visual.split(/\r?\n\r?\n/).map((part) => part.trim()).filter(Boolean);
   const thesis = visualParts[0] ?? "";
@@ -769,9 +862,90 @@ export function publicFrameMd(frameMd: string): string {
     "## Mood-board restraints",
     section("Mood-board restraints \\(≤5\\)"),
     "",
+    "## Forbidden defaults",
+    section("Forbidden defaults"),
+    "",
     "## Brand exceptions",
     section("Brand exceptions"),
   ].join("\n").trimEnd().concat("\n");
+}
+
+/**
+ * The compact author-facing projection of a frame.md.
+ *
+ * The full frame.md stays the on-disk artifact and the sole validation source
+ * (shared with people, attached to the thread). But the authoring/storyboard/
+ * concept model calls only need the DESIGN DECISIONS: thesis, semantic tokens,
+ * type, the spatial scaffold the author must define, restraints, forbidden
+ * defaults, and brand exceptions. This drops what the model already gets
+ * elsewhere or should never re-author: the cinematography-kit description (host-
+ * injected + taught in planning-director.md — its presence made authors
+ * redundantly re-declare `.material`), the verbose spatial/attribute prose, the
+ * deterministic tool report, and the provenance. Fewer tokens, faster calls,
+ * fewer distractions — the frame stays the artifact, the author gets a capsule.
+ *
+ * Best-effort and defensive: a frame.md that lacks the expected structure (e.g.
+ * a synthetic test frame) falls back to a bounded slice of the input so the
+ * author always receives a usable design context.
+ */
+export function frameCapsule(frameMd: string): string {
+  const title = frameMd.match(/^# frame\.md[^\n]*$/m)?.[0]?.replace(/^# frame\.md/, "# frame.md capsule");
+  const section = (heading: string): string => extractSection(frameMd, heading);
+  const thesisBlock = section("Visual thesis");
+  const paletteBlock = section("Recommended semantic palette");
+  const paletteTable = paletteBlock
+    .split(/\r?\n/)
+    .filter((line) => line.trim().startsWith("|"))
+    .join("\n");
+  const safeAccent = paletteBlock.match(/Use `(#[0-9A-Fa-f]{6})` as the safe default on accent/)?.[1];
+  const typographyBlock = section("Typography \\(embedded fonts only\\)");
+  const typographyLines = typographyBlock
+    .split(/\r?\n/)
+    .filter((line) => line.trim().startsWith("- **") || (line.trim() && !line.startsWith("Font families are committed")))
+    .join("\n")
+    .trim();
+  const cssBlock = frameMd.match(/```css[\s\S]*?```/)?.[0] ?? "";
+  const restraints = section("Mood-board restraints \\(≤5\\)");
+  const forbidden = section("Forbidden defaults");
+  const exceptions = section("Brand exceptions");
+
+  // Without the core sections this isn't a real frame.md — hand back a bounded
+  // slice rather than an empty capsule.
+  if (!thesisBlock || !paletteTable) return frameMd.slice(0, 4_000);
+
+  return [
+    title ?? "# frame.md capsule",
+    "",
+    "> Compact design capsule. The committed brand hue/fonts and the contrast +",
+    "> embedded-font constraints are fixed; tints, spacing, and atmosphere are",
+    "> tunable. Motion and composition stay free.",
+    "",
+    "## Visual thesis",
+    thesisBlock,
+    "",
+    "## Palette (semantic tokens — keep the stated contrast + one-accent hierarchy)",
+    paletteTable,
+    ...(safeAccent ? ["", `Safe default text on accent: \`${safeAccent}\`.`] : []),
+    "",
+    "## Type (embedded families only — scale/weight/case are yours)",
+    typographyLines,
+    "",
+    "## Spatial scaffold (define these classes/tokens in your document <style>)",
+    cssBlock,
+    "Anchor load-bearing text/UI with `data-layout-important` +",
+    "`data-layout-anchor`/`-align`/`-attach`; a camera scene gets one",
+    "`data-camera-world` plane with absolutely-placed `data-region` stations, then",
+    "returns to flow inside each region. The host injects the cinematography kit",
+    "(`.material`/`.keylight`/`.grade-*`) and film grain/vignette — use those",
+    "classes, never re-declare them.",
+    "",
+    "## Restraints",
+    restraints,
+    "",
+    "## Forbidden defaults",
+    forbidden,
+    ...(exceptions ? ["", "## Brand exceptions", exceptions] : []),
+  ].filter((line) => line !== undefined).join("\n").trimEnd().concat("\n");
 }
 
 export interface FrameMeta {

@@ -13,6 +13,8 @@ import {
 import { FRAME_PRESETS, presetById } from "../src/engine/framePresets.ts";
 import {
   buildJobFrame,
+  forbiddenDefaults,
+  frameCapsule,
   loadJobFrame,
   publicFrameMd,
   rankPresets,
@@ -121,6 +123,7 @@ describe("deterministic remap", () => {
     expect(md).toContain("sequences-frame:");
     expect(md).toContain("Art-directed starting system");
     expect(md).toContain("## Deterministic tool report");
+    expect(md).toContain("## Forbidden defaults");
     expect(md).toContain("--space-safe:");
     expect(md).toContain("--grid-columns: 12");
     expect(md).toContain(".scene {");
@@ -381,5 +384,115 @@ describe("buildJobFrame end-to-end (no model, no network)", () => {
       type: "json_schema",
       json_schema: { name: "sequences_frame_direction" },
     });
+  });
+
+  it("lets the model choose a curated type system for the trio", async () => {
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete: async () =>
+        JSON.stringify({
+          presetId: "clean-corporate",
+          thesis: "A calm geometric instrument panel.",
+          basis: "light",
+          harmony: "monochromatic",
+          temperature: "cool",
+          contrast: "crisp",
+          accentUsage: "restrained",
+          typeSystemId: "editorial", // Playfair Display / EB Garamond / JetBrains Mono
+          palette: {},
+          typography: {},
+          density: "balanced",
+          spacing: "balanced",
+          corners: "crisp",
+          depth: "bordered",
+          background: "A quiet paper field.",
+          exceptions: [],
+        }),
+    };
+    const result = await buildJobFrame({
+      provider,
+      projectDir: dir, // no brand font committed → the type system supplies the trio
+      brief: "Launch a premium editorial product",
+    });
+    expect(result.frameMd).toContain("**Display / headlines:** Playfair Display");
+    expect(result.frameMd).toContain("**Body / UI:** EB Garamond");
+    expect(result.frameMd).toContain("type system editorial"); // provenance
+  });
+});
+
+describe("forbidden defaults (brand-informed anti-patterns)", () => {
+  it("always forbids second accents, gradient washes, and chrome shadows", () => {
+    const design = remapPreset(presetById("clean-corporate")!, extractBrandTokens(""), null, []);
+    const rules = forbiddenDefaults(design).join(" ").toLowerCase();
+    expect(rules).toContain("second competing accent");
+    expect(rules).toContain("band under h.264");
+    expect(rules).toContain("no drop shadows on chrome");
+    expect(rules).toContain("tabular");
+  });
+
+  it("forbids pure black on dark and pure-white washout on light", () => {
+    const darkRules = forbiddenDefaults(
+      remapPreset(presetById("dark-premium")!, extractBrandTokens(""), null, []),
+    ).join(" ");
+    expect(darkRules).toContain("#000");
+    const lightRules = forbiddenDefaults(
+      remapPreset(presetById("bold-launch")!, extractBrandTokens(""), null, []),
+    ).join(" ");
+    expect(lightRules).toContain("#FFF");
+  });
+});
+
+describe("frame capsule (compact author projection)", () => {
+  function fullFrame(): string {
+    const design = remapPreset(
+      presetById("crisp-dev")!,
+      extractBrandTokens("accent #3B82F6"),
+      null,
+      ["Wordmark may use oversized mono."],
+    );
+    return renderFrameMd(design, "Radar");
+  }
+
+  it("keeps the design decisions and the spatial scaffold the author needs", () => {
+    const capsule = frameCapsule(fullFrame());
+    expect(capsule).toContain("# frame.md capsule");
+    expect(capsule).toContain("## Visual thesis");
+    expect(capsule).toContain("## Palette");
+    expect(capsule).toContain("| Canvas |");
+    expect(capsule).toContain("## Type");
+    expect(capsule).toContain("**Display / headlines:**");
+    // The author must still define the spatial scaffold in their own <style>.
+    expect(capsule).toContain("--space-safe:");
+    expect(capsule).toContain(".layout-split {");
+    expect(capsule).toContain("## Restraints");
+    expect(capsule).toContain("## Forbidden defaults");
+    expect(capsule).toContain("## Brand exceptions");
+    expect(capsule).toContain("oversized mono");
+  });
+
+  it("drops the host-owned/duplicated chapters and the internal report", () => {
+    const capsule = frameCapsule(fullFrame());
+    // Cinematography kit is host-injected + taught in the director prompt.
+    expect(capsule).not.toContain("## Cinematography (host kit)");
+    // Internal provenance/tooling never reaches the author.
+    expect(capsule).not.toContain("## Deterministic tool report");
+    expect(capsule).not.toContain("<!-- sequences-frame:");
+    expect(capsule).not.toContain("<!-- provenance:");
+  });
+
+  it("is meaningfully smaller than the full frame.md", () => {
+    const full = fullFrame();
+    const capsule = frameCapsule(full);
+    expect(capsule.length).toBeLessThan(full.length);
+  });
+
+  it("falls back to a bounded slice for a non-frame input", () => {
+    const junk = "# Frame token reference line for measurement.\n".repeat(80);
+    const capsule = frameCapsule(junk);
+    expect(capsule.length).toBeLessThanOrEqual(4_000);
+    expect(capsule).toBe(junk.slice(0, 4_000));
   });
 });

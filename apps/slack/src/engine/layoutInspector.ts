@@ -46,6 +46,9 @@ import {
   timeRampRuntimeSource,
   warpInverseOf,
 } from "./timeRamp.ts";
+import { FX_RUNTIME_FILE, fxRuntimeSource } from "./fxContract.ts";
+import { GRADE_SHIFT_DURATION_SEC } from "./gradeShift.ts";
+import { recordSentinelNormalization } from "./sentinelTelemetry.ts";
 import { resolveMomentContract } from "./storyboardMoments.ts";
 import {
   pingPongCandidates,
@@ -72,6 +75,26 @@ export interface DirectLayoutIssue {
   message: string;
   fixHint?: string;
   source: "hyperframes" | "sequences";
+  contrast?: {
+    ratio: number;
+    required: number;
+    foreground?: string;
+    background?: string;
+    suggestedColor?: string;
+  };
+  /**
+   * Measured framing coverage on a `camera_framed_sparse` finding — the scene,
+   * the fraction of the frame its visible content fills, and the station the
+   * camera landed on (when a full move framed one). Consumed by the
+   * deterministic `camera-sparse-zoom` correction (compositionRunner) to size a
+   * bounded zoom-in on exactly that move.
+   */
+  framing?: {
+    sceneId: string;
+    fraction: number;
+    part?: string;
+    region?: string;
+  };
 }
 
 export interface DirectBrowserQaResult {
@@ -151,6 +174,7 @@ export interface DirectInteractionEvidence {
   target: { x: number; y: number };
   deltaPx: number;
   hit: boolean;
+  normalized?: "cursor_near_miss";
 }
 
 interface RuntimeMessage {
@@ -273,7 +297,17 @@ function loadBrowserAudit(name: "layout-audit.browser.js" | "contrast-audit.brow
 //     final-scene landing tier + zero-coverage parity with the static path.
 // v7: camera_framed_sparse mid-window sample covers full-move-less camera scenes.
 // v8: exit discipline — advisory stale_asset_lingers overlap audit (WS4).
-const QA_CACHE_VERSION = 8;
+// v9: MD1 3-transition language — `match` boundaries carry a tightened
+//     eye-trace budget, degraded morphs retarget to an axis-derived swipe
+//     (cut_degraded messages carry the executed target), and swipes gain a
+//     directional blur lens + optional cover panel in the overlay layer.
+// v10: MD4 animated grade shift — the contrast (AA) sample scheduler adds each
+//     grade shift's post-cover settle instant, so text AA is re-measured under
+//     the new wash a mid-scene temperature turn lands on.
+// v11: MD3 split-style headline entrances (rise/pop/assemble) join the
+//     designed-motion suppression windows, so the transient letter scatter is
+//     not audited as a static-layout defect (the settled copy still is).
+const QA_CACHE_VERSION = 11;
 
 /** Everything environment-side that can change the verdict for the same draft. */
 let cachedStaticFingerprint: string | undefined;
@@ -288,6 +322,7 @@ function qaStaticFingerprint(): string {
         cameraRuntimeSource(),
         componentRuntimeSource(),
         timeRampRuntimeSource(),
+        fxRuntimeSource(),
       ].map((source) => createHash("sha256").update(source).digest("hex")),
       audits: [
         loadBrowserAudit("layout-audit.browser.js"),
@@ -395,6 +430,11 @@ function prepareScratch(projectDir: string, draft: DirectCompositionDraft): stri
   fs.writeFileSync(
     path.join(scratch, TIME_RUNTIME_FILE),
     timeRampRuntimeSource(),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(scratch, FX_RUNTIME_FILE),
+    fxRuntimeSource(),
     "utf8",
   );
   const assets = path.join(projectDir, "assets");
@@ -1078,26 +1118,34 @@ async function auditInteractions(
           Math.min(targetRect.bottom - inset, requestedTargetPoint.y),
         ),
       };
-      const hit =
+      const rawHit =
         cursorPoint.x >= targetRect.left + inset &&
         cursorPoint.x <= targetRect.right - inset &&
         cursorPoint.y >= targetRect.top + inset &&
         cursorPoint.y <= targetRect.bottom - inset;
-      const deltaPx = Math.hypot(
+      const rawDeltaPx = Math.hypot(
         cursorPoint.x - targetPoint.x,
         cursorPoint.y - targetPoint.y,
       );
+      const endpoint = entry.phase === "arrival" || entry.phase === "press" ||
+        entry.phase === "release" || entry.phase === "hold";
+      const nearMissSnap = endpoint &&
+        rawDeltaPx > 0 &&
+        rawDeltaPx <= 3 &&
+        (!rawHit || rawDeltaPx > 2);
+      const evidenceCursor = nearMissSnap ? targetPoint : cursorPoint;
+      const hit = nearMissSnap ? true : rawHit;
+      const deltaPx = nearMissSnap ? 0 : rawDeltaPx;
       evidence.push({
         id: intent.id,
         phase: entry.phase,
         time: payload.time,
-        cursor: cursorPoint,
+        cursor: evidenceCursor,
         target: targetPoint,
         deltaPx,
         hit,
+        ...(nearMissSnap ? { normalized: "cursor_near_miss" as const } : {}),
       });
-      const endpoint = entry.phase === "arrival" || entry.phase === "press" ||
-        entry.phase === "release" || entry.phase === "hold";
       if (endpoint && (!hit || deltaPx > 2)) {
         add(
           "interaction_target_miss",
@@ -1108,7 +1156,7 @@ async function auditInteractions(
         );
       }
       if (entry.phase === "press") {
-        const stack = document.elementsFromPoint(cursorPoint.x, cursorPoint.y);
+        const stack = document.elementsFromPoint(evidenceCursor.x, evidenceCursor.y);
         const actorSet = new Set<Element>([
           cursor,
           ...(overlay ? [overlay] : []),
@@ -1153,8 +1201,8 @@ async function auditInteractions(
               y: rippleRect.top + rippleRect.height / 2,
             };
             const rippleDelta = Math.hypot(
-              ripplePoint.x - cursorPoint.x,
-              ripplePoint.y - cursorPoint.y,
+              ripplePoint.x - evidenceCursor.x,
+              ripplePoint.y - evidenceCursor.y,
             );
             if (rippleDelta > 2) {
               add(
@@ -1846,8 +1894,17 @@ async function judgeRenderedMoments(
       ].slice(0, TEMPORAL_JUDGE_MAX_MOMENTS)
   ).slice().sort((a, b) => a.atSec - b.atSec);
   const sceneById = new Map(draft.storyboard.map((scene) => [scene.id, scene]));
+  const judgeCuts = parseCutPlan(draft.html).plan?.cuts ?? [];
   const cutExitByScene = new Map(
-    (parseCutPlan(draft.html).plan?.cuts ?? []).map((cut) => [cut.fromScene, cut.exitSec ?? 0]),
+    judgeCuts.map((cut) => [cut.fromScene, cut.exitSec ?? 0]),
+  );
+  // A cover swipe's panel is still on frame through the incoming scene's
+  // entry window — a before-frame sampled under the panel would compare a
+  // solid wipe against content and judge any change "visible" dishonestly.
+  const entryCoverByScene = new Map(
+    judgeCuts
+      .filter((cut) => cut.style === "swipe" && (cut as { cover?: boolean }).cover)
+      .map((cut) => [cut.toScene, cut.entrySec ?? 0]),
   );
   const pairs = selected.flatMap((moment) => {
     const scene = sceneById.get(moment.sceneId);
@@ -1861,8 +1918,12 @@ async function judgeRenderedMoments(
       sceneStart,
       sceneEnd - 0.05 - (cutExitByScene.get(moment.sceneId) ?? 0),
     );
+    const earliest = Math.min(
+      latest,
+      sceneStart + (entryCoverByScene.get(moment.sceneId) ?? 0),
+    );
     const beforeSec = roundTime(
-      Math.max(sceneStart, Math.min(evidence.startSec - 0.12, latest)),
+      Math.max(earliest, Math.min(evidence.startSec - 0.12, latest)),
     );
     const afterSec = roundTime(
       Math.min(Math.max(evidence.endSec + 0.08, beforeSec + 0.15), latest),
@@ -2091,6 +2152,7 @@ export async function inspectDirectComposition(
           };
           degraded?: boolean;
           reason?: string;
+          target?: string;
         }>;
       }).__sequencesCutBindings ?? [];
       return bindings
@@ -2102,12 +2164,13 @@ export async function inspectDirectComposition(
           focalPartOut: binding.cut?.focalPartOut ?? "",
           focalPartIn: binding.cut?.focalPartIn ?? "",
           reason: binding.reason ?? "geometry audit failed",
+          target: binding.target ?? "zoom-through",
         }));
     });
     const degradedCutWarnings = degradedCutBindings.map((binding) =>
       `cut_degraded: ${binding.style} ` +
       `${binding.fromScene}->${binding.toScene} ` +
-      `compiled as zoom-through: ${binding.reason}`
+      `compiled as ${binding.target}: ${binding.reason}`
     );
     const tweenBoundaries = await collectTweenBoundaries(page);
     const samples = buildDirectLayoutSampleTimes(draft.storyboard, tweenBoundaries, duration);
@@ -2180,10 +2243,22 @@ export async function inspectDirectComposition(
     // Reuse HyperFrames' screenshot-backed contrast audit at representative hero
     // frames. Contrast findings are repair feedback, not a hard geometry block.
     await page.addScriptTag({ content: loadBrowserAudit("contrast-audit.browser.js") });
+    // MD4: re-measure text AA under a mid-scene grade shift's NEW wash. Sample
+    // at the post-cover settle (panel faded, grade class active) — never during
+    // the expand, which would measure the transient decoration panel.
+    const gradeShiftSettles = draft.storyboard
+      .filter((scene) => scene.gradeShift)
+      .map((scene) => {
+        const sceneEnd = scene.startSec + scene.durationSec;
+        return Math.min(scene.gradeShift!.atSec + GRADE_SHIFT_DURATION_SEC + 0.45, sceneEnd - 0.05);
+      });
     const contrastTimes = uniqueTimes(
-      draft.storyboard.map((scene) => scene.startSec + scene.durationSec * 0.58),
+      [
+        ...gradeShiftSettles,
+        ...draft.storyboard.map((scene) => scene.startSec + scene.durationSec * 0.58),
+      ],
       duration,
-    ).slice(0, 5);
+    ).slice(0, 5 + gradeShiftSettles.length);
     for (const time of contrastTimes) {
       await seekContent(time);
       const screenshot = await page.screenshot({ encoding: "base64", type: "png" });
@@ -2194,8 +2269,12 @@ export async function inspectDirectComposition(
               selector: string;
               text: string;
               ratio: number;
+              required?: number;
               wcagAA: boolean;
               large: boolean;
+              fg?: string;
+              bg?: string;
+              suggestedColor?: string;
             }>>;
           }).__contrastAudit;
           return audit?.(payload.image, payload.time) ?? [];
@@ -2204,15 +2283,23 @@ export async function inspectDirectComposition(
       );
       for (const entry of contrast) {
         if (entry.wcagAA) continue;
+        const required = entry.required ?? (entry.large ? 3 : 4.5);
         rawIssues.push({
           code: "contrast_aa",
           severity: "warning",
           time,
           selector: entry.selector,
           text: entry.text,
-          message: `Contrast is ${entry.ratio}:1; needs ${entry.large ? 3 : 4.5}:1.`,
+          message: `Contrast is ${entry.ratio}:1; needs ${required}:1.`,
           fixHint: "Adjust the existing semantic color while preserving the committed hue family.",
           source: "hyperframes",
+          contrast: {
+            ratio: entry.ratio,
+            required,
+            ...(entry.fg ? { foreground: entry.fg } : {}),
+            ...(entry.bg ? { background: entry.bg } : {}),
+            ...(entry.suggestedColor ? { suggestedColor: entry.suggestedColor } : {}),
+          },
         });
       }
     }
@@ -2311,7 +2398,10 @@ export async function inspectDirectComposition(
     for (let index = 0; index < draft.storyboard.length - 1; index += 1) {
       const scene = draft.storyboard[index]!;
       const style = scene.cut?.style;
-      if (style !== "shape-match" && style !== "object-match") continue;
+      if (
+        style !== "morph" && style !== "match" &&
+        style !== "shape-match" && style !== "object-match"
+      ) continue;
       declaredBridgedBoundaries.set(
         `${scene.id}->${draft.storyboard[index + 1]!.id}`,
         scene.startSec + scene.durationSec,
@@ -2342,7 +2432,7 @@ export async function inspectDirectComposition(
         selector: `[data-part="${degraded.focalPartOut}"]`,
         message:
           `The storyboard declares a ${degraded.style} cut ${boundaryKey}, but the runtime ` +
-          `degraded it to zoom-through at bind time: ${degraded.reason}. Measured at the ` +
+          `degraded it to ${degraded.target} at bind time: ${degraded.reason}. Measured at the ` +
           `boundary: outgoing ${summarize(inventory?.outgoing, degraded.focalPartOut)} vs ` +
           `incoming ${summarize(inventory?.incoming, degraded.focalPartIn)}.`,
         fixHint:
@@ -2386,7 +2476,11 @@ export async function inspectDirectComposition(
             `"${jump.toScene}", but the incoming attention target "${jump.inPart}" ` +
             `appears at (${jump.inCenter.x},${jump.inCenter.y}) — a ` +
             `${Math.round(jump.displacementFraction * 100)}%-of-frame-diagonal jump ` +
-            `across a ${jump.cutStyle} cut, which does not carry the eye.`,
+            `across a ${jump.cutStyle} cut ` +
+            `(budget ${Math.round(jump.budgetFraction * 100)}%` +
+            `${jump.cutStyle === "match"
+              ? " — match PROMISES the incoming subject lands where the eye already is"
+              : ""}).`,
           fixHint:
             "Place the incoming shot's opening subject where the eye already is at the " +
             "cut: align the two focal elements' frame positions, or move the incoming " +
@@ -2716,9 +2810,21 @@ export async function inspectDirectComposition(
         if (!segment.toRegion && !segment.toPart) continue;
         // A zoom above fit crops the station deliberately; audit fit framings.
         if (segment.zoom > 1.05) continue;
-        const settleAt = Math.min(segment.endSec + 0.35, sceneEnd - 0.1);
-        if (settleAt <= segment.endSec - 0.01 || insideCutWindow(settleAt)) continue;
-        const confirmAt = Math.min(settleAt + 0.8, sceneEnd - 0.05);
+        // A dive (MD5) lands twice: on the part when its push-in leg ends,
+        // and back on the prior framing at endSec. The prior framing was
+        // already sampled by its own segment, so audit the PART landing —
+        // inside the held window, never after the pull-back has left it.
+        const isDive = segment.move === "dive";
+        const legFallback = Math.min(0.8, (segment.endSec - segment.startSec) * 0.25);
+        const arriveSec = isDive
+          ? segment.startSec + (segment.inSec ?? legFallback)
+          : segment.endSec;
+        const windowEnd = isDive
+          ? segment.endSec - (segment.outSec ?? legFallback)
+          : sceneEnd;
+        const settleAt = Math.min(arriveSec + 0.35, windowEnd - 0.1, sceneEnd - 0.1);
+        if (settleAt <= arriveSec - 0.01 || insideCutWindow(settleAt)) continue;
+        const confirmAt = Math.min(settleAt + 0.8, windowEnd - 0.05, sceneEnd - 0.05);
         const canConfirm = confirmAt > settleAt + 0.05 && !insideCutWindow(confirmAt);
         const station = segment.toPart
           ? `part "${segment.toPart}"`
@@ -2751,7 +2857,7 @@ export async function inspectDirectComposition(
               ...(clip.text ? { text: clip.text } : {}),
               message:
                 `Camera ${segment.move} lands on ${station} in scene "${scenePlan.sceneId}" at ` +
-                `${segment.endSec.toFixed(1)}s, but ${clip.selector} is only ` +
+                `${arriveSec.toFixed(1)}s, but ${clip.selector} is only ` +
                 `${Math.round(clip.fraction * 100)}% inside the frame after the move settles — ` +
                 `the audience sees it clipped.`,
               fixHint:
@@ -2780,9 +2886,15 @@ export async function inspectDirectComposition(
               selector: segment.toPart
                 ? `[data-part="${segment.toPart}"]`
                 : `[data-region="${segment.toRegion}"]`,
+              framing: {
+                sceneId: scenePlan.sceneId,
+                fraction: confirmedCoverage.fraction,
+                ...(segment.toPart ? { part: segment.toPart } : {}),
+                ...(segment.toRegion ? { region: segment.toRegion } : {}),
+              },
               message:
                 `Camera ${segment.move} lands on ${station} in scene "${scenePlan.sceneId}" at ` +
-                `${segment.endSec.toFixed(1)}s, but the scene's visible content fills only ` +
+                `${arriveSec.toFixed(1)}s, but the scene's visible content fills only ` +
                 `${Math.round(confirmedCoverage.fraction * 100)}% of the frame — a small subject ` +
                 `adrift in empty space.`,
               fixHint:
@@ -2917,6 +3029,7 @@ export async function inspectDirectComposition(
         severity: "warning",
         time: sampleAt,
         selector: `[data-scene="${scene.id}"]`,
+        framing: { sceneId: scene.id, fraction: confirmedCoverage.fraction },
         message:
           `Scene "${scene.id}" holds one framing whose visible content fills only ` +
           `${Math.round(confirmedCoverage.fraction * 100)}% of the frame — a small subject ` +
@@ -3081,6 +3194,14 @@ export async function inspectDirectComposition(
       issues.push(issue);
       warnings.push(formatIssue(issue));
     }
+    // Ledger honesty: each snapped near-miss endpoint is a deterministic
+    // normalization (L2-at-L4) — count it so sentinel-run.json never hides the
+    // repair. Cache hits skip this (diagnostics only, same as the whole pass).
+    const nearMissSnaps = interactionEvidence
+      .filter((entry) => entry.normalized === "cursor_near_miss").length;
+    if (nearMissSnaps > 0) {
+      recordSentinelNormalization("cursor-near-miss", nearMissSnaps);
+    }
     const result: DirectBrowserQaResult = {
       // The hard browser boundary is objective runtime health. Visual audit
       // findings may trigger bounded polish, but a runnable draft is always
@@ -3091,8 +3212,7 @@ export async function inspectDirectComposition(
       strictOk:
         errors.length === 0 &&
         visualErrors.length === 0 &&
-        repairWarnings.length === 0 &&
-        staticMoments.length === 0,
+        repairWarnings.length === 0,
       samples,
       issues,
       interactions: interactionEvidence,

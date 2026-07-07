@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   auditCutCoherence,
+  canonicalCutStyle,
   cutMotionWindows,
+  isEnergeticCutIntent,
   normalizeStoryboardCutIntent,
   parseCutPlan,
   resolveCutPlan,
   shapeHintsRhyme,
+  swipeAxisTowards,
   validateCutContract,
   type CutPlanV1,
 } from "../src/engine/cutContract.ts";
@@ -33,21 +36,53 @@ const scenes: DirectScene[] = [
 ];
 
 describe("normalizeStoryboardCutIntent", () => {
-  it("keeps known styles and clamps parameters", () => {
+  it("canonicalizes legacy directional names into swipe + axis and clamps parameters", () => {
     expect(normalizeStoryboardCutIntent({
       style: "cut-right",
       travelPx: 9999,
       exitSec: 0.01,
       entrySec: 5,
-    })).toEqual({ version: 1, style: "cut-right", travelPx: 420, exitSec: 0.12, entrySec: 0.9 });
+    })).toEqual({
+      version: 1,
+      style: "swipe",
+      axis: "right",
+      travelPx: 420,
+      exitSec: 0.12,
+      entrySec: 0.9,
+    });
+  });
+
+  it("accepts the canonical swipe with axis and optional cover", () => {
+    expect(normalizeStoryboardCutIntent({ style: "swipe", axis: "up", cover: true }))
+      .toEqual({ version: 1, style: "swipe", axis: "up", cover: true });
+    // Missing/unknown axis degrades to right-travel, never fails the plan.
+    expect(normalizeStoryboardCutIntent({ style: "swipe", axis: "sideways" }))
+      .toEqual({ version: 1, style: "swipe", axis: "right" });
+    // cover is only ever the literal true.
+    expect(normalizeStoryboardCutIntent({ style: "swipe", axis: "left", cover: "yes" }))
+      .toEqual({ version: 1, style: "swipe", axis: "left" });
   });
 
   it("degrades unusable declarations to no cut instead of failing", () => {
     expect(normalizeStoryboardCutIntent({ style: "spin-o-rama" })).toBeUndefined();
-    expect(normalizeStoryboardCutIntent({ style: "object-match" })).toBeUndefined();
-    expect(normalizeStoryboardCutIntent({ style: "object-match", focalPartOut: "a" })).toBeUndefined();
+    expect(normalizeStoryboardCutIntent({ style: "morph" })).toBeUndefined();
+    expect(normalizeStoryboardCutIntent({ style: "morph", focalPartOut: "a" })).toBeUndefined();
     expect(normalizeStoryboardCutIntent(null)).toBeUndefined();
     expect(normalizeStoryboardCutIntent("cut-left")).toBeUndefined();
+  });
+
+  it("keeps a match with incomplete parts as the hard-form promise", () => {
+    // object-match canonicalizes to match; with one/zero parts it is a hard
+    // cut whose eye-trace budget QA tightens, not a dropped declaration.
+    expect(normalizeStoryboardCutIntent({ style: "object-match" }))
+      .toEqual({ version: 1, style: "match" });
+    expect(normalizeStoryboardCutIntent({ style: "match", focalPartIn: "hero-panel" }))
+      .toEqual({ version: 1, style: "match", focalPartIn: "hero-panel" });
+    expect(normalizeStoryboardCutIntent({
+      style: "match",
+      focalPartOut: "chip",
+      focalPartIn: "panel",
+    })).toEqual({ version: 1, style: "match", focalPartOut: "chip", focalPartIn: "panel" });
   });
 
   it("keeps hard as an explicit editorial decision with no parameters", () => {
@@ -55,7 +90,7 @@ describe("normalizeStoryboardCutIntent", () => {
       .toEqual({ version: 1, style: "hard" });
   });
 
-  it("normalizes shape-match with silhouette hints and requires both parts", () => {
+  it("canonicalizes shape-match to morph with silhouette hints and requires both parts", () => {
     expect(normalizeStoryboardCutIntent({
       style: "shape-match",
       focalPartOut: "inbox-window",
@@ -64,7 +99,7 @@ describe("normalizeStoryboardCutIntent", () => {
       shapeIn: "card",
     })).toEqual({
       version: 1,
-      style: "shape-match",
+      style: "morph",
       focalPartOut: "inbox-window",
       focalPartIn: "draft-card",
       shapeOut: "window",
@@ -72,25 +107,53 @@ describe("normalizeStoryboardCutIntent", () => {
     });
     // Hints are optional and unknown hints are dropped, never fatal.
     expect(normalizeStoryboardCutIntent({
-      style: "shape-match",
+      style: "morph",
       focalPartOut: "a",
       focalPartIn: "b",
       shapeOut: "rhombus",
-    })).toEqual({ version: 1, style: "shape-match", focalPartOut: "a", focalPartIn: "b" });
+    })).toEqual({ version: 1, style: "morph", focalPartOut: "a", focalPartIn: "b" });
     expect(normalizeStoryboardCutIntent({ style: "shape-match", focalPartOut: "a" }))
       .toBeUndefined();
   });
 });
 
 describe("resolveCutPlan", () => {
-  it("resolves per-scene declarations into concrete boundaries", () => {
+  it("resolves per-scene declarations into concrete canonical boundaries", () => {
     const plan = resolveCutPlan(scenes);
     expect(plan.cuts.map((cut) => [cut.fromScene, cut.toScene, cut.style, cut.atSec])).toEqual([
-      ["one", "two", "cut-left", 4],
-      ["two", "three", "object-match", 9],
+      ["one", "two", "swipe", 4],
+      ["two", "three", "match", 9],
     ]);
-    expect(plan.cuts[0]).toMatchObject({ travelPx: 230, exitSec: 0.3, entrySec: 0.42 });
+    expect(plan.cuts[0]).toMatchObject({ axis: "left", travelPx: 230, exitSec: 0.3, entrySec: 0.42 });
     expect(plan.cuts[1]).toMatchObject({ focalPartOut: "chip", focalPartIn: "panel" });
+  });
+
+  it("carries the swipe cover flag into the resolved plan", () => {
+    const plan = resolveCutPlan([
+      scene({
+        id: "a",
+        startSec: 0,
+        durationSec: 3,
+        cut: { version: 1, style: "swipe", axis: "down", cover: true },
+      }),
+      scene({ id: "b", startSec: 3, durationSec: 3 }),
+    ]);
+    expect(plan.cuts[0]).toMatchObject({ style: "swipe", axis: "down", cover: true });
+  });
+
+  it("resolves a hard-form match (incomplete parts) to no runtime cut", () => {
+    // The seam is a plain hard cut; the promise lives in QA's tightened
+    // eye-trace budget, not in boundary motion.
+    const plan = resolveCutPlan([
+      scene({
+        id: "a",
+        startSec: 0,
+        durationSec: 3,
+        cut: { version: 1, style: "match", focalPartIn: "hero-panel" },
+      }),
+      scene({ id: "b", startSec: 3, durationSec: 3 }),
+    ]);
+    expect(plan.cuts).toEqual([]);
   });
 
   it("ignores the final scene's declaration and hard cuts", () => {
@@ -184,7 +247,7 @@ describe("validateCutContract", () => {
     )).toBe(true);
   });
 
-  it("carries shape-match fields through resolve and parse round-trips", () => {
+  it("carries morph fields through resolve and parse round-trips", () => {
     const shaped: DirectScene[] = [
       scene({
         id: "one",
@@ -203,7 +266,7 @@ describe("validateCutContract", () => {
     ];
     const plan = resolveCutPlan(shaped);
     expect(plan.cuts[0]).toMatchObject({
-      style: "shape-match",
+      style: "morph",
       focalPartOut: "chip",
       focalPartIn: "panel",
       shapeOut: "pill",
@@ -338,6 +401,51 @@ describe("cutMotionWindows", () => {
   });
 });
 
+describe("canonicalCutStyle", () => {
+  it("maps every legacy name onto the 3-transition language", () => {
+    expect(canonicalCutStyle("cut-left")).toEqual({ style: "swipe", axis: "left" });
+    expect(canonicalCutStyle("cut-down")).toEqual({ style: "swipe", axis: "down" });
+    expect(canonicalCutStyle("shape-match")).toEqual({ style: "morph" });
+    expect(canonicalCutStyle("object-match")).toEqual({ style: "match" });
+    expect(canonicalCutStyle("swipe")).toEqual({ style: "swipe", axis: "right" });
+    expect(canonicalCutStyle("swipe", "up")).toEqual({ style: "swipe", axis: "up" });
+    // Zoom/flash registers stay executable but undocumented.
+    expect(canonicalCutStyle("zoom-through")).toEqual({ style: "zoom-through" });
+    expect(canonicalCutStyle("hard")).toEqual({ style: "hard" });
+  });
+});
+
+describe("swipeAxisTowards", () => {
+  it("carries the eye toward the incoming focal center", () => {
+    // Target to the RIGHT → incoming enters from the right → leftward travel.
+    expect(swipeAxisTowards({ x: 200, y: 500 }, { x: 1600, y: 520 })).toBe("left");
+    expect(swipeAxisTowards({ x: 1600, y: 500 }, { x: 200, y: 520 })).toBe("right");
+    // Target BELOW (screen y grows downward) → enters from the bottom → up.
+    expect(swipeAxisTowards({ x: 900, y: 200 }, { x: 940, y: 900 })).toBe("up");
+    expect(swipeAxisTowards({ x: 900, y: 900 }, { x: 940, y: 200 })).toBe("down");
+    expect(swipeAxisTowards(undefined, { x: 1, y: 1 })).toBe("right");
+  });
+});
+
+describe("isEnergeticCutIntent", () => {
+  it("counts bridges, cover swipes, and legacy zoom/flash registers", () => {
+    expect(isEnergeticCutIntent({
+      version: 1, style: "morph", focalPartOut: "a", focalPartIn: "b",
+    })).toBe(true);
+    expect(isEnergeticCutIntent({
+      version: 1, style: "match", focalPartOut: "a", focalPartIn: "b",
+    })).toBe(true);
+    expect(isEnergeticCutIntent({ version: 1, style: "swipe", axis: "left", cover: true }))
+      .toBe(true);
+    expect(isEnergeticCutIntent({ version: 1, style: "zoom-through" })).toBe(true);
+    // Quiet seams: plain swipe, hard-form match, hard.
+    expect(isEnergeticCutIntent({ version: 1, style: "swipe", axis: "left" })).toBe(false);
+    expect(isEnergeticCutIntent({ version: 1, style: "match", focalPartIn: "b" })).toBe(false);
+    expect(isEnergeticCutIntent({ version: 1, style: "hard" })).toBe(false);
+    expect(isEnergeticCutIntent(undefined)).toBe(false);
+  });
+});
+
 describe("shapeHintsRhyme", () => {
   it("rhymes within a silhouette family and rejects cross-family pairs", () => {
     // Strips rhyme with strips…
@@ -371,7 +479,7 @@ describe("auditCutCoherence", () => {
   it("flags five distinct non-hard styles across five boundaries as a zoo", () => {
     const findings = auditCutCoherence([
       cutScene("a", 0, "cut-left"),
-      cutScene("b", 3, "cut-up"),
+      cutScene("b", 3, "zoom-through"),
       cutScene("c", 6, "flash-white"),
       cutScene("d", 9, "object-match"),
       cutScene("e", 12, "inverse-zoom"),
@@ -380,6 +488,18 @@ describe("auditCutCoherence", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatch(/cuts\/coherence/);
     expect(findings[0]).toContain("5 distinct");
+  });
+
+  it("counts the whole swipe family (all axes, legacy directional names) as ONE language", () => {
+    expect(auditCutCoherence([
+      cutScene("a", 0, "cut-left"),
+      cutScene("b", 3, "cut-up"),
+      { ...cutScene("c", 6, "swipe"), cut: { version: 1, style: "swipe", axis: "down" } },
+      cutScene("d", 9, "flash-white"),
+      cutScene("e", 12, "object-match"),
+      cutScene("f", 15, "inverse-zoom"),
+      scene({ id: "g", startSec: 18, durationSec: 3 }),
+    ])).toEqual([]);
   });
 
   it("accepts a consistent language (signatures repeated) and never counts hard cuts", () => {

@@ -18,23 +18,14 @@ const APP_DIR = path.resolve(fileURLToPath(import.meta.url), "../..");
  *
  * 1. `planning-director.md` — the editable base prompt — stays within its
  *    post-Phase-1 byte count + 10%. This one is ENFORCED and passing.
- * 2. The ASSEMBLED author prompt for a fixture job — target ≤ 45,000 chars —
- *    is currently unreachable (see the `.todo` and the structural-floor test
- *    below): the base director prompt (~37k) plus the "create" RAG budget
- *    (28k) already exceed 45k before the storyboard JSON, frame.md, component
- *    reference, and skeleton. Reaching it needs structural cuts documented in
- *    SENTINEL.md "Prompt budget", not a quiet ceiling bump. Until then a
- *    regression guard holds the line at the measured level.
+ * 2. The ASSEMBLED slot-author prompt for a fixture job stays at ≤45,000 chars.
+ *    Slot mode removes host-owned director chapters and uses a compact,
+ *    deterministic skills projection while preserving creative/motion guidance.
  */
 const PLANNING_DIRECTOR_BASELINE_BYTES = 37_010; // post-Phase-1 (SENTINEL_REPORT)
 const PLANNING_DIRECTOR_BUDGET_BYTES = Math.round(PLANNING_DIRECTOR_BASELINE_BYTES * 1.1); // 40,711
 const AUTHOR_PROMPT_TARGET_CHARS = 45_000;
-// NOT the target — the current-state anti-growth guard. Lower it as prompt
-// surgery lands (Phase 5 scaffold-prose deletion, a skills-budget diet, a
-// director-prompt split); never raise it without a written justification in
-// SENTINEL.md. The fixture below measures ~81k; the ceiling carries headroom
-// for minor deterministic RAG/storyboard drift, not for new prose.
-const AUTHOR_PROMPT_REGRESSION_CEILING = 88_000;
+const AUTHOR_PROMPT_REGRESSION_CEILING = AUTHOR_PROMPT_TARGET_CHARS;
 
 function assembledFixturePrompt(): { prompt: string; directorChars: number; skillsChars: number } {
   const brief = [
@@ -104,21 +95,19 @@ describe("Slot-mode director-prompt surgery — no contradictory whole-doc contr
     expect(prompt).not.toContain("Mark each storyboard scene with");
     // And it does carry the slot response contract.
     expect(prompt).toContain("Response contract (scene slots)");
+    // Host-owned reference chapters are removed, while creative/motion craft remains.
+    expect(prompt).not.toContain("## Architecture laws");
+    expect(prompt).not.toContain("## Hard runtime contract");
+    expect(prompt).toContain("## Motion doctrine");
+    expect(prompt).toContain("## Continuous spatial world");
+    expect(prompt).toContain("## Motion-native components");
   });
 });
 
 describe("Prompt budget — assembled author prompt", () => {
-  // The target the plan sets. Marked todo (not silently skipped) because it is
-  // structurally unreachable this phase — the reduction plan lives in
-  // SENTINEL.md "Prompt budget". Flip this to a real `it(...)` the moment the
-  // fixture drops below 45k.
-  it.todo("assembled author prompt for a fixture job ≤ 45,000 chars (target)");
-
-  it("proves the structural floor: base prompt + create-skills already exceed 45k", () => {
-    // Documents WHY the target is a todo: reaching it needs structural cuts, not
-    // prose trimming. If this ever fails, the floor moved — reconsider the todo.
-    const { directorChars, skillsChars } = assembledFixturePrompt();
-    expect(directorChars + skillsChars).toBeGreaterThan(AUTHOR_PROMPT_TARGET_CHARS);
+  it("assembled slot author prompt for a fixture job is ≤ 45,000 chars", () => {
+    const { prompt } = assembledFixturePrompt();
+    expect(prompt.length).toBeLessThanOrEqual(AUTHOR_PROMPT_TARGET_CHARS);
   });
 
   it("holds the assembled prompt at its measured regression ceiling", () => {
@@ -128,9 +117,8 @@ describe("Prompt budget — assembled author prompt", () => {
     expect(
       prompt.length,
       `Assembled author prompt grew to ${prompt.length} chars (ceiling ` +
-        `${AUTHOR_PROMPT_REGRESSION_CEILING}). This is the anti-growth guard, not the ` +
-        `45k target — if the growth is intentional and justified, raise the ceiling ` +
-        `WITH a note in SENTINEL.md; otherwise cut what you added.`,
+      `${AUTHOR_PROMPT_REGRESSION_CEILING}). If growth is intentional, update the ` +
+        `mission target and its rationale in Sentinel docs; otherwise cut it.`,
     ).toBeLessThanOrEqual(AUTHOR_PROMPT_REGRESSION_CEILING);
   });
 });
