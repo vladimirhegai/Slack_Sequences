@@ -71,7 +71,24 @@ retrieval, sentinel registry) requires updating
 [studio/INTEGRATION.md](studio/INTEGRATION.md)'s seam table** — bumping a
 runtime/kit version marks every exported recipe stale until re-proven. Plan:
 [docs/RECIPE_STUDIO_PLAN.md](../../docs/RECIPE_STUDIO_PLAN.md) (in the private
-monorepo); build report: [RECIPE_STUDIO_REPORT.md](RECIPE_STUDIO_REPORT.md).
+monorepo); build reports: [RECIPE_STUDIO_REPORT.md](RECIPE_STUDIO_REPORT.md)
+(foundation) + [RECIPE_STUDIO_REPORT_2.md](RECIPE_STUDIO_REPORT_2.md) (canvas +
+agents).
+
+The studio now also has a **canvas builder** (`studio/canvasModel.ts` +
+`compileCanvas.ts`): a direct-manipulation film editor (world view over
+`data-camera-world`/`data-region`, live catalog components, camera transitions
+with ease picker, timeline, inspector) that compiles a typed `CanvasFilm`
+**deterministically, zero tokens** into a composition and runs it through the
+EXACT production gate (`npm run studio:canvas` proves it green end-to-end). And
+an **agent chat** (`studio/agents/`): an OpenRouter in-process critic (GLM /
+DeepSeek Flash via `modelPolicy`) and a **Claude Code CLI file-first agent**
+(`claude -p --output-format stream-json --permission-mode acceptEdits`, cwd =
+the workspace, `--resume` per workspace, generated AGENT.md) — the studio is the
+referee, re-gating the composition after every CLI turn. Ref-image attachments
+persist under the workspace's `refs/` (never exported). Canvas + agent seams are
+in [studio/INTEGRATION.md](studio/INTEGRATION.md). The recipe path stays
+degrade-never-veto; `SLACK_SEQUENCES_RECIPES=0` remains the kill switch.
 
 ## The two bots
 

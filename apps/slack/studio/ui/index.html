@@ -7,7 +7,7 @@
 <style>
   :root {
     --bg: #0c1016; --panel: #131a23; --panel-2: #0f151d; --edge: #223041;
-    --text: #e8edf2; --muted: #8fa1b3; --accent: #ffc24d; --green: #7ddba3; --red: #ff8080;
+    --text: #e8edf2; --muted: #8fa1b3; --accent: #ffc24d; --green: #7ddba3; --red: #ff8080; --blue: #79b8ff;
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
@@ -15,7 +15,7 @@
   header { display: flex; align-items: baseline; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--edge); }
   header h1 { font-size: 16px; margin: 0; letter-spacing: 0.02em; }
   header .sub { color: var(--muted); font-size: 12px; }
-  main { display: grid; grid-template-columns: 260px minmax(0, 1fr) 420px; gap: 0; height: calc(100vh - 45px); }
+  main { display: grid; grid-template-columns: 250px minmax(0, 1fr) 430px; gap: 0; height: calc(100vh - 45px); }
   .col { overflow-y: auto; padding: 14px; }
   .col.left { border-right: 1px solid var(--edge); background: var(--panel-2); }
   .col.right { border-left: 1px solid var(--edge); background: var(--panel-2); }
@@ -30,11 +30,14 @@
   .badge.green { color: var(--green); border-color: rgba(125, 219, 163, 0.4); }
   .badge.red { color: var(--red); border-color: rgba(255, 128, 128, 0.4); }
   .badge.amber { color: var(--accent); border-color: rgba(255, 194, 77, 0.4); }
-  button { background: var(--panel); color: var(--text); border: 1px solid var(--edge); border-radius: 8px; padding: 7px 14px; cursor: pointer; font: inherit; }
+  .badge.blue { color: var(--blue); border-color: rgba(121, 184, 255, 0.4); }
+  button { background: var(--panel); color: var(--text); border: 1px solid var(--edge); border-radius: 8px; padding: 7px 12px; cursor: pointer; font: inherit; }
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); color: #14100a; border-color: var(--accent); font-weight: 600; }
+  button.sm { padding: 3px 8px; font-size: 12px; }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
-  input, textarea { width: 100%; background: var(--panel); border: 1px solid var(--edge); color: var(--text); border-radius: 8px; padding: 7px 10px; font: inherit; }
+  input, textarea, select { width: 100%; background: var(--panel); border: 1px solid var(--edge); color: var(--text); border-radius: 8px; padding: 7px 10px; font: inherit; }
+  select { cursor: pointer; }
   textarea.code { font: 12px/1.5 "JetBrains Mono", Consolas, monospace; white-space: pre; min-height: 200px; }
   label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px; }
   .viewer { background: #000; border: 1px solid var(--edge); border-radius: 10px; overflow: hidden; aspect-ratio: 16/9; position: relative; }
@@ -47,44 +50,452 @@
   .finding { border-left: 3px solid var(--red); background: var(--panel); border-radius: 0 8px 8px 0; padding: 6px 10px; margin-bottom: 6px; font: 12px/1.5 "JetBrains Mono", monospace; white-space: pre-wrap; word-break: break-word; }
   .finding.warn { border-left-color: var(--accent); }
   .thumbs { display: flex; gap: 8px; overflow-x: auto; margin-top: 10px; padding-bottom: 4px; }
-  .thumbs img { height: 76px; border-radius: 6px; border: 1px solid var(--edge); }
+  .thumbs img { height: 72px; border-radius: 6px; border: 1px solid var(--edge); }
   .row { display: flex; gap: 8px; align-items: center; }
   .row > * { flex: 1; }
-  .actions { display: flex; gap: 8px; margin: 14px 0; }
+  .actions { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
   .actions button { flex: none; }
   .note { color: var(--muted); font-size: 12px; margin-top: 6px; }
   .status { font-size: 12px; margin-left: auto; color: var(--muted); }
   pre.sanity { background: var(--panel); border: 1px solid var(--edge); border-radius: 8px; padding: 10px; font-size: 11px; overflow-x: auto; }
+
+  /* --- canvas editor --- */
+  .rail { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .rail .tab { padding: 5px 12px; border: 1px solid var(--edge); border-radius: 8px; cursor: pointer; background: var(--panel-2); font-size: 13px; }
+  .rail .tab.active { border-color: var(--accent); background: var(--panel); }
+  .segbtn { display: inline-flex; border: 1px solid var(--edge); border-radius: 8px; overflow: hidden; }
+  .segbtn button { border: 0; border-radius: 0; }
+  .segbtn button.on { background: var(--accent); color: #14100a; font-weight: 600; }
+  .world { display: flex; gap: 18px; overflow-x: auto; padding: 12px; background: var(--panel-2); border: 1px solid var(--edge); border-radius: 10px; min-height: 260px; align-items: flex-start; }
+  .station { flex: none; }
+  .station .cap { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); margin-bottom: 5px; gap: 6px; }
+  .frame { width: 384px; height: 216px; border: 2px solid var(--edge); border-radius: 8px; overflow: hidden; position: relative; cursor: pointer; background: #05090e; }
+  .frame.sel { border-color: var(--accent); }
+  .frame-inner { width: 1920px; height: 1080px; transform: scale(0.2); transform-origin: top left; position: absolute; left: 0; top: 0; display: grid; align-content: center; justify-items: center; padding: 120px; gap: 40px; }
+  .frame-inner h1.cmp-headline { margin: 0; font-size: 124px; line-height: .9; letter-spacing: -.05em; max-width: 16ch; text-align: center; font-weight: 800; }
+  .frame-inner h1.cmp-headline ~ h1.cmp-headline { font-size: 50px; font-weight: 600; opacity: .82; }
+  .cmp-holder { outline: 3px solid transparent; border-radius: 8px; }
+  .cmp-holder.sel { outline-color: var(--accent); }
+  .timeline { margin-top: 12px; background: var(--panel-2); border: 1px solid var(--edge); border-radius: 10px; padding: 10px; }
+  .track { position: relative; height: 26px; margin: 4px 0; background: #0a0f16; border-radius: 6px; }
+  .track .lab { position: absolute; left: 6px; top: 4px; font-size: 10px; color: var(--muted); z-index: 2; }
+  .seg { position: absolute; top: 3px; height: 20px; border-radius: 4px; font-size: 10px; color: #0a0f16; display: flex; align-items: center; padding: 0 5px; overflow: hidden; white-space: nowrap; cursor: pointer; }
+  .seg.scene { background: #3a5169; color: var(--text); }
+  .seg.cam { background: var(--blue); }
+  .seg.beat { background: var(--accent); }
+  .seg.mom { background: var(--green); height: 8px; top: 9px; }
+  .cat { display: flex; flex-wrap: wrap; gap: 6px; }
+  .cat .chip { border: 1px solid var(--edge); border-radius: 7px; padding: 5px 8px; font-size: 12px; cursor: pointer; background: var(--panel); }
+  .cat .chip:hover { border-color: var(--accent); }
+  .insp .field { margin-bottom: 8px; }
+  .insp .del { color: var(--red); border-color: rgba(255,128,128,0.35); }
+  .beatline { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+  .beatline > *:first-child { flex: 1.3; } .beatline > * { flex: 1; }
+  .hint { color: var(--muted); font-size: 12px; }
+
+  /* --- chat --- */
+  .chatbox { margin-top: 14px; border: 1px solid var(--edge); border-radius: 10px; background: var(--panel-2); }
+  .chatbox .head { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--edge); }
+  .chatbox .head select { flex: none; width: auto; }
+  .chatlog { max-height: 320px; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { padding: 8px 10px; border-radius: 8px; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+  .msg.operator { background: #172230; align-self: flex-end; max-width: 88%; }
+  .msg.agent { background: #101722; border: 1px solid var(--edge); }
+  .msg.system { color: var(--muted); font-size: 12px; font-style: italic; }
+  .msg .who { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 3px; }
+  .chatin { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--edge); align-items: flex-end; }
+  .chatin textarea { min-height: 44px; resize: vertical; }
+  .chatin button { flex: none; }
+  .refthumbs { display: flex; gap: 4px; padding: 0 10px 8px; flex-wrap: wrap; }
+  .refthumbs img { height: 40px; border-radius: 4px; border: 1px solid var(--edge); }
 </style>
 </head>
 <body>
 <header>
   <h1>Recipe Studio</h1>
-  <span class="sub">canvas-less foundation build — gate, prove, export; the agents do the rest</span>
+  <span class="sub" id="mode-sub">canvas builder + recipe factory</span>
   <span class="status" id="status"></span>
 </header>
 <main>
   <div class="col left">
     <h2>Workspaces</h2>
     <div id="workspaces"></div>
-    <div class="row" style="margin-top:10px">
-      <input id="new-id" placeholder="new-recipe-id" />
-    </div>
+    <div class="row" style="margin-top:10px"><input id="new-id" placeholder="new-id (kebab-case)" /></div>
     <div class="actions">
-      <button id="create">New</button>
-      <button id="create-from">From selected recipe</button>
+      <button id="create-canvas" class="primary sm">New canvas film</button>
+      <button id="create" class="sm">New recipe</button>
+      <button id="create-from" class="sm">From recipe</button>
     </div>
-    <h2>Library</h2>
+    <h2>Recipe library</h2>
     <div id="library"></div>
   </div>
 
-  <div class="col center">
+  <div class="col center" id="center"></div>
+
+  <div class="col right" id="right"></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let state = { workspaces: [], library: { recipes: [] }, catalog: null };
+let current = null;         // full workspace state (recipe or canvas)
+let selectedRecipe = null;  // library recipe id
+let playing = null;
+let sceneIdx = 0;           // canvas: selected scene
+let sel = { station: null, component: null, move: null }; // canvas selection
+let centerMode = "world";   // canvas center: "world" | "preview"
+let saveTimer = null;
+
+function setStatus(text, ok) {
+  $("status").textContent = text || "";
+  $("status").style.color = ok === false ? "var(--red)" : ok === true ? "var(--green)" : "var(--muted)";
+}
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} : {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || res.statusText);
+  return data;
+}
+function esc(s) { return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function badge(text, cls) { return `<span class="badge ${cls || ""}">${text}</span>`; }
+const isCanvas = () => current && current.kind === "canvas";
+
+/* ---------------- lists ---------------- */
+function renderLists() {
+  $("workspaces").innerHTML = state.workspaces.map((ws) => `
+    <div class="item ${current && current.id === ws.id ? "active" : ""}" data-ws="${ws.id}">
+      <span class="id">${esc(ws.id)}</span>
+      ${ws.kind === "canvas" ? badge("canvas", "blue") : badge("recipe")}
+      ${ws.gate ? (ws.gate.ok ? badge("green", "green") : badge("red", "red")) : ""}
+      <div class="meta">${esc(ws.title)}</div>
+    </div>`).join("") || '<div class="note">none yet</div>';
+  $("library").innerHTML = state.library.recipes.map((r) => `
+    <div class="item ${selectedRecipe === r.id ? "active" : ""}" data-recipe="${r.id}">
+      <span class="id">${esc(r.id)}</span>
+      ${r.stale ? badge("re-prove", "amber") : badge("v" + r.revision, "green")}
+      <div class="meta">${esc(r.title)}</div>
+    </div>`).join("") || '<div class="note">library is empty</div>';
+  document.querySelectorAll("[data-ws]").forEach((el) => el.addEventListener("click", () => openWorkspace(el.dataset.ws)));
+  document.querySelectorAll("[data-recipe]").forEach((el) => el.addEventListener("click", () => { selectedRecipe = el.dataset.recipe; renderLists(); }));
+}
+
+/* ---------------- shared viewer ---------------- */
+function viewerHtml() {
+  return `
     <div class="viewer" id="viewer"><div class="empty">generate to preview</div></div>
     <div class="scrub">
       <button id="play">▶</button>
       <input type="range" id="scrub" min="0" max="6" step="0.01" value="0" />
       <span class="time" id="time">0.00s</span>
+    </div>`;
+}
+function renderPreview() {
+  const viewer = $("viewer"); if (!viewer) return;
+  if (!current || !current.previewUrl) { viewer.innerHTML = '<div class="empty">generate to preview</div>'; return; }
+  viewer.innerHTML = `<iframe id="frame" src="${current.previewUrl}?t=${Date.now()}"></iframe>`;
+  const frame = $("frame");
+  const fit = () => { frame.style.transform = `scale(${viewer.clientWidth / 1920})`; };
+  new ResizeObserver(fit).observe(viewer); fit();
+  frame.addEventListener("load", () => { const tl = timeline(); if (tl) { $("scrub").max = tl.duration(); seek(0); } });
+}
+function timeline() {
+  const frame = $("frame");
+  const tls = frame && frame.contentWindow && frame.contentWindow.__timelines;
+  if (!tls) return null;
+  const key = Object.keys(tls)[0];
+  return key ? tls[key] : null;
+}
+function seek(t) {
+  const tl = timeline(); if (!tl) return;
+  tl.seek(Math.min(t, Math.max(0, tl.duration() - 0.001)));
+  if ($("scrub")) { $("scrub").value = t; $("time").textContent = `${Number(t).toFixed(2)}s`; }
+}
+function bindScrub() {
+  if (!$("scrub")) return;
+  $("scrub").addEventListener("input", (e) => { stop(); seek(Number(e.target.value)); });
+  $("play").addEventListener("click", () => { playing ? stop() : play(); });
+}
+function play() {
+  const tl = timeline(); if (!tl) return;
+  $("play").textContent = "⏸"; let last = performance.now(); let t = Number($("scrub").value);
+  if (t >= tl.duration() - 0.05) t = 0;
+  const step = (now) => { t += (now - last) / 1000; last = now;
+    if (t >= tl.duration()) { seek(tl.duration() - 0.001); stop(); return; }
+    seek(t); playing = requestAnimationFrame(step); };
+  playing = requestAnimationFrame(step);
+}
+function stop() { if (playing) cancelAnimationFrame(playing); playing = null; if ($("play")) $("play").textContent = "▶"; }
+
+function renderGateShared() {
+  const gate = current && current.gate;
+  if ($("gate-note")) $("gate-note").textContent = gate ? (gate.ok ? `green · ${new Date(gate.gatedAt).toLocaleTimeString()}` : "red — fix findings") : "not gated yet";
+  if ($("findings")) $("findings").innerHTML = gate ? [
+    ...gate.errors.map((e) => `<div class="finding">${esc(e)}</div>`),
+    ...gate.warnings.slice(0, 12).map((w) => `<div class="finding warn">${esc(w)}</div>`),
+  ].join("") : "";
+  if ($("thumbs")) $("thumbs").innerHTML = (current && current.thumbnails || []).map((src) => `<img src="${src}?t=${Date.now()}" />`).join("");
+}
+
+/* ================= CANVAS EDITOR ================= */
+const film = () => current.canvas;
+const scene = () => film().scenes[sceneIdx];
+const station = () => sel.station != null ? scene().stations[sel.station] : null;
+
+function scheduleSave() {
+  renderCanvas();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try { setStatus("saving…"); current = (await api(`/api/workspace/${current.id}/canvas`, { canvas: film() })).workspace; setStatus("saved", true); renderLists(); }
+    catch (e) { setStatus(e.message, false); }
+  }, 500);
+}
+
+function catalogMarkup(kind, id, copy) {
+  const spec = state.catalog.components.find((c) => c.kind === kind);
+  if (!spec) return "";
+  let m = spec.markup.replace(/\bdata-part="[^"]*"/, `data-part="${esc(id)}"`);
+  if (copy) {
+    const slots = [/(<[^>]*\bdata-cmp-text[^>]*>)([\s\S]*?)(<\/[a-z0-9]+>)/i,
+      /(<[^>]*\bdata-cmp-value[^>]*>)([\s\S]*?)(<\/[a-z0-9]+>)/i,
+      /(<[^>]*\bclass="[^"]*\bcmp-value\b[^"]*"[^>]*>)([\s\S]*?)(<\/[a-z0-9]+>)/i,
+      /(<[^>]*\bclass="[^"]*\bcmp-label\b[^"]*"[^>]*>)([\s\S]*?)(<\/[a-z0-9]+>)/i,
+      /(<[^>]*\bclass="[^"]*\bcmp-title\b[^"]*"[^>]*>)([\s\S]*?)(<\/[a-z0-9]+>)/i];
+    for (const s of slots) if (s.test(m)) { m = m.replace(s, (_a, o, _i, c) => `${o}${esc(copy)}${c}`); break; }
+  }
+  return m;
+}
+
+function renderCanvasCenter() {
+  const f = film();
+  $("center").innerHTML = `
+    <div class="rail" id="scene-rail"></div>
+    <div class="row" style="margin-bottom:8px">
+      <div class="segbtn" style="flex:none">
+        <button id="m-world" class="${centerMode==="world"?"on":""}">World</button>
+        <button id="m-preview" class="${centerMode==="preview"?"on":""}">Preview</button>
+      </div>
+      <div style="flex:1"></div>
+      <button class="primary" id="generate" style="flex:none">Generate + Gate</button>
+      <button id="promote" class="sm" style="flex:none" title="Promote the selected scene into a recipe (coming soon)" disabled>Promote scene→recipe</button>
     </div>
+    <div id="stage"></div>
+    <span class="note" id="gate-note"></span>
+    <div class="thumbs" id="thumbs"></div>
+    <div class="findings" id="findings"></div>
+    <div class="chatbox" id="chat"></div>`;
+  $("m-world").onclick = () => { centerMode = "world"; renderCanvasCenter(); renderCanvas(); };
+  $("m-preview").onclick = () => { centerMode = "preview"; renderCanvasCenter(); renderCanvas(); };
+  $("generate").onclick = doGenerate;
+  renderSceneRail();
+  renderCanvas();
+  mountChat();
+}
+
+function renderSceneRail() {
+  const f = film();
+  $("scene-rail").innerHTML = f.scenes.map((s, i) =>
+    `<div class="tab ${i===sceneIdx?"active":""}" data-scene-idx="${i}">${esc(s.title)} <span class="hint">${s.durationSec}s</span></div>`
+  ).join("") + `<button class="sm" id="add-scene">+ scene</button>`;
+  document.querySelectorAll("[data-scene-idx]").forEach((el) => el.onclick = () => {
+    sceneIdx = Number(el.dataset.sceneIdx); sel = { station: null, component: null, move: null }; renderCanvas();
+  });
+  $("add-scene").onclick = () => {
+    const n = f.scenes.length + 1;
+    f.scenes.push({ id: `scene-${n}`, title: `Scene ${n}`, durationSec: 4, stations: [{ region: `scene-${n}-stage`, label: "Stage", cell: 0, components: [] }], camera: [] });
+    sceneIdx = f.scenes.length - 1; sel = { station: null, component: null, move: null }; scheduleSave();
+  };
+}
+
+function renderCanvas() {
+  renderSceneRail();
+  if (centerMode === "preview") { $("stage").innerHTML = viewerHtml(); bindScrub(); renderPreview(); renderGateShared(); renderInspector(); return; }
+  const s = scene();
+  const cam = (regionId) => s.camera.filter((m) => m.toRegion === regionId).map((m) => m.move).join(", ");
+  $("stage").innerHTML = `<div class="world" id="worldview">` + s.stations.map((st, si) => `
+    <div class="station">
+      <div class="cap"><span>${esc(st.label)} · cell ${st.cell}${cam(st.region)?` · 🎥 ${cam(st.region)}`:""}</span></div>
+      <div class="frame ${sel.station===si&&sel.component==null?"sel":""}" data-station="${si}">
+        <div class="frame-inner">${st.components.map((c, ci) =>
+          `<div class="cmp-holder ${sel.station===si&&sel.component===ci?"sel":""}" data-station="${si}" data-comp="${ci}">${catalogMarkup(c.kind, c.id, c.copy)}</div>`
+        ).join("") || '<div style="color:#4a5a6a;font-size:64px">empty station</div>'}</div>
+      </div>
+    </div>`).join("") + `</div>` + renderTimeline();
+  document.querySelectorAll("[data-comp]").forEach((el) => el.onclick = (e) => {
+    e.stopPropagation(); sel = { station: Number(el.dataset.station), component: Number(el.dataset.comp), move: null }; renderCanvas();
+  });
+  document.querySelectorAll(".frame[data-station]").forEach((el) => el.onclick = () => {
+    sel = { station: Number(el.dataset.station), component: null, move: null }; renderCanvas();
+  });
+  document.querySelectorAll("[data-seek]").forEach((el) => el.onclick = () => { centerMode = "preview"; renderCanvasCenter(); setTimeout(() => seek(Number(el.dataset.seek)), 400); });
+  renderGateShared();
+  renderInspector();
+}
+
+function renderTimeline() {
+  const f = film();
+  const total = f.scenes.reduce((a, s) => a + s.durationSec, 0) || 1;
+  const pc = (t) => `${(t / total) * 100}%`;
+  let cursor = 0; const starts = f.scenes.map((s) => { const x = cursor; cursor += s.durationSec; return x; });
+  const sceneSegs = f.scenes.map((s, i) => `<div class="seg scene" style="left:${pc(starts[i])};width:${pc(s.durationSec)}" data-seek="${starts[i]+0.1}">${esc(s.title)}</div>`).join("");
+  const camSegs = f.scenes.flatMap((s, i) => s.camera.filter((m)=>m.move!=="hold").map((m) =>
+    `<div class="seg cam" style="left:${pc(starts[i]+m.startSec)};width:${pc(m.durationSec)}" data-seek="${starts[i]+m.startSec}">${esc(m.move)}</div>`)).join("");
+  const beatSegs = f.scenes.flatMap((s, i) => s.stations.flatMap((st) => st.components.flatMap((c) => (c.beats||[]).map((b) =>
+    `<div class="seg beat" style="left:${pc(starts[i]+b.atSec)};width:2%" data-seek="${starts[i]+b.atSec}">${esc(b.kind)}</div>`)))).join("");
+  return `<div class="timeline">
+    <div class="track"><span class="lab">scenes</span>${sceneSegs}</div>
+    <div class="track"><span class="lab">camera</span>${camSegs || ""}</div>
+    <div class="track"><span class="lab">beats</span>${beatSegs || ""}</div>
+  </div>`;
+}
+
+/* ---------------- component browser + inspector ---------------- */
+function renderCanvasRight() {
+  $("right").innerHTML = `
+    <h2>Component browser</h2>
+    <div class="hint" id="cat-hint"></div>
+    <div class="cat" id="catalog"></div>
+    <h2>Inspector</h2>
+    <div class="insp" id="inspector"></div>`;
+  renderCatalog();
+  renderInspector();
+}
+function renderCatalog() {
+  if (!state.catalog) { $("catalog").innerHTML = '<div class="hint">loading…</div>'; return; }
+  $("cat-hint").textContent = sel.station != null ? `Click a kind to add it to "${scene().stations[sel.station].label}"` : "Select a station first";
+  $("catalog").innerHTML = state.catalog.components.map((c) => `<div class="chip" data-kind="${c.kind}" title="${esc(c.purpose)}">${c.kind}</div>`).join("");
+  document.querySelectorAll("[data-kind]").forEach((el) => el.onclick = () => addComponent(el.dataset.kind));
+}
+function addComponent(kind) {
+  if (sel.station == null) { setStatus("select a station first", false); return; }
+  const st = scene().stations[sel.station];
+  const base = kind.replace(/[^a-z0-9]+/g, "-");
+  let id = base, n = 2; const used = new Set(film().scenes.flatMap((s)=>s.stations.flatMap((x)=>x.components.map((c)=>c.id))));
+  while (used.has(id)) id = `${base}-${n++}`;
+  st.components.push({ id, kind, copy: kind === "headline" ? "New headline" : "", role: st.components.length === 0 ? "hero" : "support" });
+  sel.component = st.components.length - 1; scheduleSave();
+}
+
+function field(label, inputHtml) { return `<div class="field"><label>${label}</label>${inputHtml}</div>`; }
+
+function renderInspector() {
+  const box = $("inspector"); if (!box) return;
+  const s = scene();
+  if (sel.station != null && sel.component != null) return inspectComponent(box, s);
+  if (sel.station != null) return inspectStation(box, s);
+  return inspectScene(box, s);
+}
+
+function inspectScene(box, s) {
+  box.innerHTML =
+    field("Scene title", `<input id="i-title" value="${esc(s.title)}" />`) +
+    field("Duration (s)", `<input id="i-dur" type="number" min="1" max="20" step="0.2" value="${s.durationSec}" />`) +
+    field("Outgoing cut", `<select id="i-cut">${(state.catalog?.cutStyles||["hard"]).map((c)=>`<option ${s.cut===c?"selected":""}>${c}</option>`).join("")}</select>`) +
+    `<div class="actions">
+       <button class="sm" id="add-station">+ station</button>
+       ${film().scenes.length>1?`<button class="sm del" id="del-scene">Delete scene</button>`:""}
+     </div>
+     <h2>Camera path</h2><div id="cam-list"></div>
+     <button class="sm" id="add-move" ${s.stations.length<1?"disabled":""}>+ camera move</button>`;
+  $("i-title").oninput = (e) => { s.title = e.target.value; scheduleSave(); };
+  $("i-dur").onchange = (e) => { s.durationSec = Math.max(1, Math.min(20, Number(e.target.value))); scheduleSave(); };
+  $("i-cut").onchange = (e) => { s.cut = e.target.value; scheduleSave(); };
+  $("add-station").onclick = () => { const n = s.stations.length; s.stations.push({ region: `${s.id}-st${n+1}`, label: `Station ${n+1}`, cell: n, components: [] }); sel.station = n; scheduleSave(); };
+  if ($("del-scene")) $("del-scene").onclick = () => { film().scenes.splice(sceneIdx, 1); sceneIdx = Math.max(0, sceneIdx-1); sel={station:null,component:null,move:null}; scheduleSave(); };
+  $("add-move").onclick = () => { const target = s.stations[s.stations.length-1].region; s.camera.push({ id: `mv-${s.camera.length+1}`, move: s.camera.length?"push-in":"hold", toRegion: target, startSec: s.camera.length?1.5:0, durationSec: 1.2 }); scheduleSave(); };
+  renderCamList(s);
+}
+function renderCamList(s) {
+  $("cam-list").innerHTML = s.camera.map((m, mi) => `
+    <div class="beatline">
+      <select data-mv="${mi}" data-k="move">${state.catalog.cameraMoves.map((v)=>`<option ${m.move===v?"selected":""}>${v}</option>`).join("")}</select>
+      <select data-mv="${mi}" data-k="toRegion">${s.stations.map((st)=>`<option value="${st.region}" ${m.toRegion===st.region?"selected":""}>${esc(st.label)}</option>`).join("")}</select>
+      <input data-mv="${mi}" data-k="startSec" type="number" step="0.1" value="${m.startSec}" title="start (rel)" />
+      <input data-mv="${mi}" data-k="durationSec" type="number" step="0.1" value="${m.durationSec}" title="dur" />
+      <button class="sm del" data-del-mv="${mi}">✕</button>
+    </div>
+    <div class="beatline" style="margin-top:-2px">
+      <select data-mv="${mi}" data-k="ease" title="ease"><option value="">ease: default</option>${state.catalog.eases.map((v)=>`<option ${m.ease===v?"selected":""}>${v}</option>`).join("")}</select>
+      <input data-mv="${mi}" data-k="zoom" type="number" step="0.05" value="${m.zoom??""}" placeholder="zoom (push-in)" title="zoom multiplier" />
+    </div>`).join("") || '<div class="hint">no camera moves — the scene is a locked frame</div>';
+  box_bind("cam-list", (mi, k, v) => {
+    if (k==="startSec"||k==="durationSec"||k==="zoom") s.camera[mi][k] = v===""?undefined:Number(v);
+    else if (k==="ease") { if (v) s.camera[mi].ease = v; else delete s.camera[mi].ease; }
+    else s.camera[mi][k] = v;
+    scheduleSave();
+  }, "mv");
+  document.querySelectorAll("[data-del-mv]").forEach((el)=>el.onclick=()=>{ s.camera.splice(Number(el.dataset.delMv),1); scheduleSave(); });
+}
+
+function inspectStation(box, s) {
+  const st = s.stations[sel.station];
+  box.innerHTML =
+    field("Station label", `<input id="i-lab" value="${esc(st.label)}" />`) +
+    field("Region id (data-region)", `<input id="i-reg" value="${esc(st.region)}" />`) +
+    field("World cell (0 = left)", `<input id="i-cell" type="number" min="0" max="6" value="${st.cell}" />`) +
+    `<div class="hint">${st.components.length} component(s). Pick a kind from the browser above to add one.</div>
+     <div class="actions">${s.stations.length>1?`<button class="sm del" id="del-station">Delete station</button>`:""}
+       <button class="sm" id="back-scene">Scene settings</button></div>`;
+  $("i-lab").oninput = (e) => { st.label = e.target.value; scheduleSave(); };
+  $("i-reg").onchange = (e) => { st.region = e.target.value.trim(); scheduleSave(); };
+  $("i-cell").onchange = (e) => { st.cell = Math.max(0, Number(e.target.value)); scheduleSave(); };
+  $("back-scene").onclick = () => { sel = { station: null, component: null, move: null }; renderCanvas(); };
+  if ($("del-station")) $("del-station").onclick = () => { s.stations.splice(sel.station,1); sel={station:null,component:null,move:null}; scheduleSave(); };
+}
+
+function inspectComponent(box, s) {
+  const st = s.stations[sel.station]; const c = st.components[sel.component];
+  const spec = state.catalog.components.find((x) => x.kind === c.kind);
+  const allBeats = [...new Set([...(spec?.beats||[]), "set-state", "highlight"])];
+  box.innerHTML =
+    field("Kind", `<input value="${c.kind}" disabled />`) +
+    field("data-part id", `<input id="c-id" value="${esc(c.id)}" />`) +
+    field("Copy", `<input id="c-copy" value="${esc(c.copy||"")}" placeholder="primary text" />`) +
+    field("Role", `<select id="c-role"><option value="support" ${c.role!=="hero"?"selected":""}>support</option><option value="hero" ${c.role==="hero"?"selected":""}>hero</option></select>`) +
+    `<h2>Beats (state changes)</h2><div id="beat-list"></div>
+     <div class="row" style="margin-top:6px"><select id="new-beat">${allBeats.map((b)=>`<option>${b}</option>`).join("")}</select><button class="sm" id="add-beat" style="flex:none">+ beat</button></div>
+     <div class="actions"><button class="sm del" id="del-comp">Delete component</button></div>`;
+  $("c-id").onchange = (e) => { c.id = e.target.value.trim(); scheduleSave(); };
+  $("c-copy").oninput = (e) => { c.copy = e.target.value; scheduleSave(); };
+  $("c-role").onchange = (e) => { c.role = e.target.value; scheduleSave(); };
+  $("add-beat").onclick = () => { const kind = $("new-beat").value; c.beats = c.beats||[]; const at = Math.min(s.durationSec-0.3, 1 + c.beats.length*0.8); c.beats.push({ id: `${c.id}-${kind}-${c.beats.length+1}`, kind, atSec: Math.round(at*10)/10, ...(kind==="count"?{value:100}:kind==="progress"?{value:1}:kind==="type"||kind==="swap"?{text:c.copy||"text"}:{}) }); scheduleSave(); };
+  $("del-comp").onclick = () => { st.components.splice(sel.component,1); sel.component=null; scheduleSave(); };
+  const bl = $("beat-list");
+  bl.innerHTML = (c.beats||[]).map((b, bi) => `
+    <div class="beatline">
+      <input value="${b.kind}" disabled />
+      <input data-bt="${bi}" data-k="atSec" type="number" step="0.1" value="${b.atSec}" title="at (rel s)" />
+      <input data-bt="${bi}" data-k="value" type="number" value="${b.value??""}" placeholder="value" title="value" />
+      <button class="sm del" data-del-bt="${bi}">✕</button>
+    </div>`).join("") || '<div class="hint">no beats</div>';
+  box_bind("beat-list", (bi, k, v) => { c.beats[bi][k] = k==="atSec"?Number(v):(v===""?undefined:Number(v)); scheduleSave(); }, "bt");
+  document.querySelectorAll("[data-del-bt]").forEach((el)=>el.onclick=()=>{ c.beats.splice(Number(el.dataset.delBt),1); scheduleSave(); });
+}
+
+function box_bind(containerId, apply, key) {
+  document.querySelectorAll(`#${containerId} [data-${key}]`).forEach((el) => {
+    const handler = () => apply(Number(el.dataset[key==="mv"?"mv":"bt"]), el.dataset.k, el.value);
+    el.onchange = handler;
+  });
+}
+
+async function doGenerate() {
+  try {
+    setStatus("gating (validation + browser QA — up to a minute)…");
+    // Persist any pending edits first.
+    clearTimeout(saveTimer);
+    current = (await api(`/api/workspace/${current.id}/canvas`, { canvas: film() })).workspace;
+    const data = await api(`/api/workspace/${current.id}/generate`, {});
+    current = data.workspace;
+    setStatus(data.gate.ok ? "gate green" : "gate red — see findings", data.gate.ok);
+    renderLists(); renderCanvas();
+  } catch (e) { setStatus(e.message, false); }
+}
+
+/* ================= RECIPE COCKPIT ================= */
+function renderRecipeCenter() {
+  $("center").innerHTML = viewerHtml() + `
     <div class="actions">
       <button class="primary" id="generate">Generate + Gate</button>
       <button id="export">Export to library</button>
@@ -93,235 +504,193 @@
     <div class="thumbs" id="thumbs"></div>
     <div class="findings" id="findings"></div>
     <pre class="sanity" id="sanity" style="display:none"></pre>
-  </div>
-
-  <div class="col right">
+    <div class="chatbox" id="chat"></div>`;
+  bindScrub();
+  $("generate").onclick = async () => {
+    try { setStatus("gating (validation + browser QA)…");
+      const data = await api(`/api/workspace/${current.id}/generate`, {});
+      current = data.workspace; renderLists(); renderRecipe(); setStatus(data.gate.ok ? "gate green" : "gate red", data.gate.ok);
+    } catch (e) { setStatus(e.message, false); }
+  };
+  $("export").onclick = async () => {
+    try { setStatus("exporting…");
+      const data = await api(`/api/workspace/${current.id}/export`, {});
+      state.library = data.library; renderLists();
+      const sanity = data.export.retrievalSanity;
+      $("sanity").style.display = "block";
+      $("sanity").textContent = "Exported to " + data.export.dir + "\nretrieval sanity: " + (sanity.ok ? "OK" : "CHECK TRIGGER PATTERNS") + "\n" + JSON.stringify(sanity, null, 2);
+      setStatus("exported", true);
+    } catch (e) { setStatus(e.message, false); }
+  };
+}
+function renderRecipeRight() {
+  $("right").innerHTML = `
     <h2>Workspace</h2>
-    <label>Title</label>
-    <input id="title" />
-    <div class="row">
-      <div><label>Demo duration (s)</label><input id="duration" type="number" min="3" max="20" step="0.5" /></div>
-    </div>
-    <label>Demo params (JSON)</label>
-    <textarea id="params" class="code" style="min-height:110px"></textarea>
-    <label>Should-match briefs (one per line — retrieval sanity)</label>
-    <textarea id="briefs" style="min-height:64px"></textarea>
-    <h2>fragment.html</h2>
-    <textarea id="fragment" class="code" spellcheck="false"></textarea>
-    <h2>recipe.json draft</h2>
-    <textarea id="manifest" class="code" style="min-height:150px" spellcheck="false"></textarea>
-    <h2>recipe.md</h2>
-    <textarea id="recipemd" class="code" style="min-height:120px" spellcheck="false"></textarea>
-    <div class="actions">
-      <button class="primary" id="save">Save sources</button>
-    </div>
-  </div>
-</main>
-<script>
-const $ = (id) => document.getElementById(id);
-let state = { workspaces: [], library: { recipes: [] } };
-let current = null;         // full workspace state
-let selectedRecipe = null;  // library recipe id
-let playing = null;
-
-function setStatus(text, ok) {
-  $("status").textContent = text || "";
-  $("status").style.color = ok === false ? "var(--red)" : "var(--muted)";
+    <label>Title</label><input id="title" />
+    <div class="row"><div><label>Demo duration (s)</label><input id="duration" type="number" min="3" max="20" step="0.5" /></div></div>
+    <label>Demo params (JSON)</label><textarea id="params" class="code" style="min-height:110px"></textarea>
+    <label>Should-match briefs (one per line)</label><textarea id="briefs" style="min-height:64px"></textarea>
+    <h2>fragment.html</h2><textarea id="fragment" class="code" spellcheck="false"></textarea>
+    <h2>recipe.json draft</h2><textarea id="manifest" class="code" style="min-height:150px" spellcheck="false"></textarea>
+    <h2>recipe.md</h2><textarea id="recipemd" class="code" style="min-height:120px" spellcheck="false"></textarea>
+    <div class="actions"><button class="primary" id="save">Save sources</button></div>`;
+  $("save").onclick = async () => {
+    try { setStatus("saving…");
+      const body = { title: $("title").value, demoDurationSec: Number($("duration").value),
+        params: JSON.parse($("params").value), sanityBriefs: $("briefs").value.split("\n").map((s)=>s.trim()).filter(Boolean),
+        fragment: $("fragment").value, manifestDraft: JSON.parse($("manifest").value), recipeMd: $("recipemd").value };
+      current = (await api(`/api/workspace/${current.id}/update`, body)).workspace;
+      renderLists(); renderRecipe(); setStatus("saved", true);
+    } catch (e) { setStatus(e.message, false); }
+  };
 }
-
-async function api(path, body) {
-  const res = await fetch(path, body === undefined ? {} : {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok || data.error) throw new Error(data.error || res.statusText);
-  return data;
-}
-
-function badge(text, cls) { return `<span class="badge ${cls || ""}">${text}</span>`; }
-
-function renderLists() {
-  $("workspaces").innerHTML = state.workspaces.map((ws) => `
-    <div class="item ${current && current.id === ws.id ? "active" : ""}" data-ws="${ws.id}">
-      <span class="id">${ws.id}</span>
-      ${ws.gate ? (ws.gate.ok ? badge("green", "green") : badge("red gate", "red")) : badge("ungated")}
-      <div class="meta">${ws.title}</div>
-    </div>`).join("") || '<div class="note">none yet</div>';
-  $("library").innerHTML = state.library.recipes.map((r) => `
-    <div class="item ${selectedRecipe === r.id ? "active" : ""}" data-recipe="${r.id}">
-      <span class="id">${r.id}</span>
-      ${r.stale ? badge("re-prove", "amber") : badge("v" + r.revision, "green")}
-      <div class="meta">${r.title}</div>
-    </div>`).join("") || '<div class="note">library is empty</div>';
-  document.querySelectorAll("[data-ws]").forEach((el) =>
-    el.addEventListener("click", () => openWorkspace(el.dataset.ws)));
-  document.querySelectorAll("[data-recipe]").forEach((el) =>
-    el.addEventListener("click", () => { selectedRecipe = el.dataset.recipe; renderLists(); }));
-}
-
-function renderWorkspace() {
-  if (!current) return;
-  $("title").value = current.title;
-  $("duration").value = current.demoDurationSec;
+function renderRecipe() {
+  $("title").value = current.title; $("duration").value = current.demoDurationSec;
   $("params").value = JSON.stringify(current.params, null, 2);
   $("briefs").value = (current.sanityBriefs || []).join("\n");
   $("fragment").value = current.fragment || "";
   $("manifest").value = JSON.stringify(current.manifestDraft, null, 2);
   $("recipemd").value = current.recipeMd || "";
-  renderGate();
-  renderPreview();
+  if ($("export")) $("export").disabled = !(current.gate && current.gate.ok);
+  renderGateShared(); renderPreview();
 }
 
-function renderGate() {
-  const gate = current && current.gate;
-  $("gate-note").textContent = gate
-    ? (gate.ok ? `green · ${new Date(gate.gatedAt).toLocaleTimeString()}` : "red gate — fix findings")
-    : "not gated yet";
-  $("export").disabled = !(gate && gate.ok);
-  $("findings").innerHTML = gate ? [
-    ...gate.errors.map((e) => `<div class="finding">${escapeHtml(e)}</div>`),
-    ...gate.warnings.slice(0, 12).map((w) => `<div class="finding warn">${escapeHtml(w)}</div>`),
-  ].join("") : "";
-  $("thumbs").innerHTML = (current && current.thumbnails || [])
-    .map((src) => `<img src="${src}?t=${Date.now()}" />`).join("");
-}
+/* ================= CHAT (agents) ================= */
+let chatProvider = "glm";
+let pendingImages = []; // {name, mimeType, base64}
+const PROVIDER_LABEL = { "glm": "GLM (critic)", "deepseek-flash": "DeepSeek Flash", "claude-cli": "Claude CLI (file-first)" };
 
-function renderPreview() {
-  const viewer = $("viewer");
-  if (!current || !current.previewUrl) {
-    viewer.innerHTML = '<div class="empty">generate to preview</div>';
-    return;
-  }
-  viewer.innerHTML = `<iframe id="frame" src="${current.previewUrl}?t=${Date.now()}"></iframe>`;
-  const frame = $("frame");
-  const fit = () => { frame.style.transform = `scale(${viewer.clientWidth / 1920})`; };
-  new ResizeObserver(fit).observe(viewer);
-  fit();
-  frame.addEventListener("load", () => {
-    const tl = timeline();
-    if (tl) { $("scrub").max = tl.duration(); seek(0); }
-  });
-}
-
-function timeline() {
-  const frame = $("frame");
-  const tls = frame && frame.contentWindow && frame.contentWindow.__timelines;
-  if (!tls) return null;
-  const key = Object.keys(tls)[0];
-  return key ? tls[key] : null;
-}
-
-function seek(t) {
-  const tl = timeline();
-  if (!tl) return;
-  tl.seek(Math.min(t, Math.max(0, tl.duration() - 0.001)));
-  $("scrub").value = t;
-  $("time").textContent = `${Number(t).toFixed(2)}s`;
-}
-
-$("scrub").addEventListener("input", (e) => { stop(); seek(Number(e.target.value)); });
-$("play").addEventListener("click", () => { playing ? stop() : play(); });
-function play() {
-  const tl = timeline();
-  if (!tl) return;
-  $("play").textContent = "⏸";
-  let last = performance.now();
-  let t = Number($("scrub").value);
-  if (t >= tl.duration() - 0.05) t = 0;
-  const step = (now) => {
-    t += (now - last) / 1000; last = now;
-    if (t >= tl.duration()) { seek(tl.duration() - 0.001); stop(); return; }
-    seek(t);
-    playing = requestAnimationFrame(step);
+function mountChat() {
+  const box = $("chat"); if (!box) return;
+  const cli = state.catalog && state.catalog.claudeCliAvailable;
+  const providers = (state.catalog && state.catalog.agentProviders) || ["glm"];
+  box.innerHTML = `
+    <div class="head">
+      <span class="hint" style="flex:1">Agent chat — the studio re-gates every edit</span>
+      <select id="chat-provider">${providers.map((p)=>`<option value="${p}" ${p===chatProvider?"selected":""} ${p==="claude-cli"&&!cli?"disabled":""}>${PROVIDER_LABEL[p]||p}${p==="claude-cli"&&!cli?" (not on PATH)":""}</option>`).join("")}</select>
+    </div>
+    <div class="chatlog" id="chatlog"><div class="hint">Ask an agent to critique or (Claude CLI) edit the workspace.</div></div>
+    <div class="refthumbs" id="refthumbs"></div>
+    <div class="chatin">
+      <textarea id="chat-input" placeholder="Describe what to change…"></textarea>
+      <input type="file" id="chat-files" accept="image/*" multiple style="display:none" />
+      <button class="sm" id="chat-attach" title="Attach reference images">📎</button>
+      <button class="primary sm" id="chat-send">Send</button>
+    </div>`;
+  $("chat-provider").onchange = (e) => { chatProvider = e.target.value; };
+  $("chat-attach").onclick = () => $("chat-files").click();
+  $("chat-files").onchange = async (e) => {
+    for (const file of e.target.files) {
+      const base64 = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.readAsDataURL(file); });
+      pendingImages.push({ name: file.name, mimeType: file.type || "image/png", base64 });
+    }
+    renderRefThumbs();
   };
-  playing = requestAnimationFrame(step);
+  $("chat-send").onclick = sendChat;
+  $("chat-input").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendChat(); });
+  loadChat();
 }
-function stop() {
-  if (playing) cancelAnimationFrame(playing);
-  playing = null;
-  $("play").textContent = "▶";
+function renderRefThumbs() {
+  $("refthumbs").innerHTML = pendingImages.map((im) => `<img src="data:${im.mimeType};base64,${im.base64}" title="${esc(im.name)}" />`).join("");
+}
+async function loadChat() {
+  try {
+    const { transcript } = await api(`/api/workspace/${current.id}/chat`);
+    renderChatLog(transcript);
+  } catch {}
+}
+function renderChatLog(msgs) {
+  const log = $("chatlog"); if (!log) return;
+  log.innerHTML = msgs.map((m) => `<div class="msg ${m.role}"><div class="who">${m.role}${m.provider?` · ${m.provider}`:""}</div>${esc(m.text)}</div>`).join("") || '<div class="hint">no messages yet</div>';
+  log.scrollTop = log.scrollHeight;
+}
+async function sendChat() {
+  const input = $("chat-input"); const text = input.value.trim();
+  if (!text || !current) return;
+  const log = $("chatlog");
+  log.insertAdjacentHTML("beforeend", `<div class="msg operator"><div class="who">operator · ${chatProvider}</div>${esc(text)}</div>`);
+  const agentEl = document.createElement("div"); agentEl.className = "msg agent"; agentEl.innerHTML = `<div class="who">agent · ${chatProvider}</div><span class="body"></span>`;
+  log.appendChild(agentEl); const body = agentEl.querySelector(".body");
+  log.scrollTop = log.scrollHeight;
+  input.value = ""; const images = pendingImages.slice(); pendingImages = []; renderRefThumbs();
+  $("chat-send").disabled = true; setStatus(chatProvider === "claude-cli" ? "agent editing + re-gating…" : "agent thinking…");
+  try {
+    const res = await fetch(`/api/workspace/${current.id}/chat`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: chatProvider, message: text, images }),
+    });
+    const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let sep;
+      while ((sep = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, sep); buf = buf.slice(sep + 2);
+        const ev = /event: (\w+)/.exec(block); const dm = /data: (.*)/s.exec(block);
+        if (!ev || !dm) continue;
+        const data = JSON.parse(dm[1]);
+        if (ev[1] === "chunk") { body.textContent += data.text; log.scrollTop = log.scrollHeight; }
+        else if (ev[1] === "done") { current = data.workspace; renderLists(); if (isCanvas()) renderCanvas(); else renderRecipe(); setStatus("done", true); }
+        else if (ev[1] === "error") { body.textContent += `\n[error] ${data.message}`; setStatus(data.message, false); }
+      }
+    }
+  } catch (e) { body.textContent += `\n[error] ${e.message}`; setStatus(e.message, false); }
+  finally { $("chat-send").disabled = false; }
+}
+
+/* ================= workspace open / create ================= */
+function ensureCatalogStyle() {
+  if (!state.catalog || document.getElementById("kit-css")) return;
+  const wrap = document.createElement("div"); wrap.innerHTML = state.catalog.kitCss;
+  const styleEl = wrap.querySelector("style"); if (styleEl) { styleEl.id = "kit-css"; document.head.appendChild(styleEl); }
+  // Component vars for the world-view frames.
+  const v = document.createElement("style"); v.textContent = `.frame-inner{--surface:#101c27;--accent:#59f1d2;--text:#f5f7fb;--muted:#a9b7c6;--font-display:Inter;--font-mono:ui-monospace,monospace;color:var(--text);font-family:Inter,sans-serif;background:radial-gradient(circle at 78% 12%,#101c27,#071018 55%)}`;
+  document.head.appendChild(v);
+}
+
+async function openWorkspace(id) {
+  stop();
+  current = (await api(`/api/workspace/${id}`)).workspace;
+  sceneIdx = 0; sel = { station: null, component: null, move: null }; centerMode = "world";
+  renderLists();
+  if (isCanvas()) {
+    ensureCatalogStyle();
+    $("mode-sub").textContent = "canvas builder — direct manipulation → the real gate";
+    renderCanvasCenter(); renderCanvasRight();
+  } else {
+    $("mode-sub").textContent = "recipe factory — gate, prove, export";
+    renderRecipeCenter(); renderRecipeRight(); renderRecipe();
+  }
+  mountChat();
 }
 
 async function refresh() {
   const data = await api("/api/state");
-  state = { workspaces: data.workspaces, library: data.library };
+  state.workspaces = data.workspaces; state.library = data.library;
+  if (!state.catalog) { try { state.catalog = await api("/api/catalog"); } catch {} }
   renderLists();
 }
 
-async function openWorkspace(id) {
-  current = (await api(`/api/workspace/${id}`)).workspace;
-  renderLists();
-  renderWorkspace();
-}
-
+$("create-canvas").addEventListener("click", async () => {
+  try { const id = $("new-id").value.trim(); if (!id) throw new Error("enter an id");
+    const data = await api("/api/workspaces", { id, kind: "canvas", title: id });
+    await refresh(); await openWorkspace(data.workspace.id);
+  } catch (e) { setStatus(e.message, false); }
+});
 $("create").addEventListener("click", async () => {
-  try {
-    const id = $("new-id").value.trim();
-    const data = await api("/api/workspaces", { id });
+  try { const id = $("new-id").value.trim(); const data = await api("/api/workspaces", { id });
     await refresh(); await openWorkspace(data.workspace.id);
   } catch (e) { setStatus(e.message, false); }
 });
 $("create-from").addEventListener("click", async () => {
-  try {
-    if (!selectedRecipe) throw new Error("select a library recipe first");
+  try { if (!selectedRecipe) throw new Error("select a library recipe first");
     const id = $("new-id").value.trim() || selectedRecipe;
     const data = await api("/api/workspaces", { id, fromRecipe: selectedRecipe });
     await refresh(); await openWorkspace(data.workspace.id);
   } catch (e) { setStatus(e.message, false); }
 });
-$("save").addEventListener("click", async () => {
-  if (!current) return;
-  try {
-    setStatus("saving…");
-    const body = {
-      title: $("title").value,
-      demoDurationSec: Number($("duration").value),
-      params: JSON.parse($("params").value),
-      sanityBriefs: $("briefs").value.split("\n").map((s) => s.trim()).filter(Boolean),
-      fragment: $("fragment").value,
-      manifestDraft: JSON.parse($("manifest").value),
-      recipeMd: $("recipemd").value,
-    };
-    current = (await api(`/api/workspace/${current.id}/update`, body)).workspace;
-    await refresh(); renderWorkspace();
-    setStatus("saved");
-  } catch (e) { setStatus(e.message, false); }
-});
-$("generate").addEventListener("click", async () => {
-  if (!current) return;
-  try {
-    setStatus("gating (validation + browser QA — up to a minute)…");
-    const data = await api(`/api/workspace/${current.id}/generate`, {});
-    current = data.workspace;
-    await refresh(); renderWorkspace();
-    setStatus(data.gate.ok ? "gate green" : "gate red", data.gate.ok);
-  } catch (e) { setStatus(e.message, false); }
-});
-$("export").addEventListener("click", async () => {
-  if (!current) return;
-  try {
-    setStatus("exporting…");
-    const data = await api(`/api/workspace/${current.id}/export`, {});
-    state.library = data.library;
-    renderLists();
-    const sanity = data.export.retrievalSanity;
-    $("sanity").style.display = "block";
-    $("sanity").textContent = "Exported to " + data.export.dir +
-      "\nretrieval sanity: " + (sanity.ok ? "OK" : "CHECK TRIGGER PATTERNS") + "\n" +
-      JSON.stringify(sanity, null, 2);
-    setStatus("exported", true);
-  } catch (e) { setStatus(e.message, false); }
-});
 
-function escapeHtml(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-refresh().then(() => {
-  if (state.workspaces[0]) openWorkspace(state.workspaces[0].id);
-});
+refresh().then(() => { if (state.workspaces[0]) openWorkspace(state.workspaces[0].id); });
 </script>
 </body>
 </html>

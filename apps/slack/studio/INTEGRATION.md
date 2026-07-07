@@ -41,6 +41,29 @@ operator/agent edits fragment.html in a studio workspace
 | `projectTemplates.initializeProject` | `studio/workspaces.ts` (a workspace IS a project dir) | keep workspaces initializable without a screenshot seed. |
 | `prompts/planning-director.md` byte budget (`test/promptBudget.test.ts`) | recipe teaching text lives in runtime-composed retrieval + the response-contract lines in `requestStoryboardPlan` — **not** in the prompt file | keep it that way; recipe additions must not grow the budgeted prompt. |
 
+## Canvas builder seams (M1/M2 — `studio/canvasModel.ts` + `compileCanvas.ts`)
+
+The canvas editor is a WYSIWYG surface over the SAME host-owned contracts the
+agents emit. `compileCanvas.ts` is a cockpit over the engine, never a second
+engine — it reuses `applyDeterministicSourceRepairs` for ALL island injection.
+
+| engine seam | canvas consumer | when you change it |
+|---|---|---|
+| `componentContract.COMPONENT_CATALOG` markup | `compileCanvas.renderCatalogComponent` (substitutes only `data-part` + copy) + the UI component browser (served via `GET /api/catalog`) | never fork the markup; a kind's markup change flows through automatically. If a kind's primary text slot changes selector, update `fillPrimaryCopy`. |
+| `cameraContract` — camera times are **ABSOLUTE** composition seconds | `compileCanvas` shifts each canvas move by `scene.startSec` (the canvas model stores scene-relative, operator-facing). `CAMERA_MOVES` / `SEQUENCES_EASES` feed the editor dropdowns via `/api/catalog` | if the resolver's time base changes, fix the shift in `compileScene`. `test/studioCanvas.test.ts` guards absolute-time camera resolution. |
+| `applyDeterministicSourceRepairs` (islands, runtimes, time-wrap LAST) | `compileCanvas.compileCanvasFilm` hands it `{html, storyboard}` | the compiler emits DOM + entrance tweens + declared moments only; the pass owns every island. Never inject islands in the compiler. |
+| `motionDensity` liveness (front-load / quiet-gap / back-half beat) | the compiler spreads entrances across each station's window + declares moments at settled times | a sparse operator scene draws a real gate finding (by design — advice, not a silent pass). |
+| `directComposition.commitDirectComposition` / `generateDirectThumbnails` | `gate.ts` `gateCanvasWorkspace` (validate → commit + browser QA → thumbnails) | same gate as recipes and live creates — no laxer referee. |
+
+## Agent seams (M3 — `studio/agents/`)
+
+| engine seam | agent consumer | when you change it |
+|---|---|---|
+| `@sequences/platform` `PROVIDERS["openrouter-api"].complete` + `CompleteOptions.images` | `agents/openrouter.ts` (in-process critic; passes ref images to vision-capable models, degrades honestly otherwise) | prompt FILES are never forked — the studio composes a chat prompt from `agents/context.ts`. |
+| `PROVIDERS["claude-code-cli"]` / the `claude` binary on PATH | `agents/cli.ts` spawns `claude -p --output-format stream-json --permission-mode acceptEdits` (cwd = workspace, `--resume` per workspace) | the CLI agent's cwd is the (gitignored) workspace dir but claude can still see the parent repo — treat diff-scoping as a TODO before this is trusted unattended. |
+| `modelPolicy` model ids (`OPENROUTER_CREATIVE_MODEL` / `_LIGHT_MODEL`) | `agents/openrouter.ts` provider switcher | keep the studio's model choices reading from `modelPolicy`, never hard-coded. |
+| `validateDirectComposition` + commit + thumbnails | `agents/context.ts` `regateComposition` — re-gates an agent-edited composition after every CLI turn | the agent is refereed by the production gate; changing its signature breaks the re-gate. |
+
 ## Environment variables
 
 | var | meaning |

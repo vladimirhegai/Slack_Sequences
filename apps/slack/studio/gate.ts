@@ -10,6 +10,7 @@
  * green composition (commit throws before writing), and the workspace's gate
  * record binds to the fragment hash so post-gate edits re-arm the gate.
  */
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -23,6 +24,8 @@ import {
   validateRecipeManifest,
 } from "../src/engine/recipeContract.ts";
 import { buildRecipeDemoDraft } from "./scaffold.ts";
+import { compileCanvasFilm } from "./compileCanvas.ts";
+import { validateCanvasFilm } from "./canvasModel.ts";
 import {
   loadWorkspace,
   saveWorkspace,
@@ -60,8 +63,55 @@ export function stageWorkspaceLibrary(workspace: StudioWorkspace): string {
  * is refreshed on both edges so the bot-side default library is never
  * polluted.
  */
+/**
+ * Gate a canvas workspace: compile the typed `CanvasFilm` deterministically
+ * into a composition and run the EXACT production gate (validate → commit +
+ * browser QA → thumbnails). No recipe staging — a canvas film is judged as any
+ * live `/sequences` create would be. Proves the plan's "click-together valid
+ * film" promise (§3.3) with zero tokens.
+ */
+export async function gateCanvasWorkspace(id: string): Promise<GateOutcome> {
+  const workspace = loadWorkspace(id);
+  if (workspace.kind !== "canvas" || !workspace.canvas) {
+    throw new Error(`workspace "${id}" is not a canvas workspace`);
+  }
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  errors.push(...validateCanvasFilm(workspace.canvas).map((error) => `canvas: ${error}`));
+  let thumbnails: string[] = [];
+  if (!errors.length) {
+    const projectDir = workspaceProjectDir(id);
+    try {
+      const draft = compileCanvasFilm(projectDir, workspace.canvas);
+      const validation = await validateDirectComposition(projectDir, draft);
+      warnings.push(...validation.warnings);
+      if (!validation.ok) {
+        errors.push(...validation.errors);
+      } else {
+        await commitDirectComposition(projectDir, workspace.title, draft);
+        const thumbs = await generateDirectThumbnails(projectDir);
+        thumbnails = Object.keys(thumbs.files);
+      }
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  const gate: WorkspaceGateResult = {
+    ok: errors.length === 0,
+    errors,
+    warnings,
+    gatedAt: new Date().toISOString(),
+    fragmentHash: createHash("sha256").update(JSON.stringify(workspace.canvas)).digest("hex"),
+    thumbnails,
+  };
+  workspace.gate = gate;
+  saveWorkspace(workspace);
+  return { workspace, gate };
+}
+
 export async function gateWorkspace(id: string): Promise<GateOutcome> {
   const workspace = loadWorkspace(id);
+  if (workspace.kind === "canvas") return gateCanvasWorkspace(id);
   const fragment = workspaceFragment(id);
   const errors: string[] = [];
   const warnings: string[] = [];

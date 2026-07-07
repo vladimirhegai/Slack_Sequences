@@ -25,6 +25,11 @@ import {
   validateRecipeManifest,
   type RecipeManifest,
 } from "../src/engine/recipeContract.ts";
+import {
+  starterCanvasFilm,
+  validateCanvasFilm,
+  type CanvasFilm,
+} from "./canvasModel.ts";
 
 const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const STUDIO_ROOT = path.join(APP_DIR, ".data", "studio");
@@ -42,6 +47,14 @@ export interface WorkspaceGateResult {
 export interface StudioWorkspace {
   version: 1;
   id: string;
+  /**
+   * "recipe" (default, backward-compatible) authors a single recipe fragment;
+   * "canvas" is the direct-manipulation film builder (plan §4). A canvas
+   * workspace ignores the recipe-specific fields below and carries `canvas`.
+   */
+  kind?: "recipe" | "canvas";
+  /** Direct-manipulation canvas state (canvas workspaces only). */
+  canvas?: CanvasFilm;
   recipeId: string;
   title: string;
   /** Demo params fed to the gate scaffold (double as the export's suggested defaults). */
@@ -143,6 +156,8 @@ export function createWorkspace(options: {
   id: string;
   fromRecipe?: string;
   title?: string;
+  /** "canvas" seeds a direct-manipulation film; default "recipe". */
+  kind?: "recipe" | "canvas";
 }): StudioWorkspace {
   const id = options.id.trim();
   if (!/^[a-z][a-z0-9-]*$/.test(id)) {
@@ -153,6 +168,29 @@ export function createWorkspace(options: {
   fs.mkdirSync(dir, { recursive: true });
   if (!fs.existsSync(path.join(dir, "project.json"))) {
     initializeProject(dir, { name: `studio-${id}`, seedScreenshot: false });
+  }
+  if (options.kind === "canvas") {
+    const now = new Date().toISOString();
+    const canvasWorkspace: StudioWorkspace = {
+      version: 1,
+      id,
+      kind: "canvas",
+      canvas: starterCanvasFilm(),
+      recipeId: id,
+      title: options.title ?? id,
+      params: {},
+      demoDurationSec: 6,
+      manifestDraft: defaultManifestDraft(id),
+      sanityBriefs: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    // Canvas workspaces still keep the fragment/recipe.md files so the store's
+    // getters never throw; they are unused until a scene is promoted to a recipe.
+    fs.writeFileSync(fragmentFile(id), BLANK_FRAGMENT, "utf8");
+    fs.writeFileSync(recipeMdFile(id), `# ${id}\n\nA canvas film built in the studio.\n`, "utf8");
+    saveWorkspace(canvasWorkspace);
+    return canvasWorkspace;
   }
   let manifestDraft = defaultManifestDraft(id);
   let fragment = BLANK_FRAGMENT;
@@ -250,6 +288,26 @@ export function updateWorkspaceSources(
       ...workspace.gate.warnings,
       "sources changed after this gate ran — re-generate before exporting",
     ] };
+  }
+  saveWorkspace(workspace);
+  return workspace;
+}
+
+/** Replace a canvas workspace's typed canvas state (checkpointing first). */
+export function updateWorkspaceCanvas(id: string, canvas: CanvasFilm): StudioWorkspace {
+  const workspace = loadWorkspace(id);
+  if (workspace.kind !== "canvas") throw new Error(`workspace "${id}" is not a canvas workspace`);
+  const errors = validateCanvasFilm(canvas);
+  if (errors.length) throw new Error(`invalid canvas: ${errors.join("; ")}`);
+  checkpointWorkspace(id, "canvas-edit");
+  workspace.canvas = canvas;
+  // A canvas edit invalidates a previous green gate.
+  if (workspace.gate) {
+    workspace.gate = {
+      ...workspace.gate,
+      ok: false,
+      warnings: [...workspace.gate.warnings, "canvas changed after this gate ran — re-generate"],
+    };
   }
   saveWorkspace(workspace);
   return workspace;

@@ -19,23 +19,40 @@
  *   GET  /preview/:id/*             serve the workspace composition dir
  *   GET  /thumbs/:id/*              serve the gate's thumbnail strip
  */
+// Operator-local only (never Railway): load the gitignored .env so OpenRouter
+// agents resolve OPENROUTER_API_KEY, exactly like the bot + sequence:check do.
+import "dotenv/config";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { loadRecipeLibrary } from "../src/engine/recipeContract.ts";
+import {
+  COMPONENT_CATALOG,
+  componentKitStyleTag,
+} from "../src/engine/componentContract.ts";
+import { CAMERA_MOVES, SEQUENCES_EASES } from "../src/engine/cameraContract.ts";
 import { gateWorkspace } from "./gate.ts";
 import { exportWorkspaceRecipe } from "./exportRecipe.ts";
+import {
+  runChatTurn,
+  loadTranscript,
+  AGENT_PROVIDERS,
+  type AgentProviderId,
+} from "./agents/index.ts";
+import { claudeCliAvailable } from "./agents/cli.ts";
 import {
   createWorkspace,
   listWorkspaces,
   loadWorkspace,
+  updateWorkspaceCanvas,
   updateWorkspaceSources,
   workspaceFragment,
   workspaceProjectDir,
   workspaceRecipeMd,
 } from "./workspaces.ts";
+import type { CanvasFilm } from "./canvasModel.ts";
 
 if (process.env.RAILWAY_ENVIRONMENT) {
   process.stderr.write(
@@ -155,16 +172,46 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
     return sendFile(res, path.join(UI_DIR, "index.html"));
   }
+  if (req.method === "GET" && url.pathname === "/favicon.ico") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/api/state") {
     return sendJson(res, 200, { library: libraryState(), workspaces: listWorkspaces() });
   }
+  if (req.method === "GET" && url.pathname === "/api/catalog") {
+    // The component browser renders LIVE from the catalog + kit CSS — never a
+    // forked copy (plan guardrail #12). Camera verbs / eases feed the editor's
+    // transition dropdowns straight from the contract vocabulary.
+    return sendJson(res, 200, {
+      components: COMPONENT_CATALOG.map((spec) => ({
+        kind: spec.kind,
+        purpose: spec.purpose,
+        beats: spec.beats,
+        markup: spec.markup,
+      })),
+      kitCss: componentKitStyleTag(),
+      cameraMoves: [...CAMERA_MOVES],
+      eases: [...SEQUENCES_EASES],
+      cutStyles: ["hard", "flash-white", "zoom-through", "inverse-zoom"],
+      agentProviders: AGENT_PROVIDERS,
+      claudeCliAvailable: claudeCliAvailable(),
+    });
+  }
   if (req.method === "POST" && url.pathname === "/api/workspaces") {
-    const body = (await readBody(req)) as { id?: string; fromRecipe?: string; title?: string };
+    const body = (await readBody(req)) as {
+      id?: string;
+      fromRecipe?: string;
+      title?: string;
+      kind?: "recipe" | "canvas";
+    };
     if (!body.id) return sendJson(res, 400, { error: "id is required" });
     const workspace = createWorkspace({
       id: body.id,
       ...(body.fromRecipe ? { fromRecipe: body.fromRecipe } : {}),
       ...(body.title ? { title: body.title } : {}),
+      ...(body.kind ? { kind: body.kind } : {}),
     });
     return sendJson(res, 200, { workspace: workspaceState(workspace.id) });
   }
@@ -179,6 +226,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       updateWorkspaceSources(id, body);
       return sendJson(res, 200, { workspace: workspaceState(id) });
     }
+    if (req.method === "POST" && action === "canvas") {
+      const body = (await readBody(req)) as { canvas?: CanvasFilm };
+      if (!body.canvas) return sendJson(res, 400, { error: "canvas is required" });
+      updateWorkspaceCanvas(id, body.canvas);
+      return sendJson(res, 200, { workspace: workspaceState(id) });
+    }
     if (req.method === "POST" && action === "generate") {
       const outcome = await enqueue(() => gateWorkspace(id));
       return sendJson(res, 200, { gate: outcome.gate, workspace: workspaceState(id) });
@@ -186,6 +239,41 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     if (req.method === "POST" && action === "export") {
       const result = await enqueue(async () => exportWorkspaceRecipe(id));
       return sendJson(res, 200, { export: result, library: libraryState() });
+    }
+    if (req.method === "GET" && action === "chat") {
+      return sendJson(res, 200, { transcript: loadTranscript(id) });
+    }
+    if (req.method === "POST" && action === "chat") {
+      const body = (await readBody(req)) as {
+        provider?: AgentProviderId;
+        message?: string;
+        images?: Array<{ mimeType: string; base64: string; name: string }>;
+      };
+      if (!body.provider || !body.message) {
+        return sendJson(res, 400, { error: "provider and message are required" });
+      }
+      // Stream the agent turn as Server-Sent Events. Not queued behind gates —
+      // a CLI turn is long, and the studio is single-operator.
+      res.writeHead(200, {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      const send = (event: string, data: unknown) =>
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      try {
+        await runChatTurn(id, {
+          provider: body.provider,
+          message: body.message,
+          ...(body.images ? { images: body.images } : {}),
+          onChunk: (text) => send("chunk", { text }),
+        });
+        send("done", { workspace: workspaceState(id) });
+      } catch (error) {
+        send("error", { message: error instanceof Error ? error.message : String(error) });
+      }
+      res.end();
+      return;
     }
   }
   if (req.method === "GET" && segments[0] === "preview" && segments[1]) {
