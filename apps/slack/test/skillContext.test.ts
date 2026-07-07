@@ -62,6 +62,11 @@ describe("HyperFrames skill retrieval", () => {
     const installed = fs.readdirSync(path.join(APP_DIR, "skills"), { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
+      // sequences-recipes is the locally curated Recipe Studio library, not an
+      // upstream vendored skill: its file count grows with every export, and
+      // its integrity is owned by test/recipeContract.test.ts (manifest
+      // validation + fragment hash), not by this pinned inventory.
+      .filter((name) => name !== "sequences-recipes")
       .sort();
 
     expect(installed).toEqual(Object.keys(manifest.skills).sort());

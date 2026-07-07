@@ -451,7 +451,49 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "camera-sparse-zoom.",
   },
 
+  {
+    id: "normalize.recipe-reconcile",
+    group: "recipes",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/recipeContract.test.ts",
+    addedBecause:
+      "2026-07-07 Recipe Studio (RECIPE_STUDIO_PLAN.md §7): storyboards may " +
+      "declare library recipes (proven, gate-passed motion patterns) that the " +
+      "host instantiates verbatim at Level 1. reconcileRecipeDeclarations " +
+      "(parseStoryboard tail) is the L2 governor: unknown/stale ids drop, " +
+      "params default/clamp/drop against the typed slot schema, the " +
+      "MAX_RECIPES_PER_FILM budget trims — degrade-never-veto, because the " +
+      "recipe knowledge already reached the planner at Level 0 (retrieval), " +
+      "so a dropped declaration costs influence, never a paid attempt. " +
+      "Telemetry tags: recipe-reconcile, recipe-inject.",
+  },
+
   // ── L3 static — linkedom / regex / plan-stage audits; cheap findings-retry ──
+  {
+    id: "recipes.contract",
+    group: "recipes",
+    layer: "static",
+    blocking: "blocking",
+    findingPrefixes: [
+      "recipe_unknown",
+      "recipe_island_missing",
+      "recipe_motion_missing",
+      "recipe_slot_unfilled",
+    ],
+    promptCostChars: 0,
+    test: "test/recipeContract.test.ts",
+    addedBecause:
+      "2026-07-07 Recipe Studio: validateRecipeContract is a host-plumbing " +
+      "self-check (the validateFxContract disposition) — the host strips and " +
+      "re-injects every declared recipe's fragment from the library on every " +
+      "repair pass (injectRecipeContract in applyDeterministicSourceRepairs, " +
+      "before the time-wrap), so these codes are reachable only if the " +
+      "injection seam breaks or a declaration survives reconciliation without " +
+      "a library entry. Never a routine authoring finding; no prompt prose.",
+  },
   {
     id: "camera.energy",
     group: "camera",
@@ -783,6 +825,7 @@ export const FINDING_SOURCE_FILES: readonly string[] = [
   "motionDensity.ts",
   "storyboardMoments.ts",
   "kitMarkupAudit.ts",
+  "recipeContract.ts",
   "frameValidation.ts",
   "layoutInspector.ts",
   "directComposition.ts",

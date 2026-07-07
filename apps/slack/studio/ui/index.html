@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Recipe Studio</title>
+<style>
+  :root {
+    --bg: #0c1016; --panel: #131a23; --panel-2: #0f151d; --edge: #223041;
+    --text: #e8edf2; --muted: #8fa1b3; --accent: #ffc24d; --green: #7ddba3; --red: #ff8080;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 Inter, system-ui, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--edge); }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: 0.02em; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  main { display: grid; grid-template-columns: 260px minmax(0, 1fr) 420px; gap: 0; height: calc(100vh - 45px); }
+  .col { overflow-y: auto; padding: 14px; }
+  .col.left { border-right: 1px solid var(--edge); background: var(--panel-2); }
+  .col.right { border-left: 1px solid var(--edge); background: var(--panel-2); }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); margin: 18px 0 8px; }
+  h2:first-child { margin-top: 0; }
+  .item { padding: 8px 10px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; margin-bottom: 4px; }
+  .item:hover { background: var(--panel); }
+  .item.active { border-color: var(--edge); background: var(--panel); }
+  .item .id { font-weight: 600; }
+  .item .meta { color: var(--muted); font-size: 12px; }
+  .badge { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--edge); color: var(--muted); vertical-align: 1px; margin-left: 6px; }
+  .badge.green { color: var(--green); border-color: rgba(125, 219, 163, 0.4); }
+  .badge.red { color: var(--red); border-color: rgba(255, 128, 128, 0.4); }
+  .badge.amber { color: var(--accent); border-color: rgba(255, 194, 77, 0.4); }
+  button { background: var(--panel); color: var(--text); border: 1px solid var(--edge); border-radius: 8px; padding: 7px 14px; cursor: pointer; font: inherit; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #14100a; border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  input, textarea { width: 100%; background: var(--panel); border: 1px solid var(--edge); color: var(--text); border-radius: 8px; padding: 7px 10px; font: inherit; }
+  textarea.code { font: 12px/1.5 "JetBrains Mono", Consolas, monospace; white-space: pre; min-height: 200px; }
+  label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px; }
+  .viewer { background: #000; border: 1px solid var(--edge); border-radius: 10px; overflow: hidden; aspect-ratio: 16/9; position: relative; }
+  .viewer iframe { width: 1920px; height: 1080px; border: 0; transform-origin: 0 0; position: absolute; left: 0; top: 0; }
+  .viewer .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+  .scrub { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .scrub input { flex: 1; }
+  .scrub .time { font: 12px "JetBrains Mono", monospace; color: var(--muted); min-width: 88px; text-align: right; }
+  .findings { margin-top: 10px; }
+  .finding { border-left: 3px solid var(--red); background: var(--panel); border-radius: 0 8px 8px 0; padding: 6px 10px; margin-bottom: 6px; font: 12px/1.5 "JetBrains Mono", monospace; white-space: pre-wrap; word-break: break-word; }
+  .finding.warn { border-left-color: var(--accent); }
+  .thumbs { display: flex; gap: 8px; overflow-x: auto; margin-top: 10px; padding-bottom: 4px; }
+  .thumbs img { height: 76px; border-radius: 6px; border: 1px solid var(--edge); }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  .actions { display: flex; gap: 8px; margin: 14px 0; }
+  .actions button { flex: none; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .status { font-size: 12px; margin-left: auto; color: var(--muted); }
+  pre.sanity { background: var(--panel); border: 1px solid var(--edge); border-radius: 8px; padding: 10px; font-size: 11px; overflow-x: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Recipe Studio</h1>
+  <span class="sub">canvas-less foundation build — gate, prove, export; the agents do the rest</span>
+  <span class="status" id="status"></span>
+</header>
+<main>
+  <div class="col left">
+    <h2>Workspaces</h2>
+    <div id="workspaces"></div>
+    <div class="row" style="margin-top:10px">
+      <input id="new-id" placeholder="new-recipe-id" />
+    </div>
+    <div class="actions">
+      <button id="create">New</button>
+      <button id="create-from">From selected recipe</button>
+    </div>
+    <h2>Library</h2>
+    <div id="library"></div>
+  </div>
+
+  <div class="col center">
+    <div class="viewer" id="viewer"><div class="empty">generate to preview</div></div>
+    <div class="scrub">
+      <button id="play">▶</button>
+      <input type="range" id="scrub" min="0" max="6" step="0.01" value="0" />
+      <span class="time" id="time">0.00s</span>
+    </div>
+    <div class="actions">
+      <button class="primary" id="generate">Generate + Gate</button>
+      <button id="export">Export to library</button>
+      <span class="note" id="gate-note"></span>
+    </div>
+    <div class="thumbs" id="thumbs"></div>
+    <div class="findings" id="findings"></div>
+    <pre class="sanity" id="sanity" style="display:none"></pre>
+  </div>
+
+  <div class="col right">
+    <h2>Workspace</h2>
+    <label>Title</label>
+    <input id="title" />
+    <div class="row">
+      <div><label>Demo duration (s)</label><input id="duration" type="number" min="3" max="20" step="0.5" /></div>
+    </div>
+    <label>Demo params (JSON)</label>
+    <textarea id="params" class="code" style="min-height:110px"></textarea>
+    <label>Should-match briefs (one per line — retrieval sanity)</label>
+    <textarea id="briefs" style="min-height:64px"></textarea>
+    <h2>fragment.html</h2>
+    <textarea id="fragment" class="code" spellcheck="false"></textarea>
+    <h2>recipe.json draft</h2>
+    <textarea id="manifest" class="code" style="min-height:150px" spellcheck="false"></textarea>
+    <h2>recipe.md</h2>
+    <textarea id="recipemd" class="code" style="min-height:120px" spellcheck="false"></textarea>
+    <div class="actions">
+      <button class="primary" id="save">Save sources</button>
+    </div>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let state = { workspaces: [], library: { recipes: [] } };
+let current = null;         // full workspace state
+let selectedRecipe = null;  // library recipe id
+let playing = null;
+
+function setStatus(text, ok) {
+  $("status").textContent = text || "";
+  $("status").style.color = ok === false ? "var(--red)" : "var(--muted)";
+}
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? {} : {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function badge(text, cls) { return `<span class="badge ${cls || ""}">${text}</span>`; }
+
+function renderLists() {
+  $("workspaces").innerHTML = state.workspaces.map((ws) => `
+    <div class="item ${current && current.id === ws.id ? "active" : ""}" data-ws="${ws.id}">
+      <span class="id">${ws.id}</span>
+      ${ws.gate ? (ws.gate.ok ? badge("green", "green") : badge("red gate", "red")) : badge("ungated")}
+      <div class="meta">${ws.title}</div>
+    </div>`).join("") || '<div class="note">none yet</div>';
+  $("library").innerHTML = state.library.recipes.map((r) => `
+    <div class="item ${selectedRecipe === r.id ? "active" : ""}" data-recipe="${r.id}">
+      <span class="id">${r.id}</span>
+      ${r.stale ? badge("re-prove", "amber") : badge("v" + r.revision, "green")}
+      <div class="meta">${r.title}</div>
+    </div>`).join("") || '<div class="note">library is empty</div>';
+  document.querySelectorAll("[data-ws]").forEach((el) =>
+    el.addEventListener("click", () => openWorkspace(el.dataset.ws)));
+  document.querySelectorAll("[data-recipe]").forEach((el) =>
+    el.addEventListener("click", () => { selectedRecipe = el.dataset.recipe; renderLists(); }));
+}
+
+function renderWorkspace() {
+  if (!current) return;
+  $("title").value = current.title;
+  $("duration").value = current.demoDurationSec;
+  $("params").value = JSON.stringify(current.params, null, 2);
+  $("briefs").value = (current.sanityBriefs || []).join("\n");
+  $("fragment").value = current.fragment || "";
+  $("manifest").value = JSON.stringify(current.manifestDraft, null, 2);
+  $("recipemd").value = current.recipeMd || "";
+  renderGate();
+  renderPreview();
+}
+
+function renderGate() {
+  const gate = current && current.gate;
+  $("gate-note").textContent = gate
+    ? (gate.ok ? `green · ${new Date(gate.gatedAt).toLocaleTimeString()}` : "red gate — fix findings")
+    : "not gated yet";
+  $("export").disabled = !(gate && gate.ok);
+  $("findings").innerHTML = gate ? [
+    ...gate.errors.map((e) => `<div class="finding">${escapeHtml(e)}</div>`),
+    ...gate.warnings.slice(0, 12).map((w) => `<div class="finding warn">${escapeHtml(w)}</div>`),
+  ].join("") : "";
+  $("thumbs").innerHTML = (current && current.thumbnails || [])
+    .map((src) => `<img src="${src}?t=${Date.now()}" />`).join("");
+}
+
+function renderPreview() {
+  const viewer = $("viewer");
+  if (!current || !current.previewUrl) {
+    viewer.innerHTML = '<div class="empty">generate to preview</div>';
+    return;
+  }
+  viewer.innerHTML = `<iframe id="frame" src="${current.previewUrl}?t=${Date.now()}"></iframe>`;
+  const frame = $("frame");
+  const fit = () => { frame.style.transform = `scale(${viewer.clientWidth / 1920})`; };
+  new ResizeObserver(fit).observe(viewer);
+  fit();
+  frame.addEventListener("load", () => {
+    const tl = timeline();
+    if (tl) { $("scrub").max = tl.duration(); seek(0); }
+  });
+}
+
+function timeline() {
+  const frame = $("frame");
+  const tls = frame && frame.contentWindow && frame.contentWindow.__timelines;
+  if (!tls) return null;
+  const key = Object.keys(tls)[0];
+  return key ? tls[key] : null;
+}
+
+function seek(t) {
+  const tl = timeline();
+  if (!tl) return;
+  tl.seek(Math.min(t, Math.max(0, tl.duration() - 0.001)));
+  $("scrub").value = t;
+  $("time").textContent = `${Number(t).toFixed(2)}s`;
+}
+
+$("scrub").addEventListener("input", (e) => { stop(); seek(Number(e.target.value)); });
+$("play").addEventListener("click", () => { playing ? stop() : play(); });
+function play() {
+  const tl = timeline();
+  if (!tl) return;
+  $("play").textContent = "⏸";
+  let last = performance.now();
+  let t = Number($("scrub").value);
+  if (t >= tl.duration() - 0.05) t = 0;
+  const step = (now) => {
+    t += (now - last) / 1000; last = now;
+    if (t >= tl.duration()) { seek(tl.duration() - 0.001); stop(); return; }
+    seek(t);
+    playing = requestAnimationFrame(step);
+  };
+  playing = requestAnimationFrame(step);
+}
+function stop() {
+  if (playing) cancelAnimationFrame(playing);
+  playing = null;
+  $("play").textContent = "▶";
+}
+
+async function refresh() {
+  const data = await api("/api/state");
+  state = { workspaces: data.workspaces, library: data.library };
+  renderLists();
+}
+
+async function openWorkspace(id) {
+  current = (await api(`/api/workspace/${id}`)).workspace;
+  renderLists();
+  renderWorkspace();
+}
+
+$("create").addEventListener("click", async () => {
+  try {
+    const id = $("new-id").value.trim();
+    const data = await api("/api/workspaces", { id });
+    await refresh(); await openWorkspace(data.workspace.id);
+  } catch (e) { setStatus(e.message, false); }
+});
+$("create-from").addEventListener("click", async () => {
+  try {
+    if (!selectedRecipe) throw new Error("select a library recipe first");
+    const id = $("new-id").value.trim() || selectedRecipe;
+    const data = await api("/api/workspaces", { id, fromRecipe: selectedRecipe });
+    await refresh(); await openWorkspace(data.workspace.id);
+  } catch (e) { setStatus(e.message, false); }
+});
+$("save").addEventListener("click", async () => {
+  if (!current) return;
+  try {
+    setStatus("saving…");
+    const body = {
+      title: $("title").value,
+      demoDurationSec: Number($("duration").value),
+      params: JSON.parse($("params").value),
+      sanityBriefs: $("briefs").value.split("\n").map((s) => s.trim()).filter(Boolean),
+      fragment: $("fragment").value,
+      manifestDraft: JSON.parse($("manifest").value),
+      recipeMd: $("recipemd").value,
+    };
+    current = (await api(`/api/workspace/${current.id}/update`, body)).workspace;
+    await refresh(); renderWorkspace();
+    setStatus("saved");
+  } catch (e) { setStatus(e.message, false); }
+});
+$("generate").addEventListener("click", async () => {
+  if (!current) return;
+  try {
+    setStatus("gating (validation + browser QA — up to a minute)…");
+    const data = await api(`/api/workspace/${current.id}/generate`, {});
+    current = data.workspace;
+    await refresh(); renderWorkspace();
+    setStatus(data.gate.ok ? "gate green" : "gate red", data.gate.ok);
+  } catch (e) { setStatus(e.message, false); }
+});
+$("export").addEventListener("click", async () => {
+  if (!current) return;
+  try {
+    setStatus("exporting…");
+    const data = await api(`/api/workspace/${current.id}/export`, {});
+    state.library = data.library;
+    renderLists();
+    const sanity = data.export.retrievalSanity;
+    $("sanity").style.display = "block";
+    $("sanity").textContent = "Exported to " + data.export.dir +
+      "\nretrieval sanity: " + (sanity.ok ? "OK" : "CHECK TRIGGER PATTERNS") + "\n" +
+      JSON.stringify(sanity, null, 2);
+    setStatus("exported", true);
+  } catch (e) { setStatus(e.message, false); }
+});
+
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+refresh().then(() => {
+  if (state.workspaces[0]) openWorkspace(state.workspaces[0].id);
+});
+</script>
+</body>
+</html>

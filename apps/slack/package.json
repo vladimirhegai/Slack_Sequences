@@ -16,6 +16,8 @@
     "model:smoke": "tsx scripts/modelAuthoringSmoke.ts",
     "storyboard:probe": "tsx scripts/storyboardProbe.ts",
     "sentinel:report": "tsx scripts/sentinelReport.ts",
+    "studio": "tsx studio/server.ts",
+    "studio:golden": "tsx studio/selfCheck.ts --recipe last-word-roulette --export",
     "capabilities:sync": "tsx scripts/syncCapabilityIndex.ts",
     "mcp:server": "tsx src/engine/mcpServer.ts",
     "test": "vitest run --root ../.. apps/slack/test",

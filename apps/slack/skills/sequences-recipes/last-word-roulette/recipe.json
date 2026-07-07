@@ -1,0 +1,97 @@
+{
+  "format": 2,
+  "id": "last-word-roulette",
+  "title": "Locked sentence with a final-word roulette payoff",
+  "description": "Hero headline whose last word ticks through candidates on a masked wheel, then snaps onto the payoff word with an accent underline and glow.",
+  "tags": [
+    "kinetic-type",
+    "headline",
+    "payoff",
+    "roulette",
+    "word-swap",
+    "hero-copy",
+    "resolve"
+  ],
+  "triggerPatterns": [
+    "roulette",
+    "word[ -]?(wheel|spin|roll|slot)",
+    "last word",
+    "final word",
+    "cycl(e|es|ing) through (words|options|names)",
+    "flip(s|ping)? (through|between) (words|options)",
+    "(spins?|rolls?) (through|to) (a|the|one) word",
+    "slot[ -]?machine (head|copy|word|text)",
+    "headline .*(payoff|lands|snaps)"
+  ],
+  "durationWindow": {
+    "minSec": 3.5,
+    "maxSec": 12
+  },
+  "componentKinds": [
+    "headline"
+  ],
+  "params": [
+    {
+      "name": "lead",
+      "kind": "text",
+      "description": "The locked sentence prefix the wheel completes (no trailing space).",
+      "maxChars": 60
+    },
+    {
+      "name": "word1",
+      "kind": "text",
+      "description": "First candidate tick (weakest of the set).",
+      "default": "Faster",
+      "maxChars": 18
+    },
+    {
+      "name": "word2",
+      "kind": "text",
+      "description": "Second candidate tick.",
+      "default": "Smarter",
+      "maxChars": 18
+    },
+    {
+      "name": "word3",
+      "kind": "text",
+      "description": "Third candidate tick (closest rival to the payoff).",
+      "default": "Simpler",
+      "maxChars": 18
+    },
+    {
+      "name": "payoff",
+      "kind": "text",
+      "description": "The word that stays — the shot's thesis.",
+      "maxChars": 24
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for the wheel words, underline, and glow.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "settleSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the payoff locks (leave >=1s of scene after it).",
+      "default": 2.6,
+      "min": 1.6,
+      "max": 12
+    }
+  ],
+  "engine": {
+    "storyboardContract": 14,
+    "kitVersions": {
+      "componentKit": 1,
+      "componentRuntime": 1,
+      "cameraRuntime": 1,
+      "cutRuntime": 1,
+      "interactionRuntime": 1,
+      "timeRuntime": 1,
+      "fxRuntime": 1,
+      "cinemaKit": 1
+    }
+  },
+  "revision": 3,
+  "fragmentHash": "3da85bc3da217b4d38c8f691b25c3602d417647f787b0874f37df308eeca12ba"
+}

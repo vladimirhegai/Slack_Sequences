@@ -39,3 +39,17 @@ export function sentinelSlotsEnabled(): boolean {
 export function criticSkipCleanEnabled(): boolean {
   return process.env.SLACK_SEQUENCES_CRITIC_SKIP_CLEAN !== "0";
 }
+
+/**
+ * Recipe Studio Level-1 consumption — retrieval offers proven library recipes
+ * to the planner and the host instantiates declared ones verbatim
+ * (`recipeContract.ts`). Default ON: the operator wants recipes to be a
+ * high-priority vocabulary on live creates, the whole path is
+ * degrade-never-veto (a bad declaration is dropped at parse, never vetoes a
+ * film), and instantiated output still passes the full gate.
+ * `SLACK_SEQUENCES_RECIPES=0` reverts to the recipe-free pipeline in one env
+ * var (an empty library behaves identically).
+ */
+export function recipesEnabled(): boolean {
+  return process.env.SLACK_SEQUENCES_RECIPES !== "0";
+}

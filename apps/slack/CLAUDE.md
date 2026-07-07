@@ -50,6 +50,29 @@ an unregistered class). Flags: `SLACK_SEQUENCES_SENTINEL_SKELETON` /
 > judges test the bot** — see [FALLBACKS.md](FALLBACKS.md). Read FALLBACKS.md
 > before changing the authoring pipeline.
 
+## Recipe Studio + the recipe library (2026-07-07)
+
+`apps/slack/studio/` is the operator-local Recipe Studio
+(`npm run studio --workspace @sequences/slack` → `http://127.0.0.1:4321`;
+**never** on Railway — the server refuses `RAILWAY_ENVIRONMENT`). It gates and
+exports **recipes**: proven motion patterns in
+`skills/sequences-recipes/<id>/` that live creates consume at **Level 1 host
+instantiation** — retrieval (`skillContext.ts`) offers ≤2 matching recipes
+with a declare-by-default instruction, the storyboard declares
+`recipes:[{id,params}]` per scene, `reconcileRecipeDeclarations` (Sentinel L2,
+degrade-never-veto) governs the declarations, and
+`applyDeterministicSourceRepairs` strips + re-injects the proven fragment
+VERBATIM every pass (`src/engine/recipeContract.ts` — the sixth host-owned
+contract; the author model can never edit the mechanism). Kill switch
+`SLACK_SEQUENCES_RECIPES=0`. Golden proof: `npm run studio:golden` re-proves
+and re-exports `last-word-roulette` through the full gate. **Touching any
+engine seam (runtime/kit versions, storyboard schema, injection order,
+retrieval, sentinel registry) requires updating
+[studio/INTEGRATION.md](studio/INTEGRATION.md)'s seam table** — bumping a
+runtime/kit version marks every exported recipe stale until re-proven. Plan:
+[docs/RECIPE_STUDIO_PLAN.md](../../docs/RECIPE_STUDIO_PLAN.md) (in the private
+monorepo); build report: [RECIPE_STUDIO_REPORT.md](RECIPE_STUDIO_REPORT.md).
+
 ## The two bots
 
 This app runs **two distinct agents**. Keep them straight:

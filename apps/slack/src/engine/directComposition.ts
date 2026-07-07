@@ -70,6 +70,10 @@ import {
   type ComponentBeatIntentV1,
   type SceneComponentSpecV1,
 } from "./componentContract.ts";
+import {
+  validateRecipeContract,
+  type RecipeDeclarationV1,
+} from "./recipeContract.ts";
 import { validateCompositionAgainstFrame } from "./frameValidation.ts";
 import { auditKitMarkupCompleteness } from "./kitMarkupAudit.ts";
 import {
@@ -127,6 +131,12 @@ export interface DirectScene {
   components?: SceneComponentSpecV1[];
   /** Typed state-change beats on declared components (times are absolute). */
   beats?: ComponentBeatIntentV1[];
+  /**
+   * Declared library recipes (Recipe Studio, Level-1 host instantiation):
+   * the host injects each recipe's proven fragment verbatim with these param
+   * values — the author model never owns the mechanism.
+   */
+  recipes?: RecipeDeclarationV1[];
   spatialIntent?: SpatialIntentV1;
   interactions?: InteractionIntentV1[];
   /** Ordered reviewable changed states this scene promises (the moment contract). */
@@ -519,6 +529,11 @@ export async function validateDirectComposition(
   errors.push(...componentValidation.errors);
   const fxValidation = validateFxContract(html, normalized.scenes);
   errors.push(...fxValidation.errors);
+  // Recipe islands are host-injected from the library (Level-1
+  // instantiation); like fx, these errors are host-plumbing self-checks —
+  // reachable only if the injection seam breaks.
+  const recipeValidation = validateRecipeContract(html, normalized.scenes);
+  errors.push(...recipeValidation.errors);
   // Bind failures abort the whole browser compile behind an opaque timeout;
   // re-run the runtimes' bind queries against a parsed DOM here so they
   // surface as named findings the repair loop can act on.
@@ -603,6 +618,7 @@ export async function validateDirectComposition(
       ...cameraValidation.warnings,
       ...timeRampValidation.warnings,
       ...componentValidation.warnings,
+      ...recipeValidation.warnings,
       ...kitMarkupAudit.warnings,
       ...motionValidation.warnings,
       ...momentContract.warnings,

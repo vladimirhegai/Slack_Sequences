@@ -48,6 +48,8 @@ point an agent at the listed file.
 | Temporal motion evidence | `src/engine/temporalInspector.ts` | development strips, cut triptychs, change curve, quiet-window review |
 | Zero-token revise ("shorter" / "warmer") | `src/engine/tweakRunner.ts` | deterministic tweak matcher |
 | Render + thumbnails | `src/engine/render.ts`, `src/engine/thumbs.ts`, `src/engine/directComposition.ts` (`generateDirectThumbnails`) | Chrome / FFmpeg pipeline, draft vs HD; WS7 moment-thumbnail walk-forward: a scene-start moment whose subject hasn't revealed (opacity check) or whose copy clip-reveals later (relative painted-pixel check) walks to the first frame that actually shows the moment |
+| Recipe library (Level-1 host instantiation) | `src/engine/recipeContract.ts`, `skills/sequences-recipes/`, `src/agent/skillContext.ts` | RecipeV2 format, typed param slots, verbatim fragment injection, retrieval scoring/budget, version fencing (`SLACK_SEQUENCES_RECIPES=0`) |
+| Recipe Studio (operator tool, never deployed) | `studio/server.ts`, `studio/gate.ts`, `studio/exportRecipe.ts`, `studio/scaffold.ts`, `studio/INTEGRATION.md` | workspace gate loop (real validators + browser QA), RecipeV2 export wizard mechanics, golden proof (`npm run studio:golden`) |
 | Curated model-free demo | `src/demo.ts` | the bulletproof preset reel |
 | Golden Slack ad film | `scripts/slackAdFilm.ts` | cinematic quality bar and end-to-end cut proof (`npm run film:demo`) |
 | Local `/sequences` simulator | `scripts/sequenceCheck.ts` | Slack-free create checks, model/provider receipts, validation, motion/artifact report |

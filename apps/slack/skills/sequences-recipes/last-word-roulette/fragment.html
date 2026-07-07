@@ -1,0 +1,139 @@
+<!--
+  last-word-roulette — the golden recipe (Recipe Studio, RecipeV2).
+
+  A locked sentence whose final word is a masked vertical wheel: three
+  candidate words tick past, then the payoff word snaps in, an accent
+  underline draws beneath it, and a soft glow acknowledges the landing.
+
+  Instantiation contract (host-owned — see recipeContract.ts):
+  - the <template data-recipe-markup> is injected inside the declared scene
+    (HTML-escaped {{param}} slots filled from the storyboard declaration);
+  - the <style data-recipe-style> is injected once into <head>;
+  - the <script data-recipe-motion> body runs as (tl, root, start, duration,
+    uid) — statements add tweens to the ONE paused master timeline. Pure
+    function of timeline time: no clocks, no rAF, no randomness, no repeats.
+-->
+<style data-recipe-style>
+  .rcp-roulette {
+    position: relative;
+    display: block;
+    text-align: center;
+    line-height: 1.08;
+    /* Self-sufficient display scale with tunable overrides: a hosting scene
+       may retune via --rcp-size/--rcp-weight without touching the mechanism. */
+    font-size: var(--rcp-size, 104px);
+    font-weight: var(--rcp-weight, 800);
+    letter-spacing: -0.015em;
+  }
+  .rcp-roulette .rcp-line {
+    display: block;
+    white-space: nowrap;
+  }
+  .rcp-roulette .rcp-lead {
+    display: inline-block;
+    vertical-align: baseline;
+  }
+  .rcp-roulette .rcp-slot {
+    /* The wheel's column: inline with the lead, owns the underline + glow so
+       both track the PAYOFF word, not the sentence. vertical-align: bottom
+       matches the mask's box bottom to the line box bottom, so the wheel
+       words share the lead's baseline (an overflow-hidden inline-block would
+       otherwise baseline-align its bottom edge and ride high). */
+    position: relative;
+    display: inline-block;
+    vertical-align: bottom;
+    margin-left: 0.28em;
+  }
+  .rcp-roulette .rcp-mask {
+    display: block;
+    overflow: hidden;
+    height: 1.08em;
+    text-align: left;
+  }
+  .rcp-roulette .rcp-wheel {
+    display: inline-block;
+    will-change: transform;
+  }
+  .rcp-roulette .rcp-word {
+    display: block;
+    height: 1.08em;
+    color: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-roulette .rcp-word:not(.rcp-payoff) {
+    opacity: 0.82;
+  }
+  .rcp-roulette .rcp-rule {
+    display: block; /* transformed inline spans are a no-op (determinism rules) */
+    position: absolute;
+    left: 3%;
+    right: 3%;
+    top: calc(100% + 0.08em);
+    height: 0.05em;
+    border-radius: 999px;
+    background: var(--rcp-accent, #ffc24d);
+    transform: scaleX(0);
+    transform-origin: 50% 50%;
+  }
+  .rcp-roulette .rcp-glow {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 8em;
+    height: 3em;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: radial-gradient(closest-side, var(--rcp-accent, #ffc24d), transparent 72%);
+    opacity: 0;
+    pointer-events: none;
+    filter: blur(14px);
+  }
+</style>
+<template data-recipe-markup>
+  <div class="rcp-roulette" data-part="{{uid}}-roulette" data-layout-important
+    data-layout-anchor="frame:center" style="--rcp-accent: {{accent}}">
+    <span class="rcp-line">
+      <span class="rcp-lead">{{lead}}</span>
+      <span class="rcp-slot" data-layout-allow-overflow>
+        <span class="rcp-glow" data-layout-ignore></span>
+        <span class="rcp-mask">
+          <span class="rcp-wheel" data-part="{{uid}}-wheel">
+            <span class="rcp-word">{{word1}}</span>
+            <span class="rcp-word">{{word2}}</span>
+            <span class="rcp-word">{{word3}}</span>
+            <span class="rcp-word rcp-payoff">{{payoff}}</span>
+          </span>
+        </span>
+        <span class="rcp-rule" data-layout-ignore></span>
+      </span>
+    </span>
+  </div>
+</template>
+<script data-recipe-motion>
+  // Timing spine: everything is derived from the scene window and the single
+  // settleSec knob (seconds after scene start when the payoff locks), so a
+  // re-timed scene keeps the choreography's shape. Clamped so the full
+  // gesture always fits the scene with a reading hold after the payoff.
+  var settle = start + Math.min(Math.max({{settleSec}}, 1.6), Math.max(1.6, duration - 1.0));
+  var rootSel = '[data-part="' + uid + '-roulette"]';
+  var wheelSel = '[data-part="' + uid + '-wheel"]';
+  var ruleSel = rootSel + " .rcp-rule";
+  var glowSel = rootSel + " .rcp-glow";
+
+  // Entrance: the locked sentence rises in as one object.
+  tl.fromTo(rootSel, { y: 26, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.5, ease: "power3.out" }, start + 0.2);
+
+  // The wheel: three candidate ticks, then the payoff snap. Each word is 25%
+  // of the wheel column; ticks are committed inOut steps (never a blur), the
+  // payoff lands on seqSettle — overshoot-free arrival (house style).
+  var tick = 0.3;
+  tl.set(wheelSel, { yPercent: 0 }, start);
+  tl.to(wheelSel, { yPercent: -25, duration: tick, ease: "power2.inOut" }, settle - 1.42);
+  tl.to(wheelSel, { yPercent: -50, duration: tick, ease: "power2.inOut" }, settle - 0.96);
+  tl.to(wheelSel, { yPercent: -75, duration: 0.4, ease: "seqSettle" }, settle - 0.4);
+
+  // Acknowledgment: underline draws, glow breathes once and releases.
+  tl.fromTo(ruleSel, { scaleX: 0 }, { scaleX: 1, duration: 0.45, ease: "power2.inOut" }, settle + 0.05);
+  tl.fromTo(glowSel, { opacity: 0 }, { opacity: 0.5, duration: 0.3, ease: "power2.out" }, settle);
+  tl.to(glowSel, { opacity: 0.22, duration: 0.6, ease: "power2.inOut" }, settle + 0.3);
+</script>

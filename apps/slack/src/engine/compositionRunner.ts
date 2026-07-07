@@ -134,7 +134,14 @@ import {
   recordSentinelScaffoldRestoration,
   recordSentinelSlotCall,
 } from "./sentinelTelemetry.ts";
-import { criticSkipCleanEnabled, sentinelSkeletonEnabled, sentinelSlotsEnabled } from "./sentinelFlags.ts";
+import { criticSkipCleanEnabled, recipesEnabled, sentinelSkeletonEnabled, sentinelSlotsEnabled } from "./sentinelFlags.ts";
+import {
+  MAX_RECIPES_PER_FILM,
+  injectRecipeContract,
+  loadRecipeLibrary,
+  normalizeStoryboardRecipeDeclarations,
+  reconcileRecipeDeclarations,
+} from "./recipeContract.ts";
 import {
   SENTINEL_CONTRACT,
   type SentinelBlocking,
@@ -349,6 +356,32 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
                     additionalProperties: false,
                   },
                 },
+                recipes: {
+                  type: "array",
+                  maxItems: MAX_RECIPES_PER_FILM,
+                  items: {
+                    type: "object",
+                    properties: {
+                      version: { type: "number", enum: [1] },
+                      id: { type: "string" },
+                      region: { type: "string" },
+                      params: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            name: { type: "string" },
+                            value: { type: ["string", "number"] },
+                          },
+                          required: ["name", "value"],
+                          additionalProperties: false,
+                        },
+                      },
+                    },
+                    required: ["version", "id", "params"],
+                    additionalProperties: false,
+                  },
+                },
                 spatialIntent: {
                   type: "object",
                   properties: {
@@ -470,7 +503,8 @@ function storyboardResponseFormat(): NonNullable<CompleteOptions["responseFormat
                 "id", "title", "purpose", "incomingIdea", "foreground", "background",
                 "cameraIntent", "startSec", "durationSec", "blueprint", "rules",
                 "capabilityIds", "continuityAnchor", "outgoingCut", "cut", "timeRamp",
-                "camera", "components", "beats", "spatialIntent", "moments", "interactions",
+                "camera", "components", "beats", "recipes", "spatialIntent", "moments",
+                "interactions",
               ],
               additionalProperties: false,
             },
@@ -3215,6 +3249,26 @@ export function applyDeterministicSourceRepairs(
       }
     }
   }
+  // Declared library recipes are the sixth host-owned contract (Recipe
+  // Studio, Level-1 instantiation): the proven fragment markup/style/motion
+  // is stripped and re-injected VERBATIM from the library on every pass, so
+  // the author model can never edit the mechanism — only author around it.
+  // Runs after the contract islands (tween order on a paused timeline is
+  // irrelevant) and BEFORE the time-wrap rewrite, which must stay LAST.
+  if (recipesEnabled()) {
+    const recipeInjection = injectRecipeContract(
+      html,
+      lockedStoryboard ?? draft.storyboard,
+    );
+    if (recipeInjection.html !== html) {
+      html = recipeInjection.html;
+      recordSentinelNormalization("recipe-inject", recipeInjection.injected.length || 1);
+      process.stderr.write(
+        `[author] injected ${recipeInjection.injected.length} host-instantiated ` +
+          `recipe fragment(s): ${recipeInjection.injected.join(", ")}\n`,
+      );
+    }
+  }
   {
     const liveness = injectMissingLivenessBeats(html, lockedStoryboard ?? draft.storyboard);
     if (liveness.repaired.length) {
@@ -3770,6 +3824,11 @@ function parseStoryboard(raw: string): DirectScene[] {
       sceneId: id,
       ...authoredFrame,
     });
+    // Recipe declarations carry no absolute times (fragment motion is
+    // scene-relative by construction), so they need no re-base shift below.
+    const recipes = recipesEnabled()
+      ? normalizeStoryboardRecipeDeclarations(scene.recipes)
+      : [];
     // The authored and rebased windows have identical length (duration is
     // clamped once, above), so a pure shift keeps every time in-window and
     // preserves relative ordering within each intent.
@@ -3835,6 +3894,7 @@ function parseStoryboard(raw: string): DirectScene[] {
       ...(worldLayout.length ? { worldLayout } : {}),
       ...(components.length ? { components } : {}),
       ...(beats.length ? { beats } : {}),
+      ...(recipes.length ? { recipes } : {}),
       ...(spatialIntent ? { spatialIntent } : {}),
       ...(interactions.length ? { interactions } : {}),
       ...(moments.length ? { moments } : {}),
@@ -3912,7 +3972,19 @@ function parseStoryboard(raw: string): DirectScene[] {
     process.stderr.write(`[storyboard] ${line}\n`);
   }
   if (grades.dropped.length) recordSentinelNormalization("grade-shift", grades.dropped.length);
-  return grades.storyboard;
+  // Recipe declarations are governed by the same L2 discipline: unknown/stale
+  // ids drop, params default/clamp/drop, the per-film budget trims — a bad
+  // declaration degrades to the Level-0 knowledge the planner already
+  // retrieved, never a paid retry (degrade-never-veto).
+  if (!recipesEnabled()) return grades.storyboard;
+  const recipeReconcile = reconcileRecipeDeclarations(grades.storyboard);
+  for (const line of recipeReconcile.notes) {
+    process.stderr.write(`[storyboard] recipe-reconcile: ${line}\n`);
+  }
+  if (recipeReconcile.notes.length) {
+    recordSentinelNormalization("recipe-reconcile", recipeReconcile.notes.length);
+  }
+  return recipeReconcile.scenes;
 }
 
 /** Content time at which the viewer has experienced `span` seconds past `fromSec`
@@ -5546,8 +5618,13 @@ export async function requestStoryboardPlan(
     // AUTO-DERIVES the MD3/MD4/MD6 styles a production planner under-reaches for
     // — compact `open`→pop, headline `type`→rise/assemble, and a scene
     // `gradeShift` from a primary moment naming a temperature — so the same raw
-    // plan parses to a styled storyboard (the md-audit-probe gap fix).
-    contract: 13,
+    // plan parses to a styled storyboard (the md-audit-probe gap fix); v14:
+    // Recipe Studio Level-1 consumption — scenes may declare typed
+    // `recipes:[{id,params}]` from the retrieved library, reconciled at parse
+    // and host-instantiated verbatim (recipeContract.ts). The library content
+    // hash below also keys the cache, so an exported/re-proven recipe
+    // invalidates plans that could now use it.
+    contract: 14,
     provider: provider.id,
     model: model ?? null,
     brief: args.brief,
@@ -5557,6 +5634,8 @@ export async function requestStoryboardPlan(
     requirements,
     registryVersion: args.skills.registryVersion,
     blueprints: args.skills.blueprintIds,
+    recipesVersion: recipesEnabled() ? loadRecipeLibrary().version : "off",
+    recipeIds: args.skills.recipeIds ?? [],
   })).digest("hex");
   const planningDir = path.join(args.projectDir, "planning");
   const cacheFile = path.join(planningDir, "storyboard.json");
@@ -5894,6 +5973,11 @@ export async function requestStoryboardPlan(
     '"style":"optional: type→typewriter|rise|pop|assemble, open→pop (compact kinds), highlight→ring|sweep|underline"}],',
     "Beat atSec values are absolute composition seconds inside the shot window.",
     'Use "components":[] and "beats":[] when a shot has no product surface.',
+    '"recipes":[{"version":1,"id":"library recipe id","params":[{"name":"slot","value":"…"}]}]',
+    "— declare a retrieved proven recipe (see the recipe section above when",
+    "present) on the shot it belongs to; the host injects its proven",
+    "markup+motion verbatim with your param values, costing zero authoring",
+    'budget. Use "recipes":[] when no library recipe fits the shot.',
     "A component id doubles as its data-part: cameras can track-to-anchor it,",
     "object-match cuts can carry it, and cursor interactions can click it.",
     '"spatialIntent":{"version":1,"focalPart":"stable semantic part",',

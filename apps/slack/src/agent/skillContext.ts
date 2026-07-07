@@ -9,6 +9,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderCapabilityContext } from "./capabilityIndex.ts";
+import {
+  MAX_RECIPES_PER_FILM,
+  loadRecipeLibrary,
+  recipePlanningVocabulary,
+  recipeRetrievalScore,
+  type RecipeDefinition,
+} from "../engine/recipeContract.ts";
+import { recipesEnabled } from "../engine/sentinelFlags.ts";
 
 const SKILLS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../skills");
 
@@ -20,6 +28,10 @@ export interface RetrievedSkillContext {
   ruleIds: string[];
   capabilityIds: string[];
   registryVersion: string;
+  /** Library recipes offered to the planner for this brief (cap 2). */
+  recipeIds?: string[];
+  /** Content hash of the recipe library (cache-key input, like registryVersion). */
+  recipesVersion?: string;
   text: string;
 }
 
@@ -192,7 +204,13 @@ using the host component-kit markup (the job prompt supplies the exact markup
 contract for the declared kinds). The host injects the kit CSS and, for typed
 beats, sequences-components.v1.js + the sequences-components island +
 SequencesComponents.compile(tl, root). Author entrances and FINAL states;
-never author typing/opening/counting/streaming/morph motion the beats own.`;
+never author typing/opening/counting/streaming/morph motion the beats own.
+
+**Library recipes:** a scene whose storyboard entry declares "recipes" gets a
+host-injected proven fragment (a .seq-recipe wrapper + its motion) — the host
+re-injects it verbatim on every pass. Author the REST of the scene around it:
+never re-create, duplicate, or restyle the recipe's own content, and leave its
+focal window clear of competing motion.`;
 
 /* ------------------------------------------------- ease library (compact) */
 
@@ -327,6 +345,51 @@ function readRecipe(type: "blueprints" | "rules", id: string, budget: number): s
   return fs.readFileSync(file, "utf8").trim().slice(0, budget);
 }
 
+/* ------------------------------------------- library recipes (Recipe Studio) */
+
+/**
+ * Score the proven-recipe library against the brief. Recipes are the
+ * operator-curated, gate-proven signature patterns (Level-1 host
+ * instantiation), so they outrank generic craft knowledge: a matching recipe
+ * is offered with a declare-by-default instruction, capped at
+ * MAX_RECIPES_PER_FILM. Stale (version-fence-drifted) recipes never surface.
+ * When nothing scores, the planner still sees a one-line library index so it
+ * can opt in on a judgment call.
+ */
+function selectedLibraryRecipes(intent: SkillIntent, query: string): {
+  matched: RecipeDefinition[];
+  index: RecipeDefinition[];
+  version: string;
+} {
+  if (!recipesEnabled() || intent !== "create") {
+    return { matched: [], index: [], version: "off" };
+  }
+  const library = loadRecipeLibrary();
+  const fresh = [...library.recipes.values()].filter((recipe) => !recipe.stale);
+  const scored = fresh
+    .map((recipe) => ({ recipe, score: recipeRetrievalScore(recipe.manifest, query) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.recipe.manifest.id.localeCompare(b.recipe.manifest.id));
+  return {
+    matched: scored.slice(0, MAX_RECIPES_PER_FILM).map((entry) => entry.recipe),
+    index: fresh,
+    version: library.version,
+  };
+}
+
+function recipeLibraryIndexLine(recipes: RecipeDefinition[]): string {
+  if (!recipes.length) return "";
+  const entries = recipes
+    .map((recipe) => `${recipe.manifest.id} (${recipe.manifest.title})`)
+    .join(" · ");
+  return [
+    "## Recipe library index",
+    "No library recipe matched this brief by trigger patterns, but these",
+    "proven, host-instantiated patterns exist and MAY be declared on a shot",
+    `via its "recipes" array when one clearly serves the story: ${entries}.`,
+  ].join("\n");
+}
+
 /* ------------------------------------------------- public API */
 
 export function retrieveHyperframesSkillContext(
@@ -337,6 +400,7 @@ export function retrieveHyperframesSkillContext(
   const blueprintIds = selectedBlueprints(intent, query);
   const ruleIds = selectedRules(blueprintIds, intent, query);
   const capabilityContext = renderCapabilityContext(query);
+  const libraryRecipes = selectedLibraryRecipes(intent, query);
 
   // 1. Foundation (always included — compact technical reference)
   const foundation = [
@@ -375,7 +439,15 @@ export function retrieveHyperframesSkillContext(
     return content ? `<motion-rule id="${id}">\n${content}\n</motion-rule>` : "";
   }).filter(Boolean);
 
+  // Library recipes lead the selected section: they are gate-proven,
+  // host-instantiated signature patterns, and the operator wants them to be
+  // the planner's first vocabulary, ahead of prose blueprints.
+  const recipeSection = libraryRecipes.matched.length
+    ? recipePlanningVocabulary(libraryRecipes.matched)
+    : recipeLibraryIndexLine(libraryRecipes.index);
+
   const selectedSection = [
+    ...(recipeSection ? [recipeSection] : []),
     `## Selected blueprints for this job: ${blueprintIds.join(", ") || "compose freely"}`,
     `## Selected motion rules: ${ruleIds.join(", ") || "author from the vocabulary above"}`,
     "",
@@ -413,6 +485,8 @@ export function retrieveHyperframesSkillContext(
     ruleIds,
     capabilityIds: capabilityContext.capabilityIds,
     registryVersion: capabilityContext.registryVersion,
+    recipeIds: libraryRecipes.matched.map((recipe) => recipe.manifest.id),
+    recipesVersion: libraryRecipes.version,
     text: trimTo(text, maxChars),
   };
 }
