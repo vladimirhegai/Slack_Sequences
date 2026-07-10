@@ -2,11 +2,15 @@
  * Animated grade shift (MD4) — the background color morph, narrowed to a
  * motivated turn of the film's temperature.
  *
- * A scene starts on its authored grade class; at `atSec` an oversized
- * kit-owned panel expands from `fromPart`'s center (default: frame center) to
- * cover the frame, and at full cover the fx runtime swaps the scene's grade
- * class to `toGrade` under the panel, then fades the panel into the incoming
- * wash's steady state — transform + opacity only, no filter on the world.
+ * A scene starts on its authored grade class; at `atSec` the fx runtime fades
+ * in a full-frame panel wearing the TARGET grade class (its ::after paints
+ * exactly that grade's steady wash), and at full cover swaps the scene's
+ * grade class to `toGrade` while the panel drops out on identical pixels —
+ * pure grading, held at the settled wash's own strength, no wipe geometry,
+ * opacity only, no filter on the world. The turn CARRIES across cuts: later
+ * scenes still wearing the pre-shift tone are re-classed at cover time until
+ * the first deliberately re-graded scene. (`fromPart` survives in the schema
+ * as a no-op anchor hint — the wash no longer expands from a point.)
  *
  * This module owns the typed declaration, its deterministic normalization, and
  * the always-drop-invalid governor (a volunteered garnish that fails the

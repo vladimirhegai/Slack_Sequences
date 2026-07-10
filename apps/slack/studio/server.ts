@@ -1,26 +1,22 @@
 /**
- * Recipe Studio server — owner-facing internal tool (RECIPE_STUDIO_PLAN.md).
+ * Sequences Studio — the operator's ONE local viewer over components, assets,
+ * and recipes. (`npm run studio --workspace @sequences/slack` →
+ * http://127.0.0.1:4321; `npm run assets` is an alias.)
  *
- * `npm run studio --workspace @sequences/slack` → http://127.0.0.1:4321
+ * The operator VIEWS here; coding agents AUTHOR elsewhere:
+ *  - components: the 23-kind catalog rendered live from COMPONENT_CATALOG +
+ *    the kit CSS (never a forked copy) with each kind's beat vocabulary;
+ *  - assets: the pre-built parametric asset library (params, spring
+ *    animations, morph preview) through assetContract — never re-implemented;
+ *  - recipes: the agent-authored source library (recipes/<id>.recipe.html,
+ *    see recipes/README.md) joined against the exported RecipeV2 library,
+ *    with gate/export buttons that run the SAME CLI machinery.
  *
  * Localhost-only, no auth, no build step, no heavy deps (`http.createServer`
  * + static files + vanilla JS UI). NEVER deployed: refuses to start under
  * RAILWAY_ENVIRONMENT (belt) and is absent from the Docker CMD (suspenders).
  * It is a cockpit over the real engine gate — never a second engine.
- *
- * Endpoints:
- *   GET  /                          studio UI
- *   GET  /api/state                 library recipes + workspaces
- *   POST /api/workspaces            { id, fromRecipe?, title? } create
- *   GET  /api/workspace/:id         full workspace (sources + gate)
- *   POST /api/workspace/:id/update  { fragment?, recipeMd?, params?, … }
- *   POST /api/workspace/:id/generate  scaffold + full gate + thumbnails
- *   POST /api/workspace/:id/export  RecipeV2 export (green gate only)
- *   GET  /preview/:id/*             serve the workspace composition dir
- *   GET  /thumbs/:id/*              serve the gate's thumbnail strip
  */
-// Operator-local only (never Railway): load the gitignored .env so OpenRouter
-// agents resolve OPENROUTER_API_KEY, exactly like the bot + sequence:check do.
 import "dotenv/config";
 import http from "node:http";
 import fs from "node:fs";
@@ -32,36 +28,30 @@ import {
   COMPONENT_CATALOG,
   componentKitStyleTag,
 } from "../src/engine/componentContract.ts";
-import { CAMERA_MOVES, SEQUENCES_EASES } from "../src/engine/cameraContract.ts";
-import { gateWorkspace } from "./gate.ts";
-import { exportWorkspaceRecipe } from "./exportRecipe.ts";
 import {
-  runChatTurn,
-  loadTranscript,
-  AGENT_PROVIDERS,
-  type AgentProviderId,
-} from "./agents/index.ts";
-import { claudeCliAvailable } from "./agents/cli.ts";
-import {
-  createWorkspace,
-  listWorkspaces,
-  loadWorkspace,
-  updateWorkspaceCanvas,
-  updateWorkspaceSources,
-  workspaceFragment,
-  workspaceProjectDir,
-  workspaceRecipeMd,
-} from "./workspaces.ts";
-import type { CanvasFilm } from "./canvasModel.ts";
+  renderAssetInstance,
+  compileAssetAnimation,
+  type AssetDefinitionV1,
+} from "../src/engine/assetContract.ts";
+import { SPRING_PRESETS, type SpringPresetName } from "../src/engine/motionSpring.ts";
+import { ASSET_LIBRARY, getAsset } from "../src/engine/assets/index.ts";
+import { sweepOrphanBrowsers } from "../src/engine/browserLifecycle.ts";
+import { gateRecipe, loadGateRecord, recipeGateDir } from "./gate.ts";
+import { exportRecipe } from "./exportRecipe.ts";
+import { listRecipeSources } from "./recipeSource.ts";
 
 if (process.env.RAILWAY_ENVIRONMENT) {
   process.stderr.write(
-    "Recipe Studio is an operator-local tool and refuses to start on Railway.\n",
+    "Sequences Studio is an operator-local tool and refuses to start on Railway.\n",
   );
   process.exit(1);
 }
 
 const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "ui");
+const RECIPES_LIBRARY_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../skills/sequences-recipes",
+);
 const PORT = Number(process.env.STUDIO_PORT ?? argValue("--port") ?? 4321);
 const HOST = "127.0.0.1";
 
@@ -70,6 +60,7 @@ const MIME: Record<string, string> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".md": "text/plain; charset=utf-8",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".svg": "image/svg+xml",
@@ -83,9 +74,8 @@ function argValue(flag: string): string | undefined {
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body, null, 2);
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
-  res.end(payload);
+  res.end(JSON.stringify(body, null, 2));
 }
 
 function sendFile(res: http.ServerResponse, file: string): void {
@@ -115,43 +105,126 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(chunk as Buffer);
   const raw = Buffer.concat(chunks).toString("utf8");
-  if (!raw.trim()) return {};
-  return JSON.parse(raw);
+  return raw.trim() ? JSON.parse(raw) : {};
 }
 
-function libraryState(): unknown {
-  const library = loadRecipeLibrary({ refresh: true });
+/* ------------------------------------------------------------ components */
+
+function componentsState(): unknown {
   return {
-    version: library.version,
-    warnings: library.warnings,
-    recipes: [...library.recipes.values()].map((recipe) => ({
-      id: recipe.manifest.id,
-      title: recipe.manifest.title,
-      tags: recipe.manifest.tags,
-      revision: recipe.manifest.revision,
-      stale: recipe.stale,
-      staleReasons: recipe.staleReasons,
-      params: recipe.manifest.params,
-      hasDemo: fs.existsSync(path.join(recipe.dir, "demo.html")),
+    components: COMPONENT_CATALOG.map((spec) => ({
+      kind: spec.kind,
+      purpose: spec.purpose,
+      beats: spec.beats,
+      markup: spec.markup,
+    })),
+    kitCss: componentKitStyleTag(),
+  };
+}
+
+/* ------------------------------------------------------------ assets */
+
+function assetSummary(definition: AssetDefinitionV1): unknown {
+  return {
+    id: definition.id,
+    title: definition.title,
+    purpose: definition.purpose,
+    family: definition.family,
+    params: definition.params,
+    animations: definition.animations.map((animation) => ({
+      name: animation.name,
+      purpose: animation.purpose,
+      spring: animation.spring,
+      trigger: animation.trigger ?? "manual",
     })),
   };
 }
 
-function workspaceState(id: string): unknown {
-  const workspace = loadWorkspace(id);
-  return {
-    ...workspace,
-    fragment: workspaceFragment(id),
-    recipeMd: workspaceRecipeMd(id),
-    previewUrl: fs.existsSync(path.join(workspaceProjectDir(id), "composition", "index.html"))
-      ? `/preview/${id}/index.html`
-      : undefined,
-    thumbnails: (workspace.gate?.thumbnails ?? []).map((name) => `/thumbs/${id}/${name}`),
-  };
+/**
+ * The morph preview's gesture, precompiled once per house spring preset so
+ * the morph-tweak picker recomputes nothing client-side — every option is the
+ * exact easing the contract would compile. Default stays `settle`.
+ */
+const MORPH_GESTURES = Object.fromEntries(
+  (Object.keys(SPRING_PRESETS) as SpringPresetName[]).map((preset) => {
+    const compiled = compileAssetAnimation(
+      {
+        name: "morph",
+        purpose: "FLIP morph between two assets",
+        spring: preset,
+        tracks: [{ property: "opacity", from: 0, to: 1 }],
+      },
+      {},
+    );
+    return [preset, { durationMs: compiled.durationMs, easing: compiled.easing }];
+  }),
+) as Record<SpringPresetName, { durationMs: number; easing: string }>;
+
+/* ------------------------------------------------------------ recipes */
+
+function recipesState(): unknown {
+  const { sources, issues } = listRecipeSources();
+  const library = loadRecipeLibrary({ refresh: true });
+  const ids = new Set<string>([
+    ...sources.map((source) => source.id),
+    ...library.recipes.keys(),
+  ]);
+  const entries = [...ids].sort().map((id) => {
+    const source = sources.find((entry) => entry.id === id);
+    const exported = library.recipes.get(id);
+    const gate = source ? loadGateRecord(id) : undefined;
+    const manifest = source?.manifest ?? exported?.manifest;
+    const previewDir = path.join(RECIPES_LIBRARY_DIR, id, "preview");
+    const preview = fs.existsSync(previewDir)
+      ? fs.readdirSync(previewDir)
+          .filter((name) => name.endsWith(".png"))
+          .map((name) => `/library/${id}/preview/${name}`)
+      : [];
+    const hasLivePreview = fs.existsSync(
+      path.join(recipeGateDir(id), "composition", "index.html"),
+    );
+    return {
+      id,
+      title: manifest?.title ?? id,
+      description: manifest?.description ?? "",
+      tags: manifest?.tags ?? [],
+      triggerPatterns: manifest?.triggerPatterns ?? [],
+      durationWindow: manifest?.durationWindow,
+      params: manifest?.params ?? [],
+      source: source
+        ? {
+            file: path.relative(path.resolve(UI_DIR, "../.."), source.file).replace(/\\/g, "/"),
+            demoParams: source.demo.params ?? {},
+            sanityBriefs: source.sanityBriefs,
+            gate: gate
+              ? {
+                  ok: gate.ok,
+                  gatedAt: gate.gatedAt,
+                  errors: gate.errors,
+                  warnings: gate.warnings,
+                  fresh: gate.fragmentHash === source.fragmentHash,
+                }
+              : undefined,
+          }
+        : undefined,
+      exported: exported
+        ? {
+            revision: exported.manifest.revision,
+            stale: exported.stale,
+            staleReasons: exported.staleReasons,
+            inSync: source ? exported.manifest.fragmentHash === source.fragmentHash : true,
+            preview,
+          }
+        : undefined,
+      previewUrl: hasLivePreview ? `/preview/${id}/index.html` : undefined,
+      thumbnails: (gate?.thumbnails ?? []).map((name) => `/thumbs/${id}/${name}`),
+    };
+  });
+  return { version: library.version, warnings: library.warnings, entries, issues };
 }
 
-// One request at a time: gates run a real browser and the library env
-// override is process-global. A simple promise chain keeps handlers honest.
+// One long-running job at a time: gates run a real browser and the library
+// env override is process-global. A simple promise chain keeps handlers honest.
 let queue: Promise<unknown> = Promise.resolve();
 function enqueue<T>(work: () => Promise<T>): Promise<T> {
   const next = queue.then(work, work);
@@ -178,110 +251,50 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/state") {
-    return sendJson(res, 200, { library: libraryState(), workspaces: listWorkspaces() });
-  }
-  if (req.method === "GET" && url.pathname === "/api/catalog") {
-    // The component browser renders LIVE from the catalog + kit CSS — never a
-    // forked copy (plan guardrail #12). Camera verbs / eases feed the editor's
-    // transition dropdowns straight from the contract vocabulary.
     return sendJson(res, 200, {
-      components: COMPONENT_CATALOG.map((spec) => ({
-        kind: spec.kind,
-        purpose: spec.purpose,
-        beats: spec.beats,
-        markup: spec.markup,
-      })),
-      kitCss: componentKitStyleTag(),
-      cameraMoves: [...CAMERA_MOVES],
-      eases: [...SEQUENCES_EASES],
-      cutStyles: ["hard", "flash-white", "zoom-through", "inverse-zoom"],
-      agentProviders: AGENT_PROVIDERS,
-      claudeCliAvailable: claudeCliAvailable(),
+      ...(componentsState() as object),
+      assets: ASSET_LIBRARY.map(assetSummary),
+      morph: { default: "settle", gestures: MORPH_GESTURES },
+      recipes: recipesState(),
     });
   }
-  if (req.method === "POST" && url.pathname === "/api/workspaces") {
+  if (req.method === "GET" && url.pathname === "/api/recipes") {
+    return sendJson(res, 200, { recipes: recipesState() });
+  }
+  if (req.method === "POST" && url.pathname === "/api/render") {
     const body = (await readBody(req)) as {
       id?: string;
-      fromRecipe?: string;
-      title?: string;
-      kind?: "recipe" | "canvas";
+      params?: Record<string, string | number>;
+      partId?: string;
     };
-    if (!body.id) return sendJson(res, 400, { error: "id is required" });
-    const workspace = createWorkspace({
-      id: body.id,
-      ...(body.fromRecipe ? { fromRecipe: body.fromRecipe } : {}),
-      ...(body.title ? { title: body.title } : {}),
-      ...(body.kind ? { kind: body.kind } : {}),
+    const definition = getAsset(body.id ?? "");
+    if (!definition) return sendJson(res, 404, { error: `unknown asset "${body.id}"` });
+    const instance = renderAssetInstance(definition, body.params ?? {}, {
+      ...(body.partId ? { partId: body.partId } : {}),
     });
-    return sendJson(res, 200, { workspace: workspaceState(workspace.id) });
+    return sendJson(res, 200, instance);
   }
-  if (segments[0] === "api" && segments[1] === "workspace" && segments[2]) {
+  if (segments[0] === "api" && segments[1] === "recipes" && segments[2] && req.method === "POST") {
     const id = decodeURIComponent(segments[2]);
-    const action = segments[3];
-    if (req.method === "GET" && !action) {
-      return sendJson(res, 200, { workspace: workspaceState(id) });
+    if (segments[3] === "gate") {
+      const outcome = await enqueue(() => gateRecipe(id));
+      return sendJson(res, 200, { gate: outcome.gate, recipes: recipesState() });
     }
-    if (req.method === "POST" && action === "update") {
-      const body = (await readBody(req)) as Parameters<typeof updateWorkspaceSources>[1];
-      updateWorkspaceSources(id, body);
-      return sendJson(res, 200, { workspace: workspaceState(id) });
-    }
-    if (req.method === "POST" && action === "canvas") {
-      const body = (await readBody(req)) as { canvas?: CanvasFilm };
-      if (!body.canvas) return sendJson(res, 400, { error: "canvas is required" });
-      updateWorkspaceCanvas(id, body.canvas);
-      return sendJson(res, 200, { workspace: workspaceState(id) });
-    }
-    if (req.method === "POST" && action === "generate") {
-      const outcome = await enqueue(() => gateWorkspace(id));
-      return sendJson(res, 200, { gate: outcome.gate, workspace: workspaceState(id) });
-    }
-    if (req.method === "POST" && action === "export") {
-      const result = await enqueue(async () => exportWorkspaceRecipe(id));
-      return sendJson(res, 200, { export: result, library: libraryState() });
-    }
-    if (req.method === "GET" && action === "chat") {
-      return sendJson(res, 200, { transcript: loadTranscript(id) });
-    }
-    if (req.method === "POST" && action === "chat") {
-      const body = (await readBody(req)) as {
-        provider?: AgentProviderId;
-        message?: string;
-        images?: Array<{ mimeType: string; base64: string; name: string }>;
-      };
-      if (!body.provider || !body.message) {
-        return sendJson(res, 400, { error: "provider and message are required" });
-      }
-      // Stream the agent turn as Server-Sent Events. Not queued behind gates —
-      // a CLI turn is long, and the studio is single-operator.
-      res.writeHead(200, {
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-      });
-      const send = (event: string, data: unknown) =>
-        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-      try {
-        await runChatTurn(id, {
-          provider: body.provider,
-          message: body.message,
-          ...(body.images ? { images: body.images } : {}),
-          onChunk: (text) => send("chunk", { text }),
-        });
-        send("done", { workspace: workspaceState(id) });
-      } catch (error) {
-        send("error", { message: error instanceof Error ? error.message : String(error) });
-      }
-      res.end();
-      return;
+    if (segments[3] === "export") {
+      const result = await enqueue(async () => exportRecipe(id));
+      return sendJson(res, 200, { export: result, recipes: recipesState() });
     }
   }
   if (req.method === "GET" && segments[0] === "preview" && segments[1]) {
-    const root = path.join(workspaceProjectDir(decodeURIComponent(segments[1])), "composition");
+    const root = path.join(recipeGateDir(decodeURIComponent(segments[1])), "composition");
     return sendWithin(res, root, segments.slice(2).join("/") || "index.html");
   }
   if (req.method === "GET" && segments[0] === "thumbs" && segments[1]) {
-    const root = path.join(workspaceProjectDir(decodeURIComponent(segments[1])), "build", "thumbs");
+    const root = path.join(recipeGateDir(decodeURIComponent(segments[1])), "build", "thumbs");
+    return sendWithin(res, root, segments.slice(2).join("/"));
+  }
+  if (req.method === "GET" && segments[0] === "library" && segments[1]) {
+    const root = path.join(RECIPES_LIBRARY_DIR, decodeURIComponent(segments[1]));
     return sendWithin(res, root, segments.slice(2).join("/"));
   }
   if (req.method === "GET" && segments[0] === "ui") {
@@ -292,7 +305,15 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
 
 server.listen(PORT, HOST, () => {
   const url = `http://${HOST}:${PORT}`;
-  process.stdout.write(`Recipe Studio → ${url}\n`);
+  process.stdout.write(
+    `Sequences Studio → ${url}  (${COMPONENT_CATALOG.length} components · ` +
+      `${ASSET_LIBRARY.length} assets · recipes from recipes/*.recipe.html)\n`,
+  );
+  // Operator-local hygiene: reap any headless QA browsers a previous
+  // interrupted gate/test stranded on this machine (orphans only).
+  void sweepOrphanBrowsers().then((killed) => {
+    if (killed > 0) process.stdout.write(`(cleaned ${killed} orphaned headless browser process(es))\n`);
+  }).catch(() => undefined);
   if (!process.argv.includes("--no-open")) {
     // Best-effort browser launch; the URL above is the contract.
     const opener = process.platform === "win32"

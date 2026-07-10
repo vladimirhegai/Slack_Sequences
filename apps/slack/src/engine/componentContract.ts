@@ -71,7 +71,8 @@ export type ComponentKind =
   | "terminal"
   | "tabs"
   | "avatar-stack"
-  | "headline";
+  | "headline"
+  | "asset";
 
 export type ComponentBeatKind =
   | "type"
@@ -87,7 +88,8 @@ export type ComponentBeatKind =
   | "stream"
   | "highlight"
   | "morph"
-  | "swap";
+  | "swap"
+  | "animate";
 
 /** Beats every component kind supports regardless of its specific list. */
 const UNIVERSAL_BEATS: ReadonlySet<ComponentBeatKind> = new Set<ComponentBeatKind>([
@@ -107,6 +109,12 @@ export interface ComponentKindSpec {
   morphsWith?: ComponentKind[];
   /** Compact authoring exemplar — the markup contract the kit CSS styles. */
   markup: string;
+  /**
+   * Host-only kind: excluded from the planner vocabulary, the authoring
+   * reference, and model-side normalization (Sentinel L0 — the models cannot
+   * even represent it). Only host lowerings may declare it.
+   */
+  internal?: boolean;
 }
 
 /**
@@ -350,6 +358,19 @@ export const COMPONENT_CATALOG: ComponentKindSpec[] = [
       `<h1 class="cmp cmp-headline" data-component="headline" data-part="hero-copy">` +
       `<span class="cmp-text" data-cmp-text>Final copy</span></h1>`,
   },
+  {
+    kind: "asset",
+    className: "asset",
+    internal: true,
+    purpose:
+      "Pre-built parametric library asset (ASSETS.md), host-lowered from an " +
+      "asset-<id> plugin declaration — never planner-declared or author-drawn. " +
+      "Its `animate` beats are spring animations compiled by the host asset runtime.",
+    beats: ["animate"],
+    markup:
+      `<div class="asset" data-component="asset" data-part="unit-core">` +
+      `…host-generated — do not author…</div>`,
+  },
 ];
 
 const CATALOG_BY_KIND = new Map(COMPONENT_CATALOG.map((spec) => [spec.kind, spec]));
@@ -361,7 +382,17 @@ export const COMPONENT_KINDS: ReadonlySet<ComponentKind> = new Set(
 export const COMPONENT_BEAT_KINDS: ReadonlySet<ComponentBeatKind> = new Set<ComponentBeatKind>([
   "type", "open", "close", "select", "press", "set-state", "count",
   "progress", "chart", "rows", "stream", "highlight", "morph", "swap",
+  // Host-only (asset spring animations): valid in resolved plans/islands, but
+  // normalizeStoryboardComponentBeats rejects it from model storyboards.
+  "animate",
 ]);
+
+/** Model-facing subsets (Sentinel L0): host-only kinds/beats are excluded from
+ * the storyboard JSON schema so the planner cannot even represent them. */
+export const PLANNER_COMPONENT_KINDS: readonly ComponentKind[] =
+  COMPONENT_CATALOG.filter((spec) => !spec.internal).map((spec) => spec.kind);
+export const PLANNER_COMPONENT_BEAT_KINDS: readonly ComponentBeatKind[] =
+  [...COMPONENT_BEAT_KINDS].filter((kind) => kind !== "animate");
 
 export function componentSupportsBeat(kind: ComponentKind, beat: ComponentBeatKind): boolean {
   if (UNIVERSAL_BEATS.has(beat)) return true;
@@ -408,6 +439,13 @@ export interface SceneComponentSpecV1 {
   /** Optional camera-world station the component lives in. */
   region?: string;
   role?: "hero" | "support";
+  /**
+   * Host-stamped when this component was lowered from a declared plugin unit
+   * (`pluginContract.ts`) — never model-authored (`normalizeStoryboardComponents`
+   * cannot emit it). Components sharing a pluginUid are ONE budget/pacing unit:
+   * complexity audits count the unit once and trims never dismember it.
+   */
+  pluginUid?: string;
 }
 
 /** One typed state change on a declared component (times are absolute). */
@@ -438,6 +476,12 @@ export interface ComponentBeatIntentV1 {
    * unsupported value is style-dropped at parse, never beat-dropped.
    */
   style?: string;
+  /**
+   * `animate` beats only (host-lowered from asset declarations, never
+   * model-authored): the asset library animation name this beat invokes. The
+   * asset runtime compiles the spring motion; the components runtime skips it.
+   */
+  animation?: string;
   ease?: string;
 }
 
@@ -455,6 +499,7 @@ export interface ResolvedComponentBeatV1 {
   toState?: string;
   morphTo?: string;
   style?: string;
+  animation?: string;
 }
 
 export interface SceneComponentPlanV1 {
@@ -489,6 +534,10 @@ const BEAT_DEFAULTS: Record<ComponentBeatKind, BeatDefaults> = {
   highlight: { ease: "power2.out", defaultSec: 0.9, minSec: 0.4, maxSec: 1.6 },
   morph: { ease: "seqSwoosh", defaultSec: 0.8, minSec: 0.4, maxSec: 1.6 },
   swap: { ease: "power3.out", defaultSec: 0.6, minSec: 0.3, maxSec: 1.2 },
+  // Asset spring animations: the real curve lives in the assets island (spring
+  // samples); this paperwork window mirrors the compiled duration the lowering
+  // stamps, with room for a slow bounce settle.
+  animate: { ease: "none", defaultSec: 0.8, minSec: 0.15, maxSec: 6 },
 };
 
 const EASE_PATTERN = new RegExp(
@@ -558,6 +607,9 @@ export function normalizeStoryboardComponents(value: unknown): SceneComponentSpe
     const id = stableName(item.id);
     const kind = typeof item.kind === "string" ? item.kind.trim() as ComponentKind : "";
     if (!id || !kind || !COMPONENT_KINDS.has(kind) || seen.has(id)) return [];
+    // Host-only kinds (the asset unit root) are unrepresentable from the model
+    // side — only a plugin lowering may declare them (Sentinel L0).
+    if (CATALOG_BY_KIND.get(kind)?.internal) return [];
     seen.add(id);
     const region = stableName(item.region);
     return [{
@@ -591,6 +643,8 @@ export function normalizeStoryboardComponentBeats(
     const component = stableName(item.component);
     const kind = typeof item.kind === "string" ? item.kind.trim() as ComponentBeatKind : "";
     if (!id || !component || !kind || !COMPONENT_BEAT_KINDS.has(kind)) return [];
+    // `animate` is host-only (asset lowering); a model cannot declare it.
+    if (kind === "animate") return [];
     if (!componentIds.has(component)) return [];
     if (!finite(item.atSec)) return [];
     const rawAtSec = item.atSec;
@@ -684,6 +738,7 @@ export function resolveComponentPlan(scenes: DirectScene[]): ComponentPlanV1 {
         ...(beat.toState ? { toState: beat.toState } : {}),
         ...(beat.morphTo ? { morphTo: beat.morphTo } : {}),
         ...(beat.style ? { style: beat.style } : {}),
+        ...(beat.animation ? { animation: beat.animation } : {}),
       }];
     });
     if (resolved.length) planScenes.push({ sceneId: scene.id, beats: resolved });
@@ -713,6 +768,8 @@ const BEAT_CHANNELS: Record<ComponentBeatKind, string> = {
   highlight: "pulse",
   "set-state": "state",
   morph: "morph",
+  // Asset animations transform the unit root; two overlapping would fight.
+  animate: "asset",
 };
 
 /** Pulse kinds repeated in quick succession read as a stutter, not emphasis. */
@@ -850,6 +907,29 @@ export function dedupeRedundantBeats(storyboard: DirectScene[]): BeatDedupeResul
           continue;
         }
       }
+      // Rule 5: a swap to text the component ALREADY shows is a no-op
+      // double-reveal — the same word flies out and flies back in
+      // (probe-audit-01: swap "Cadence" onto a wordmark a prior beat already
+      // put there). Parse time has no HTML, so only beat-derived text is
+      // knowable (a prior type/swap on the same component); the runtime no-op
+      // in compileSwap covers the authored-markup case. Drop the redundant beat.
+      if (beat.kind === "swap" && beat.text != null) {
+        const priorText = [...kept]
+          .reverse()
+          .find((earlier) =>
+            earlier.component === beat.component &&
+            (earlier.kind === "type" || earlier.kind === "swap") &&
+            earlier.text != null
+          )?.text;
+        if (priorText != null && priorText.trim() === beat.text.trim()) {
+          changed = true;
+          dropped.push(
+            `scene "${scene.id}": beat "${beat.id}" (swap on ${beat.component}) swaps in text the ` +
+              `component already shows ("${beat.text.trim()}") — dropped (a swap to itself is not motion)`,
+          );
+          continue;
+        }
+      }
       kept.push(beat);
     }
     if (!changed) return scene;
@@ -892,9 +972,16 @@ export function autoStyleCompactPops(storyboard: DirectScene[]): StyleDeriveResu
     const beats = scene.beats ?? [];
     if (!beats.length) return scene;
     const kinds = new Map((scene.components ?? []).map((component) => [component.id, component.kind]));
+    // Plugin-lowered entrances stay uniform: the unit's cascade is ONE
+    // host-choreographed gesture, and pop-styling only the first two children
+    // (the per-scene cap) would make one generated unit read inconsistently.
+    const pluginOwned = new Set(
+      (scene.components ?? []).flatMap((component) => (component.pluginUid ? [component.id] : [])),
+    );
     let changed = false;
     const next = beats.map((beat) => {
       if (beat.kind !== "open" || beat.style) return beat;
+      if (pluginOwned.has(beat.component)) return beat;
       const kind = kinds.get(beat.component);
       if (!kind || !COMPACT_POP_KINDS.has(kind)) return beat;
       changed = true;
@@ -1034,6 +1121,26 @@ const SURFACE_RETIRE_BEATS: ReadonlySet<ComponentBeatKind> = new Set<ComponentBe
 ]);
 
 /**
+ * Budget units in a component list: a plugin unit (components sharing a
+ * `pluginUid`) counts ONCE regardless of how many children it lowered — the
+ * host generated the whole unit as one gesture, the author builds none of it,
+ * and the viewer reads it as one surface. Free-standing components count
+ * individually as before.
+ */
+export function componentUnitCount(
+  components: SceneComponentSpecV1[] | undefined,
+): number {
+  if (!components?.length) return 0;
+  const pluginUids = new Set<string>();
+  let free = 0;
+  for (const component of components) {
+    if (component.pluginUid) pluginUids.add(component.pluginUid);
+    else free += 1;
+  }
+  return free + pluginUids.size;
+}
+
+/**
  * Deterministic plan-complexity audit, run at storyboard validation. The
  * 2026-07-04 baseline failure mode: GLM declared 11 components (4 in one
  * 2.7s scene) for an 18s film, and the source author burned all three
@@ -1049,7 +1156,7 @@ export function auditComponentComplexity(
   let total = 0;
   let filmSec = 0;
   for (const scene of scenes) {
-    const count = scene.components?.length ?? 0;
+    const count = componentUnitCount(scene.components);
     total += count;
     filmSec += scene.durationSec;
     const cap = Math.min(
@@ -1074,6 +1181,165 @@ export function auditComponentComplexity(
     );
   }
   return findings;
+}
+
+/**
+ * Evidence-search half-windows mirroring `storyboardMoments.ts`
+ * (EVIDENCE_BEFORE_SEC / EVIDENCE_AFTER_SEC). Kept local to avoid an import
+ * cycle — a beat inside a declared moment's window may bind that moment at
+ * publication, so its component must never be trimmed.
+ */
+const MOMENT_EVIDENCE_BEFORE_SEC = 0.45;
+const MOMENT_EVIDENCE_AFTER_SEC = 0.75;
+
+/**
+ * Component ids that are LOAD-BEARING — never trimmed — because dropping one
+ * would orphan declared choreography or a reviewable moment:
+ *  - a cursor interaction targets it (`targetPart`),
+ *  - a camera move frames it (`toPart`) or racks focus on it (`focus.part`),
+ *  - a cut carries it across a boundary (`focalPartOut`/`focalPartIn`),
+ *  - it is a declared focal subject (`spatialIntent.focalPart`),
+ *  - it is a morph twin (a beat morphs TO it) or a morph source (it has a beat
+ *    that morphs to another),
+ *  - one of its beats lands inside a declared moment's evidence-search window
+ *    (publication may bind that moment to the beat — the `isLoadBearingMove`
+ *    rule, applied to component beats).
+ * Matched across the WHOLE storyboard by id (kebab ids are effectively unique),
+ * so the predicate is deliberately over-conservative: an ambiguous surface is
+ * kept, which is exactly the "ambiguity stays a finding" rule.
+ */
+function boundComponentIds(storyboard: DirectScene[]): Set<string> {
+  const bound = new Set<string>();
+  const add = (value: string | undefined | null): void => {
+    const id = typeof value === "string" ? value.trim() : "";
+    if (id) bound.add(id);
+  };
+  for (const scene of storyboard) {
+    for (const interaction of scene.interactions ?? []) add(interaction.targetPart);
+    for (const move of scene.camera?.path ?? []) {
+      add(move.toPart);
+      add(move.focus?.part);
+    }
+    if (scene.cut) {
+      add(scene.cut.focalPartOut);
+      add(scene.cut.focalPartIn);
+    }
+    add(scene.spatialIntent?.focalPart);
+    for (const beat of scene.beats ?? []) {
+      if (beat.morphTo) {
+        add(beat.morphTo);
+        add(beat.component);
+      }
+    }
+    for (const moment of scene.moments ?? []) {
+      for (const beat of scene.beats ?? []) {
+        if (
+          beat.atSec >= moment.atSec - MOMENT_EVIDENCE_BEFORE_SEC &&
+          beat.atSec <= moment.atSec + MOMENT_EVIDENCE_AFTER_SEC
+        ) {
+          add(beat.component);
+        }
+      }
+    }
+  }
+  return bound;
+}
+
+/**
+ * Sentinel L2 normalize-before-retry: a `components/complexity` over-count by 1
+ * or 2 is arithmetic the host can do without inventing anything — drop the
+ * fewest-beat surface(s) that bind NO declared moment, NO interaction target,
+ * and NO camera/cut focal (the finding's own fix hint: "drop the surfaces that
+ * are set dressing"). It only DELETES a declared surface the plan can spare, so
+ * it is a normalization (L2), not a creative rewrite. An over-count of >= 3 is a
+ * genuine over-reach the model must resolve, and a scene/film with nothing
+ * safely droppable keeps its blocking finding (ambiguity stays a finding). It
+ * runs inside the parse-side atomic commit-or-revert, so a trim that minted a
+ * new finding class (e.g. a dropped beat opening a liveness gap) reverts.
+ */
+export function trimOverBudgetComponents(
+  storyboard: DirectScene[],
+): { storyboard: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  const bound = boundComponentIds(storyboard);
+  const beatCountOf = (scene: DirectScene, id: string): number =>
+    (scene.beats ?? []).filter((beat) => beat.component === id).length;
+  // Safely-droppable components in a scene, fewest-beat first (then declaration
+  // order) — set dressing goes before a surface carrying real state changes.
+  const droppableInScene = (scene: DirectScene): SceneComponentSpecV1[] => {
+    const components = scene.components ?? [];
+    // A plugin child is never set dressing to trim piecemeal: the unit was
+    // host-generated as one gesture and counts as one budget unit anyway.
+    return components
+      .filter((component) => !component.pluginUid && !bound.has(component.id))
+      .sort(
+        (a, b) =>
+          beatCountOf(scene, a.id) - beatCountOf(scene, b.id) ||
+          components.indexOf(a) - components.indexOf(b),
+      );
+  };
+  const applyTrim = (scene: DirectScene, dropIds: Set<string>, note: string): DirectScene => ({
+    ...scene,
+    components: (scene.components ?? []).filter((component) => !dropIds.has(component.id)),
+    beats: (scene.beats ?? []).filter((beat) => !dropIds.has(beat.component)),
+    sentinelNormalizations: [...(scene.sentinelNormalizations ?? []), note],
+  });
+
+  // (1) Per-scene over-cap: trim the offending scene only, over by 1-2.
+  let scenes = storyboard.map((scene) => {
+    const components = scene.components ?? [];
+    if (!components.length) return scene;
+    const cap = Math.min(
+      MAX_COMPONENTS_PER_SCENE,
+      Math.max(1, Math.floor(scene.durationSec / SEC_PER_COMPONENT)),
+    );
+    const overBy = componentUnitCount(components) - cap;
+    if (overBy < 1 || overBy > 2) return scene;
+    const picks = droppableInScene(scene).slice(0, overBy);
+    if (picks.length < overBy) return scene; // cannot safely reach the cap → keep the finding
+    const dropIds = new Set(picks.map((component) => component.id));
+    const note =
+      `trimmed ${dropIds.size} unbound component(s) (${[...dropIds].join(", ")}) to fit the ` +
+      `${cap}-surface budget for a ${scene.durationSec.toFixed(1)}s window`;
+    normalized.push(`scene "${scene.id}": ${note}`);
+    return applyTrim(scene, dropIds, note);
+  });
+
+  // (2) Film-wide over-cap (recomputed after per-scene trims), over by 1-2.
+  const total = scenes.reduce((count, scene) => count + componentUnitCount(scene.components), 0);
+  const filmSec = scenes.reduce((sec, scene) => sec + scene.durationSec, 0);
+  const filmCap = Math.max(2, Math.ceil(filmSec / FILM_SEC_PER_COMPONENT));
+  const filmOver = total - filmCap;
+  if (filmOver >= 1 && filmOver <= 2) {
+    const flat = scenes.flatMap((scene, sceneIndex) =>
+      droppableInScene(scene).map((component) => ({
+        sceneIndex,
+        id: component.id,
+        beats: beatCountOf(scene, component.id),
+      })),
+    );
+    const picks = flat
+      .sort((a, b) => a.beats - b.beats || a.sceneIndex - b.sceneIndex)
+      .slice(0, filmOver);
+    if (picks.length >= filmOver) {
+      const dropByScene = new Map<number, Set<string>>();
+      for (const pick of picks) {
+        if (!dropByScene.has(pick.sceneIndex)) dropByScene.set(pick.sceneIndex, new Set());
+        dropByScene.get(pick.sceneIndex)!.add(pick.id);
+      }
+      scenes = scenes.map((scene, sceneIndex) => {
+        const dropIds = dropByScene.get(sceneIndex);
+        if (!dropIds) return scene;
+        const note =
+          `trimmed ${dropIds.size} unbound component(s) (${[...dropIds].join(", ")}) to fit the ` +
+          `${filmCap}-surface film budget`;
+        normalized.push(`scene "${scene.id}": ${note}`);
+        return applyTrim(scene, dropIds, note);
+      });
+    }
+  }
+
+  return { storyboard: scenes, normalized };
 }
 
 /**
@@ -1269,6 +1535,7 @@ export function parseComponentPlan(html: string): { plan?: ComponentPlanV1; erro
       if (errors.some((error) => error.startsWith(label))) return [];
       const morphTo = stableName(beat.morphTo);
       const toState = typeof beat.toState === "string" ? beat.toState : "";
+      const animation = stableName(beat.animation);
       return [{
         id,
         component,
@@ -1281,6 +1548,9 @@ export function parseComponentPlan(html: string): { plan?: ComponentPlanV1; erro
         ...(finite(beat.item) ? { item: beat.item } : {}),
         ...(toState ? { toState } : {}),
         ...(morphTo ? { morphTo } : {}),
+        // Asset `animate` beats round-trip their animation name — the
+        // island-equality check rejects any drift from the resolved plan.
+        ...(animation ? { animation } : {}),
         // The resolved plan carries the optional `style` variant (MD3/MD6:
         // type→rise/pop/assemble, open→pop, highlight→sweep/underline), and the
         // runtime reads it. It MUST round-trip here or the island-equality check
@@ -1471,6 +1741,28 @@ export function componentMotionWindows(
         beat.kind === "morph" ||
         beat.kind === "open" ||
         beat.kind === "close" ||
+        // In-place component-internal motion (2026-07-08, probe-audit-01): these
+        // beats animate a surface's OWN text/value/emphasis without moving the
+        // surface, transiently perturbing the internal geometry the vendored
+        // static overlap/overflow heuristics measure. `swap` stacks an
+        // absolutely-positioned `.cmp-swap-new` over the old text in the same
+        // slot; `count` rewrites the value text every frame as digits roll in
+        // (reflowing its box); `set-state` re-lays a surface's internal state;
+        // `highlight` pulses a ring/scale over the surface. Sampled mid-beat the
+        // heuristics misread this as "two text blocks overlap" / "container
+        // overflow" (the stat-card label↔value↔delta and swap-new↔slot false
+        // positives that legible frames disprove), and the author loop then
+        // spends repairs fighting motion it cannot fix. Suppress exactly like
+        // morph/open/close; the settled state is still audited outside the
+        // window, and these heuristics are advisory-only — never a gate.
+        beat.kind === "swap" ||
+        beat.kind === "count" ||
+        beat.kind === "set-state" ||
+        beat.kind === "highlight" ||
+        // Asset spring animations (enter pops, bouncy expands, fills) move the
+        // unit root by design — mid-flight geometry is designed motion exactly
+        // like an open/morph window; the settled state stays audited.
+        beat.kind === "animate" ||
         // MD3 split-style headline entrances (rise/pop/assemble) transiently
         // displace letters/words by transform (assemble scatters up to ~96px)
         // before converging to the AUTHORED copy — designed entrance motion, not
@@ -1489,7 +1781,7 @@ export function componentMotionWindows(
  * what exists, what state changes it supports, and which twins morph.
  */
 export function componentPlanningVocabulary(): string {
-  const lines = COMPONENT_CATALOG.map((spec) => {
+  const lines = COMPONENT_CATALOG.filter((spec) => !spec.internal).map((spec) => {
     const beats = [...new Set([...spec.beats])];
     const morphs = spec.morphsWith?.length ? ` · morphs↔${spec.morphsWith.join("/")}` : "";
     return `- ${spec.kind}: ${spec.purpose}${beats.length ? ` · beats: ${beats.join(",")}` : ""}${morphs}`;
@@ -1516,7 +1808,7 @@ export function componentPlanningVocabulary(): string {
 export function componentAuthoringReference(kinds?: Iterable<ComponentKind>): string {
   const requested = kinds ? new Set(kinds) : undefined;
   const specs = COMPONENT_CATALOG.filter((spec) =>
-    !requested || requested.has(spec.kind)
+    !spec.internal && (!requested || requested.has(spec.kind))
   );
   if (!specs.length) return "";
   return [

@@ -1,6 +1,9 @@
 # SENTINEL_PLAN.md — the correctness-by-construction guard for Sequences authoring
 
-**Status:** plan, to be implemented by a separate agent. Author: Claude (Fable), 2026-07-05.
+**Status:** IMPLEMENTED (all phases shipped, Sentinel flags default ON since
+2026-07-06) — this file is the frozen design contract; what actually shipped,
+with probe evidence, is [SENTINEL_REPORT.md](SENTINEL_REPORT.md), and the living
+system doc is [SENTINEL.md](SENTINEL.md). Author: Claude (Fable), 2026-07-05.
 **Deadline context:** Slack Agent Builder Challenge judging ≈ **Jul 13 2026** — 8 days.
 Every phase below has a cut line so a half-finished Sentinel still leaves the bot
 *better* than today, never worse.

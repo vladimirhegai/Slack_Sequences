@@ -29,7 +29,8 @@ const TONE_OPTIONS: Array<{ value: Tone; label: string }> = [
   { value: "bold-launch", label: "Bold & high-energy - launch" },
 ];
 
-const LENGTH_OPTIONS = [15, 30, 45, 60];
+// 15 was dropped: sub-20s films read as truncated (owner call, 2026-07-09).
+const LENGTH_OPTIONS = [20, 25, 30, 45, 60];
 
 function plain(text: string) {
   return { type: "plain_text" as const, text, emoji: true };
@@ -174,6 +175,63 @@ export function buildCreateModal(ctx: ModalContext): View {
           multiline: true,
           max_length: 2_000,
           placeholder: plain("Anything else the video should say or show"),
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * The `/sequences asset` intake modal. Slash commands can't carry files, so
+ * the modal's `file_input` block is how screenshots reach the bot. Kept to
+ * two fields — images + notes — because everything else is derived.
+ */
+export function buildAssetBriefModal(ctx: ModalContext): View {
+  return {
+    type: "modal",
+    callback_id: "asset_brief",
+    private_metadata: JSON.stringify({
+      channel: ctx.channel,
+      userId: ctx.userId,
+      teamId: ctx.teamId,
+    }),
+    title: plain("Capture your brand"),
+    submit: plain("Capture"),
+    close: plain("Cancel"),
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text:
+            ":art: *Show me your product's UI.*\n" +
+            "I'll extract your brand truth (accent, canvas tone) and theme every video " +
+            "made in this channel with it — plus preview the asset kit in your colors. " +
+            "Re-run to replace; `/sequences asset clear` to forget.",
+        },
+      },
+      {
+        type: "input",
+        block_id: "images",
+        label: plain("UI screenshots"),
+        element: {
+          type: "file_input",
+          action_id: "value",
+          filetypes: ["png", "jpg", "jpeg", "webp"],
+          max_files: 5,
+        },
+      },
+      {
+        type: "input",
+        block_id: "notes",
+        optional: true,
+        label: plain("Notes"),
+        element: {
+          type: "plain_text_input",
+          action_id: "value",
+          multiline: true,
+          max_length: 1_000,
+          placeholder: plain("Anything the videos should respect — vibe, colors to avoid, product nouns"),
         },
       },
     ],

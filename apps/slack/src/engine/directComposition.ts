@@ -13,9 +13,17 @@ import {
   lintHyperframeHtml,
   type HyperframeLintFinding,
 } from "@hyperframes/core";
-import type { RenderQuality } from "./render.ts";
-import { ensureFfmpegOnPath, findBrowserExecutable } from "./render.ts";
+import type { RenderQuality, SupersamplePlan } from "./render.ts";
+import {
+  downscaleSupersampledRender,
+  ensureFfmpegOnPath,
+  findBrowserExecutable,
+  renderProducerOverrides,
+  resolveSupersamplePlan,
+  supersampleJobFields,
+} from "./render.ts";
 import { inspectDirectComposition } from "./layoutInspector.ts";
+import { launchHeadlessBrowser } from "./browserLifecycle.ts";
 import {
   INTERACTION_RUNTIME_FILE,
   INTERACTION_RUNTIME_VERSION,
@@ -74,6 +82,15 @@ import {
   validateRecipeContract,
   type RecipeDeclarationV1,
 } from "./recipeContract.ts";
+import {
+  validatePluginContract,
+  type PluginDeclarationV1,
+} from "./pluginContract.ts";
+import {
+  ASSET_RUNTIME_FILE,
+  assetRuntimeSource,
+  validateAssetContract,
+} from "./assetRuntime.ts";
 import { validateCompositionAgainstFrame } from "./frameValidation.ts";
 import { auditKitMarkupCompleteness } from "./kitMarkupAudit.ts";
 import {
@@ -84,6 +101,10 @@ import {
   resolveMomentContract,
   type StoryboardMomentV1,
 } from "./storyboardMoments.ts";
+import {
+  directionScoreConsumersEnabled,
+  resolveFilmDirectionScore,
+} from "./directionScore.ts";
 
 const DIRECT_DIR = "composition";
 const MANIFEST_FILE = "manifest.json";
@@ -100,6 +121,36 @@ const MAX_SOURCE_CHARS = 500_000;
 export interface WorldLayoutCellV1 {
   region: string;
   cell: [number, number];
+}
+
+export interface LayoutRepairRectV1 {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Host-only deterministic layout repair. This is never requested from the
+ * author model; `applyDeterministicSourceRepairs` materializes it as CSS after
+ * browser QA proves the measured geometry can be corrected safely.
+ */
+export interface SceneLayoutRepairV1 {
+  version: 1;
+  id: string;
+  kind: "overflow-clamp";
+  selector: string;
+  issueCode: "canvas_overflow" | "important_safe_area";
+  dx: number;
+  dy: number;
+  scale: number;
+  origin: "center center";
+  before: {
+    rect: LayoutRepairRectV1;
+    safeRect: LayoutRepairRectV1;
+  };
 }
 
 export interface DirectScene {
@@ -137,10 +188,26 @@ export interface DirectScene {
    * values — the author model never owns the mechanism.
    */
   recipes?: RecipeDeclarationV1[];
+  /**
+   * Declared host plugins (seventh contract): typed generator forms the host
+   * lowered into this scene's components/beats at parse and injects as one
+   * verbatim markup unit per declaration — the author model never owns them.
+   */
+  plugins?: PluginDeclarationV1[];
+  /**
+   * Part names whose free component declarations the plugin reconciler
+   * absorbed as duplicates of a declared plugin unit. The injector hides any
+   * author-drawn markup still carrying these parts (the plugin-live-1 lesson:
+   * the storyboard-level absorber can't stop the source author hand-drawing
+   * the same content beside the injected unit).
+   */
+  pluginAbsorbedParts?: string[];
   spatialIntent?: SpatialIntentV1;
   interactions?: InteractionIntentV1[];
   /** Ordered reviewable changed states this scene promises (the moment contract). */
   moments?: StoryboardMomentV1[];
+  /** Host-only deterministic layout repairs, stripped from author prompts. */
+  layoutRepairs?: SceneLayoutRepairV1[];
   /**
    * Host-applied Sentinel normalization notes (delete/degrade/retime fixes the
    * host made to this scene at parse — never model-authored). Rendered in
@@ -353,9 +420,15 @@ function normalizeStoryboard(
       ...(proposed?.gradeShift ? { gradeShift: proposed.gradeShift } : {}),
       ...(proposed?.components?.length ? { components: proposed.components } : {}),
       ...(proposed?.beats?.length ? { beats: proposed.beats } : {}),
+      ...(proposed?.recipes?.length ? { recipes: proposed.recipes } : {}),
+      ...(proposed?.plugins?.length ? { plugins: proposed.plugins } : {}),
       ...(proposed?.spatialIntent ? { spatialIntent: proposed.spatialIntent } : {}),
       ...(proposed?.interactions?.length ? { interactions: proposed.interactions } : {}),
       ...(proposed?.moments?.length ? { moments: proposed.moments } : {}),
+      ...(proposed?.layoutRepairs?.length ? { layoutRepairs: proposed.layoutRepairs } : {}),
+      ...(proposed?.sentinelNormalizations?.length
+        ? { sentinelNormalizations: proposed.sentinelNormalizations }
+        : {}),
     };
   });
   if (tags.length < 2) errors.push("composition needs at least two elements marked data-scene");
@@ -534,6 +607,15 @@ export async function validateDirectComposition(
   // reachable only if the injection seam breaks.
   const recipeValidation = validateRecipeContract(html, normalized.scenes);
   errors.push(...recipeValidation.errors);
+  // Plugin units are host-injected from the catalog (lowered typed forms);
+  // like recipes, these errors are host-plumbing self-checks.
+  const pluginValidation = validatePluginContract(html, normalized.scenes);
+  errors.push(...pluginValidation.errors);
+  // Asset spring-animation island/runtime self-check (assetRuntime.ts) —
+  // host plumbing exactly like recipes/plugins; stands down when the assets
+  // flag is off.
+  const assetValidation = validateAssetContract(html, normalized.scenes);
+  errors.push(...assetValidation.errors);
   // Bind failures abort the whole browser compile behind an opaque timeout;
   // re-run the runtimes' bind queries against a parsed DOM here so they
   // surface as named findings the repair loop can act on.
@@ -575,6 +657,7 @@ export async function validateDirectComposition(
       ref !== COMPONENT_RUNTIME_FILE &&
       ref !== TIME_RUNTIME_FILE &&
       ref !== FX_RUNTIME_FILE &&
+      ref !== ASSET_RUNTIME_FILE &&
       !fs.existsSync(resolved)
     ) {
       const staged = path.resolve(projectDir, ref);
@@ -673,6 +756,11 @@ function copyRuntimeAndAssets(projectDir: string, targetDir: string): void {
     fxRuntimeSource(),
     "utf8",
   );
+  fs.writeFileSync(
+    path.join(targetDir, ASSET_RUNTIME_FILE),
+    assetRuntimeSource(),
+    "utf8",
+  );
   const sourceAssets = path.join(projectDir, "assets");
   if (fs.existsSync(sourceAssets)) {
     fs.cpSync(sourceAssets, path.join(targetDir, "assets"), { recursive: true });
@@ -688,6 +776,9 @@ function writeJson(file: string, value: unknown): void {
 }
 
 export function storyboardMarkdown(title: string, scenes: DirectScene[]): string {
+  const directionByScene = new Map(
+    resolveFilmDirectionScore(scenes).scenes.map((scene) => [scene.sceneId, scene]),
+  );
   return [
     `# STORYBOARD.md — ${title}`,
     "",
@@ -719,11 +810,36 @@ export function storyboardMarkdown(title: string, scenes: DirectScene[]): string
           .map((move) => `${move.move}${move.toPart ? `→${move.toPart}` : move.toRegion ? `→${move.toRegion}` : ""}`)
           .join(", ")}`
         : "",
+      directionByScene.get(scene.id)?.phrases.length
+        ? `- Direction: ${directionByScene.get(scene.id)!.entryRelationship} entry · ${
+          directionByScene.get(scene.id)!.phrases.map((phrase) =>
+            `${phrase.role}:${phrase.dominant.system}${
+              phrase.attention?.part
+                ? `→${phrase.attention.part}`
+                : phrase.attention?.region
+                  ? `→${phrase.attention.region}`
+                  : phrase.attention?.selector
+                    ? `→${phrase.attention.selector}`
+                    : ""
+            }`
+          ).join(", ")
+        }`
+        : "",
       scene.timeRamp
         ? `- Speed ramp: dip to ${scene.timeRamp.slowTo}× at ${scene.timeRamp.atSec.toFixed(2)}s` +
           ` (net-zero inside the shot)`
         : "",
       ...(scene.sentinelNormalizations ?? []).map((note) => `- Sentinel normalized: ${note}`),
+      ...(scene.plugins ?? []).map((declaration) => {
+        const details = Object.entries(declaration.params).map(
+          ([name, value]) => `${name}=${value}`,
+        );
+        if (declaration.region) details.push(`station=${declaration.region}`);
+        return (
+          `- plugin: ${declaration.kind} "${declaration.id}"` +
+          `${details.length ? ` (${details.join(", ")})` : ""} — host-generated`
+        );
+      }),
       scene.components?.length
         ? `- Components: ${scene.components
           .map((component) => `${component.id} (${component.kind})`)
@@ -879,6 +995,11 @@ export async function commitDirectComposition(
         version: COMPONENT_RUNTIME_VERSION,
         sha256: componentRuntimeHash(),
       },
+      direction: resolveFilmDirectionScore(normalized.scenes),
+      directionConsumersEnabled: directionScoreConsumersEnabled(),
+      ...(browserQa.continuousMotion
+        ? { continuousMotion: browserQa.continuousMotion }
+        : {}),
       moments: validation.moments,
       ...(validation.motionReport
         ? {
@@ -899,6 +1020,9 @@ export async function commitDirectComposition(
       samples: browserQa.samples,
       issues: browserQa.issues,
       interactions: interactionEvidence,
+      ...(browserQa.continuousMotion
+        ? { continuousMotion: browserQa.continuousMotion }
+        : {}),
       ...(browserQa.infraError ? { infraError: browserQa.infraError } : {}),
       runtime: {
         version: INTERACTION_RUNTIME_VERSION,
@@ -958,6 +1082,10 @@ export async function commitDirectComposition(
     path.join(target, FX_RUNTIME_FILE),
     path.join(checkpoint, FX_RUNTIME_FILE),
   );
+  fs.copyFileSync(
+    path.join(target, ASSET_RUNTIME_FILE),
+    path.join(checkpoint, ASSET_RUNTIME_FILE),
+  );
   fs.cpSync(path.join(target, "qa"), path.join(checkpoint, "qa"), { recursive: true });
   return { manifest, validation };
 }
@@ -982,6 +1110,7 @@ export function undoDirectComposition(projectDir: string): boolean {
     COMPONENT_RUNTIME_FILE,
     TIME_RUNTIME_FILE,
     FX_RUNTIME_FILE,
+    ASSET_RUNTIME_FILE,
   ]) {
     const source = path.join(checkpoint, sidecar);
     const destination = path.join(target, sidecar);
@@ -1012,9 +1141,12 @@ export function directOutline(manifest: DirectCompositionManifest): string {
     .map((scene, index) => {
       const recipe = scene.blueprint ? ` · ${scene.blueprint}` : "";
       const cut = scene.outgoingCut ? ` · cut: ${scene.outgoingCut}` : "";
+      const plugins = scene.plugins?.length
+        ? ` · plugins: ${scene.plugins.map((declaration) => declaration.kind).join(", ")}`
+        : "";
       const header = `${index + 1}. ${scene.title} · ${scene.startSec.toFixed(1)}–${(
         scene.startSec + scene.durationSec
-      ).toFixed(1)}s${recipe}${cut}`;
+      ).toFixed(1)}s${recipe}${cut}${plugins}`;
       const moments = (scene.moments ?? []).map((moment) => {
         const marker = moment.importance === "primary" ? "◆" : "◇";
         // Declared moments carry an authored change description; synthesized
@@ -1092,6 +1224,8 @@ interface ThumbnailCapture {
   sceneId: string;
   /** Cut-safe upper bound: the walk-forward never crosses the outgoing cut. */
   latestSec: number;
+  /** Cut-safe lower bound for recovering a subject that has already departed. */
+  earliestSec: number;
   /** The moment's bound data-part when it is a component/interaction subject. */
   subjectPart?: string;
 }
@@ -1101,6 +1235,8 @@ const MAX_MOMENT_THUMBNAILS = 10;
 /** WS7 walk-forward: total budget past the chosen capture time (clamped to the
  *  cut-safe latest). A title card's copy can reveal ~1s after its scene opens. */
 const MOMENT_WALK_MAX_SEC = 1.0;
+/** Backward recovery budget when a settled subject has already left frame. */
+const MOMENT_WALK_BACK_MAX_SEC = 1.0;
 /** Step for the opacity walk when the moment names a specific subject part. */
 const MOMENT_WALK_STEP_SEC = 0.1;
 /** Coarser step for the pixel walk (each step is a screenshot). */
@@ -1148,6 +1284,7 @@ function thumbnailCaptures(manifest: DirectCompositionManifest): ThumbnailCaptur
       key: scene.id,
       atSec: scene.startSec + scene.durationSec * 0.58,
       sceneId: scene.id,
+      earliestSec: scene.startSec,
       latestSec: Math.max(scene.startSec, scene.startSec + scene.durationSec - 0.05),
     }));
   }
@@ -1191,6 +1328,7 @@ function thumbnailCaptures(manifest: DirectCompositionManifest): ThumbnailCaptur
         key: `m${String(index + 1).padStart(2, "0")}-${moment.id}`,
         atSec: Math.min(Math.max(settledSec, earliestSec), latestSec),
         sceneId: scene.id,
+        earliestSec,
         latestSec,
         ...(subjectPart ? { subjectPart } : {}),
       };
@@ -1214,11 +1352,10 @@ export async function generateDirectThumbnails(
   if (!browserPath) throw new Error("no Chrome/Edge found for thumbnail capture");
   const scale = (options.width ?? 480) / current.manifest.width;
   const started = Date.now();
-  const puppeteer = (await import("puppeteer-core")).default;
   const server = await serveDir(compositionDir(projectDir));
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
+  let browser: import("puppeteer-core").Browser | undefined;
   try {
-    browser = await puppeteer.launch({
+    browser = await launchHeadlessBrowser({
       executablePath: browserPath,
       headless: true,
       args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu"],
@@ -1304,7 +1441,19 @@ export async function generateDirectThumbnails(
         const rect = element.getBoundingClientRect();
         const w = Math.max(0, Math.min(rect.right, rootRect.right) - Math.max(rect.left, rootRect.left));
         const h = Math.max(0, Math.min(rect.bottom, rootRect.bottom) - Math.max(rect.top, rootRect.top));
-        return opacity >= 0.5 && w * h > 0 ? ("visible" as const) : ("hidden" as const);
+        const area = rect.width * rect.height;
+        const onFrame = area > 0 ? (w * h) / area : 0;
+        const insetX = rootRect.width * 0.025;
+        const insetY = rootRect.height * 0.025;
+        const safeX = rect.width >= rootRect.width * 0.94 ||
+          (rect.left >= rootRect.left + insetX && rect.right <= rootRect.right - insetX);
+        const safeY = rect.height >= rootRect.height * 0.94 ||
+          (rect.top >= rootRect.top + insetY && rect.bottom <= rootRect.bottom - insetY);
+        // Moment thumbs are review artifacts, not playback frames: even a
+        // technically visible subject reads as broken when 3-5% is clipped.
+        return opacity >= 0.5 && onFrame >= 0.98 && safeX && safeY
+          ? ("visible" as const)
+          : ("hidden" as const);
       }, { sceneId, subjectPart });
 
     // Fraction of frame pixels that deviate from the four-corner background —
@@ -1357,7 +1506,22 @@ export async function generateDirectThumbnails(
       if (state === "hidden") {
         // Named subject present but not yet revealed (probe-cutfix-3 m03: the
         // palette is opacity-0 mid-entrance) — walk to the first frame it shows.
-        for (let t = capture.atSec + MOMENT_WALK_STEP_SEC; t <= walkEnd + 1e-6; t += MOMENT_WALK_STEP_SEC) {
+        const walkStart = Math.max(
+          capture.earliestSec,
+          capture.atSec - MOMENT_WALK_BACK_MAX_SEC,
+        );
+        for (let t = capture.atSec - MOMENT_WALK_STEP_SEC;
+          t >= walkStart - 1e-6;
+          t -= MOMENT_WALK_STEP_SEC) {
+          await seekTo(t);
+          if (await subjectState(capture.sceneId, capture.subjectPart!) === "visible") {
+            chosen = t;
+            break;
+          }
+        }
+        for (let t = capture.atSec + MOMENT_WALK_STEP_SEC;
+          chosen === capture.atSec && t <= walkEnd + 1e-6;
+          t += MOMENT_WALK_STEP_SEC) {
           await seekTo(t);
           if (await subjectState(capture.sceneId, capture.subjectPart!) === "visible") {
             chosen = t;
@@ -1405,38 +1569,60 @@ export async function renderDirectComposition(
   options: { quality?: RenderQuality; browserPath?: string; quiet?: boolean } = {},
 ): Promise<DirectRenderResult> {
   const current = loadDirectComposition(projectDir);
-  ensureFfmpegOnPath();
+  const ffmpegPath = ensureFfmpegOnPath();
   const browserPath = options.browserPath ?? findBrowserExecutable();
+  const quality = options.quality ?? "draft";
   const outputPath = path.join(projectDir, "renders", renderName(current.manifest.title));
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   const started = Date.now();
   (globalThis as { require?: NodeRequire }).require ??= createRequire(import.meta.url);
   const producerSpecifier: string = "@hyperframes/producer";
   const producer = (await import(producerSpecifier)) as ProducerModule;
-  const job = producer.createRenderJob({
-    fps: current.manifest.fps,
-    quality: options.quality ?? "draft",
-    format: "mp4",
-    entryFile: "index.html",
-    logger: options.quiet ? undefined : producer.createConsoleLogger?.("info"),
-    producerConfig: producer.resolveConfig({
-      browserGpuMode: "software",
-      forceScreenshot: true,
-      ...(browserPath ? { chromePath: browserPath } : {}),
-    }),
-  });
-  await producer.executeRenderJob(
-    job,
-    compositionDir(projectDir),
-    outputPath,
-    options.quiet
-      ? undefined
-      : (progressJob, message) => {
-          const percent = Math.round(progressJob.progress);
-          process.stdout.write(`\rrender ${percent}% ${message.padEnd(40).slice(0, 40)}`);
-          if (percent >= 100) process.stdout.write("\n");
-        },
+  const makeJob = (supersample?: SupersamplePlan): unknown =>
+    producer.createRenderJob({
+      fps: current.manifest.fps,
+      quality,
+      format: "mp4",
+      entryFile: "index.html",
+      logger: options.quiet ? undefined : producer.createConsoleLogger?.("info"),
+      ...(supersample ? supersampleJobFields(supersample) : {}),
+      producerConfig: producer.resolveConfig(renderProducerOverrides(browserPath)),
+    });
+  const onProgress = options.quiet
+    ? undefined
+    : (progressJob: { progress: number }, message: string): void => {
+        const percent = Math.round(progressJob.progress);
+        process.stdout.write(`\rrender ${percent}% ${message.padEnd(40).slice(0, 40)}`);
+        if (percent >= 100) process.stdout.write("\n");
+      };
+  // HD tier: capture the film at an integer 2× DPR and lanczos-downscale back
+  // to composition dimensions, so slow sub-pixel motion stops stair-stepping
+  // in the MP4 (see resolveSupersamplePlan). Any failure falls back to the
+  // plain 1× render.
+  const supersample = resolveSupersamplePlan(
+    current.manifest.width,
+    current.manifest.height,
+    quality,
   );
+  let rendered = false;
+  if (supersample) {
+    const masterPath = `${outputPath}.supersample-master.mp4`;
+    try {
+      await producer.executeRenderJob(makeJob(supersample), compositionDir(projectDir), masterPath, onProgress);
+      downscaleSupersampledRender(ffmpegPath, masterPath, outputPath, supersample);
+      rendered = true;
+    } catch (error) {
+      process.stderr.write(
+        `[render] supersampled render failed, falling back to 1x: ` +
+          `${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    } finally {
+      fs.rmSync(masterPath, { force: true });
+    }
+  }
+  if (!rendered) {
+    await producer.executeRenderJob(makeJob(), compositionDir(projectDir), outputPath, onProgress);
+  }
   return {
     outputPath,
     durationSec: current.manifest.durationSec,

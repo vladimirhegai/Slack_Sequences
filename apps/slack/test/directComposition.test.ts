@@ -8,6 +8,8 @@ import {
 } from "@sequences/platform/providers";
 import {
   applyCompositionRepair,
+  applyDeterministicSourceRepairs,
+  addressedPartsForLayoutRepair,
   inferStoryboardPlanRequirements,
   injectLayoutIntentHints,
   normalizeWorldLayout,
@@ -20,9 +22,16 @@ import {
   retimeUnmotivatedTimeRamps,
   criticSkippableCleanDraft,
   earlyLeastBadPublishReason,
+  stagnantPolishShipReason,
+  stagnantPolishSignature,
+  browserQualityPenalty,
   repairContrastAaIssues,
+  correctLayoutOverflow,
   correctSparseFraming,
   sourceRetryFeedbackForBrowserQa,
+  repairStationPositioning,
+  injectBrandBase,
+  brandBaseStyleBlock,
   StoryboardValidationError,
 } from "../src/engine/compositionRunner.ts";
 import { resolveTimeRampPlan, timeRampHoldWindow } from "../src/engine/timeRamp.ts";
@@ -38,6 +47,7 @@ import {
   type DirectCompositionDraft,
 } from "../src/engine/directComposition.ts";
 import { resolveMomentContract, type StoryboardMomentV1 } from "../src/engine/storyboardMoments.ts";
+import { normalizeStoryboardPluginDeclarations } from "../src/engine/pluginContract.ts";
 import {
   dropUnusableGradeShifts,
   normalizeStoryboardGradeShift,
@@ -67,7 +77,16 @@ process.env.SLACK_SEQUENCES_SENTINEL_SLOTS = "0";
 
 /** Every published draft carries the host-injected runtimes and kits. */
 function withHostInjections(html: string): string {
-  return injectCinemaKit(injectComponentKit(injectCameraRuntimeTag(html)));
+  const withRootTiming = html.replace(
+    /<[a-z][\w:-]*\b(?=[^>]*\bdata-composition-id\s*=)[^>]*>/i,
+    (tag) => {
+      if (/\bdata-start\s*=/.test(tag)) return tag;
+      return tag.replace(/\s*\/?>$/, (suffix) =>
+        suffix.includes("/") ? ` data-start="0" />` : ` data-start="0">`
+      );
+    },
+  );
+  return injectCinemaKit(injectComponentKit(injectCameraRuntimeTag(withRootTiming)));
 }
 
 vi.mock("../src/engine/layoutInspector.ts", () => ({
@@ -75,6 +94,38 @@ vi.mock("../src/engine/layoutInspector.ts", () => ({
     ok: true,
     strictOk: true,
     samples: [0, 2, 4, 6, 8],
+    continuousMotion: {
+      version: 1,
+      advisory: true,
+      sampleHz: 5,
+      frame: { width: 1920, height: 1080 },
+      samples: [],
+      reversals: [],
+      jerkMarkers: [],
+      settleWindows: [],
+      scenes: [],
+      summary: {
+        sampleCount: 5,
+        focalFoundSamples: 5,
+        minimumVisibleFraction: 1,
+        meanVisibleFraction: 1,
+        minimumOccupancyFraction: 0.1,
+        meanOccupancyFraction: 0.1,
+        offframeSamples: 0,
+        tinyFocalSamples: 0,
+        peakSpeed: 0.1,
+        peakAcceleration: 0.2,
+        peakJerk: 0.3,
+        reversalCount: 0,
+        jerkMarkerCount: 0,
+        maxIndependentMotionCount: 1,
+        meanIndependentMotionCount: 0.5,
+        settleWindowCount: 1,
+        measuredSettleWindowCount: 1,
+        settledByWindowEndCount: 1,
+      },
+      advisories: [],
+    },
     issues: [],
     errors: [],
     warnings: [],
@@ -502,7 +553,10 @@ describe("host-owned scene-timing re-base (LESS_FALLBACKS lever 10)", () => {
         camera: {
           version: 1,
           path: [
-            { version: 1, move: "pan", toRegion: "stage", startSec: 5.0, durationSec: 0.8 },
+            // Starts after the interaction's settled result so the 2026-07-08
+            // retimeCameraOverInteractions normalizer has nothing to fix here —
+            // this test isolates the re-base arithmetic.
+            { version: 1, move: "pan", toRegion: "stage", startSec: 6.0, durationSec: 0.8 },
           ],
         },
         interactions: [{
@@ -535,7 +589,7 @@ describe("host-owned scene-timing re-base (LESS_FALLBACKS lever 10)", () => {
     expect(parsed[2]!.startSec).toBe(6);
     // Every nested time moved by the -1.3s delta: same offsets inside the scene.
     expect(parsed[1]!.beats![0]!.atSec).toBeCloseTo(4.0, 3);
-    expect(parsed[1]!.camera!.path[0]!.startSec).toBeCloseTo(3.7, 3);
+    expect(parsed[1]!.camera!.path[0]!.startSec).toBeCloseTo(4.7, 3);
     expect(parsed[1]!.interactions![0]!.startSec).toBeCloseTo(3.5, 3);
     expect(parsed[1]!.interactions![0]!.arriveSec).toBeCloseTo(4.1, 3);
     // Look the declared moment up by id — the moment top-up may add
@@ -766,9 +820,37 @@ describe("Sentinel Phase 3 — storyboard normalization is wired into parseStory
       .toHaveLength(1);
     // The surviving move is the highest-energy one (pull-back outranks pan/track).
     expect(middle.camera!.path.some((move) => move.move === "pull-back")).toBe(true);
-    // The committed normalization is visible on the scene → STORYBOARD.md.
-    expect(middle.sentinelNormalizations?.length).toBe(1);
+    // The committed normalization is visible on the scene → STORYBOARD.md
+    // (a derived default worldLayout may add its own note beside it).
+    expect(
+      middle.sentinelNormalizations?.filter((note) => note.includes("camera")).length,
+    ).toBe(1);
     expect(storyboardMarkdown("t", parsed)).toContain("- Sentinel normalized: dropped 2");
+  });
+
+  it("renders one host-generated line per declared plugin in STORYBOARD.md", () => {
+    const pluginScene = {
+      id: "s1",
+      title: "Metrics land",
+      purpose: "Prove the deploy story at a glance",
+      startSec: 0,
+      durationSec: 6,
+      plugins: normalizeStoryboardPluginDeclarations([
+        {
+          version: 1,
+          kind: "dashboard-grid",
+          id: "metrics",
+          region: "metric-wall",
+          params: { tiles: 4, topic: "deploy speed" },
+        },
+        { version: 1, kind: "lockup", id: "closing", params: { headline: "Ship it faster" } },
+      ]),
+    };
+    const md = storyboardMarkdown("t", [pluginScene]);
+    expect(md).toContain(
+      '- plugin: dashboard-grid "metrics" (tiles=4, topic=deploy speed, station=metric-wall) — host-generated',
+    );
+    expect(md).toContain('- plugin: lockup "closing" (headline=Ship it faster) — host-generated');
   });
 
   it("reverts a normalization that would mint a NEW blocking finding (atomic commit)", () => {
@@ -804,6 +886,50 @@ describe("Sentinel Phase 3 — storyboard normalization is wired into parseStory
     // effect (too few moves after the clamp).
     expect(message).toContain("pacing/camera-budget");
     expect(message).not.toContain("typed camera moves");
+  });
+
+  it("keeps an explicit rack-focus top-up when unrelated arithmetic is reverted", () => {
+    const scenes = storyboard();
+    const raw = scenes.map((scene, index) =>
+      index === 1
+        ? {
+            ...scene,
+            spatialIntent: {
+              version: 1 as const,
+              focalPart: "chip",
+              composition: "product route",
+              relationships: ["chip leads the route"],
+            },
+            camera: {
+              version: 1 as const,
+              path: [
+                { version: 1 as const, move: "pan" as const, toRegion: "left", startSec: 3.2, durationSec: 0.5 },
+                {
+                  version: 1 as const,
+                  move: "track-to-anchor" as const,
+                  toPart: "chip",
+                  startSec: 4.0,
+                  durationSec: 0.5,
+                },
+                { version: 1 as const, move: "pull-back" as const, toRegion: "wide", startSec: 4.8, durationSec: 0.5 },
+              ],
+            },
+          }
+        : scene
+    );
+    const response = `<storyboard_json>${JSON.stringify(raw)}</storyboard_json>`;
+    let failure: StoryboardValidationError | undefined;
+    try {
+      parseStoryboardResponse(response, { minCameraMoves: 3, requireRackFocus: true });
+    } catch (error) {
+      if (error instanceof StoryboardValidationError) failure = error;
+      else throw error;
+    }
+
+    expect(failure?.findings.some((finding) => finding.includes("pacing/camera-budget"))).toBe(true);
+    expect(failure?.findings.some((finding) => finding.includes("rack-focus"))).toBe(false);
+    const focused = failure?.storyboard[1]?.camera?.path.find((move) => move.toPart === "chip");
+    expect(focused?.focus).toEqual({ part: "chip", blurMaxPx: 6 });
   });
 
   it("stretches a marginal scene-boundary reading miss and cascade-shifts later scenes", () => {
@@ -1197,6 +1323,50 @@ describe("Sentinel Phase 3 — criticSkippableCleanDraft (critic gating predicat
     expect(criticSkippableCleanDraft(base, ["frame: hero contrast repaired"])).toBe(false);
   });
 
+  it("skips the critic when the run shipped stagnant (critic-economy 2026-07-08)", () => {
+    // A non-pristine draft that shipped under stagnant-polish-early-ship
+    // resisted two identical-signature patches; a third won't help either.
+    const stuck: DirectBrowserQaResult = {
+      ...base,
+      strictOk: false,
+      issues: [{
+        code: "contrast_aa",
+        severity: "warning",
+        time: 4,
+        selector: ".cmp-label",
+        message: "contrast 3.9",
+        source: "sequences",
+      }],
+    };
+    expect(criticSkippableCleanDraft(stuck, [], "stagnant-polish-early-ship:penalty=4")).toBe(true);
+  });
+
+  it("still runs the critic on an ordinary least-bad or early-least-bad ship", () => {
+    // Only the stagnation reason qualifies — the ordinary attempt-3 least-bad
+    // pick never proved two-patch resistance, and the early budget-broker exit
+    // ships a LOW-penalty draft the critic may still improve.
+    const stuck: DirectBrowserQaResult = {
+      ...base,
+      strictOk: false,
+      issues: [{
+        code: "contrast_aa",
+        severity: "warning",
+        time: 4,
+        selector: ".cmp-label",
+        message: "contrast 3.9",
+        source: "sequences",
+      }],
+    };
+    expect(criticSkippableCleanDraft(stuck, [], "least-bad-pick:penalty=7")).toBe(false);
+    expect(criticSkippableCleanDraft(stuck, [], "early-least-bad-pick:penalty=3;findings=polish"))
+      .toBe(false);
+    expect(criticSkippableCleanDraft(stuck, [], undefined)).toBe(false);
+  });
+
+  it("skips a pristine draft regardless of ship reason", () => {
+    expect(criticSkippableCleanDraft(base, [], "least-bad-pick:penalty=0")).toBe(true);
+  });
+
   it("allows the attempt-2 broker to publish low-penalty advisory layout polish", () => {
     const browserQa: DirectBrowserQaResult = {
       ...base,
@@ -1244,7 +1414,104 @@ describe("Sentinel Phase 3 — criticSkippableCleanDraft (critic gating predicat
     })).toBeUndefined();
   });
 
-  it("removes moment_static_frame from source retry feedback unless the film is blank", () => {
+  it("counts declaration paperwork at zero weight in the quality penalty", () => {
+    // layout_intent_missing asks for a DECLARATION, not a visual change — a
+    // banked draft is not one pixel worse for lacking it, so it must not hold
+    // the attempt-2 broker under its penalty ceiling (2026-07-07 sweep).
+    const paperworkOnly: DirectBrowserQaResult = {
+      ...base,
+      strictOk: false,
+      issues: [1, 2, 3, 4, 5, 6].map((n) => ({
+        code: "layout_intent_missing",
+        severity: "warning" as const,
+        time: n,
+        selector: `#scene-${n}`,
+        message: "Visible scene declares no relational layout intent.",
+        source: "sequences" as const,
+      })),
+    };
+    expect(browserQualityPenalty(paperworkOnly)).toBe(0);
+    // A measured visual warning still counts.
+    expect(browserQualityPenalty({
+      ...paperworkOnly,
+      issues: [...paperworkOnly.issues, {
+        code: "content_overlap",
+        severity: "warning",
+        time: 2,
+        selector: "#metric",
+        message: "Two text blocks overlap.",
+        source: "sequences",
+      }],
+    })).toBe(1);
+  });
+
+  it("normalizes measurement jitter out of stagnation keys (digit-stripped)", () => {
+    // The same defect re-measured: contrast moved 4.4:1 → 3.39:1 and the
+    // window shifted, but the defect LIST is unchanged — the classKey
+    // precedent from the storyboard commit-or-revert.
+    expect(stagnantPolishSignature(
+      "contrast_aa div.seg-time (t=7.74s): Contrast is 4.4:1; needs 4.5:1.",
+    )).toBe(stagnantPolishSignature(
+      "contrast_aa div.seg-time (t=7.74–8.35s): Contrast is 3.39:1; needs 4.5:1.",
+    ));
+    // A different element is a different defect.
+    expect(stagnantPolishSignature(
+      "contrast_aa div.seg-time (t=7.74s): Contrast is 4.4:1; needs 4.5:1.",
+    )).not.toBe(stagnantPolishSignature(
+      "contrast_aa span.alert-chip (t=8.35s): Contrast is 3.45:1; needs 4.5:1.",
+    ));
+  });
+
+  it("ships the banked draft when a patch provably changed nothing (stagnant signatures)", () => {
+    // Attempt 2's browser findings are byte-identical to attempt 1's — the
+    // paid patch between them moved nothing the gate measures, so attempt 3
+    // would publish the same banked draft with the same advisories anyway.
+    const signatures = [
+      "layout_intent_missing #cold-open",
+      "contrast_aa div.seg-time",
+    ];
+    expect(stagnantPolishShipReason({
+      attempt: 2,
+      browserQaOk: true,
+      currentSignatures: signatures,
+      previousSignatures: new Set(signatures),
+      bankedPenalty: 7,
+    })).toBe("stagnant-polish-early-ship:penalty=7");
+    // Progress (a differing set) keeps the ladder running.
+    expect(stagnantPolishShipReason({
+      attempt: 2,
+      browserQaOk: true,
+      currentSignatures: [signatures[0]!],
+      previousSignatures: new Set(signatures),
+      bankedPenalty: 7,
+    })).toBeUndefined();
+    // Attempt 1 has no previous rejection to compare against.
+    expect(stagnantPolishShipReason({
+      attempt: 1,
+      browserQaOk: true,
+      currentSignatures: signatures,
+      previousSignatures: new Set(),
+      bankedPenalty: 7,
+    })).toBeUndefined();
+    // A hard runtime failure (browserQa.ok false) never takes the early exit.
+    expect(stagnantPolishShipReason({
+      attempt: 2,
+      browserQaOk: false,
+      currentSignatures: signatures,
+      previousSignatures: new Set(signatures),
+      bankedPenalty: 7,
+    })).toBeUndefined();
+    // Nothing banked → nothing to ship.
+    expect(stagnantPolishShipReason({
+      attempt: 2,
+      browserQaOk: true,
+      currentSignatures: signatures,
+      previousSignatures: new Set(signatures),
+      bankedPenalty: undefined,
+    })).toBeUndefined();
+  });
+
+  it("retries static primary moments but keeps static supporting moments diagnostic", () => {
     const qa: DirectBrowserQaResult = {
       ...base,
       strictOk: false,
@@ -1252,10 +1519,26 @@ describe("Sentinel Phase 3 — criticSkippableCleanDraft (critic gating predicat
         "moment_static_frame moment:m-ghost (t=6.00s): invisible change",
         "layout_intent_missing #scene (t=2.00s): Visible scene declares no relational layout intent.",
       ],
+      temporalJudge: [{
+        momentId: "m-ghost",
+        title: "Ghost",
+        importance: "supporting",
+        atSec: 6,
+        beforeSec: 5.8,
+        midSec: 6,
+        afterSec: 6.2,
+        changedRatio: 0,
+        meanDelta: 0,
+        verdict: "static",
+      }],
     };
     expect(sourceRetryFeedbackForBrowserQa(qa)).toEqual([
       "layout_intent_missing #scene (t=2.00s): Visible scene declares no relational layout intent.",
     ]);
+    expect(sourceRetryFeedbackForBrowserQa({
+      ...qa,
+      temporalJudge: qa.temporalJudge?.map((entry) => ({ ...entry, importance: "primary" })),
+    })).toContain("moment_static_frame moment:m-ghost (t=6.00s): invisible change");
     expect(sourceRetryFeedbackForBrowserQa({
       ...qa,
       errors: ["near_blank_film: 1 scene renders as blank frames"],
@@ -1470,21 +1753,69 @@ describe("correctSparseFraming (camera-sparse auto-framing, L2-at-L4)", () => {
       qa([sparseIssue("lonely", 0.1, { region: "lonely" })]),
     );
     expect(result.corrected).toEqual(["lonely"]);
-    // sqrt(0.18/0.1) = 1.3416…, base 1 → ~1.342, safely past the 1.05 skip.
+    // sqrt(0.22/0.1) = 1.483..., with headroom beyond the 18% audit floor.
     const zoom = result.storyboard[0]!.camera!.path[0]!.zoom!;
-    expect(zoom).toBeCloseTo(1.342, 2);
+    expect(zoom).toBeCloseTo(1.483, 2);
     expect(zoom).toBeGreaterThan(1.05);
+    expect(result.storyboard[0]!.camera!.path[0]!.framingCorrection).toBe("camera-sparse-zoom");
     // The input storyboard is never mutated in place.
     expect(storyboard[0]!.camera!.path[0]!.zoom).toBeUndefined();
   });
 
-  it("clamps the zoom factor at 1.8 for an extremely sparse landing", () => {
+  it("clamps the zoom factor at the camera contract ceiling for an extremely sparse landing", () => {
     const result = correctSparseFraming(
       [cameraScene("tiny", "tiny")],
       qa([sparseIssue("tiny", 0.02, { region: "tiny" })]),
     );
-    // sqrt(0.18/0.02) = 3.0 → clamped to the 1.8 ceiling.
-    expect(result.storyboard[0]!.camera!.path[0]!.zoom).toBeCloseTo(1.8, 5);
+    // sqrt(0.22/0.02) > 3 -> clamped to the camera contract's 2.8 ceiling.
+    expect(result.storyboard[0]!.camera!.path[0]!.zoom).toBeCloseTo(2.8, 5);
+  });
+
+  it("zooms a wide footprint whose actual painted occupancy is sparse", () => {
+    const issue = sparseIssue("scatter", 0.5, { region: "scatter" });
+    issue.framing!.occupiedFraction = 0.01;
+    const result = correctSparseFraming([cameraScene("scatter", "scatter")], qa([issue]));
+    expect(result.corrected).toEqual(["scatter"]);
+    expect(result.storyboard[0]!.camera!.path[0]!.zoom).toBeGreaterThan(2.5);
+  });
+
+  it("adds a restrained focal push when a camera-less scene is sparse", () => {
+    const staticScene: DirectScene = {
+      id: "cold-open",
+      title: "Cold open",
+      purpose: "Introduce one search field",
+      startSec: 0,
+      durationSec: 4,
+      spatialIntent: {
+        version: 1,
+        focalPart: "query",
+        composition: "one centered search field",
+        relationships: ["query is the only subject"],
+      },
+    };
+    const result = correctSparseFraming(
+      [staticScene],
+      qa([sparseIssue("cold-open", 0.12)]),
+    );
+    expect(result.corrected).toEqual(["cold-open"]);
+    expect(result.storyboard[0]!.camera!.path[0]).toMatchObject({
+      move: "push-in",
+      fromPart: "query",
+      toPart: "query",
+      startSec: 0,
+      framingCorrection: "camera-sparse-zoom",
+    });
+    expect(result.storyboard[0]!.camera!.path[0]!.zoom).toBeGreaterThan(1);
+    expect(result.storyboard[0]!.camera!.path[0]!.zoom).toBeLessThanOrEqual(1.08);
+  });
+
+  it("does not invent a sparse framing target without declared spatial intent", () => {
+    const result = correctSparseFraming(
+      [{ id: "unknown", title: "Unknown", purpose: "No focal", startSec: 0, durationSec: 4 }],
+      qa([sparseIssue("unknown", 0.08)]),
+    );
+    expect(result.corrected).toEqual([]);
+    expect(result.storyboard[0]!.camera).toBeUndefined();
   });
 
   it("bumps the last targeted full move for a scene-level [data-scene] finding", () => {
@@ -1529,6 +1860,161 @@ describe("correctSparseFraming (camera-sparse auto-framing, L2-at-L4)", () => {
     delete (issue as { framing?: unknown }).framing;
     const result = correctSparseFraming([cameraScene("lonely", "lonely")], qa([issue]));
     expect(result.corrected).toEqual([]);
+  });
+});
+
+describe("correctLayoutOverflow (browser-measured overflow repair)", () => {
+  const rect = (
+    left: number,
+    top: number,
+    width: number,
+    height: number,
+  ): NonNullable<DirectLayoutIssue["rect"]> => ({
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+  });
+
+  const scene = (extra: Partial<DirectScene> = {}): DirectScene => ({
+    id: "one",
+    title: "One",
+    purpose: "Open",
+    startSec: 0,
+    durationSec: 3,
+    ...extra,
+  });
+
+  const qa = (issues: DirectLayoutIssue[]): DirectBrowserQaResult => ({
+    ok: true,
+    strictOk: false,
+    samples: [1],
+    issues,
+    errors: [],
+    warnings: [],
+  });
+
+  const overflowIssue = (overrides: Partial<DirectLayoutIssue> = {}): DirectLayoutIssue => ({
+    code: "canvas_overflow",
+    severity: "info",
+    time: 1,
+    selector: "#badge",
+    repairSelector: "#badge",
+    sceneId: "one",
+    part: "badge",
+    rect: rect(780, 100, 60, 30),
+    containerRect: rect(0, 0, 800, 600),
+    overflow: { right: 40 },
+    message: "Text extends outside the composition canvas.",
+    source: "hyperframes",
+    ...overrides,
+  });
+
+  it("emits a bounded overflow clamp repair for a unique non-camera target", () => {
+    const result = correctLayoutOverflow([scene()], qa([overflowIssue()]));
+    expect(result.corrected).toEqual(["one"]);
+    const repair = result.storyboard[0]!.layoutRepairs![0]!;
+    expect(repair.kind).toBe("overflow-clamp");
+    expect(repair.selector).toBe("#badge");
+    expect(repair.issueCode).toBe("canvas_overflow");
+    expect(repair.dx).toBeLessThan(0);
+    expect(Math.abs(repair.dx)).toBeLessThanOrEqual(80);
+    expect(repair.scale).toBe(1);
+    expect(result.storyboard[0]!.sentinelNormalizations?.[0]).toContain("layout-overflow-clamp");
+  });
+
+  it("skips camera, cut, interaction, and focal addressed parts", () => {
+    const storyboard = [scene({
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "pan",
+          toPart: "badge",
+          startSec: 0.4,
+          durationSec: 1,
+        }],
+      },
+    })];
+    expect(addressedPartsForLayoutRepair(storyboard).has("one\u0000badge")).toBe(true);
+    expect(correctLayoutOverflow(storyboard, qa([overflowIssue()])).corrected).toEqual([]);
+  });
+
+  it("skips repairs that require a composition-changing scale", () => {
+    const result = correctLayoutOverflow(
+      [scene()],
+      qa([overflowIssue({
+        rect: rect(-120, 80, 1100, 80),
+        overflow: { left: 120, right: 180 },
+      })]),
+    );
+    expect(result.corrected).toEqual([]);
+  });
+
+  it("injects exactly one idempotent layout repair style block", () => {
+    const draftValue = draft();
+    const storyboard: DirectScene[] = [{
+      ...draftValue.storyboard[0]!,
+      layoutRepairs: [{
+        version: 1,
+        id: "layout-hook-test",
+        kind: "overflow-clamp",
+        selector: "#hook-copy",
+        issueCode: "canvas_overflow",
+        dx: -24,
+        dy: 0,
+        scale: 0.96,
+        origin: "center center",
+        before: {
+          rect: rect(1850, 120, 160, 48),
+          safeRect: rect(8, 8, 1904, 1064),
+        },
+      }],
+    }, draftValue.storyboard[1]!];
+    const first = applyDeterministicSourceRepairs(
+      {
+        ...draftValue,
+        storyboard,
+        html: draftValue.html.replace(
+          "</head>",
+          '<style data-sequences-layout-repair>#old{translate:1px 1px}</style></head>',
+        ),
+      },
+      projectDir(),
+      storyboard,
+    );
+    const second = applyDeterministicSourceRepairs(first, projectDir(), storyboard);
+    expect(second.html.match(/data-sequences-layout-repair/g)).toHaveLength(1);
+    expect(second.html).toContain("#hook-copy{transform-origin:center center !important;");
+    expect(second.html).toContain("translate:-24px 0px !important;");
+    expect(second.html).toContain("scale:0.96 !important;");
+    expect(second.html).not.toContain("#old");
+  });
+
+  it("ignores malformed host-only layout repair metadata instead of throwing", () => {
+    const draftValue = draft();
+    const storyboard: DirectScene[] = [{
+      ...draftValue.storyboard[0]!,
+      layoutRepairs: [{
+        version: 1,
+        id: "layout-bad-shape",
+        kind: "overflow-clamp",
+        selector: "#hook-copy",
+        issueCode: "canvas_overflow",
+        dx: -12,
+        dy: 0,
+        scale: 1,
+        origin: "center center",
+      } as unknown as NonNullable<DirectScene["layoutRepairs"]>[number]],
+    }, draftValue.storyboard[1]!];
+    const repaired = applyDeterministicSourceRepairs(
+      { ...draftValue, storyboard },
+      projectDir(),
+      storyboard,
+    );
+    expect(repaired.html).not.toContain("data-sequences-layout-repair");
   });
 });
 
@@ -1849,6 +2335,22 @@ describe("direct HyperFrames composition", () => {
     expect(requirements.requestedComponentKinds).toHaveLength(3);
     // The floor is capped at the requested count so the brief stays satisfiable.
     expect(requirements.minRequestedComponentKinds).toBe(3);
+  });
+
+  it("preserves explicit camera count, orbit, and shared-element demands", () => {
+    const requirements = inferStoryboardPlanRequirements(
+      "Use at least five purposeful full camera moves, one true orbit or orbit-lite peak, " +
+        "and a genuine shared-element morph or match.",
+      32,
+    );
+    expect(requirements).toMatchObject({
+      minCameraMoves: 5,
+      requireOrbit: true,
+      requireSharedElementCut: true,
+    });
+    const plan = storyboard();
+    expect(() => parseStoryboardResponse(JSON.stringify(plan), requirements))
+      .toThrow(/5 FULL typed camera moves/);
   });
 
   it("keeps typed boundary cuts and canonicalizes legacy names before source authoring", () => {
@@ -2907,7 +3409,7 @@ describe("direct HyperFrames composition", () => {
     expect(complete).toHaveBeenCalledTimes(2);
     expect(complete.mock.calls[1]?.[0]).toContain("timer-driven visual state is not seek-safe");
     expect(complete.mock.calls[1]?.[0]).toContain('"patches" array');
-    expect((complete.mock.calls[1]?.[1] as { maxTokens?: number }).maxTokens).toBe(4_096);
+    expect((complete.mock.calls[1]?.[1] as { maxTokens?: number }).maxTokens).toBe(8_192);
     expect((complete.mock.calls[1]?.[1] as {
       responseFormat?: { json_schema?: { name?: string } };
     }).responseFormat?.json_schema?.name).toBe("sequences_composition_patches");
@@ -3482,10 +3984,28 @@ describe("direct HyperFrames composition", () => {
     });
     expect(fs.existsSync(path.join(dir, "composition", "STORYBOARD.md"))).toBe(true);
     expect(fs.existsSync(path.join(dir, "composition", "motion-plan.json"))).toBe(true);
+    const motionPlan = JSON.parse(
+      fs.readFileSync(path.join(dir, "composition", "motion-plan.json"), "utf8"),
+    ) as {
+      direction: { version: number; source: string; scenes: unknown[] };
+      directionConsumersEnabled: boolean;
+      continuousMotion: { version: number; advisory: boolean; summary: { sampleCount: number } };
+    };
+    expect(motionPlan.direction).toMatchObject({ version: 1, source: "host-derived" });
+    expect(motionPlan.direction.scenes).toHaveLength(first.storyboard.length);
+    expect(motionPlan.directionConsumersEnabled).toBe(true);
+    expect(motionPlan.continuousMotion).toMatchObject({
+      version: 1,
+      advisory: true,
+      summary: { sampleCount: 5 },
+    });
     expect(fs.existsSync(
       path.join(dir, "composition", "sequences-interactions.v1.js"),
     )).toBe(true);
     expect(fs.existsSync(path.join(dir, "composition", "qa", "spatial.json"))).toBe(true);
+    expect(JSON.parse(
+      fs.readFileSync(path.join(dir, "composition", "qa", "spatial.json"), "utf8"),
+    ).continuousMotion).toMatchObject({ version: 1, advisory: true });
     expect(fs.existsSync(path.join(
       dir,
       "revisions",
@@ -3640,5 +4160,131 @@ describe("direct HyperFrames composition", () => {
     const drifted = await validateDirectComposition(dir, draft("#22d3ee"));
     expect(drifted.ok).toBe(false);
     expect(drifted.frameErrors.join("\n")).toContain("committed frame accent #8B5CF6");
+  });
+});
+
+describe("L2 station positioning repair (plugin-live-1 static-flow station)", () => {
+  it("completes position:absolute on a station declaring a placement rect", () => {
+    const html =
+      `<div data-camera-world style="width:3840px;height:2160px;position:absolute">` +
+      `<div data-region="metric-station" style="left:0;top:0;width:1920px;height:1080px;display:grid"></div>` +
+      `</div>`;
+    const result = repairStationPositioning(html);
+    expect(result.repairs).toBe(1);
+    expect(result.html).toContain(
+      'style="position:absolute;left:0;top:0;width:1920px;height:1080px;display:grid"',
+    );
+  });
+
+  it("leaves already-positioned and rect-less stations alone (idempotent)", () => {
+    const html =
+      `<div data-region="a" style="position:absolute;left:10px;top:0;width:100px;height:100px"></div>` +
+      `<div data-region="b" style="display:flex;gap:8px"></div>` +
+      `<div data-region="c"></div>`;
+    const result = repairStationPositioning(html);
+    expect(result.repairs).toBe(0);
+    expect(result.html).toBe(html);
+    const repaired = repairStationPositioning(
+      repairStationPositioning(
+        `<div data-region="d" style="left:0;top:0;width:9px;height:9px"></div>`,
+      ).html,
+    );
+    expect(repaired.repairs).toBe(0);
+  });
+});
+
+describe("L2 infinite-repeat clamp (plugin-probe-1 attempt-1 death class)", () => {
+  it("rewrites repeat:-1 to a finite repeat before the invariant lint", () => {
+    const draftValue = draft();
+    const storyboard = draftValue.storyboard;
+    const withRepeat = {
+      ...draftValue,
+      html: draftValue.html.replace(
+        "</body>",
+        '<div class="pulse"></div><script>tl.to(\'.pulse\',{opacity:0.4,repeat: -1,yoyo:true});</script></body>',
+      ),
+    };
+    const repaired = applyDeterministicSourceRepairs(withRepeat, projectDir(), storyboard);
+    expect(repaired.html).not.toMatch(/repeat\s*:\s*-1\b/);
+    expect(repaired.html).toContain("repeat: 2");
+  });
+});
+
+describe("L2 brand base injection (host-owned committed type/canvas/accent)", () => {
+  const FRAME_MD = [
+    "| Token | Value | Rule |",
+    "| Canvas | `#0A0E14` | Primary text must remain >=7:1 |",
+    "| Committed accent | `#E8590C` | one accent |",
+    "",
+    "**Display / headlines:** Space Grotesk",
+    "**Body / UI:** EB Garamond",
+    "**Mono / chrome / code:** JetBrains Mono",
+  ].join("\n");
+
+  it("renders the committed tokens as a host style block", () => {
+    const block = brandBaseStyleBlock(FRAME_MD)!;
+    expect(block).toContain('id="sequences-brand-base"');
+    expect(block).toContain("--canvas:#0A0E14");
+    expect(block).toContain("--accent:#E8590C");
+    expect(block).toContain("--font-body:'EB Garamond'");
+    expect(block).toContain("body{font-family:var(--font-body)");
+    expect(block).toContain(".cmp-headline{font-family:var(--font-display)");
+    expect(block).toContain("--font-mono:'JetBrains Mono'");
+  });
+
+  it("injects before the first authored style so authored rules win, and converges", () => {
+    const html =
+      `<html><head><style>:root{--accent:#ffffff}</style></head><body></body></html>`;
+    const once = injectBrandBase(html, FRAME_MD);
+    expect(once.injected).toBe(true);
+    const brandIndex = once.html.indexOf("sequences-brand-base");
+    const authoredIndex = once.html.indexOf("--accent:#ffffff");
+    expect(brandIndex).toBeGreaterThan(-1);
+    expect(brandIndex).toBeLessThan(authoredIndex);
+    const twice = injectBrandBase(once.html, FRAME_MD);
+    expect(twice.injected).toBe(false);
+    expect(twice.html).toBe(once.html);
+  });
+
+  it("no-ops without a frame or without committed tokens", () => {
+    expect(injectBrandBase("<html></html>", undefined).injected).toBe(false);
+    expect(brandBaseStyleBlock("no tokens here")).toBeUndefined();
+  });
+});
+
+describe("L2 default worldLayout derivation (fix-probe-1 mega-station void)", () => {
+  it("synthesizes viewport cells for camera-path regions when the plan omits worldLayout", () => {
+    const scenes = storyboard();
+    const raw = scenes.map((scene, index) =>
+      index === 1
+        ? {
+            ...scene,
+            camera: {
+              version: 1,
+              path: [
+                { version: 1, move: "pan", toRegion: "terminal-strip", startSec: 3.2, durationSec: 0.8 },
+                { version: 1, move: "pan", toRegion: "metric-wall", startSec: 4.4, durationSec: 0.8 },
+              ],
+            },
+          }
+        : scene
+    );
+    const parsed = parseStoryboardResponse(`<storyboard_json>${JSON.stringify(raw)}</storyboard_json>`);
+    const middle = parsed[1]!;
+    expect(middle.worldLayout).toEqual([
+      { region: "terminal-strip", cell: [0, 0] },
+      { region: "metric-wall", cell: [1, 0] },
+    ]);
+    expect(
+      middle.sentinelNormalizations?.some((note) => note.startsWith("world-layout-derive")),
+    ).toBe(true);
+    // A declared layout always wins — no synthesis, no note.
+    const declared = raw.map((scene, index) =>
+      index === 1
+        ? { ...scene, worldLayout: [{ region: "metric-wall", cell: [0, 0] }] }
+        : scene
+    );
+    const kept = parseStoryboardResponse(`<storyboard_json>${JSON.stringify(declared)}</storyboard_json>`)[1]!;
+    expect(kept.worldLayout).toEqual([{ region: "metric-wall", cell: [0, 0] }]);
   });
 });

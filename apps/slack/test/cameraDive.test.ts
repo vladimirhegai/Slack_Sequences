@@ -92,8 +92,10 @@ describe("dive normalization (MD5)", () => {
 });
 
 describe("diveWindows", () => {
-  it("defaults to symmetric quarter-window legs capped at the max", () => {
-    expect(diveWindows({ durationSec: 2 })).toEqual({ inSec: 0.5, outSec: 0.5 });
+  it("floors short-dive legs so they don't snap, and caps long-dive legs at the max", () => {
+    // The quarter-window leg for a 2s dive (0.5s) is floored to DIVE_LEG_MIN_SEC
+    // so a short dive eases in/out instead of snapping (probe-audit-03 softening).
+    expect(diveWindows({ durationSec: 2 })).toEqual({ inSec: 0.7, outSec: 0.7 });
     expect(diveWindows({ durationSec: 6 })).toEqual({
       inSec: DIVE_LEG_MAX_SEC,
       outSec: DIVE_LEG_MAX_SEC,

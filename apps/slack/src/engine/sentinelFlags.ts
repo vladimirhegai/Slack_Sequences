@@ -41,6 +41,42 @@ export function criticSkipCleanEnabled(): boolean {
 }
 
 /**
+ * Route continuity-critic directives that name a shot through the scene-scoped
+ * slot repair (`repairSlotDraftForFindings`) instead of a whole-document patch.
+ * A small per-scene re-author validates far more often than a find/replace
+ * patch against a large document — the sequence-check-1783463306190 probe
+ * showed the whole-doc critique patch failing static validation and the
+ * pre-critique draft shipping (two paid calls for nothing). Only fires when the
+ * shipped draft came from the slot path (so a slot map exists) and EVERY
+ * directive names a shot; film-level directives keep the whole-document path.
+ * Adopted only on a strict non-regression guard (static + browser clean, the
+ * quality penalty never rises), so a stale slot map can only miss the
+ * optimization, never ship a worse film. Default ON;
+ * `SLACK_SEQUENCES_CRITIC_SLOT_REPAIR=0` reverts to the whole-document critique
+ * patch in one env var.
+ */
+export function criticSlotRepairEnabled(): boolean {
+  return process.env.SLACK_SEQUENCES_CRITIC_SLOT_REPAIR !== "0";
+}
+
+/**
+ * Storyboard scene-scoped findings repair — the storyboard analogue of the
+ * author-stage slot retry (`repairSlotDraftForFindings`). When a rejected
+ * storyboard's EVERY blocking finding maps to a named scene, re-plan ONLY those
+ * scenes (one bounded, low-reasoning call) against the locked timing envelope,
+ * re-validate the merged plan through the full gate, and adopt it if it
+ * converges — replacing the ~6-min whole-plan re-plan an attempt would cost.
+ * Default ON; `SLACK_SEQUENCES_STORYBOARD_SCENE_REPAIR=0` reverts to the
+ * whole-plan-only ladder in one env var (it only ever REPLACES a paid attempt
+ * with a cheaper one and falls back to that same attempt on any miss, so it can
+ * never reduce a run's chances — but the kill switch keeps the structural
+ * change one flag from reverting).
+ */
+export function storyboardSceneRepairEnabled(): boolean {
+  return process.env.SLACK_SEQUENCES_STORYBOARD_SCENE_REPAIR !== "0";
+}
+
+/**
  * Recipe Studio Level-1 consumption — retrieval offers proven library recipes
  * to the planner and the host instantiates declared ones verbatim
  * (`recipeContract.ts`). Default ON: the operator wants recipes to be a
@@ -52,4 +88,32 @@ export function criticSkipCleanEnabled(): boolean {
  */
 export function recipesEnabled(): boolean {
   return process.env.SLACK_SEQUENCES_RECIPES !== "0";
+}
+
+/**
+ * Host plugins — parameterized generators the storyboard invokes as typed
+ * `plugins:[{kind,params}]` forms and the host LOWERS into the existing
+ * component/beat contracts plus a host-injected markup unit
+ * (`pluginContract.ts`, the seventh host-owned contract). Default ON: the
+ * whole path is degrade-never-veto (unknown kinds no-op, bad params
+ * default/clamp/drop at parse — zero paid attempts), and lowered output still
+ * passes every existing gate. `SLACK_SEQUENCES_PLUGINS=0` reverts to the
+ * plugin-free pipeline in one env var (declarations then parse to nothing).
+ */
+export function pluginsEnabled(): boolean {
+  return process.env.SLACK_SEQUENCES_PLUGINS !== "0";
+}
+
+/**
+ * Pre-built asset library — designer-grade parametric assets
+ * (`assetContract.ts` + `src/engine/assets/`, ASSETS.md) exposed to the
+ * planner as `asset-<id>` plugin kinds riding the plugin rails
+ * (strip-and-reinject, default/clamp/drop governance, shared per-film
+ * budget). Default ON after asset-probe-2 published clean;
+ * `SLACK_SEQUENCES_ASSETS=0` reverts to the asset-free path. The Asset Lab
+ * (`npm run assets`) works regardless of this flag — it reads the library
+ * directly.
+ */
+export function assetsEnabled(): boolean {
+  return process.env.SLACK_SEQUENCES_ASSETS !== "0";
 }

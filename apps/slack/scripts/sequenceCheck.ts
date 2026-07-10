@@ -308,7 +308,7 @@ function summarizeStatus(report: StatusReport): CheckStatus {
   if (report.direct?.validation?.ok === false) return "fail";
   if (report.result.thumbnailPaths.some((thumb) => !thumb.exists || thumb.bytes <= 0)) return "fail";
   if (report.options.render && (!report.artifacts.mp4?.exists || report.artifacts.mp4.bytes <= 0)) {
-    return "warn";
+    return "fail";
   }
   if (report.result.authoringMode === "deterministic-fallback") return "warn";
   if ((report.direct?.validation?.motionWarnings?.length ?? 0) > 0) return "warn";

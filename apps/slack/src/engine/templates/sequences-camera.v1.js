@@ -8,10 +8,13 @@
   // the camera compiler and authored GSAP beats can reference them by name.
   // Every function is pure, f(0)=0, f(1)=1 — deterministic under seek.
   var EASES = {
-    // Sharp symmetric in-out with a high peak velocity and feathered ends —
-    // the signature SaaS "swoosh" reframe.
+    // Controlled symmetric travel for operated pans and tracks. The old
+    // quintic curve covered almost no distance in the first/last quarter,
+    // then rushed through the middle; chained moves read as wait-rush-wait.
+    // Cubic in-out still has a confident velocity peak while leaving enough
+    // visible travel in the shoulders to read as one continuous gesture.
     seqSwoosh: function (t) {
-      return t < 0.5 ? 16 * Math.pow(t, 5) : 1 - Math.pow(-2 * t + 2, 5) / 2;
+      return t < 0.5 ? 4 * Math.pow(t, 3) : 1 - Math.pow(-2 * t + 2, 3) / 2;
     },
     // Violent leave, feathered landing. Asymmetric: most of the distance is
     // covered in the first 40% of the window.
@@ -93,7 +96,8 @@
   // Dive leg fallbacks — kept in sync with cameraContract's diveWindows.
   var DIVE_LEG_MAX = 0.8;
   var DIVE_LEG_FRACTION = 0.25;
-  var REGION_MARGIN_RATIO = 0.04;
+  var DIVE_LEG_MIN = 0.7;
+  var REGION_MARGIN_RATIO = 0.08;
   var PART_MARGIN_RATIO = 0.16;
   var CREEP_ZOOM = 1.028;
   var ORBIT_DEG = 7;
@@ -138,6 +142,102 @@
     };
   }
 
+  function colorHasAlpha(value) {
+    if (!value || value === "transparent") return false;
+    var match = value.match(/rgba?\(([^)]+)\)/i);
+    if (!match) return true;
+    var channels = match[1].split(",");
+    return channels.length < 4 || Number(channels[3]) > 0.02;
+  }
+
+  function hasVisualPaint(element) {
+    var style = getComputedStyle(element);
+    if (colorHasAlpha(style.backgroundColor) || style.backgroundImage !== "none") return true;
+    if (style.boxShadow !== "none" || style.outlineStyle !== "none") return true;
+    return (
+      (parseFloat(style.borderTopWidth) || 0) > 0 ||
+      (parseFloat(style.borderRightWidth) || 0) > 0 ||
+      (parseFloat(style.borderBottomWidth) || 0) > 0 ||
+      (parseFloat(style.borderLeftWidth) || 0) > 0
+    );
+  }
+
+  function hasDirectText(element) {
+    for (var i = 0; i < element.childNodes.length; i += 1) {
+      var node = element.childNodes[i];
+      if (node.nodeType === Node.TEXT_NODE && /\S/.test(node.textContent || "")) return true;
+    }
+    return false;
+  }
+
+  function isFramingContent(element) {
+    if (
+      element.closest("[data-layout-ignore],[data-camera-overlay]") ||
+      element.matches(".cmp-scrim,.seq-whip-lens,[data-layout-decorative]")
+    ) return false;
+    var tag = element.tagName.toUpperCase();
+    if (tag === "IMG" || tag === "SVG" || tag === "VIDEO" || tag === "CANVAS" || tag === "PICTURE") {
+      return true;
+    }
+    return hasDirectText(element) || hasVisualPaint(element);
+  }
+
+  // A station is a placement boundary, not necessarily the shot's visual
+  // silhouette. Authors commonly put one 600px product panel in a viewport-
+  // sized station; fitting the station makes that panel a tiny subject adrift
+  // in empty space. Frame the union of actual painted/text/media descendants,
+  // while preserving an explicit escape for deliberate establishing shots.
+  function regionContentRect(world, region) {
+    var fallback = layoutRect(world, region);
+    if (region.getAttribute("data-camera-frame") === "region") return fallback;
+    var left = Infinity;
+    var top = Infinity;
+    var right = -Infinity;
+    var bottom = -Infinity;
+    var nodes = region.querySelectorAll("*");
+    for (var i = 0; i < nodes.length; i += 1) {
+      var element = nodes[i];
+      if (!isFramingContent(element)) continue;
+      var rect = layoutRect(world, element);
+      if (rect.width < 4 || rect.height < 4) continue;
+      left = Math.min(left, rect.x);
+      top = Math.min(top, rect.y);
+      right = Math.max(right, rect.x + rect.width);
+      bottom = Math.max(bottom, rect.y + rect.height);
+    }
+    if (right <= left || bottom <= top) return fallback;
+    return { x: left, y: top, width: right - left, height: bottom - top };
+  }
+
+  function partWithCompanionsRect(world, element) {
+    var fallback = layoutRect(world, element);
+    var region = element.closest && element.closest("[data-region]");
+    if (!region) return fallback;
+    var companions = region.querySelectorAll("[data-layout-important]");
+    if (!companions.length) return fallback;
+    var left = fallback.x;
+    var top = fallback.y;
+    var right = fallback.x + fallback.width;
+    var bottom = fallback.y + fallback.height;
+    for (var i = 0; i < companions.length; i += 1) {
+      var rect = layoutRect(world, companions[i]);
+      if (rect.width < 4 || rect.height < 4) continue;
+      left = Math.min(left, rect.x);
+      top = Math.min(top, rect.y);
+      right = Math.max(right, rect.x + rect.width);
+      bottom = Math.max(bottom, rect.y + rect.height);
+    }
+    return { x: left, y: top, width: right - left, height: bottom - top };
+  }
+
+  function framingRect(world, element, kind) {
+    if (kind === "region") return regionContentRect(world, element);
+    // Modal roots span the scene; their dialog is the surface the camera and
+    // the audience perceive as the subject.
+    var visual = element.querySelector && element.querySelector(".cmp-dialog");
+    return partWithCompanionsRect(world, visual || element);
+  }
+
   function targetElement(scene, segment, useFrom) {
     var part = useFrom ? segment.fromPart : segment.toPart;
     var region = useFrom ? segment.fromRegion : segment.toRegion;
@@ -160,7 +260,7 @@
 
   // The camera state that frames `element` comfortably inside the viewport.
   function frameState(viewport, world, element, kind, zoomMul) {
-    var r = layoutRect(world, element);
+    var r = framingRect(world, element, kind);
     var marginRatio = kind === "part" ? PART_MARGIN_RATIO : REGION_MARGIN_RATIO;
     var margin = Math.min(viewport.w, viewport.h) * marginRatio;
     var fit = Math.min(
@@ -435,15 +535,22 @@
         var framedDive = frameState(
           viewport, world, diveTarget.element, "part", segment.zoom,
         );
-        var legCap = Math.min(DIVE_LEG_MAX, duration * DIVE_LEG_FRACTION);
+        var legCap = Math.max(DIVE_LEG_MIN, Math.min(DIVE_LEG_MAX, duration * DIVE_LEG_FRACTION));
         var inSec = isFinite(segment.inSec) ? segment.inSec : legCap;
         var outSec = isFinite(segment.outSec) ? segment.outSec : legCap;
+        // Dive envelope softening (probe-audit-03: the dive read harsh on entry
+        // and exit). The runtime OWNS the dive's leg eases (MD5: the host owns
+        // the whole dive arithmetic), so the push-in gets a soft committed
+        // ease-in-out and the pull-back a gentle ease-out — never a
+        // velocity-spike ease like seqImpulse that snaps the frame. The held
+        // middle between the legs is untouched (exact return to the pre-dive
+        // state by construction).
         tween(timeline, proxy, { x: state.x, y: state.y, z: state.z }, {
           x: framedDive.x,
           y: framedDive.y,
           z: framedDive.z,
           duration: inSec,
-          ease: segment.ease || "seqSettle",
+          ease: "power2.inOut",
           onUpdate: apply,
         }, segment.startSec);
         tween(timeline, proxy, {
@@ -455,7 +562,7 @@
           y: state.y,
           z: state.z,
           duration: outSec,
-          ease: "power3.inOut",
+          ease: "power2.out",
           onUpdate: apply,
         }, segment.endSec - outSec);
         // state is unchanged by construction — the camera came home.

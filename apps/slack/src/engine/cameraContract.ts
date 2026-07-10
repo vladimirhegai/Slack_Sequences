@@ -25,6 +25,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DirectScene } from "./directComposition.ts";
+import {
+  directionScoreConsumersEnabled,
+  directionSettleWindows,
+  resolveFilmDirectionScore,
+  type DirectionSettleWindowV1,
+} from "./directionScore.ts";
 
 export const CAMERA_RUNTIME_VERSION = 1;
 export const CAMERA_RUNTIME_FILE = "sequences-camera.v1.js";
@@ -82,6 +88,20 @@ export const CAMERA_FULL_MOVES: ReadonlySet<CameraMoveStyle> = new Set<CameraMov
 export const DIVE_LEG_MAX_SEC = 0.8;
 export const DIVE_LEG_FRACTION = 0.25;
 export const DIVE_MIN_HOLD_FRACTION = 0.2;
+/**
+ * Minimum in/out leg for a dive whose legs are NOT constrained tighter by a
+ * beat landing right after the push-in (probe-audit-03 read harsh on short
+ * dives). Raised from the quarter-window fallback so a short dive eases in/out
+ * instead of snapping; capped by the fraction ceiling and the hold budget so it
+ * never eats the held middle a tightly-timed dive derives.
+ */
+export const DIVE_LEG_MIN_SEC = 0.7;
+
+/** The fallback leg length for a dive of this total duration, floored so short
+ * dives don't snap (DIVE_LEG_MIN_SEC) but never past the fraction ceiling. */
+export function diveLegCap(durationSec: number): number {
+  return Math.max(DIVE_LEG_MIN_SEC, Math.min(DIVE_LEG_MAX_SEC, durationSec * DIVE_LEG_FRACTION));
+}
 export const DIVE_ZOOM_MIN = 1.0;
 export const DIVE_ZOOM_MAX = 1.4;
 export const DIVE_ZOOM_DEFAULT = 1.18;
@@ -96,7 +116,7 @@ export const DIVE_ZOOM_DEFAULT = 1.18;
 export function diveWindows(
   move: Pick<CameraMoveIntentV1, "durationSec" | "inSec" | "outSec">,
 ): { inSec: number; outSec: number } {
-  const legCap = Math.min(DIVE_LEG_MAX_SEC, move.durationSec * DIVE_LEG_FRACTION);
+  const legCap = diveLegCap(move.durationSec);
   let inSec = finite(move.inSec) ? move.inSec : legCap;
   let outSec = finite(move.outSec) ? move.outSec : legCap;
   const maxLegs = move.durationSec * (1 - DIVE_MIN_HOLD_FRACTION);
@@ -117,6 +137,15 @@ export const ORBIT_ARC_DEFAULT_DEG = 28;
 /** Rack-focus blur ceiling; software rasterization pays per blurred pixel. */
 export const FOCUS_BLUR_MAX_PX = 10;
 export const FOCUS_BLUR_DEFAULT_PX = 6;
+
+/**
+ * Minimum destination dwell when a substantial final reframe would otherwise
+ * land exactly on the scene cut. Kept below the moment binder's 0.45s look-back
+ * so existing camera evidence remains bindable; the resolver fills the freed
+ * tail with its gentle destination drift rather than a frozen frame.
+ */
+export const CAMERA_LANDING_RESERVE_SEC = 0.42;
+const CAMERA_MIN_RETIMED_TRAVEL_SEC = 0.35;
 
 /**
  * Curated motion-graphics ease vocabulary registered by the camera runtime at
@@ -176,6 +205,8 @@ export interface CameraMoveIntentV1 {
   outSec?: number;
   /** Optional rack-focus pull attached to this move's window. */
   focus?: CameraFocusIntentV1;
+  /** Host-applied correction that must remain browser-auditable after zoom. */
+  framingCorrection?: "camera-sparse-zoom";
   startSec: number;
   durationSec: number;
   ease?: string;
@@ -213,6 +244,8 @@ export interface CameraSegmentV1 {
   outSec?: number;
   /** Rack-focus pull bound to this segment's window. */
   focus?: CameraFocusIntentV1;
+  /** Host-applied correction that must remain browser-auditable after zoom. */
+  framingCorrection?: "camera-sparse-zoom";
 }
 
 export interface SceneCameraPlanV1 {
@@ -274,11 +307,13 @@ const FILL_EPSILON_SEC = 0.11;
 const ANTICIPATION_SEC = 0.22;
 /** Minimum gap-fill length that can afford a wind-up split. */
 const ANTICIPATION_MIN_GAP_SEC = 0.35;
-/** Moves that earn an anticipation wind-up before they commit. */
+/**
+ * Moves that earn an anticipation wind-up before they commit. A whip can
+ * motivate a tiny reverse load; applying it to ordinary pushes and tracking
+ * moves made the camera visibly change its mind before routine reframes.
+ */
 const ANTICIPATION_MOVES: ReadonlySet<CameraMoveStyle> = new Set<CameraMoveStyle>([
   "whip",
-  "push-in",
-  "track-to-anchor",
 ]);
 
 const ZOOM_MIN = 0.5;
@@ -410,6 +445,74 @@ export function normalizeStoryboardCameraIntent(
 }
 
 /**
+ * Canonicalize post-retime paths before the resolver turns them into segments.
+ * Connective drift/hold is subordinate to decisive full moves: if a planner or
+ * pacing retime leaves connective motion spanning a full move, trim it to the
+ * nearest free interval (or drop a sub-150ms remnant). Also restore chronological
+ * ordering after retimers mutate `startSec` in place. Probe 7 otherwise squeezed
+ * a 2s parallax pass into 300ms because an earlier array entry had been delayed
+ * past it, producing the film's largest jerk spike.
+ */
+export function normalizeConnectiveCameraSchedule(
+  storyboard: DirectScene[],
+): { storyboard: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  const scenes = storyboard.map((scene) => {
+    const path = scene.camera?.path;
+    if (!path?.length) return scene;
+    const decorated = path.map((move, index) => ({ move, index }));
+    const fullMoves = decorated
+      .filter((entry) => CAMERA_FULL_MOVES.has(entry.move.move))
+      .sort((a, b) => a.move.startSec - b.move.startSec || a.index - b.index);
+    let trimmed = 0;
+    let dropped = 0;
+    const adjusted = decorated.flatMap(({ move, index }) => {
+      if (move.move !== "drift" && move.move !== "hold") return [{ move, index }];
+      let start = move.startSec;
+      let end = move.startSec + move.durationSec;
+      for (const full of fullMoves) {
+        const fullStart = full.move.startSec;
+        const fullEnd = full.move.startSec + full.move.durationSec;
+        if (end <= fullStart + 1e-6 || start >= fullEnd - 1e-6) continue;
+        if (start < fullStart - 1e-6) {
+          end = fullStart;
+          break;
+        }
+        start = fullEnd;
+      }
+      const durationSec = round(end - start);
+      if (durationSec < 0.15) {
+        dropped += 1;
+        return [];
+      }
+      const changed = Math.abs(start - move.startSec) > 1e-6 ||
+        Math.abs(durationSec - move.durationSec) > 1e-6;
+      if (changed) trimmed += 1;
+      return [{
+        index,
+        move: changed ? { ...move, startSec: round(start), durationSec } : move,
+      }];
+    });
+    const ordered = adjusted.sort((a, b) =>
+      a.move.startSec - b.move.startSec || a.index - b.index
+    );
+    const reordered = ordered.some((entry, index) => entry.index !== index);
+    if (!trimmed && !dropped && !reordered) return scene;
+    const note =
+      `canonicalized camera schedule after retiming (` +
+      `${trimmed} connective trim(s), ${dropped} sub-150ms drop(s), ` +
+      `${reordered ? "chronological reorder" : "order already chronological"})`;
+    normalized.push(`scene "${scene.id}": ${note}`);
+    return {
+      ...scene,
+      camera: { ...scene.camera!, path: ordered.map((entry) => entry.move) },
+      sentinelNormalizations: [...(scene.sentinelNormalizations ?? []), note],
+    };
+  });
+  return { storyboard: scenes, normalized };
+}
+
+/**
  * Planners routinely stage "pan to the region, then push in on it" as two
  * serial moves, which plays as travel → dead stop → zoom — the awkward-pause
  * tell. A reframe immediately followed by a push-in/pull-back on the SAME
@@ -463,6 +566,7 @@ function targetOf(intent: CameraMoveIntentV1): TargetRef | undefined {
  */
 export function resolveCameraPlan(scenes: DirectScene[]): CameraPlanV1 {
   const planScenes: SceneCameraPlanV1[] = [];
+  const direction = resolveFilmDirectionScore(scenes);
   for (const scene of scenes) {
     const intent = scene.camera;
     if (!intent?.path.length) continue;
@@ -471,6 +575,20 @@ export function resolveCameraPlan(scenes: DirectScene[]): CameraPlanV1 {
     // leading moves from the first explicit framing.
     const firstTargeted = intent.path.find((move) => targetOf(move));
     if (!firstTargeted) continue;
+    // A later first move names where the camera is GOING, not necessarily the
+    // opening frame. Without an explicit from target the old resolver started
+    // on that future destination, turning the lead-in drift and the move into
+    // a no-op while the scene's promised focal could sit off-frame. The
+    // storyboard already owns one deterministic entry anchor: spatialIntent's
+    // focal part.
+    const entryTarget: TargetRef | undefined = firstTargeted.fromPart
+      ? { toPart: firstTargeted.fromPart }
+      : firstTargeted.fromRegion
+        ? { toRegion: firstTargeted.fromRegion }
+        : firstTargeted.startSec > scene.startSec + FILL_EPSILON_SEC &&
+            scene.spatialIntent?.focalPart
+          ? { toPart: scene.spatialIntent.focalPart }
+          : targetOf(firstTargeted);
     let currentTarget: TargetRef = targetOf(firstTargeted)!;
     const targeted = intent.path.map((move) => {
       const target = targetOf(move) ?? currentTarget;
@@ -479,18 +597,78 @@ export function resolveCameraPlan(scenes: DirectScene[]): CameraPlanV1 {
     });
 
     const segments: CameraSegmentV1[] = [];
+    const settleWindows = directionScoreConsumersEnabled()
+      ? directionSettleWindows(direction, scene.id)
+      : [];
     let cursor = round(scene.startSec);
-    const pushFill = (endSec: number, target: TargetRef, blend: number): void => {
+    const pushFillSegment = (
+      endSec: number,
+      target: TargetRef,
+      blend: number,
+      move: "drift" | "hold" = "drift",
+    ): void => {
+      if (endSec - cursor <= FILL_EPSILON_SEC) return;
+      const startsPlan = segments.length === 0;
       segments.push({
-        move: "drift",
+        move,
         startSec: cursor,
         endSec: round(endSec),
-        blend,
+        blend: move === "hold" ? 0 : blend,
         zoom: 1,
-        ease: MOVE_DEFAULTS.drift.ease,
+        ease: move === "hold" ? MOVE_DEFAULTS.hold.ease : MOVE_DEFAULTS.drift.ease,
         ...target,
+        ...(startsPlan && entryTarget?.toRegion ? { fromRegion: entryTarget.toRegion } : {}),
+        ...(startsPlan && entryTarget?.toPart ? { fromPart: entryTarget.toPart } : {}),
       });
       cursor = round(endSec);
+    };
+    /**
+     * Partition an automatic connective into drift and explicit holds from the
+     * film direction score. Declared camera moves are untouched; only the
+     * resolver-owned creep/approach yields while a payoff or cut landing reads.
+     */
+    const pushFill = (endSec: number, target: TargetRef, blend: number): void => {
+      const fillStart = cursor;
+      const holds = settleWindows
+        .filter((window): window is DirectionSettleWindowV1 =>
+          window.endSec > fillStart + FILL_EPSILON_SEC &&
+          window.startSec < endSec - FILL_EPSILON_SEC
+        )
+        .map((window) => ({
+          startSec: Math.max(fillStart, window.startSec),
+          endSec: Math.min(endSec, window.endSec),
+        }))
+        .sort((a, b) => a.startSec - b.startSec);
+      if (!holds.length) {
+        pushFillSegment(endSec, target, blend);
+        return;
+      }
+      const holdDuration = holds.reduce(
+        (total, hold) => total + Math.max(0, hold.endSec - Math.max(cursor, hold.startSec)),
+        0,
+      );
+      const movingDuration = Math.max(FILL_EPSILON_SEC, endSec - fillStart - holdDuration);
+      for (const hold of holds) {
+        if (hold.startSec > cursor + FILL_EPSILON_SEC) {
+          const duration = hold.startSec - cursor;
+          pushFillSegment(
+            hold.startSec,
+            target,
+            blend > 0 ? blend * duration / movingDuration : 0,
+          );
+        }
+        if (hold.endSec > cursor + FILL_EPSILON_SEC) {
+          pushFillSegment(hold.endSec, target, 0, "hold");
+        }
+      }
+      if (endSec > cursor + FILL_EPSILON_SEC) {
+        const duration = endSec - cursor;
+        pushFillSegment(
+          endSec,
+          target,
+          blend > 0 ? blend * duration / movingDuration : 0,
+        );
+      }
     };
     for (const entry of targeted) {
       const defaults = MOVE_DEFAULTS[entry.move.move];
@@ -540,13 +718,16 @@ export function resolveCameraPlan(scenes: DirectScene[]): CameraPlanV1 {
         zoom: clamp(entry.move.zoom ?? defaults.zoom, ZOOM_MIN, ZOOM_MAX),
         ease: entry.move.ease ?? defaults.ease,
         ...entry.target,
-        ...(isFirst && entry.move.fromRegion ? { fromRegion: entry.move.fromRegion } : {}),
-        ...(isFirst && entry.move.fromPart ? { fromPart: entry.move.fromPart } : {}),
+        ...(isFirst && entryTarget?.toRegion ? { fromRegion: entryTarget.toRegion } : {}),
+        ...(isFirst && entryTarget?.toPart ? { fromPart: entryTarget.toPart } : {}),
         ...(entry.move.move === "orbit"
           ? { arcDeg: entry.move.arcDeg ?? ORBIT_ARC_DEFAULT_DEG }
           : {}),
         ...(legs ? { inSec: legs.inSec, outSec: legs.outSec } : {}),
         ...(entry.move.focus ? { focus: entry.move.focus } : {}),
+        ...(entry.move.framingCorrection === "camera-sparse-zoom"
+          ? { framingCorrection: "camera-sparse-zoom" as const }
+          : {}),
       });
       cursor = endSec;
     }
@@ -681,6 +862,9 @@ export function parseCameraPlan(html: string): { plan?: CameraPlanV1; errors: st
           ? { inSec: segment.inSec, outSec: segment.outSec }
           : {}),
         ...(focus ? { focus } : {}),
+        ...(segment.framingCorrection === "camera-sparse-zoom"
+          ? { framingCorrection: "camera-sparse-zoom" as const }
+          : {}),
       }];
     });
     return sceneId && segments.length
@@ -914,6 +1098,212 @@ export function auditCameraEnergy(storyboard: DirectScene[]): string[] {
     }
   }
   return findings;
+}
+
+/**
+ * Zoom below `HIGH_ENERGY_PUSH_ZOOM` but committed enough that nudging it up to
+ * the peak threshold is a normalization (the model already chose a mild zoom),
+ * not an invention. The energy lift only touches a move already in this band.
+ */
+export const MILD_ENERGY_ZOOM_MIN = 1.15;
+
+/** Full moves whose zoom carries their energy — the only kinds the lift bumps. */
+const ZOOM_ENERGY_MOVES: ReadonlySet<CameraMoveStyle> = new Set<CameraMoveStyle>([
+  "push-in",
+  "pull-back",
+  "dive",
+]);
+
+/**
+ * Sentinel L2 normalize-before-retry: a 12s+ film with no high-energy peak is
+ * the exact `camera/energy` shape `auditCameraEnergy` blocks. When the film
+ * ALREADY commits to a mild zoom-in — a push-in/pull-back/dive whose effective
+ * zoom sits in [MILD_ENERGY_ZOOM_MIN, HIGH_ENERGY_PUSH_ZOOM) — raise the single
+ * largest such move to HIGH_ENERGY_PUSH_ZOOM so the film earns its required
+ * peak. This DEGRADES a value the model already declared by a bounded amount
+ * (the audit's OWN remediation advice is "a push-in with zoom:1.35"); it never
+ * invents a move, a target, or a verb, and it adds no move, so the per-scene
+ * camera budget and framing-density floor are untouched — a normalization (L2),
+ * not a creative rewrite.
+ *
+ * It fires ONLY when there is also no energetic cut (matching
+ * `auditCameraEnergy`'s own peak test), so it can never fight a film whose peak
+ * already lives on a boundary, and only when a liftable candidate exists (a
+ * peak-less film with only pans/drifts is a genuine energy deficit that stays a
+ * model finding). It runs inside the parse-side atomic commit-or-revert, so if
+ * the nudge somehow minted a finding the plan reverts to the model's artifact.
+ */
+export function liftCameraEnergyPeak(
+  storyboard: DirectScene[],
+): { storyboard: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  const durationSec = storyboard.reduce(
+    (end, scene) => Math.max(end, scene.startSec + scene.durationSec),
+    0,
+  );
+  if (durationSec < 12) return { storyboard, normalized };
+  const fullMoves = storyboard.flatMap((scene) =>
+    (scene.camera?.path ?? []).filter((move) => CAMERA_FULL_MOVES.has(move.move))
+  );
+  const hasHighEnergyMove = fullMoves.some(
+    (move) =>
+      move.move === "whip" || move.move === "orbit" || cameraMoveZoom(move) >= HIGH_ENERGY_PUSH_ZOOM,
+  );
+  const hasEnergeticCut = storyboard.some((scene) => scene.cut && energeticCut(scene.cut));
+  if (hasHighEnergyMove || hasEnergeticCut) return { storyboard, normalized };
+
+  // The liftable candidate with the largest effective zoom (closest to the
+  // threshold — the smallest, least-visible nudge that reaches the peak).
+  let best: { sceneIndex: number; moveIndex: number; zoom: number } | undefined;
+  storyboard.forEach((scene, sceneIndex) => {
+    (scene.camera?.path ?? []).forEach((move, moveIndex) => {
+      if (!ZOOM_ENERGY_MOVES.has(move.move)) return;
+      const zoom = cameraMoveZoom(move);
+      if (zoom < MILD_ENERGY_ZOOM_MIN || zoom >= HIGH_ENERGY_PUSH_ZOOM) return;
+      if (!best || zoom > best.zoom) best = { sceneIndex, moveIndex, zoom };
+    });
+  });
+  if (!best) return { storyboard, normalized };
+  const target = best;
+
+  const scenes = storyboard.map((scene, sceneIndex) => {
+    if (sceneIndex !== target.sceneIndex || !scene.camera) return scene;
+    const move = scene.camera.path[target.moveIndex]!;
+    const path = scene.camera.path.map((entry, moveIndex) =>
+      moveIndex === target.moveIndex ? { ...entry, zoom: HIGH_ENERGY_PUSH_ZOOM } : entry,
+    );
+    const note =
+      `lifted the ${move.move} zoom from ${target.zoom.toFixed(2)} to ${HIGH_ENERGY_PUSH_ZOOM} ` +
+      `to give the ${durationSec.toFixed(0)}s film its required high-energy peak`;
+    normalized.push(`scene "${scene.id}": ${note}`);
+    return {
+      ...scene,
+      camera: { ...scene.camera, path },
+      sentinelNormalizations: [...(scene.sentinelNormalizations ?? []), note],
+    };
+  });
+  return { storyboard: scenes, normalized };
+}
+
+/**
+ * Satisfy an explicit rack-focus brief from camera intent the planner already
+ * supplied. A focus pull is a modifier, not a new action: when no move carries
+ * one, attach it to the strongest existing non-whip move that can name a real
+ * part (its own `toPart`, otherwise the scene focal). No move/part means the
+ * request remains a genuine planner deficit. This runs inside the storyboard
+ * normalizers' atomic commit/revert boundary.
+ */
+export function topUpRequiredRackFocus(
+  storyboard: DirectScene[],
+): { storyboard: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  if (storyboard.some((scene) => scene.camera?.path.some((move) => move.focus))) {
+    return { storyboard, normalized };
+  }
+  const preferredMoves = new Set<CameraMoveStyle>([
+    "track-to-anchor",
+    "push-in",
+    "pull-back",
+    "parallax-pass",
+    "orbit-lite",
+    "orbit",
+    "dive",
+  ]);
+  let best: {
+    sceneIndex: number;
+    moveIndex: number;
+    part: string;
+    score: number;
+  } | undefined;
+  storyboard.forEach((scene, sceneIndex) => {
+    (scene.camera?.path ?? []).forEach((move, moveIndex) => {
+      if (!CAMERA_FULL_MOVES.has(move.move) || move.move === "whip") return;
+      const part = move.toPart ?? scene.spatialIntent?.focalPart;
+      if (!part) return;
+      const arrival = move.startSec + move.durationSec;
+      const primaryNearArrival = (scene.moments ?? []).some((moment) =>
+        moment.importance === "primary" && Math.abs(moment.atSec - arrival) <= 1,
+      );
+      const score = Number(Boolean(move.toPart)) * 6 +
+        Number(preferredMoves.has(move.move)) * 3 +
+        Number(primaryNearArrival) * 2 +
+        sceneIndex / Math.max(1, storyboard.length);
+      if (!best || score > best.score) best = { sceneIndex, moveIndex, part, score };
+    });
+  });
+  if (!best) return { storyboard, normalized };
+  const target = best;
+  const scenes = storyboard.map((scene, sceneIndex) => {
+    if (sceneIndex !== target.sceneIndex || !scene.camera) return scene;
+    const selected = scene.camera.path[target.moveIndex]!;
+    const path = scene.camera.path.map((move, moveIndex) =>
+      moveIndex === target.moveIndex
+        ? { ...move, focus: { part: target.part, blurMaxPx: 6 } }
+        : move
+    );
+    const note =
+      `attached the required rack-focus pull to the ${selected.move} landing on ` +
+      `"${target.part}"`;
+    normalized.push(`scene "${scene.id}": ${note}`);
+    return {
+      ...scene,
+      camera: { ...scene.camera, path },
+      sentinelNormalizations: [...(scene.sentinelNormalizations ?? []), note],
+    };
+  });
+  return { storyboard: scenes, normalized };
+}
+
+/**
+ * Let the audience actually see the destination of a final camera move.
+ * Planner paths frequently spend the entire remaining scene travelling and
+ * arrive on the cut, which makes a spatial journey read like blank connective
+ * motion. Shorten only a substantial, non-dive final full move that ends on
+ * the scene boundary; the camera resolver turns the reclaimed tail into its
+ * normal low-amplitude destination drift. No cue, target, scene duration, or
+ * ordering changes, and short impact moves remain untouched.
+ */
+export function reserveFinalCameraLanding(
+  storyboard: DirectScene[],
+): { storyboard: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  const scenes = storyboard.map((scene) => {
+    if (!scene.camera?.path.length) return scene;
+    const sceneEnd = scene.startSec + scene.durationSec;
+    let candidateIndex = -1;
+    let candidateEnd = -Infinity;
+    scene.camera.path.forEach((move, index) => {
+      if (!CAMERA_FULL_MOVES.has(move.move) || move.move === "dive") return;
+      const end = move.startSec + move.durationSec;
+      if (end > candidateEnd) {
+        candidateIndex = index;
+        candidateEnd = end;
+      }
+    });
+    if (candidateIndex < 0 || Math.abs(candidateEnd - sceneEnd) > 0.03) return scene;
+    const selected = scene.camera.path[candidateIndex]!;
+    if (selected.durationSec < CAMERA_LANDING_RESERVE_SEC + CAMERA_MIN_RETIMED_TRAVEL_SEC) {
+      return scene;
+    }
+    const durationSec = round(sceneEnd - CAMERA_LANDING_RESERVE_SEC - selected.startSec);
+    if (durationSec < CAMERA_MIN_RETIMED_TRAVEL_SEC || durationSec >= selected.durationSec - 0.01) {
+      return scene;
+    }
+    const path = scene.camera.path.map((move, index) =>
+      index === candidateIndex ? { ...move, durationSec } : move
+    );
+    const target = selected.toPart ?? selected.toRegion ?? "declared framing";
+    const note =
+      `reserved ${CAMERA_LANDING_RESERVE_SEC.toFixed(2)}s of destination dwell after the ` +
+      `${selected.move} landing on "${target}"`;
+    normalized.push(`scene "${scene.id}": ${note}`);
+    return {
+      ...scene,
+      camera: { ...scene.camera, path },
+      sentinelNormalizations: [...(scene.sentinelNormalizations ?? []), note],
+    };
+  });
+  return { storyboard: scenes, normalized };
 }
 
 /**

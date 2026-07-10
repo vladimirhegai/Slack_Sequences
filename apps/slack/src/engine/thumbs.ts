@@ -20,6 +20,7 @@ import {
 } from "@sequences/core";
 import { buildProject } from "./projectIo.ts";
 import { findBrowserExecutable, findFfmpeg } from "./render.ts";
+import { launchHeadlessBrowser } from "./browserLifecycle.ts";
 
 const THUMB_MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -102,11 +103,10 @@ export async function generateSceneThumbnails(
   const scale = (options.width ?? 480) / width;
   const started = Date.now();
 
-  const puppeteer = (await import("puppeteer-core")).default;
   const server = await serveDir(buildDir);
-  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
+  let browser: import("puppeteer-core").Browser | undefined;
   try {
-    browser = await puppeteer.launch({
+    browser = await launchHeadlessBrowser({
       executablePath: browserPath,
       headless: true,
       args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu"],

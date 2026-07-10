@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
+import { launchHeadlessBrowser } from "../src/engine/browserLifecycle.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
 import { CAMERA_RUNTIME_FILE, cameraRuntimeSource } from "../src/engine/cameraContract.ts";
 import { CUT_RUNTIME_FILE, cutRuntimeSource, resolveCutPlan } from "../src/engine/cutContract.ts";
@@ -151,8 +152,7 @@ describe("sequences-fx runtime browser contract (MD2)", () => {
     fs.writeFileSync(path.join(dir, CUT_RUNTIME_FILE), cutRuntimeSource(), "utf8");
     fs.writeFileSync(path.join(dir, FX_RUNTIME_FILE), fxRuntimeSource(), "utf8");
     const server = await serveDir(dir);
-    const puppeteer = (await import("puppeteer-core")).default;
-    const browser = await puppeteer.launch({
+    const browser = await launchHeadlessBrowser({
       executablePath: browserPath!,
       headless: true,
       args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
@@ -254,7 +254,7 @@ describe("sequences-fx runtime browser contract (MD2)", () => {
     }
   }, 45_000);
 
-  it("swaps the grade class at full cover and restores it under backward seek (MD4)", async () => {
+  it("fades in the held full-frame wash, swaps the grade at cover, carries it across cuts, and restores under backward seek (MD4)", async () => {
     const browserPath = findBrowserExecutable();
     expect(browserPath, "a Chromium/Chrome/Edge executable is required").toBeTruthy();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-grade-smoke-"));
@@ -262,7 +262,7 @@ describe("sequences-fx runtime browser contract (MD2)", () => {
     const fxPlan: FxPlanV1 = {
       version: 1,
       effects: [
-        { kind: "grade-shift", sceneId: "turn", toGrade: "warm", atSec: 2, durationSec: 0.9 },
+        { kind: "grade-shift", sceneId: "turn", toGrade: "warm", atSec: 1.6, durationSec: 0.9 },
       ],
     };
     const html = `<!doctype html>
@@ -271,19 +271,30 @@ describe("sequences-fx runtime browser contract (MD2)", () => {
 <script src="${CAMERA_RUNTIME_FILE}"></script>
 <script src="${FX_RUNTIME_FILE}"></script><style>
 *{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#101622}
-#root{position:relative;width:1920px;height:1080px;overflow:hidden;--cinema-panel-warm:rgba(255,180,80,0.14)}
+#root{position:relative;width:1920px;height:1080px;overflow:hidden}
 .scene{position:absolute;inset:0;display:grid;place-items:center;opacity:0}
+.grade-cold::after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 90% at 30% 12%,rgba(98,130,200,0.085) 0%,rgba(8,10,20,0.12) 78%)}
+.grade-warm::after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 90% at 68% 16%,rgba(255,186,110,0.07) 0%,rgba(30,16,8,0.1) 82%)}
+.grade-noir::after{content:"";position:absolute;inset:0;pointer-events:none;background:rgba(6,7,14,0.2)}
 .claim{color:#eef2f8;font:800 96px Arial}
 </style></head><body>
 <main id="root" data-composition-id="grade-smoke" data-width="1920" data-height="1080" data-duration="6">
-<section id="turn" class="scene clip grade-cold" data-scene="turn" data-start="0" data-duration="6" data-track-index="1">
+<section id="turn" class="scene clip grade-cold" data-scene="turn" data-start="0" data-duration="3" data-track-index="1">
 <div class="claim" data-part="turn-claim">Problem becomes solution</div>
+</section>
+<section id="carrying" class="scene clip grade-cold" data-scene="carrying" data-start="3" data-duration="1.5" data-track-index="1">
+<div class="claim" data-part="carry-claim">Still warm here</div>
+</section>
+<section id="regraded" class="scene clip grade-noir" data-scene="regraded" data-start="4.5" data-duration="1.5" data-track-index="1">
+<div class="claim" data-part="noir-claim">Deliberate noir ending</div>
 </section>
 </main>
 <script type="application/json" id="sequences-fx">${JSON.stringify(fxPlan)}</script>
 <script>
 window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
-tl.set("#turn",{opacity:1},0).set("#turn",{opacity:0},6);
+tl.set("#turn",{opacity:1},0).set("#turn",{opacity:0},3);
+tl.set("#carrying",{opacity:1},3).set("#carrying",{opacity:0},4.5);
+tl.set("#regraded",{opacity:1},4.5).set("#regraded",{opacity:0},6);
 SequencesFx.compile(tl,document.getElementById("root"));
 window.__timelines["grade-smoke"]=tl;tl.seek(0);
 </script></body></html>`;
@@ -293,8 +304,7 @@ window.__timelines["grade-smoke"]=tl;tl.seek(0);
     fs.writeFileSync(path.join(dir, CAMERA_RUNTIME_FILE), cameraRuntimeSource(), "utf8");
     fs.writeFileSync(path.join(dir, FX_RUNTIME_FILE), fxRuntimeSource(), "utf8");
     const server = await serveDir(dir);
-    const puppeteer = (await import("puppeteer-core")).default;
-    const browser = await puppeteer.launch({
+    const browser = await launchHeadlessBrowser({
       executablePath: browserPath!,
       headless: true,
       args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
@@ -314,7 +324,15 @@ window.__timelines["grade-smoke"]=tl;tl.seek(0);
         () => Object.keys((window as unknown as { __timelines?: object }).__timelines ?? {}).length > 0,
         { timeout: 10_000 },
       );
-      const stateAt = async (time: number): Promise<{ classes: string; panelOpacity: number; panelScale: string }> =>
+      interface GradeState {
+        classes: string;
+        carryingClasses: string;
+        regradedClasses: string;
+        panelClasses: string;
+        panelOpacity: number;
+        panelRect: { width: number; height: number };
+      }
+      const stateAt = async (time: number): Promise<GradeState> =>
         page.evaluate((at: number) => {
           const timelines = (window as unknown as {
             __timelines: Record<string, { pause: () => void; seek: (t: number, s?: boolean) => void }>;
@@ -323,12 +341,15 @@ window.__timelines["grade-smoke"]=tl;tl.seek(0);
             timeline.pause();
             timeline.seek(at, false);
           }
-          const scene = document.querySelector<HTMLElement>("#turn")!;
           const panel = document.querySelector<HTMLElement>('[data-sequences-fx="grade"]')!;
+          const rect = panel.getBoundingClientRect();
           return {
-            classes: scene.className,
+            classes: document.querySelector<HTMLElement>("#turn")!.className,
+            carryingClasses: document.querySelector<HTMLElement>("#carrying")!.className,
+            regradedClasses: document.querySelector<HTMLElement>("#regraded")!.className,
+            panelClasses: panel.className,
             panelOpacity: Number.parseFloat(getComputedStyle(panel).opacity),
-            panelScale: panel.style.transform,
+            panelRect: { width: rect.width, height: rect.height },
           };
         }, time);
 
@@ -337,24 +358,44 @@ window.__timelines["grade-smoke"]=tl;tl.seek(0);
       expect(before.classes).toContain("grade-cold");
       expect(before.classes).not.toContain("grade-warm");
       expect(before.panelOpacity).toBe(0);
-      // Mid-expand: the panel is covering; the class has NOT swapped yet.
-      const expanding = await stateAt(2.5);
-      expect(expanding.panelOpacity).toBe(1);
-      expect(expanding.classes).toContain("grade-cold");
-      // After cover + fade: warm grade active, panel gone.
-      const after = await stateAt(3.6);
+      // Mid-shift: the wash is a full-frame FADE, never an expanding shape —
+      // the panel covers the whole frame at partial opacity, wearing the
+      // TARGET grade class (its ::after is the settled wash, so full opacity
+      // can never overshoot the steady state), and the scene's own class has
+      // NOT swapped yet.
+      const fading = await stateAt(2.05);
+      expect(fading.panelOpacity).toBeGreaterThan(0.05);
+      expect(fading.panelOpacity).toBeLessThan(1);
+      expect(fading.panelClasses).toContain("grade-warm");
+      expect(fading.panelRect.width).toBe(1920);
+      expect(fading.panelRect.height).toBe(1080);
+      expect(fading.classes).toContain("grade-cold");
+      // After cover: warm grade active, panel handed off in the same instant.
+      const after = await stateAt(2.8);
       expect(after.classes).toContain("grade-warm");
       expect(after.classes).not.toContain("grade-cold");
       expect(after.panelOpacity).toBe(0);
+      // Carry across the cut: the next scene still wearing the pre-shift cold
+      // grade inherits the warm turn; the deliberately re-graded noir scene
+      // ends the carry and keeps its authored class.
+      const carried = await stateAt(3.6);
+      expect(carried.carryingClasses).toContain("grade-warm");
+      expect(carried.carryingClasses).not.toContain("grade-cold");
+      expect(carried.regradedClasses).toContain("grade-noir");
+      const ending = await stateAt(5.2);
+      expect(ending.regradedClasses).toContain("grade-noir");
+      expect(ending.regradedClasses).not.toContain("grade-warm");
       // THE seek-safety promise: seeking backward past the cover restores the
-      // authored grade exactly — QA samples frames out of order, so a class
+      // authored grades exactly — QA samples frames out of order, so a class
       // swap that sticks would tint every earlier re-sampled frame warm.
       const restored = await stateAt(1.0);
       expect(restored.classes).toContain("grade-cold");
       expect(restored.classes).not.toContain("grade-warm");
+      expect(restored.carryingClasses).toContain("grade-cold");
+      expect(restored.carryingClasses).not.toContain("grade-warm");
       expect(restored.panelOpacity).toBe(0);
       // And forward again lands warm deterministically.
-      const replay = await stateAt(3.6);
+      const replay = await stateAt(2.8);
       expect(replay.classes).toContain("grade-warm");
       expect(consoleErrors).toEqual([]);
     } finally {

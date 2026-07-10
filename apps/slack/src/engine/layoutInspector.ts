@@ -47,6 +47,7 @@ import {
   warpInverseOf,
 } from "./timeRamp.ts";
 import { FX_RUNTIME_FILE, fxRuntimeSource } from "./fxContract.ts";
+import { ASSET_RUNTIME_FILE, assetRuntimeSource } from "./assetRuntime.ts";
 import { GRADE_SHIFT_DURATION_SEC } from "./gradeShift.ts";
 import { recordSentinelNormalization } from "./sentinelTelemetry.ts";
 import { resolveMomentContract } from "./storyboardMoments.ts";
@@ -57,8 +58,24 @@ import {
   scorePingPongPair,
 } from "./eyeTrace.ts";
 import { findBrowserExecutable } from "./render.ts";
+import {
+  captureContinuousMotionEvidence,
+  continuousMotionEvidenceEnabled,
+  type ContinuousMotionEvidenceV1,
+} from "./continuousMotion.ts";
 
 export type LayoutSeverity = "error" | "warning" | "info";
+
+export interface LayoutRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+export type LayoutOverflow = Partial<Record<"left" | "right" | "top" | "bottom", number>>;
 
 export interface DirectLayoutIssue {
   code: string;
@@ -72,6 +89,21 @@ export interface DirectLayoutIssue {
   selector: string;
   containerSelector?: string;
   text?: string;
+  rect?: LayoutRect;
+  containerRect?: LayoutRect;
+  safeRect?: LayoutRect;
+  overflow?: LayoutOverflow;
+  peerRect?: LayoutRect;
+  repairSelector?: string;
+  sceneId?: string;
+  part?: string;
+  componentRootPart?: string;
+  /** Importance of a storyboard moment when this issue is moment-scoped. */
+  momentImportance?: "primary" | "supporting";
+  insideCameraWorld?: boolean;
+  /** The subject IS a data-camera-world plane (overflow there is by design). */
+  isCameraWorld?: boolean;
+  motionWindowOverlap?: boolean;
   message: string;
   fixHint?: string;
   source: "hyperframes" | "sequences";
@@ -91,7 +123,10 @@ export interface DirectLayoutIssue {
    */
   framing?: {
     sceneId: string;
+    /** Bounding footprint of the composed content in the frame. */
     fraction: number;
+    /** Union area of actual painted/text/media rectangles in the frame. */
+    occupiedFraction?: number;
     part?: string;
     region?: string;
   };
@@ -111,6 +146,8 @@ export interface DirectBrowserQaResult {
   boundaries?: DirectBoundaryInventory[];
   /** Rendered temporal judge: per-moment before/after frame-difference evidence. */
   temporalJudge?: TemporalJudgeMomentEvidence[];
+  /** Advisory playback time series; never contributes to ok/strictOk. */
+  continuousMotion?: ContinuousMotionEvidenceV1;
   errors: string[];
   warnings: string[];
   guidePngBase64?: string;
@@ -307,7 +344,16 @@ function loadBrowserAudit(name: "layout-audit.browser.js" | "contrast-audit.brow
 // v11: MD3 split-style headline entrances (rise/pop/assemble) join the
 //     designed-motion suppression windows, so the transient letter scatter is
 //     not audited as a static-layout defect (the settled copy still is).
-const QA_CACHE_VERSION = 11;
+// v12: measurement honesty for the two loudest churn classes (2026-07-07
+//     attempt-economy sweep): spatial_focal_invisible re-samples bounded later
+//     instants before reporting (late entrance ≠ absent focal), and contrast_aa
+//     dedupes to the worst ratio per selector+text instead of one row per
+//     sampled hero frame.
+// v13: layout findings preserve structured geometry and repair selectors.
+// v14: Sequences safe-area evidence serializes plain root rects, not DOMRect.
+// v17: sparse framing includes painted rectangle-union occupancy and primary
+//      static moments participate in strict visual acceptance.
+const QA_CACHE_VERSION = 17;
 
 /** Everything environment-side that can change the verdict for the same draft. */
 let cachedStaticFingerprint: string | undefined;
@@ -323,6 +369,7 @@ function qaStaticFingerprint(): string {
         componentRuntimeSource(),
         timeRampRuntimeSource(),
         fxRuntimeSource(),
+        assetRuntimeSource(),
       ].map((source) => createHash("sha256").update(source).digest("hex")),
       audits: [
         loadBrowserAudit("layout-audit.browser.js"),
@@ -435,6 +482,11 @@ function prepareScratch(projectDir: string, draft: DirectCompositionDraft): stri
   fs.writeFileSync(
     path.join(scratch, FX_RUNTIME_FILE),
     fxRuntimeSource(),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(scratch, ASSET_RUNTIME_FILE),
+    assetRuntimeSource(),
     "utf8",
   );
   const assets = path.join(projectDir, "assets");
@@ -560,7 +612,15 @@ async function auditSequencesRelationships(
     type BrowserIssue = Omit<DirectLayoutIssue, "source">;
     const root = document.querySelector<HTMLElement>("[data-composition-id][data-width][data-height]");
     if (!root) return [];
-    const rootRect = root.getBoundingClientRect();
+    const rootBox = root.getBoundingClientRect();
+    const rootRect: Rect = {
+      left: rootBox.left,
+      top: rootBox.top,
+      right: rootBox.right,
+      bottom: rootBox.bottom,
+      width: rootBox.width,
+      height: rootBox.height,
+    };
     const rect = (element: Element): Rect => {
       const value = element.getBoundingClientRect();
       return {
@@ -571,6 +631,22 @@ async function auditSequencesRelationships(
         width: value.width,
         height: value.height,
       };
+    };
+    const rectFromEdges = (left: number, top: number, right: number, bottom: number): Rect => ({
+      left,
+      top,
+      right,
+      bottom,
+      width: Math.max(0, right - left),
+      height: Math.max(0, bottom - top),
+    });
+    const overflowFor = (subject: Rect, container: Rect, tolerance: number): LayoutOverflow | undefined => {
+      const overflow: LayoutOverflow = {};
+      if (subject.left < container.left - tolerance) overflow.left = container.left - subject.left;
+      if (subject.right > container.right + tolerance) overflow.right = subject.right - container.right;
+      if (subject.top < container.top - tolerance) overflow.top = container.top - subject.top;
+      if (subject.bottom > container.bottom + tolerance) overflow.bottom = subject.bottom - container.bottom;
+      return Object.keys(overflow).length ? overflow : undefined;
     };
     const selector = (element: Element): string => {
       if (element.id) return `#${CSS.escape(element.id)}`;
@@ -614,6 +690,12 @@ async function auditSequencesRelationships(
     const safe = Number.isFinite(cssSafe) && cssSafe > 0
       ? cssSafe
       : Math.round(Math.min(rootRect.width, rootRect.height) * 0.06);
+    const safeRect = rectFromEdges(
+      rootRect.left + safe,
+      rootRect.top + safe,
+      rootRect.right - safe,
+      rootRect.bottom - safe,
+    );
 
     // Camera-rig worlds are deliberately larger than the frame: content that
     // sits in a currently-unframed region is expected to be off screen, and
@@ -644,14 +726,20 @@ async function auditSequencesRelationships(
         value.bottom - (rootRect.bottom - safe),
       );
       if (overflow > 2) {
-        issues.push(issue(
+        issues.push({
+          ...issue(
           "important_safe_area",
           "warning",
           element,
           `Load-bearing content crosses the ${safe}px safe canvas inset by ${Math.round(overflow)}px.`,
           "Keep it in the .scene flow container; give it a .zone and widen the named layout track before wrapping or reducing type.",
           root,
-        ));
+          ),
+          rect: value,
+          containerRect: rootRect,
+          safeRect,
+          overflow: overflowFor(value, safeRect, 2),
+        });
       }
     }
 
@@ -1295,6 +1383,54 @@ async function renderSpatialGuide(
   return String(image);
 }
 
+/** Follow a declared focal through completed component morphs in one scene. */
+export function spatialFocalPartAt(scene: DirectScene, time: number): string | undefined {
+  let focalPart = scene.spatialIntent?.focalPart;
+  if (!focalPart) return undefined;
+  const morphs = (scene.beats ?? [])
+    .filter((beat) => beat.kind === "morph" && beat.morphTo)
+    .sort((a, b) => a.atSec - b.atSec);
+  for (const beat of morphs) {
+    const endSec = beat.atSec + (beat.durationSec ?? 0.8);
+    if (beat.component === focalPart && time >= endSec) focalPart = beat.morphTo!;
+  }
+  return focalPart;
+}
+
+/** Review a primary morph on its settled target, not its hidden source shell. */
+export function primaryFocalReview(
+  scene: DirectScene,
+  momentAtSec: number,
+  momentSubjectPart?: string,
+): { focalPart?: string; sampleAt: number } {
+  const sceneEnd = scene.startSec + scene.durationSec;
+  let sampleAt = Math.min(
+    Math.max(momentAtSec + 0.15, scene.startSec + 0.15),
+    sceneEnd - 0.08,
+  );
+  // A primary moment may concern a supporting component rather than the
+  // scene-level hero (direction-live-a: feed rows at 4.5s while the later
+  // mttr counter was still correctly hidden). Prefer its executable evidence
+  // target; the spatial focal remains the scene-level fallback.
+  let focalPart = momentSubjectPart ?? scene.spatialIntent?.focalPart;
+  if (!focalPart) return { sampleAt };
+  const morph = (scene.beats ?? []).find((beat) => {
+    if (beat.kind !== "morph" || beat.component !== focalPart || !beat.morphTo) return false;
+    const endSec = beat.atSec + (beat.durationSec ?? 0.8);
+    return momentAtSec >= beat.atSec - 0.1 && momentAtSec <= endSec + 0.1;
+  });
+  if (morph?.morphTo) {
+    sampleAt = Math.min(
+      Math.max(sampleAt, morph.atSec + (morph.durationSec ?? 0.8) + 0.08),
+      sceneEnd - 0.08,
+    );
+    focalPart = morph.morphTo;
+  } else if (!momentSubjectPart) {
+    focalPart = spatialFocalPartAt(scene, sampleAt) ?? focalPart;
+  }
+  return { focalPart, sampleAt };
+}
+
 async function auditFocalParts(
   page: import("puppeteer-core").Page,
   scenes: DirectScene[],
@@ -1307,6 +1443,7 @@ async function auditFocalParts(
     Math.abs(time - (scene.startSec + scene.durationSec * 0.58)) <= 0.04
   );
   if (!active?.spatialIntent) return [];
+  const focalPart = spatialFocalPartAt(active, time) ?? active.spatialIntent.focalPart;
   return page.evaluate((payload) => {
     const scene = document.querySelector<HTMLElement>(
       `[data-scene="${CSS.escape(payload.sceneId)}"]`,
@@ -1388,9 +1525,106 @@ async function auditFocalParts(
     return [];
   }, {
     sceneId: active.id,
-    focalPart: active.spatialIntent.focalPart,
+    focalPart,
     time,
   });
+}
+
+/**
+ * A scene-level hero sample cannot protect the exact frames the storyboard
+ * calls primary. Measure each primary moment's declared focal after a short
+ * settle allowance, under the active camera transform. This catches entrances
+ * that begin at the promised "resolve" moment and assets still hanging outside
+ * the viewport even though they become healthy later in the scene.
+ */
+async function auditPrimaryMomentFocals(
+  page: import("puppeteer-core").Page,
+  scenes: DirectScene[],
+  seekContent: (time: number) => Promise<void>,
+): Promise<DirectLayoutIssue[]> {
+  const issues: DirectLayoutIssue[] = [];
+  const failed = new Set<string>();
+  for (const scene of scenes) {
+    const sceneEnd = scene.startSec + scene.durationSec;
+    for (const moment of (scene.moments ?? []).filter((entry) => entry.importance === "primary")) {
+      const evidenceTarget = moment.evidence &&
+          (moment.evidence.kind === "component" || moment.evidence.kind === "interaction")
+        ? moment.evidence.detail.split("→").at(-1)?.trim()
+        : undefined;
+      const momentSubject = evidenceTarget && /^[a-z0-9][a-z0-9-]*$/i.test(evidenceTarget)
+        ? evidenceTarget
+        : undefined;
+      const review = primaryFocalReview(scene, moment.atSec, momentSubject);
+      const focalPart = review.focalPart;
+      if (!focalPart) continue;
+      const key = `${scene.id}\u0000${focalPart}`;
+      if (failed.has(key)) break;
+      const sampleAt = review.sampleAt;
+      if (sampleAt <= scene.startSec || sampleAt >= sceneEnd) continue;
+      await seekContent(sampleAt);
+      const measured = await page.evaluate((payload: { sceneId: string; focalPart: string }) => {
+        const root = document.querySelector<HTMLElement>(
+          "[data-composition-id][data-width][data-height]",
+        );
+        const sceneElement = document.querySelector<HTMLElement>(
+          `[data-scene="${CSS.escape(payload.sceneId)}"]`,
+        );
+        const focal = sceneElement?.querySelector<HTMLElement>(
+          `[data-part="${CSS.escape(payload.focalPart)}"]`,
+        );
+        if (!root || !focal) return { missing: true, opacity: 0, onFrame: 0, frameFraction: 0 };
+        const rootRect = root.getBoundingClientRect();
+        const rect = focal.getBoundingClientRect();
+        let opacity = 1;
+        let node: Element | null = focal;
+        while (node) {
+          const style = getComputedStyle(node);
+          if (style.display === "none" || style.visibility === "hidden") opacity = 0;
+          opacity *= Number.parseFloat(style.opacity) || 0;
+          node = node.parentElement;
+        }
+        const width = Math.max(
+          0,
+          Math.min(rect.right, rootRect.right) - Math.max(rect.left, rootRect.left),
+        );
+        const height = Math.max(
+          0,
+          Math.min(rect.bottom, rootRect.bottom) - Math.max(rect.top, rootRect.top),
+        );
+        const area = rect.width * rect.height;
+        const frameArea = rootRect.width * rootRect.height;
+        return {
+          missing: false,
+          opacity,
+          onFrame: area > 0 ? (width * height) / area : 0,
+          frameFraction: frameArea > 0 ? (width * height) / frameArea : 0,
+        };
+      }, { sceneId: scene.id, focalPart });
+      if (!measured.missing && measured.opacity >= 0.35 && measured.onFrame >= 0.85) continue;
+      failed.add(key);
+      const invisible = measured.missing || measured.opacity < 0.35;
+      issues.push({
+        code: invisible ? "spatial_focal_invisible" : "spatial_focal_offframe",
+        severity: "warning",
+        time: sampleAt,
+        selector: `[data-part="${focalPart}"]`,
+        sceneId: scene.id,
+        part: focalPart,
+        momentImportance: "primary",
+        message: invisible
+          ? `Primary moment "${moment.id}" promises focal part "${focalPart}", but it is not ` +
+            `visibly ready at the review frame (${sampleAt.toFixed(2)}s).`
+          : `Primary moment "${moment.id}" promises focal part "${focalPart}", but only ` +
+            `${Math.round(measured.onFrame * 100)}% is inside the frame at its review frame ` +
+            `(${sampleAt.toFixed(2)}s).`,
+        fixHint:
+          "Finish the focal entrance before the primary moment, move the moment to the settled " +
+          "state, or reframe the subject so at least 85% is visible at that exact review frame.",
+        source: "sequences",
+      });
+    }
+  }
+  return issues;
 }
 
 /**
@@ -1746,6 +1980,11 @@ async function auditStaleAssets(
  */
 const SPARSE_COVERAGE_MIN = 0.18;
 /**
+ * A large union bbox can be faked by a few tiny fragments in opposite corners.
+ * Require a modest amount of actually painted/text/media area as well.
+ */
+const SPARSE_OCCUPANCY_MIN = 0.055;
+/**
  * Lower floor for camera landings in the film's FINAL scene: a deliberate
  * compact resolve (badge + CTA pair ~10-15%) reached by a pull-back is the
  * genre's signature and must pass, while a true disaster (a 2% lone CTA — the
@@ -1756,6 +1995,8 @@ const SPARSE_COVERAGE_MIN = 0.18;
 const SPARSE_COVERAGE_MIN_FINAL = 0.08;
 /** Content spanning this much of one frame axis is a deliberate composition. */
 const SPARSE_AXIS_ESCAPE = 0.6;
+/** A true band/rail stays compact on the perpendicular axis. */
+const SPARSE_AXIS_ESCAPE_THICKNESS = 0.35;
 /** Scenes shorter than this are stings/flashes — never judged for coverage. */
 const SPARSE_MIN_SCENE_SEC = 2;
 
@@ -1767,6 +2008,62 @@ const NEAR_BLANK_MIN_SCENE_SEC = 1.2;
 const NEAR_BLANK_SCENE_HARD_SEC = 4;
 /** Blank scenes totalling this fraction of the film block publication. */
 const NEAR_BLANK_FILM_FRACTION = 0.3;
+
+function asLayoutRect(value: unknown): LayoutRect | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const rect = {
+    left: Number(raw.left),
+    top: Number(raw.top),
+    right: Number(raw.right),
+    bottom: Number(raw.bottom),
+    width: Number(raw.width),
+    height: Number(raw.height),
+  };
+  return Object.values(rect).every(Number.isFinite) ? rect : undefined;
+}
+
+function asLayoutOverflow(value: unknown): LayoutOverflow | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const overflow: LayoutOverflow = {};
+  for (const side of ["left", "right", "top", "bottom"] as const) {
+    const parsed = Number(raw[side]);
+    if (Number.isFinite(parsed)) overflow[side] = parsed;
+  }
+  return Object.keys(overflow).length ? overflow : undefined;
+}
+
+function unionLayoutRect(a: LayoutRect | undefined, b: LayoutRect | undefined): LayoutRect | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  const left = Math.min(a.left, b.left);
+  const top = Math.min(a.top, b.top);
+  const right = Math.max(a.right, b.right);
+  const bottom = Math.max(a.bottom, b.bottom);
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+function maxLayoutOverflow(
+  a: LayoutOverflow | undefined,
+  b: LayoutOverflow | undefined,
+): LayoutOverflow | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  const overflow: LayoutOverflow = {};
+  for (const side of ["left", "right", "top", "bottom"] as const) {
+    const value = Math.max(a[side] ?? 0, b[side] ?? 0);
+    if (value > 0) overflow[side] = value;
+  }
+  return Object.keys(overflow).length ? overflow : undefined;
+}
 
 function normalizeHyperframesIssue(value: Record<string, unknown>): DirectLayoutIssue {
   const code = String(value.code ?? "layout_issue");
@@ -1794,12 +2091,105 @@ function normalizeHyperframesIssue(value: Record<string, unknown>): DirectLayout
     selector: String(value.selector ?? "composition"),
     ...(value.containerSelector ? { containerSelector: String(value.containerSelector) } : {}),
     ...(value.text ? { text: String(value.text) } : {}),
+    ...(asLayoutRect(value.rect) ? { rect: asLayoutRect(value.rect) } : {}),
+    ...(asLayoutRect(value.containerRect) ? { containerRect: asLayoutRect(value.containerRect) } : {}),
+    ...(asLayoutOverflow(value.overflow) ? { overflow: asLayoutOverflow(value.overflow) } : {}),
     message: String(value.message ?? code),
     ...(scaffoldHints[code]
       ? { fixHint: scaffoldHints[code] }
       : value.fixHint ? { fixHint: String(value.fixHint) } : {}),
     source: "hyperframes",
   };
+}
+
+async function enrichRepairEvidence(
+  page: import("puppeteer-core").Page,
+  issues: DirectLayoutIssue[],
+): Promise<DirectLayoutIssue[]> {
+  if (!issues.length) return issues;
+  return page.evaluate((rawIssues: DirectLayoutIssue[]) => {
+    const root = document.querySelector<HTMLElement>("[data-composition-id][data-width][data-height]");
+    if (!root) return rawIssues;
+    const escapeCss = (value: string): string =>
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(value)
+        : value.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+    const escapeAttr = (value: string): string =>
+      value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const count = (selector: string): number => {
+      try {
+        return root.querySelectorAll(selector).length;
+      } catch {
+        return 0;
+      }
+    };
+    const scenePrefix = (scene: HTMLElement): string | undefined => {
+      const sceneId = scene.getAttribute("data-scene");
+      if (sceneId) return `[data-scene="${escapeAttr(sceneId)}"]`;
+      return scene.id ? `#${escapeCss(scene.id)}` : undefined;
+    };
+    const nthSegment = (element: Element): string => {
+      const tag = element.tagName.toLowerCase();
+      const parent = element.parentElement;
+      if (!parent) return tag;
+      const siblings = Array.from(parent.children).filter((child) => child.tagName === element.tagName);
+      return `${tag}:nth-of-type(${siblings.indexOf(element) + 1})`;
+    };
+    const structuralSelector = (element: Element, scene: HTMLElement | null): string | undefined => {
+      const stop = scene ?? root;
+      const prefix = scene ? scenePrefix(scene) : "[data-composition-id]";
+      if (!prefix) return undefined;
+      const parts: string[] = [];
+      for (let current: Element | null = element; current && current !== stop; current = current.parentElement) {
+        parts.unshift(nthSegment(current));
+      }
+      if (!parts.length) return prefix;
+      const selector = `${prefix} > ${parts.join(" > ")}`;
+      return count(selector) === 1 ? selector : undefined;
+    };
+    const repairSelectorFor = (element: Element, scene: HTMLElement | null): string | undefined => {
+      if (element.id) {
+        const selector = `#${escapeCss(element.id)}`;
+        if (count(selector) === 1) return selector;
+      }
+      const ownPart = element.getAttribute("data-part");
+      if (ownPart && scene) {
+        const prefix = scenePrefix(scene);
+        const selector = prefix
+          ? `${prefix} [data-part="${escapeAttr(ownPart)}"]`
+          : `[data-part="${escapeAttr(ownPart)}"]`;
+        if (count(selector) === 1) return selector;
+      }
+      return structuralSelector(element, scene);
+    };
+    const resolveElement = (selector: string): Element | null => {
+      if (!selector || selector === "composition") return null;
+      try {
+        return root.querySelector(selector);
+      } catch {
+        return null;
+      }
+    };
+    return rawIssues.map((issue) => {
+      const element = resolveElement(issue.selector);
+      if (!element) return issue;
+      const scene = element.closest<HTMLElement>("[data-scene]");
+      const partElement = element.closest<HTMLElement>("[data-part]");
+      const componentRoot = element.closest<HTMLElement>("[data-component][data-part]");
+      const repairSelector = repairSelectorFor(element, scene);
+      return {
+        ...issue,
+        ...(repairSelector ? { repairSelector } : {}),
+        ...(scene ? { sceneId: scene.getAttribute("data-scene") || scene.id || undefined } : {}),
+        ...(partElement ? { part: partElement.getAttribute("data-part") || undefined } : {}),
+        ...(componentRoot
+          ? { componentRootPart: componentRoot.getAttribute("data-part") || undefined }
+          : {}),
+        insideCameraWorld: Boolean(element.closest("[data-camera-world]")),
+        isCameraWorld: element.hasAttribute("data-camera-world"),
+      };
+    });
+  }, issues);
 }
 
 function collapseIssues(values: DirectLayoutIssue[]): DirectLayoutIssue[] {
@@ -1810,7 +2200,9 @@ function collapseIssues(values: DirectLayoutIssue[]): DirectLayoutIssue[] {
       value.code,
       value.severity,
       value.interactionId ?? "",
+      value.sceneId ?? "",
       value.selector,
+      value.repairSelector ?? "",
       value.containerSelector ?? "",
       value.text ?? "",
     ].join("|");
@@ -1827,6 +2219,11 @@ function collapseIssues(values: DirectLayoutIssue[]): DirectLayoutIssue[] {
     existing.firstSeen = Math.min(existing.firstSeen ?? value.time, value.time);
     existing.lastSeen = Math.max(existing.lastSeen ?? value.time, value.time);
     existing.occurrences = (existing.occurrences ?? 1) + 1;
+    existing.rect = unionLayoutRect(existing.rect, value.rect);
+    existing.containerRect = unionLayoutRect(existing.containerRect, value.containerRect);
+    existing.safeRect = unionLayoutRect(existing.safeRect, value.safeRect);
+    existing.peerRect = unionLayoutRect(existing.peerRect, value.peerRect);
+    existing.overflow = maxLayoutOverflow(existing.overflow, value.overflow);
   }
   return [...groups.values()].sort((a, b) => {
     const rank = (severity: LayoutSeverity) => severity === "error" ? 0 : severity === "warning" ? 1 : 2;
@@ -2202,6 +2599,7 @@ export async function inspectDirectComposition(
       const interactionAudit = await auditInteractions(page, interactionIntents, time);
       const hyperframesIssues = (hyperframes as Record<string, unknown>[])
         .map(normalizeHyperframesIssue);
+      const sequenceRelationshipIssues = await auditSequencesRelationships(page, time);
       // Content parked in a currently-unframed camera-world region is meant to
       // be off screen (clipped by the viewport); it is not a layout defect.
       const offWorldFlags = await page.evaluate((selectors: string[]) => {
@@ -2231,13 +2629,83 @@ export async function inspectDirectComposition(
           return area <= 0 || (w * h) / area < 0.6;
         });
       }, hyperframesIssues.map((issue) => issue.selector));
-      rawIssues.push(
+      const enriched = await enrichRepairEvidence(page, [
         ...hyperframesIssues.filter((_, index) => !offWorldFlags[index]),
-        ...await auditSequencesRelationships(page, time),
+        ...sequenceRelationshipIssues,
+      ]);
+      rawIssues.push(
+        // A camera world plane extends beyond its scene clip BY DESIGN under
+        // any pan/zoom — container_overflow on the world ELEMENT is a false
+        // positive dropped at the source so penalty/warnings/repair prompts
+        // all agree (fix-probe-5/6). Content INSIDE the world stays judged.
+        ...enriched.filter((issue) =>
+          !(issue.code === "container_overflow" && issue.isCameraWorld)
+        ),
         ...await auditFocalParts(page, draft.storyboard, time),
         ...interactionAudit.issues,
       );
       interactionEvidence.push(...interactionAudit.evidence);
+    }
+
+    // A focal subject invisible at the single 58% hero sample may simply enter
+    // late — the shot resolves around it a beat after the sample instant (the
+    // WS7 thumbnail lesson applied to measurement: walk forward before
+    // reporting). Re-sample bounded alternates inside the same shot; a subject
+    // visible at any of them is late choreography, not an absent focal, and
+    // reporting it as invisible burned identical paid patch attempts on the
+    // 2026-07-07 probe set. A subject visible at NO sample stays a finding.
+    const focalInvisible = rawIssues.filter((issue) => issue.code === "spatial_focal_invisible");
+    if (focalInvisible.length) {
+      const lateVisible = new Set<DirectLayoutIssue>();
+      for (const issue of focalInvisible.slice(0, 4)) {
+        const scene = draft.storyboard.find((entry) =>
+          entry.spatialIntent?.focalPart &&
+          issue.time >= entry.startSec &&
+          issue.time <= entry.startSec + entry.durationSec
+        );
+        const focalPart = scene?.spatialIntent?.focalPart;
+        if (!scene || !focalPart) continue;
+        const sceneEnd = scene.startSec + scene.durationSec;
+        const recheckTimes = uniqueTimes(
+          [
+            Math.min(issue.time + 0.6, sceneEnd - 0.05),
+            scene.startSec + scene.durationSec * 0.82,
+          ],
+          duration,
+        ).filter((time) => time > issue.time + 0.05 && time < sceneEnd).slice(0, 2);
+        for (const time of recheckTimes) {
+          await seekContent(time);
+          const visibleNow = await page.evaluate((payload: { sceneId: string; part: string }) => {
+            const sceneElement = document.querySelector<HTMLElement>(
+              `[data-scene="${CSS.escape(payload.sceneId)}"]`,
+            );
+            const focal = sceneElement?.querySelector<HTMLElement>(
+              `[data-part="${CSS.escape(payload.part)}"]`,
+            );
+            if (!focal) return false;
+            const rect = focal.getBoundingClientRect();
+            let opacity = 1;
+            let node: Element | null = focal;
+            while (node) {
+              const style = getComputedStyle(node);
+              if (style.display === "none" || style.visibility === "hidden") opacity = 0;
+              opacity *= Number.parseFloat(style.opacity) || 0;
+              node = node.parentElement;
+            }
+            return rect.width >= 1 && rect.height >= 1 && opacity >= 0.15;
+          }, { sceneId: scene.id, part: focalPart });
+          if (visibleNow) {
+            lateVisible.add(issue);
+            break;
+          }
+        }
+      }
+      if (lateVisible.size) {
+        recordSentinelNormalization("focal-late-sample", lateVisible.size);
+        for (let index = rawIssues.length - 1; index >= 0; index -= 1) {
+          if (lateVisible.has(rawIssues[index]!)) rawIssues.splice(index, 1);
+        }
+      }
     }
 
     // Reuse HyperFrames' screenshot-backed contrast audit at representative hero
@@ -2259,6 +2727,12 @@ export async function inspectDirectComposition(
       ],
       duration,
     ).slice(0, 5 + gradeShiftSettles.length);
+    // One real defect, one finding: an element sampled at several hero frames
+    // (or mid color animation) otherwise mints near-duplicate contrast rows
+    // whose count inflates the least-bad penalty (2026-07-07 ledgers: the same
+    // div at five ratios 4.23–4.46 in ONE attempt). Keep the worst ratio per
+    // selector+text.
+    const contrastWorst = new Map<string, DirectLayoutIssue>();
     for (const time of contrastTimes) {
       await seekContent(time);
       const screenshot = await page.screenshot({ encoding: "base64", type: "png" });
@@ -2284,7 +2758,7 @@ export async function inspectDirectComposition(
       for (const entry of contrast) {
         if (entry.wcagAA) continue;
         const required = entry.required ?? (entry.large ? 3 : 4.5);
-        rawIssues.push({
+        const issue: DirectLayoutIssue = {
           code: "contrast_aa",
           severity: "warning",
           time,
@@ -2300,9 +2774,15 @@ export async function inspectDirectComposition(
             ...(entry.bg ? { background: entry.bg } : {}),
             ...(entry.suggestedColor ? { suggestedColor: entry.suggestedColor } : {}),
           },
-        });
+        };
+        const key = `${entry.selector} ${entry.text ?? ""}`;
+        const existing = contrastWorst.get(key);
+        if (!existing || entry.ratio < (existing.contrast?.ratio ?? 999)) {
+          contrastWorst.set(key, issue);
+        }
       }
     }
+    rawIssues.push(...contrastWorst.values());
 
     // Rendering may seek frames out of order. Revisit each interaction arrival
     // after seeking forward and backward; a history-dependent cursor will not
@@ -2715,7 +3195,12 @@ export async function inspectDirectComposition(
       time: number,
       sceneId: string,
     ): Promise<
-      { fraction: number; widthFraction: number; heightFraction: number } | undefined
+      {
+        fraction: number;
+        occupiedFraction: number;
+        widthFraction: number;
+        heightFraction: number;
+      } | undefined
     > => {
       await seekContent(time);
       return page.evaluate((payload: { sceneId: string }) => {
@@ -2747,15 +3232,36 @@ export async function inspectDirectComposition(
         let top = Infinity;
         let right = -Infinity;
         let bottom = -Infinity;
+        const rects: Array<{ left: number; top: number; right: number; bottom: number }> = [];
+        const colorHasAlpha = (value: string): boolean => {
+          if (!value || value === "transparent") return false;
+          const match = value.match(/rgba?\(([^)]+)\)/i);
+          if (!match) return true;
+          const channels = match[1]!.split(",");
+          return channels.length < 4 || Number(channels[3]) > 0.02;
+        };
+        const stylePaints = (style: CSSStyleDeclaration): boolean =>
+          colorHasAlpha(style.backgroundColor) ||
+          style.backgroundImage !== "none" ||
+          style.boxShadow !== "none" ||
+          style.outlineStyle !== "none" ||
+          (Number.parseFloat(style.borderTopWidth) || 0) > 0 ||
+          (Number.parseFloat(style.borderRightWidth) || 0) > 0 ||
+          (Number.parseFloat(style.borderBottomWidth) || 0) > 0 ||
+          (Number.parseFloat(style.borderLeftWidth) || 0) > 0;
         for (const element of [scope, ...Array.from(scope.querySelectorAll<HTMLElement>("*"))]) {
           if (element.closest("[data-layout-ignore]")) continue;
           const hasText = Array.from(element.childNodes).some((node) =>
             node.nodeType === Node.TEXT_NODE && /\S/.test(node.textContent ?? ""),
           );
+          const style = getComputedStyle(element);
+          const before = getComputedStyle(element, "::before");
+          const after = getComputedStyle(element, "::after");
+          const pseudoPaints = (pseudo: CSSStyleDeclaration) =>
+            pseudo.content !== "none" && pseudo.content !== "normal" && stylePaints(pseudo);
           const isContent = hasText ||
             MEDIA.has(element.tagName.toUpperCase()) ||
-            element.hasAttribute("data-part") ||
-            element.hasAttribute("data-layout-important");
+            stylePaints(style) || pseudoPaints(before) || pseudoPaints(after);
           if (!isContent) continue;
           const rect = element.getBoundingClientRect();
           if (rect.width < 12 || rect.height < 12) continue;
@@ -2769,28 +3275,88 @@ export async function inspectDirectComposition(
           top = Math.min(top, t);
           right = Math.max(right, r);
           bottom = Math.max(bottom, b);
+          rects.push({ left: l, top: t, right: r, bottom: b });
         }
         if (right <= left || bottom <= top) {
-          return { fraction: 0, widthFraction: 0, heightFraction: 0 };
+          return { fraction: 0, occupiedFraction: 0, widthFraction: 0, heightFraction: 0 };
         }
+        // Exact rectangle-union area. Nested text inside a painted panel does
+        // not double-count, while widely separated tiny cards no longer earn
+        // the empty area between them as visual coverage.
+        const xs = [...new Set(rects.flatMap((rect) => [rect.left, rect.right]))]
+          .sort((a, b) => a - b);
+        let occupiedArea = 0;
+        for (let index = 0; index < xs.length - 1; index += 1) {
+          const x1 = xs[index]!;
+          const x2 = xs[index + 1]!;
+          if (x2 <= x1) continue;
+          const intervals = rects
+            .filter((rect) => rect.left < x2 && rect.right > x1)
+            .map((rect) => [rect.top, rect.bottom] as const)
+            .sort((a, b) => a[0] - b[0]);
+          let coveredY = 0;
+          let runStart = 0;
+          let runEnd = 0;
+          for (let interval = 0; interval < intervals.length; interval += 1) {
+            const [start, end] = intervals[interval]!;
+            if (interval === 0) {
+              runStart = start;
+              runEnd = end;
+            } else if (start <= runEnd) {
+              runEnd = Math.max(runEnd, end);
+            } else {
+              coveredY += runEnd - runStart;
+              runStart = start;
+              runEnd = end;
+            }
+          }
+          if (intervals.length) coveredY += runEnd - runStart;
+          occupiedArea += (x2 - x1) * coveredY;
+        }
+        const frameArea = rootRect.width * rootRect.height;
         return {
-          fraction: ((right - left) * (bottom - top)) / (rootRect.width * rootRect.height),
+          fraction: ((right - left) * (bottom - top)) / frameArea,
+          occupiedFraction: occupiedArea / frameArea,
           widthFraction: (right - left) / rootRect.width,
           heightFraction: (bottom - top) / rootRect.height,
         };
       }, { sceneId });
     };
     const isSparseCoverage = (
-      coverage: { fraction: number; widthFraction: number; heightFraction: number } | undefined,
+      coverage: {
+        fraction: number;
+        occupiedFraction: number;
+        widthFraction: number;
+        heightFraction: number;
+      } | undefined,
       minFraction: number = SPARSE_COVERAGE_MIN,
-    ): coverage is { fraction: number; widthFraction: number; heightFraction: number } =>
+    ): coverage is {
+      fraction: number;
+      occupiedFraction: number;
+      widthFraction: number;
+      heightFraction: number;
+    } =>
       Boolean(
         coverage &&
-        coverage.fraction < minFraction &&
-        // A composition that spans most of one frame axis (a full-width
-        // headline band, a tall rail) is a deliberate shape, not sparseness.
-        coverage.widthFraction < SPARSE_AXIS_ESCAPE &&
-        coverage.heightFraction < SPARSE_AXIS_ESCAPE,
+        (
+          coverage.fraction < minFraction ||
+          coverage.occupiedFraction < (
+            minFraction === SPARSE_COVERAGE_MIN_FINAL ? 0.03 : SPARSE_OCCUPANCY_MIN
+          )
+        ) &&
+        // A composition that spans one axis while staying compact on the
+        // other (a full-width headline band, a tall rail) is deliberate. Two
+        // tiny islands in opposite corners span BOTH axes and are not a band.
+        !(
+          (
+            coverage.widthFraction >= SPARSE_AXIS_ESCAPE &&
+            coverage.heightFraction <= SPARSE_AXIS_ESCAPE_THICKNESS
+          ) ||
+          (
+            coverage.heightFraction >= SPARSE_AXIS_ESCAPE &&
+            coverage.widthFraction <= SPARSE_AXIS_ESCAPE_THICKNESS
+          )
+        ),
       );
     const finalSceneId = draft.storyboard[draft.storyboard.length - 1]?.id;
     for (const scenePlan of parseCameraPlan(draft.html).plan?.scenes ?? []) {
@@ -2808,8 +3374,11 @@ export async function inspectDirectComposition(
       for (const segment of scenePlan.segments) {
         if (!CAMERA_FULL_MOVES.has(segment.move) || segment.blend < 1) continue;
         if (!segment.toRegion && !segment.toPart) continue;
-        // A zoom above fit crops the station deliberately; audit fit framings.
-        if (segment.zoom > 1.05) continue;
+        // A creative zoom above fit may crop the station deliberately, so the
+        // general audit stays on fit framings. Host-applied sparse corrections
+        // must prove themselves after zooming instead of clearing by skip.
+        const auditZoomedCorrection = segment.framingCorrection === "camera-sparse-zoom";
+        if (segment.zoom > 1.05 && !auditZoomedCorrection) continue;
         // A dive (MD5) lands twice: on the part when its push-in leg ends,
         // and back on the prior framing at endSec. The prior framing was
         // already sampled by its own segment, so audit the PART landing —
@@ -2889,14 +3458,16 @@ export async function inspectDirectComposition(
               framing: {
                 sceneId: scenePlan.sceneId,
                 fraction: confirmedCoverage.fraction,
+                occupiedFraction: confirmedCoverage.occupiedFraction,
                 ...(segment.toPart ? { part: segment.toPart } : {}),
                 ...(segment.toRegion ? { region: segment.toRegion } : {}),
               },
               message:
                 `Camera ${segment.move} lands on ${station} in scene "${scenePlan.sceneId}" at ` +
                 `${arriveSec.toFixed(1)}s, but the scene's visible content fills only ` +
-                `${Math.round(confirmedCoverage.fraction * 100)}% of the frame — a small subject ` +
-                `adrift in empty space.`,
+                `${Math.round(confirmedCoverage.fraction * 100)}% of the frame footprint and ` +
+                `${Math.round(confirmedCoverage.occupiedFraction * 100)}% painted area — a small ` +
+                `subject adrift in empty space.`,
               fixHint:
                 "Fill the framing: enlarge the framed content, tighten the station rect (the fit " +
                 "zoom follows the data-region box), or bring more of the scene's content into the " +
@@ -2918,7 +3489,7 @@ export async function inspectDirectComposition(
         CAMERA_FULL_MOVES.has(segment.move) &&
         segment.blend >= 1 &&
         (segment.toRegion || segment.toPart) &&
-        segment.zoom <= 1.05
+        (segment.zoom <= 1.05 || segment.framingCorrection === "camera-sparse-zoom")
       );
       const settledFramingAt = (atSec: number) =>
         fullSegments
@@ -3029,11 +3600,16 @@ export async function inspectDirectComposition(
         severity: "warning",
         time: sampleAt,
         selector: `[data-scene="${scene.id}"]`,
-        framing: { sceneId: scene.id, fraction: confirmedCoverage.fraction },
+        framing: {
+          sceneId: scene.id,
+          fraction: confirmedCoverage.fraction,
+          occupiedFraction: confirmedCoverage.occupiedFraction,
+        },
         message:
           `Scene "${scene.id}" holds one framing whose visible content fills only ` +
-          `${Math.round(confirmedCoverage.fraction * 100)}% of the frame — a small subject ` +
-          `adrift in empty space.`,
+          `${Math.round(confirmedCoverage.fraction * 100)}% of the frame footprint and ` +
+          `${Math.round(confirmedCoverage.occupiedFraction * 100)}% painted area — a small ` +
+          `subject adrift in empty space.`,
         fixHint:
           "Fill the frame: scale the composition up (hero content at 60-80% of frame width), " +
           "or develop the safe area around the subject with supporting evidence instead of " +
@@ -3041,6 +3617,8 @@ export async function inspectDirectComposition(
         source: "sequences",
       });
     }
+
+    rawIssues.push(...await auditPrimaryMomentFocals(page, draft.storyboard, seekContent));
 
     // Exit discipline (WS4): a surface whose last beat has passed still sitting
     // at full opacity over the focal element is the "assets don't disappear and
@@ -3145,6 +3723,16 @@ export async function inspectDirectComposition(
       // the blocking pressure.
       issue.code !== "stale_asset_lingers" &&
       (issue.code !== "eye_trace_jump" || eyeTrace === "block") &&
+      // Kit avatar stacks overlap BY DESIGN (negative-margin monograms) —
+      // a content_overlap on them is a false positive that burned a paid
+      // attempt in fix-probe-4. Kit-owned deliberate overlap only; any other
+      // content_overlap stays a finding.
+      !(issue.code === "content_overlap" && /\.cmp-avatars/.test(issue.selector ?? "")) &&
+      // A camera world plane extends beyond its scene clip BY DESIGN under
+      // any pan/zoom — container_overflow on the world element itself is a
+      // false positive (fix-probe-5 burned an attempt + shipped penalty on
+      // three of them). Content INSIDE the world stays judged.
+      !(issue.code === "container_overflow" && issue.isCameraWorld) &&
       (
         issue.source === "sequences" ||
         issue.code === "content_overlap" ||
@@ -3155,6 +3743,27 @@ export async function inspectDirectComposition(
     if (interactionIntents.length) {
       await seekContent(interactionIntents[0]!.arriveSec);
       guidePngBase64 = await renderSpatialGuide(page, interactionIntents);
+    }
+    // Continuous playback evidence. It is deliberately advisory: losing this
+    // evidence never rejects a runnable draft, and its metrics do not feed
+    // strictOk until golden + live A/B calibration establishes useful bounds.
+    let continuousMotion: ContinuousMotionEvidenceV1 | undefined;
+    if (continuousMotionEvidenceEnabled() && duration >= 8) {
+      try {
+        continuousMotion = await captureContinuousMotionEvidence(
+          page,
+          draft.storyboard,
+          duration,
+          { width, height },
+          { mapSeekTime: toOutputTime },
+        );
+      } catch (error) {
+        process.stderr.write(
+          `[layout-qa] continuous motion evidence skipped: ${
+            error instanceof Error ? error.message : String(error)
+          }\n`,
+        );
+      }
     }
     // Rendered temporal judge — must run LAST: it drops the device scale for
     // cheap frame pairs, so every full-resolution capture is already done.
@@ -3176,12 +3785,14 @@ export async function inspectDirectComposition(
       );
     }
     const staticMoments = temporalJudge.filter((entry) => entry.verdict === "static");
+    const staticPrimaryMoments = staticMoments.filter((entry) => entry.importance === "primary");
     for (const flat of staticMoments) {
       const issue: DirectLayoutIssue = {
         code: "moment_static_frame",
         severity: "warning",
         time: flat.atSec,
         selector: `moment:${flat.momentId}`,
+        momentImportance: flat.importance,
         message:
           `moment "${flat.momentId}" (${flat.title}) claims a changed state at ${flat.atSec}s ` +
           `but rendered frames at ${flat.beforeSec}s and ${flat.afterSec}s are near-identical ` +
@@ -3212,12 +3823,14 @@ export async function inspectDirectComposition(
       strictOk:
         errors.length === 0 &&
         visualErrors.length === 0 &&
-        repairWarnings.length === 0,
+        repairWarnings.length === 0 &&
+        staticPrimaryMoments.length === 0,
       samples,
       issues,
       interactions: interactionEvidence,
       ...(boundaryInventories.length ? { boundaries: boundaryInventories } : {}),
       ...(temporalJudge.length ? { temporalJudge } : {}),
+      ...(continuousMotion ? { continuousMotion } : {}),
       errors: [...new Set(errors)],
       warnings: [...new Set(warnings)],
       ...(guidePngBase64 ? { guidePngBase64 } : {}),

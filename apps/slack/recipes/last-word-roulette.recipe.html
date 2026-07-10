@@ -1,0 +1,266 @@
+<script type="application/json" data-recipe-meta>
+{
+  "format": 2,
+  "id": "last-word-roulette",
+  "title": "Locked sentence with a final-word roulette payoff",
+  "description": "Hero headline whose last word ticks through candidates on a masked wheel, then snaps onto the payoff word with an accent underline and glow.",
+  "tags": [
+    "kinetic-type",
+    "headline",
+    "payoff",
+    "roulette",
+    "word-swap",
+    "hero-copy",
+    "resolve"
+  ],
+  "triggerPatterns": [
+    "roulette",
+    "word[ -]?(wheel|spin|roll|slot)",
+    "last word",
+    "final word",
+    "cycl(e|es|ing) through (words|options|names)",
+    "flip(s|ping)? (through|between) (words|options)",
+    "(spins?|rolls?) (through|to) (a|the|one) word",
+    "slot[ -]?machine (head|copy|word|text)",
+    "headline .*(payoff|lands|snaps)"
+  ],
+  "durationWindow": { "minSec": 3.5, "maxSec": 12 },
+  "componentKinds": ["headline"],
+  "params": [
+    {
+      "name": "lead",
+      "kind": "text",
+      "description": "The locked sentence prefix the wheel completes (no trailing space).",
+      "maxChars": 60
+    },
+    {
+      "name": "word1",
+      "kind": "text",
+      "description": "First candidate tick (weakest of the set).",
+      "default": "Faster",
+      "maxChars": 18
+    },
+    {
+      "name": "word2",
+      "kind": "text",
+      "description": "Second candidate tick.",
+      "default": "Smarter",
+      "maxChars": 18
+    },
+    {
+      "name": "word3",
+      "kind": "text",
+      "description": "Third candidate tick (closest rival to the payoff).",
+      "default": "Simpler",
+      "maxChars": 18
+    },
+    {
+      "name": "payoff",
+      "kind": "text",
+      "description": "The word that stays — the shot's thesis.",
+      "maxChars": 24
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for the wheel words, underline, and glow.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "settleSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the payoff locks (leave >=1s of scene after it).",
+      "default": 2.6,
+      "min": 1.6,
+      "max": 12
+    }
+  ],
+  "revision": 1,
+  "demo": {
+    "durationSec": 6,
+    "params": {
+      "lead": "Your launch becomes",
+      "word1": "a thread",
+      "word2": "a task",
+      "word3": "a demo",
+      "payoff": "a film.",
+      "accent": "var(--cinema-key)",
+      "settleSec": 3.2
+    }
+  },
+  "sanityBriefs": [
+    "Hook shot: the headline cycles through words and lands on the last word 'shipped' — a word roulette payoff.",
+    "Launch film where the hero copy spins through options like a slot machine before the final word locks in."
+  ]
+}
+</script>
+<template data-recipe-doc>
+# last-word-roulette — locked sentence, final-word wheel, payoff snap
+
+**What it is.** A hero headline whose sentence is locked while its final word
+is a masked vertical roulette: three candidate words tick past in committed
+steps, then the payoff word snaps in on a settle ease, an accent underline
+draws beneath it, and a soft glow acknowledges the landing before releasing.
+
+**When to declare it.** The brief positions the product against alternatives,
+cycles through options, or builds to one decisive word — "everything becomes
+___", "stop guessing, start ___", pricing/persona/verb roulettes, hook shots
+that need a typographic signature, or a resolve shot that lands the thesis
+word. The payoff landing is a natural PRIMARY moment: place a declared moment
+at roughly `sceneStart + settleSec` with motionIntent "type-on" or "resolve".
+
+**How to stage the shot around it.**
+- Give the wheel its focal window: no competing motion from `settleSec - 1.5`
+  until ~1s after the payoff (the pattern owns the eye through the snap).
+- The sentence reads best as the scene's hero copy on a calm or slowly
+  drifting camera; a whip INTO the scene works, a whip away before the payoff
+  has ~1s of reading room does not.
+- Pair naturally: a `timeRamp` dip at the payoff, a `gradeShift` warming at
+  the landing, or a cut whose continuity anchor is the underlined word.
+- The candidates should escalate toward the payoff (weakest first); keep all
+  four words in one register (verbs with verbs, nouns with nouns).
+
+**Slots.** `lead` (the locked sentence prefix), `word1..word3` (the candidate
+ticks), `payoff` (the word that stays), `accent` (a `var(--…)` brand token for
+the wheel/underline/glow), `settleSec` (seconds after scene start when the
+payoff locks — leave ≥1s of scene after it).
+</template>
+<!--
+  last-word-roulette — the golden recipe (Recipe Studio, RecipeV2).
+
+  A locked sentence whose final word is a masked vertical wheel: three
+  candidate words tick past, then the payoff word snaps in, an accent
+  underline draws beneath it, and a soft glow acknowledges the landing.
+
+  Instantiation contract (host-owned — see recipeContract.ts):
+  - the <template data-recipe-markup> is injected inside the declared scene
+    (HTML-escaped {{param}} slots filled from the storyboard declaration);
+  - the <style data-recipe-style> is injected once into <head>;
+  - the <script data-recipe-motion> body runs as (tl, root, start, duration,
+    uid) — statements add tweens to the ONE paused master timeline. Pure
+    function of timeline time: no clocks, no rAF, no randomness, no repeats.
+-->
+<style data-recipe-style>
+  .rcp-roulette {
+    position: relative;
+    display: block;
+    text-align: center;
+    line-height: 1.08;
+    /* Self-sufficient display scale with tunable overrides: a hosting scene
+       may retune via --rcp-size/--rcp-weight without touching the mechanism. */
+    font-size: var(--rcp-size, 104px);
+    font-weight: var(--rcp-weight, 800);
+    letter-spacing: -0.015em;
+  }
+  .rcp-roulette .rcp-line {
+    display: block;
+    white-space: nowrap;
+  }
+  .rcp-roulette .rcp-lead {
+    display: inline-block;
+    vertical-align: baseline;
+  }
+  .rcp-roulette .rcp-slot {
+    /* The wheel's column: inline with the lead, owns the underline + glow so
+       both track the PAYOFF word, not the sentence. vertical-align: bottom
+       matches the mask's box bottom to the line box bottom, so the wheel
+       words share the lead's baseline (an overflow-hidden inline-block would
+       otherwise baseline-align its bottom edge and ride high). */
+    position: relative;
+    display: inline-block;
+    vertical-align: bottom;
+    margin-left: 0.28em;
+  }
+  .rcp-roulette .rcp-mask {
+    display: block;
+    overflow: hidden;
+    height: 1.08em;
+    text-align: left;
+  }
+  .rcp-roulette .rcp-wheel {
+    display: inline-block;
+    will-change: transform;
+  }
+  .rcp-roulette .rcp-word {
+    display: block;
+    height: 1.08em;
+    color: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-roulette .rcp-word:not(.rcp-payoff) {
+    opacity: 0.82;
+  }
+  .rcp-roulette .rcp-rule {
+    display: block; /* transformed inline spans are a no-op (determinism rules) */
+    position: absolute;
+    left: 3%;
+    right: 3%;
+    top: calc(100% + 0.08em);
+    height: 0.05em;
+    border-radius: 999px;
+    background: var(--rcp-accent, #ffc24d);
+    transform: scaleX(0);
+    transform-origin: 50% 50%;
+  }
+  .rcp-roulette .rcp-glow {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 8em;
+    height: 3em;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: radial-gradient(closest-side, var(--rcp-accent, #ffc24d), transparent 72%);
+    opacity: 0;
+    pointer-events: none;
+    filter: blur(14px);
+  }
+</style>
+<template data-recipe-markup>
+  <div class="rcp-roulette" data-part="{{uid}}-roulette" data-layout-important
+    data-layout-anchor="frame:center" style="--rcp-accent: {{accent}}">
+    <span class="rcp-line">
+      <span class="rcp-lead">{{lead}}</span>
+      <span class="rcp-slot" data-layout-allow-overflow>
+        <span class="rcp-glow" data-layout-ignore></span>
+        <span class="rcp-mask">
+          <span class="rcp-wheel" data-part="{{uid}}-wheel">
+            <span class="rcp-word">{{word1}}</span>
+            <span class="rcp-word">{{word2}}</span>
+            <span class="rcp-word">{{word3}}</span>
+            <span class="rcp-word rcp-payoff">{{payoff}}</span>
+          </span>
+        </span>
+        <span class="rcp-rule" data-layout-ignore></span>
+      </span>
+    </span>
+  </div>
+</template>
+<script data-recipe-motion>
+  // Timing spine: everything is derived from the scene window and the single
+  // settleSec knob (seconds after scene start when the payoff locks), so a
+  // re-timed scene keeps the choreography's shape. Clamped so the full
+  // gesture always fits the scene with a reading hold after the payoff.
+  var settle = start + Math.min(Math.max({{settleSec}}, 1.6), Math.max(1.6, duration - 1.0));
+  var rootSel = '[data-part="' + uid + '-roulette"]';
+  var wheelSel = '[data-part="' + uid + '-wheel"]';
+  var ruleSel = rootSel + " .rcp-rule";
+  var glowSel = rootSel + " .rcp-glow";
+
+  // Entrance: the locked sentence rises in as one object.
+  tl.fromTo(rootSel, { y: 26, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.5, ease: "power3.out" }, start + 0.2);
+
+  // The wheel: three candidate ticks, then the payoff snap. Each word is 25%
+  // of the wheel column; ticks are committed inOut steps (never a blur), the
+  // payoff lands on seqSettle — overshoot-free arrival (house style).
+  var tick = 0.3;
+  tl.set(wheelSel, { yPercent: 0 }, start);
+  tl.to(wheelSel, { yPercent: -25, duration: tick, ease: "power2.inOut" }, settle - 1.42);
+  tl.to(wheelSel, { yPercent: -50, duration: tick, ease: "power2.inOut" }, settle - 0.96);
+  tl.to(wheelSel, { yPercent: -75, duration: 0.4, ease: "seqSettle" }, settle - 0.4);
+
+  // Acknowledgment: underline draws, glow breathes once and releases.
+  tl.fromTo(ruleSel, { scaleX: 0 }, { scaleX: 1, duration: 0.45, ease: "power2.inOut" }, settle + 0.05);
+  tl.fromTo(glowSel, { opacity: 0 }, { opacity: 0.5, duration: 0.3, ease: "power2.out" }, settle);
+  tl.to(glowSel, { opacity: 0.22, duration: 0.6, ease: "power2.inOut" }, settle + 0.3);
+</script>

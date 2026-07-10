@@ -13,20 +13,26 @@ import {
   findingSignature,
   HOST_PLAN_ISLAND_IDS,
   injectMissingLivenessBeats,
+  mergeEmbeddedDevelopmentScenes,
   reconcileCameraWorldPlanes,
   reconcileComponentBindings,
   reconcileComponentInternalPartAliases,
   reconcileContractBindings,
   repairMalformedFromToCalls,
+  quoteBareCssVarsInInlineScripts,
+  stripInvalidSvgPathPlaceholders,
   repairStrategyAfterStaticRejection,
   rewriteDegradedCutStoryboard,
   stripAllHostPlanIslands,
   stripHostKitAssetReferences,
   stripUnusedHostPlanIslands,
+  topUpChartMarkup,
+  topUpProgressMarkup,
   topUpRowsMarkup,
   volunteeredCutBoundaries,
 } from "../src/engine/compositionRunner.ts";
 import { hasPausedTimeline } from "../src/engine/directComposition.ts";
+import { auditKitMarkupCompleteness } from "../src/engine/kitMarkupAudit.ts";
 import { validateCameraContract } from "../src/engine/cameraContract.ts";
 import { validateComponentContract } from "../src/engine/componentContract.ts";
 import { resolveCutPlan, validateCutContract } from "../src/engine/cutContract.ts";
@@ -35,6 +41,67 @@ import { validateInteractionContract } from "../src/engine/interactionContract.t
 import { analyzeMotionDensity } from "../src/engine/motionDensity.ts";
 
 const roots: string[] = [];
+
+describe("embedded development scene repair", () => {
+  const component = (id: string, kind: string) => ({ version: 1, id, kind });
+  const parent = () => ({
+    id: "metric-payoff",
+    startSec: 18.5,
+    durationSec: 8,
+    components: [component("metric-number", "stat-card"), component("ring", "progress-ring")],
+    beats: [{ version: 1, id: "count", component: "metric-number", kind: "count", atSec: 19.5 }],
+    moments: [{ id: "count-start", atSec: 19.5 }],
+    spatialIntent: { focalPart: "metric-number" },
+  });
+  const continuation = (overrides: Record<string, unknown> = {}) => ({
+    id: "metric-develop",
+    startSec: 22.4,
+    durationSec: 3.5,
+    components: [component("metric-number", "stat-card"), component("ring", "progress-ring")],
+    beats: [
+      { version: 1, id: "label-swap", component: "metric-number", kind: "swap", atSec: 23 },
+      { version: 1, id: "ring-pulse", component: "ring", kind: "highlight", atSec: 24.5 },
+    ],
+    moments: [
+      { id: "label-develop", atSec: 23 },
+      { id: "ring-develop", atSec: 24.5 },
+    ],
+    camera: { path: [{ move: "drift", startSec: 22.4, durationSec: 1.5 }] },
+    interactions: [],
+    plugins: [],
+    recipes: [],
+    spatialIntent: { focalPart: "metric-number" },
+    ...overrides,
+  });
+
+  it("folds an embedded duplicate-surface beat patch into its containing scene", () => {
+    const cta = { id: "cta", startSec: 26.5, durationSec: 6 };
+    const result = mergeEmbeddedDevelopmentScenes([parent(), continuation(), cta]);
+    expect(result.storyboard).toHaveLength(2);
+    expect(result.normalized[0]).toContain('"metric-develop" into "metric-payoff"');
+    const merged = result.storyboard[0] as Record<string, unknown>;
+    expect((merged.beats as Array<{ id: string }>).map((beat) => beat.id))
+      .toEqual(["count", "label-swap", "ring-pulse"]);
+    expect((merged.moments as Array<{ id: string }>).map((moment) => moment.id))
+      .toEqual(["count-start", "label-develop", "ring-develop"]);
+    expect(merged.sentinelNormalizations).toEqual([expect.stringContaining("2 beat(s)")]);
+  });
+
+  it("does not fold creative changes or cues outside the containing window", () => {
+    const cases = [
+      continuation({ components: [component("new-chart", "chart")] }),
+      continuation({ camera: { path: [{ move: "push-in", startSec: 23, durationSec: 1 }] } }),
+      continuation({ interactions: [{ id: "click" }] }),
+      continuation({ spatialIntent: { focalPart: "other" } }),
+      continuation({ moments: [{ id: "late", atSec: 27 }] }),
+      continuation({ cut: { style: "morph" } }),
+      continuation({ gradeShift: { atSec: 23, toGrade: "warm" } }),
+    ];
+    for (const child of cases) {
+      expect(mergeEmbeddedDevelopmentScenes([parent(), child]).normalized).toEqual([]);
+    }
+  });
+});
 
 afterEach(() => {
   while (roots.length) {
@@ -455,6 +522,203 @@ describe("deterministic rows-markup top-up (fallback-elimination lever 1)", () =
     expect(result.html.match(/class="cmp-item"/g)).toHaveLength(3);
     expect(topUpRowsMarkup(result.html, selectScene).repaired).toEqual([]);
   });
+
+  it("labels topped-up rows with real plan copy, not 'Item N' (T5)", () => {
+    // Priority: the component's own beat text, then moment titles, then the
+    // foreground fragments — never generic placeholders.
+    const html =
+      '<section data-scene="board"><div data-part="board-list" data-component="list" ' +
+      'class="cmp cmp-list"></div></section>';
+    const scenes: DirectScene[] = [scene("board", 0, {
+      components: [{ version: 1, id: "board-list", kind: "list" }],
+      beats: [{ version: 1, id: "rows", sceneId: "board", component: "board-list", kind: "rows", atSec: 1 }],
+      foreground: "'deploy blocked on auth', 'PR 234 ready', 'waiting on API spec'",
+    })];
+    const result = topUpRowsMarkup(html, scenes);
+    expect(result.repaired).toEqual(["board-list"]);
+    // The quoted foreground fragments ship as row copy, quotes stripped.
+    expect(result.html).toContain("deploy blocked on auth");
+    expect(result.html).toContain("PR 234 ready");
+    expect(result.html).toContain("waiting on API spec");
+    expect(result.html).not.toContain("Item 1");
+    // The source is recorded for the degradation ledger.
+    expect(result.html).toContain('data-sequences-rows-source="foreground"');
+    // Still marked host-invented placeholder STRUCTURE (a degradation on ship).
+    expect(result.html.match(/data-sequences-neutral="1"/g)).toHaveLength(3);
+  });
+
+  it("prefers the component's own beat text over moments/foreground", () => {
+    const html =
+      '<section data-scene="feed"><div data-part="feed" data-component="chat" ' +
+      'class="cmp cmp-chat"></div></section>';
+    const scenes: DirectScene[] = [scene("feed", 0, {
+      components: [{ version: 1, id: "feed", kind: "chat" }],
+      beats: [
+        { version: 1, id: "type-1", sceneId: "feed", component: "feed", kind: "type", atSec: 1, text: "Deploy shipped" },
+        { version: 1, id: "rows", sceneId: "feed", component: "feed", kind: "rows", atSec: 2 },
+      ],
+      moments: [{ version: 1, id: "m", sceneId: "feed", atSec: 1, title: "A moment title", visualState: "x", change: "y", motionIntent: "type-on", importance: "primary" }],
+      foreground: "some, foreground, fragments",
+    })];
+    const result = topUpRowsMarkup(html, scenes);
+    expect(result.html).toContain("Deploy shipped");
+    expect(result.html).toContain('data-sequences-rows-source="beat-text"');
+  });
+
+  it("falls back to the neutral noun only when the plan carries no copy", () => {
+    const html =
+      '<section data-scene="bare"><div data-part="bare" data-component="table" ' +
+      'class="cmp cmp-table"></div></section>';
+    const scenes: DirectScene[] = [scene("bare", 0, {
+      components: [{ version: 1, id: "bare", kind: "table" }],
+      beats: [{ version: 1, id: "rows", sceneId: "bare", component: "bare", kind: "rows", atSec: 1 }],
+    })];
+    const result = topUpRowsMarkup(html, scenes);
+    expect(result.html).toContain("Row 1");
+    expect(result.html).toContain('data-sequences-rows-source="neutral"');
+  });
+});
+
+function compositionDoc(body: string): string {
+  return `<!doctype html><html><head></head><body>
+<main data-composition-id="c" data-width="1920" data-height="1080" data-duration="4">
+${body}
+</main></body></html>`;
+}
+
+describe("deterministic chart-markup top-up (kit_markup_incomplete absorption)", () => {
+  const chartScene = (kind: "chart-bars" | "chart-line"): DirectScene[] => [
+    scene("metrics", 0, {
+      components: [{ version: 1, id: "growth", kind }],
+      beats: [{
+        version: 1,
+        id: "grow",
+        sceneId: "metrics",
+        component: "growth",
+        kind: "chart",
+        atSec: 1.5,
+      }],
+    }),
+  ];
+
+  it("injects four neutral kit bars into a chartless bar chart", () => {
+    const html =
+      '<section data-scene="metrics"><div data-part="growth" data-component="chart-bars" ' +
+      'class="cmp cmp-chart-bars material"></div></section>';
+    const result = topUpChartMarkup(html, chartScene("chart-bars"));
+    expect(result.repaired).toEqual(["growth"]);
+    expect(result.html.match(/<i[^>]*data-sequences-neutral="chart"/g)).toHaveLength(4);
+    expect(result.html).toContain('class="cmp-hero"');
+    // Idempotent: bars now present, a second pass stays out.
+    expect(topUpChartMarkup(result.html, chartScene("chart-bars")).repaired).toEqual([]);
+  });
+
+  it("injects an svg polyline stroke for a line chart", () => {
+    const html =
+      '<div data-part="growth" data-component="chart-line" class="cmp cmp-chart-line"></div>';
+    const result = topUpChartMarkup(html, chartScene("chart-line"));
+    expect(result.repaired).toEqual(["growth"]);
+    expect(result.html).toContain('class="cmp-stroke"');
+    expect(result.html).toContain('data-sequences-neutral="chart"');
+    expect(topUpChartMarkup(result.html, chartScene("chart-line")).repaired).toEqual([]);
+  });
+
+  it("leaves charts that already have bars or a stroke alone", () => {
+    const bars =
+      '<div data-part="growth" data-component="chart-bars" class="cmp cmp-chart-bars">' +
+      '<i style="height:40%"></i></div>';
+    expect(topUpChartMarkup(bars, chartScene("chart-bars")).repaired).toEqual([]);
+    const stroke =
+      '<div data-part="growth" data-component="chart-line" class="cmp cmp-chart-line">' +
+      '<svg><polyline points="0,10 10,0"/></svg></div>';
+    expect(topUpChartMarkup(stroke, chartScene("chart-line")).repaired).toEqual([]);
+  });
+
+  it("declines a content-bearing root — a stray nested <i> icon stays a finding", () => {
+    const html =
+      '<div data-part="growth" data-component="chart-bars" class="cmp cmp-chart-bars">' +
+      '<div class="cmp-head"><i class="icon-trend"></i> Revenue</div></div>';
+    expect(topUpChartMarkup(html, chartScene("chart-bars")).repaired).toEqual([]);
+  });
+
+  it("declines an ambiguous (duplicated) root", () => {
+    const html =
+      '<div data-part="growth" class="cmp"></div><div data-part="growth" class="cmp"></div>';
+    expect(topUpChartMarkup(html, chartScene("chart-bars")).repaired).toEqual([]);
+  });
+
+  it("clears the exact kit_markup_incomplete finding it targets (round-trip vs the audit)", () => {
+    const scenes = chartScene("chart-bars");
+    const before = compositionDoc(
+      '<section data-scene="metrics" data-start="0" data-duration="4">' +
+        '<div data-part="growth" class="cmp cmp-chart-bars"></div></section>',
+    );
+    expect(auditKitMarkupCompleteness(before, scenes).errors.some((error) =>
+      error.includes("kit_markup_incomplete") && error.includes("chart"))).toBe(true);
+    const after = topUpChartMarkup(before, scenes).html;
+    expect(auditKitMarkupCompleteness(after, scenes).errors).toEqual([]);
+  });
+});
+
+describe("deterministic progress-markup top-up (kit_markup_incomplete absorption)", () => {
+  const progressScene = (kind: "progress" | "progress-ring"): DirectScene[] => [
+    scene("deploy", 0, {
+      components: [{ version: 1, id: "build", kind }],
+      beats: [{
+        version: 1,
+        id: "fill",
+        sceneId: "deploy",
+        component: "build",
+        kind: "progress",
+        atSec: 1.5,
+      }],
+    }),
+  ];
+
+  it("injects a data-cmp-fill bar into a fill-less horizontal progress", () => {
+    const html =
+      '<div data-part="build" data-component="progress" class="cmp cmp-progress"></div>';
+    const result = topUpProgressMarkup(html, progressScene("progress"));
+    expect(result.repaired).toEqual(["build"]);
+    expect(result.html).toContain("data-cmp-fill");
+    expect(result.html).toContain('data-sequences-neutral="progress"');
+    expect(topUpProgressMarkup(result.html, progressScene("progress")).repaired).toEqual([]);
+  });
+
+  it("injects an svg ring arc into an empty progress-ring", () => {
+    const html =
+      '<div data-part="build" data-component="progress-ring" class="cmp cmp-ring"></div>';
+    const result = topUpProgressMarkup(html, progressScene("progress-ring"));
+    expect(result.repaired).toEqual(["build"]);
+    expect(result.html).toContain('class="cmp-ring-fg"');
+    expect(topUpProgressMarkup(result.html, progressScene("progress-ring")).repaired).toEqual([]);
+  });
+
+  it("declines a partial ring — a background track but no fg arc stays a finding", () => {
+    const html =
+      '<div data-part="build" data-component="progress-ring" class="cmp cmp-ring">' +
+      '<svg viewBox="0 0 120 120"><circle class="cmp-ring-bg" cx="60" cy="60" r="52"/></svg></div>';
+    expect(topUpProgressMarkup(html, progressScene("progress-ring")).repaired).toEqual([]);
+  });
+
+  it("leaves an already-filled progress alone", () => {
+    const html =
+      '<div data-part="build" data-component="progress" class="cmp cmp-progress">' +
+      "<i data-cmp-fill></i></div>";
+    expect(topUpProgressMarkup(html, progressScene("progress")).repaired).toEqual([]);
+  });
+
+  it("clears the exact kit_markup_incomplete finding it targets (round-trip vs the audit)", () => {
+    const scenes = progressScene("progress");
+    const before = compositionDoc(
+      '<section data-scene="deploy" data-start="0" data-duration="4">' +
+        '<div data-part="build" class="cmp cmp-progress"></div></section>',
+    );
+    expect(auditKitMarkupCompleteness(before, scenes).errors.some((error) =>
+      error.includes("kit_markup_incomplete") && error.includes("progress"))).toBe(true);
+    const after = topUpProgressMarkup(before, scenes).html;
+    expect(auditKitMarkupCompleteness(after, scenes).errors).toEqual([]);
+  });
 });
 
 describe("repair-feedback dedupe by finding signature", () => {
@@ -690,6 +954,40 @@ describe("reconcileComponentBindings — missing data-part recovery", () => {
     expect(repairs).toBe(1);
     expect(out).toContain('data-component="command-palette" data-part="cmd-palette"');
   });
+
+  it("moves a stat binding off a hidden placeholder onto the sole visible metric root", () => {
+    const html = wrap(
+      '<div class="panel-stat-dock"><span data-cmp-value>7</span></div>' +
+        '<div data-part="impact-stat" data-component="stat-card" style="display:none;">' +
+        '<span data-cmp-value>142ms</span></div>',
+    );
+    const { html: out, repairs } = reconcileComponentBindings(html, [
+      scene("dashboard-overload", 0, {
+        components: [component("impact-stat", "stat-card")],
+      }),
+    ]);
+    expect(repairs).toBe(1);
+    expect(out).toContain(
+      'class="panel-stat-dock" data-part="impact-stat" data-component="stat-card"',
+    );
+    expect(out).toContain('data-part="impact-stat-hidden-aux-1"');
+  });
+
+  it("leaves a hidden stat binding in place when visible metric roots are ambiguous", () => {
+    const html = wrap(
+      '<div class="panel-stat-dock"><span data-cmp-value>7</span></div>' +
+        '<div class="metric-card"><span data-cmp-value>8</span></div>' +
+        '<div data-part="impact-stat" data-component="stat-card" style="display:none"></div>',
+    );
+    const { html: out, repairs } = reconcileComponentBindings(html, [
+      scene("dashboard-overload", 0, {
+        components: [component("impact-stat", "stat-card")],
+      }),
+    ]);
+    expect(repairs).toBe(0);
+    expect(out).toContain('data-part="impact-stat" data-component="stat-card" style="display:none"');
+    expect(out).not.toContain('data-part="impact-stat-hidden-aux-1"');
+  });
 });
 
 describe("deterministic source repair ordering: camera world + component aliases", () => {
@@ -779,6 +1077,104 @@ describe("deterministic source repair ordering: camera world + component aliases
     expect(validateCutContract(repaired.html, scenes).errors).toEqual([]);
     expect(validateCameraContract(repaired.html, scenes).errors).toEqual([]);
     expect(validateComponentContract(repaired.html, scenes).errors).toEqual([]);
+  });
+
+  it("normalizes the composition root start time without duplicating it", () => {
+    const scenes = storyboard();
+    const first = applyDeterministicSourceRepairs(
+      { html: sourceHtml(), storyboard: scenes },
+      tempDir(),
+      scenes,
+    );
+    expect(first.html).toMatch(/<main\b[^>]*\bdata-composition-id="c"[^>]*\bdata-start="0"/);
+
+    const second = applyDeterministicSourceRepairs(first, tempDir(), scenes);
+    const rootTag = second.html.match(/<main\b[^>]*>/)?.[0] ?? "";
+    expect(rootTag.match(/\bdata-start=/g)).toHaveLength(1);
+  });
+
+  it("strips dead literal GSAP tweens while preserving live and dynamic calls", () => {
+    const scenes = storyboard();
+    const html = sourceHtml().replace(
+      'const tl = gsap.timeline({ paused: true });',
+      'const tl = gsap.timeline({ paused: true });\n' +
+        'tl.to("#missing-panel", { opacity: 1, duration: 0.4 }, 1);\n' +
+        'tl.to("#dashboard-overwhelm", { opacity: 1, duration: 0.4 }, 1.5);\n' +
+        'tl.to(selectorFromState, { opacity: 1, duration: 0.4 }, 2);',
+    );
+    const repaired = applyDeterministicSourceRepairs(
+      { html, storyboard: scenes },
+      tempDir(),
+      scenes,
+    );
+    expect(repaired.html).not.toContain('#missing-panel');
+    expect(repaired.html).toContain('#dashboard-overwhelm');
+    expect(repaired.html).toContain('selectorFromState');
+  });
+
+  it("injects the canonical ripple even when an authored tween selector names the ripple part", () => {
+    // The 2026-07-07 TraceKit probe replay: the author built a ripple element
+    // AND a tween addressing `[data-part='…-ripple']`. Retiring the element
+    // used to leave the selector string in the inline script, which the bare
+    // attribute-existence test mistook for a still-bound element — no
+    // canonical actor was injected and interaction_ripple_missing survived
+    // every paid attempt.
+    const scenes = storyboard().map((entry) =>
+      entry.id === "palette-ship"
+        ? {
+            ...entry,
+            interactions: [{
+              version: 1 as const,
+              id: "press-palette",
+              sceneId: "palette-ship",
+              cursorId: "pointer",
+              targetPart: "cmd-palette",
+              action: "click" as const,
+              startSec: 5,
+              arriveSec: 5.6,
+              pressSec: 5.7,
+              releaseSec: 5.85,
+              from: "frame:bottom-right" as const,
+              path: "human" as const,
+              aimX: 0.5,
+              aimY: 0.5,
+              feedback: "press-ripple" as const,
+              ripplePart: "palette-ripple",
+            }],
+          }
+        : entry
+    );
+    const html = sourceHtml()
+      .replace(
+        '<div class="cmp cmp-palette material" data-component="command-palette">',
+        '<span data-part="palette-ripple" style="position:absolute;width:0;height:0"></span>' +
+          '<div class="cmp cmp-palette material" data-component="command-palette">',
+      )
+      .replace(
+        'const tl = gsap.timeline({ paused: true });',
+        'const tl = gsap.timeline({ paused: true });\n' +
+          "tl.fromTo(\"#palette-ship [data-part='palette-ripple']\", " +
+          '{ width: 0 }, { width: 340, duration: 0.8 }, 5.7);',
+      );
+    const repaired = applyDeterministicSourceRepairs(
+      { html, storyboard: scenes },
+      tempDir(),
+      scenes,
+    );
+    // The canonical runtime actor exists and owns the data-part.
+    expect(repaired.html).toMatch(
+      /data-sequences-runtime-ripple[^>]*\bdata-part="palette-ripple"/,
+    );
+    // The authored element is retired, and the tween selector follows it with
+    // its original quote style intact (the script must still parse).
+    expect(repaired.html).toContain('data-sequences-retired-ripple="palette-ripple"');
+    expect(repaired.html).toContain(
+      "#palette-ship [data-sequences-retired-ripple='palette-ripple']",
+    );
+    expect(repaired.html).not.toContain("[data-part='palette-ripple']");
+    // Exactly one live binding remains — the canonical actor.
+    const liveBindings = repaired.html.match(/\bdata-part="palette-ripple"/g) ?? [];
+    expect(liveBindings).toHaveLength(1);
   });
 });
 
@@ -1098,6 +1494,18 @@ describe("repairMalformedFromToCalls — the s5-interactions call-shape class", 
     expect(result.html).toBe(source);
   });
 
+  it("replays the Vectorline live failure as a settled micro-pin .to()", () => {
+    const source =
+      `tl.fromTo("[data-part='hero-stat-card']", ` +
+      `{ y: 0, opacity: 1, duration: 0.01, ease: "power3.out" }, 26.1);`;
+    const result = repairMalformedFromToCalls(source);
+    expect(result).toMatchObject({ repairs: 1, toRepairs: 1, ambiguous: 0 });
+    expect(result.html).toBe(
+      `tl.to("[data-part='hero-stat-card']", ` +
+      `{ y: 0, opacity: 1, duration: 0.01, ease: "power3.out" }, 26.1);`,
+    );
+  });
+
   it("leaves mixed/cue-less direction ambiguous and blocking", () => {
     const source =
       'tl.fromTo("#mixed", { opacity: 1, y: 40, duration: 0.6 }, 1.2);\n' +
@@ -1116,6 +1524,37 @@ describe("repairMalformedFromToCalls — the s5-interactions call-shape class", 
     const result = repairMalformedFromToCalls(wellFormed);
     expect(result.repairs).toBe(0);
     expect(result.html).toBe(wellFormed);
+  });
+});
+
+describe("Probe 6 mechanical source syntax repairs", () => {
+  it("quotes bare CSS var() values only inside executable inline scripts", () => {
+    const source = [
+      "<style>.button{color:var(--positive)}</style>",
+      '<script type="application/json">{"css":"var(--positive)"}</script>',
+      "<script>",
+      "tl.to(button, { borderColor: var(--positive), color: var( --accent-soft ) }, 24.5);",
+      "</script>",
+    ].join("\n");
+    const result = quoteBareCssVarsInInlineScripts(source);
+
+    expect(result.repairs).toBe(2);
+    expect(result.html).toContain(".button{color:var(--positive)}");
+    expect(result.html).toContain('{"css":"var(--positive)"}');
+    expect(result.html).toContain('borderColor: "var(--positive)"');
+    expect(result.html).toContain('color: "var(--accent-soft)"');
+  });
+
+  it("removes an unbound SVG ellipsis path but preserves binding-bearing paths", () => {
+    const source = [
+      '<svg><path d="M0,100 C...,120 100" fill="url(#fill)"/>',
+      '<path data-part="hero-line" d="M0,100 C...,120 100"/></svg>',
+    ].join("");
+    const result = stripInvalidSvgPathPlaceholders(source);
+
+    expect(result.repairs).toBe(1);
+    expect(result.html).not.toContain('fill="url(#fill)"');
+    expect(result.html).toContain('data-part="hero-line"');
   });
 });
 

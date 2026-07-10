@@ -164,6 +164,40 @@ function readNumberExpression(
   }
 }
 
+/**
+ * Resolve the first member of a deterministic stagger authored inside an
+ * inline `forEach((item, index) => { ... })`. The index is not a timeline
+ * variable: substituting zero gives the stagger's earliest absolute start,
+ * which is the conservative point liveness needs. Other unknown identifiers
+ * remain unplaceable.
+ */
+function readPositionExpression(
+  value: string | undefined,
+  constants: Map<string, number>,
+  sourceBeforeCall: string,
+): number | undefined {
+  const direct = readNumberExpression(value, constants);
+  if (direct !== undefined || !value) return direct;
+  const raw = value.trim();
+  const identifiers = [...new Set(raw.match(/\b[A-Za-z_$][\w$]*\b/g) ?? [])]
+    .filter((name) => !constants.has(name));
+  if (identifiers.length !== 1) return undefined;
+  const indexName = identifiers[0]!;
+  const escaped = indexName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const callbackTail = sourceBeforeCall.slice(-900);
+  if (!new RegExp(
+    `\\.forEach\\s*\\(\\s*\\(\\s*[A-Za-z_$][\\w$]*\\s*,\\s*${escaped}` +
+      `\\s*\\)\\s*=>\\s*\\{[^{}]*$`,
+    "s",
+  ).test(callbackTail)) {
+    return undefined;
+  }
+  return readNumberExpression(
+    raw.replace(new RegExp(`\\b${escaped}\\b`, "g"), "0"),
+    constants,
+  );
+}
+
 function readObjectNumber(
   objectSource: string | undefined,
   key: string,
@@ -234,7 +268,11 @@ function authoredTweenActivities(
     if (!call) continue;
     const args = splitTopLevel(call);
     const vars = method === "fromTo" ? args[2] : args[1];
-    const position = readNumberExpression(method === "fromTo" ? args[3] : args[2], constants);
+    const position = readPositionExpression(
+      method === "fromTo" ? args[3] : args[2],
+      constants,
+      html.slice(0, match.index),
+    );
     if (position === undefined) {
       unpositioned += 1;
       continue;

@@ -36,6 +36,8 @@ describe("deterministic direct fallback browser contract", () => {
     // The framing-coverage audit must not fire on the deterministic proof
     // film (its compact end card is the final-scene exemption's proof case).
     expect(qa.issues.filter((issue) => issue.code === "camera_framed_sparse")).toEqual([]);
-    // 30s: the coverage audit added deliberate extra seeks to browser QA.
-  }, 30_000);
+    // Full-suite workers run several Chromium QA contracts concurrently; the
+    // same probe takes ~20s alone and can exceed Vitest's 30s default under
+    // contention. This timeout changes scheduling tolerance, not QA policy.
+  }, 60_000);
 });

@@ -19,14 +19,11 @@
  */
 [data-composition-id] {
   position: relative;
-  /* MD4 grade-shift panel wash colors. The fx runtime paints its expanding
-   * cover panel with the TARGET grade's wash so the temperature turn reads as
-   * grading; at full cover the scene's grade class swaps and the panel fades
-   * into that grade's static ::after wash (no double wash). */
-  --cinema-panel-cold: rgba(98, 130, 200, 0.16);
-  --cinema-panel-neutral: rgba(230, 234, 244, 0.13);
-  --cinema-panel-warm: rgba(255, 186, 110, 0.16);
-  --cinema-panel-noir: rgba(6, 7, 14, 0.42);
+  /* MD4 grade shift: the fx runtime fades in a full-frame panel WEARING the
+   * target grade class — the panel's own ::after paints that grade's steady
+   * wash — so the turn is pure grading, no wipe geometry and no cover color
+   * brighter than the settled wash. At cover the scene's class swaps and the
+   * panel drops out on identical pixels. */
 }
 [data-composition-id]::after {
   content: "";

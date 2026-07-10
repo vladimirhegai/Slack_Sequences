@@ -56,6 +56,8 @@ function round(value: number): number {
 export const DEVELOPMENT_SEC_PER_INTRODUCTION = 0.9;
 /** The last introduction must land by this fraction of the scene window. */
 export const LAST_INTRODUCTION_MAX_FRACTION = 0.65;
+/** A judge-facing cold open must establish its first declared subject promptly. */
+export const OPENING_SUBJECT_MAX_SEC = 1.25;
 /** Reading floor per word for typed copy, and its clamp bounds. */
 export const READING_SEC_PER_WORD = 0.3;
 export const READING_MIN_SEC = 1.2;
@@ -68,6 +70,19 @@ export const ASSEMBLE_HOLD_SEC = 1.2;
 export const CAMERA_BUDGET_WINDOW_SEC = 3.5;
 /** Whips allowed per film. */
 export const MAX_WHIPS_PER_FILM = 2;
+/** Films shorter than this are exempt from the distinct-framings floor. */
+export const FRAMING_FLOOR_MIN_FILM_SEC = 10;
+/**
+ * Distinct framings a film of this length needs: a new framing (a cut into a
+ * shot, or a full typed camera move) roughly every `CAMERA_BUDGET_WINDOW_SEC`.
+ * The single source of truth for the floor `validateStoryboardPlan` enforces
+ * and `topUpFramingFloor` closes.
+ */
+export function requiredFramingCount(totalDurationSec: number): number {
+  return Math.min(12, Math.max(3, Math.round(totalDurationSec / CAMERA_BUDGET_WINDOW_SEC)));
+}
+/** Gentle establishing zoom for a host-added framing top-up push-in. */
+export const FRAMING_TOPUP_ZOOM = 1.15;
 /**
  * Shortfall below which a time-window finding stays silent. A paid storyboard
  * attempt must never be vetoed over a marginal miss (live probe
@@ -80,15 +95,132 @@ export const PACING_TOLERANCE_SEC = 0.35;
  * Largest reading/outcome-hold shortfall that gets closed by stretching the
  * scene's own cut boundary (and cascade-shifting every later scene) instead
  * of being reported to the model as a findings-retry. A miss this size is
- * mechanical arithmetic (extend a cut by under a second); a larger one is a
+ * mechanical arithmetic (extend a cut by at most a beat and a half); a larger one is a
  * genuine creative deficit and stays blocking, per Sentinel's decision rule
  * (SENTINEL_PLAN.md §3 Phase 3.1: normalize what deletes/degrades/retimes,
  * send content deficits back to the model).
  */
-export const MAX_PACING_STRETCH_SEC = 1.0;
+export const MAX_PACING_STRETCH_SEC = 1.5;
+/**
+ * A camera move can be shifted farther than a cut may be stretched when the
+ * move still fits its scene (within the separate stretch cap), does not pass
+ * another move, and retains every camera-moment binding. The upper bound is
+ * the same four-second maximum reading floor the move is clearing.
+ */
+export const MAX_PACING_RETIME_SEC = READING_MAX_SEC;
+/**
+ * A cursor interaction owns the frame from just before the cursor arrives
+ * until its result settles: a full camera move IN FLIGHT there stacks two
+ * verbs on one instant (probe-audit-01: a whip re-framed the world during a
+ * sidebar click). The lead keeps the frame stable as the cursor closes in;
+ * the settle gives the click's result a beat before the next reframe.
+ */
+export const INTERACTION_HOLD_LEAD_SEC = 0.15;
+export const INTERACTION_HOLD_SETTLE_SEC = 0.3;
+/**
+ * The eye needs a beat after a cut lands before an ENERGETIC reframe fires,
+ * or the boundary reads as two stacked transitions (probe-audit-02: hard cut
+ * → 0.2s → whip; morph → 0.3s → push-in). Connective pans/drifts stay free.
+ */
+export const ENTRY_SETTLE_SEC = 0.9;
+/** Minimum gap between two energetic full moves aimed at different targets. */
+export const MOVE_SETTLE_GAP_SEC = 0.6;
 
-/** Beat kinds that put a NEW surface (or new content) in front of the viewer. */
-const ENTRANCE_BEAT_KINDS = new Set(["open", "rows", "swap"]);
+/** The window each interaction owns, in the scene's own (content) time. */
+function interactionHoldWindows(
+  scene: DirectScene,
+): Array<{ id: string; from: number; until: number }> {
+  return (scene.interactions ?? []).map((interaction) => ({
+    id: interaction.id,
+    from: interaction.arriveSec - INTERACTION_HOLD_LEAD_SEC,
+    until:
+      (interaction.holdUntilSec ?? interaction.releaseSec ?? interaction.pressSec ??
+        interaction.arriveSec) + INTERACTION_HOLD_SETTLE_SEC,
+  }));
+}
+
+/**
+ * A move that reads as a TRANSITION in its own right — the ones that stack
+ * badly against a cut landing or against each other. Mirrors
+ * `cameraMoveEnergyRank` >= 1 (whip/orbit/high-zoom, push/pull/dive);
+ * connective pan/track/parallax stay exempt.
+ */
+function isEnergeticCameraMove(move: CameraMoveIntentV1): boolean {
+  return cameraMoveEnergyRank(move) >= 1;
+}
+
+/**
+ * The reading/outcome hold windows `auditPacing` will demand after each beat
+ * — the windows a retime normalizer must never delay a move INTO. Live probe
+ * `probe-audit-fable-2` (2026-07-08): the entry-settle delay moved a push-in
+ * from 4.8s to 5.4s, which put it in flight through a set-state payoff's
+ * >=0.8s hold at 6.2s and minted the very `pacing/outcome` finding the
+ * earlier `delayConflictingCameraMoves` pass exists to prevent (it runs
+ * BEFORE these normalizers, so it cannot see their retimes).
+ */
+function beatHoldWindows(
+  scene: DirectScene,
+  beats: ResolvedComponentBeatV1[],
+): Array<{ from: number; until: number }> {
+  const componentKinds = new Map(
+    (scene.components ?? []).map((component) => [component.id, component.kind]),
+  );
+  const windows: Array<{ from: number; until: number }> = [];
+  for (const beat of beats) {
+    let needed = 0;
+    if ((beat.kind === "type" || beat.kind === "swap") && beat.text) {
+      needed = Math.min(
+        READING_MAX_SEC,
+        Math.max(READING_MIN_SEC, READING_SEC_PER_WORD * words(beat.text)),
+      );
+    }
+    const isToastOpen = beat.kind === "open" && componentKinds.get(beat.component) === "toast";
+    if (PAYOFF_BEAT_KINDS.has(beat.kind) || isToastOpen) {
+      needed = Math.max(needed, OUTCOME_HOLD_SEC);
+    }
+    if (needed > 0) windows.push({ from: beat.endSec, until: beat.endSec + needed });
+  }
+  return windows;
+}
+
+/**
+ * Walk a retimed move's start forward until it no longer intersects any
+ * obstacle window — EXCEPT windows the move's ORIGINAL placement already
+ * intersected (the model's own conflict is the audit's business; a retime
+ * must only never CREATE one). Returns the cleared start time.
+ */
+function advanceClearOfWindows(
+  target: number,
+  durationSec: number,
+  originalStartSec: number,
+  obstacles: Array<{ from: number; until: number }>,
+): number {
+  const clashAt = (start: number): { from: number; until: number } | undefined =>
+    obstacles.find(
+      (window) => start < window.until - 1e-6 && start + durationSec > window.from + 1e-6,
+    );
+  const preexisting = new Set<number>();
+  for (const window of obstacles) {
+    if (
+      originalStartSec < window.until - 1e-6 &&
+      originalStartSec + durationSec > window.from + 1e-6
+    ) {
+      preexisting.add(window.from);
+    }
+  }
+  for (let pass = 0; pass <= obstacles.length; pass += 1) {
+    const clash = clashAt(target);
+    if (!clash || preexisting.has(clash.from)) return round(target);
+    target = Math.max(target, clash.until);
+  }
+  return round(target);
+}
+
+/** Beat kinds that put a NEW surface (or new content) in front of the viewer.
+ * `animate` covers a pre-built asset unit's spring entrance (its first beat is
+ * its arrival, camera-aware) so introduction timing judges the real moment the
+ * viewer sees it. */
+const ENTRANCE_BEAT_KINDS = new Set(["open", "rows", "swap", "animate"]);
 /**
  * Component kinds compact enough to land late in a short final resolve (a
  * logo / CTA / metric end card is read in one glance). Dense surfaces —
@@ -160,13 +292,27 @@ export function sceneIntroductionTimes(scene: DirectScene): number[] {
   const beats = scene.beats ?? [];
   const events: number[] = [];
   const usedBeatIds = new Set<string>();
+  // A plugin unit's children arrive as ONE host-choreographed gesture (the
+  // cascade), so the unit contributes one introduction at its earliest
+  // entrance — N seeded tiles are one surface to the eye, not N.
+  const pluginIntro = new Map<string, number>();
   for (const component of components) {
     const entrance = beats
       .filter((beat) => beat.component === component.id && ENTRANCE_BEAT_KINDS.has(beat.kind))
       .sort((a, b) => a.atSec - b.atSec)[0];
     if (entrance) usedBeatIds.add(entrance.id);
-    events.push(entrance ? entrance.atSec : scene.startSec);
+    const at = entrance ? entrance.atSec : scene.startSec;
+    if (component.pluginUid) {
+      const earliest = pluginIntro.get(component.pluginUid);
+      pluginIntro.set(
+        component.pluginUid,
+        earliest === undefined ? at : Math.min(earliest, at),
+      );
+    } else {
+      events.push(at);
+    }
   }
+  events.push(...pluginIntro.values());
   for (const beat of beats) {
     if (beat.kind === "swap" && !usedBeatIds.has(beat.id)) events.push(beat.atSec);
   }
@@ -191,6 +337,7 @@ export function auditPacing(storyboard: DirectScene[]): string[] {
   let whipCount = 0;
   for (const scene of storyboard) {
     const sceneEnd = scene.startSec + scene.durationSec;
+    const isFirstScene = scene === storyboard[0];
     const path = scene.camera?.path ?? [];
     const fullMoves = path.filter((move) => CAMERA_FULL_MOVES.has(move.move));
     whipCount += path.filter((move) => move.move === "whip").length;
@@ -216,6 +363,19 @@ export function auditPacing(storyboard: DirectScene[]): string[] {
     // landing late is the genre's signature, not a defect. A dense kind in
     // the same slot stays judged.
     const introductions = sceneIntroductionTimes(scene);
+    if (
+      isFirstScene &&
+      introductions.length &&
+      introductions[0]! > scene.startSec + OPENING_SUBJECT_MAX_SEC
+    ) {
+      findings.push(
+        `storyboard/opening-subject: first scene "${scene.id}" keeps its first declared ` +
+          `subject hidden until ${introductions[0]!.toFixed(1)}s (` +
+          `${(introductions[0]! - scene.startSec).toFixed(1)}s into the film) — establish the ` +
+          `focal product object within ${OPENING_SUBJECT_MAX_SEC.toFixed(2)}s, then develop it; ` +
+          `a prolonged empty void becomes a near_blank_film browser failure and reads as dead air`,
+      );
+    }
     const isShortFinalResolve =
       scene === storyboard[storyboard.length - 1] &&
       scene.durationSec <= FINAL_RESOLVE_ALLOWANCE_SEC &&
@@ -247,6 +407,34 @@ export function auditPacing(storyboard: DirectScene[]): string[] {
             `develop the held surfaces with count/progress/highlight beats instead of ` +
             `introducing more`,
         );
+      }
+    }
+
+    // 5. Interaction holds: no full move may be in flight while the cursor is
+    // arriving/pressing or its result is settling — the camera holds through
+    // arrive→result (probe-audit-01). A dive is exempt: its host-derived held
+    // middle exists exactly to frame an act. `retimeCameraOverInteractions`
+    // repairs this mechanically at parse, so this finding fires only on the
+    // residue no retime could fix; the tolerance keeps marginal grazes from
+    // vetoing a paid attempt.
+    for (const window of interactionHoldWindows(scene)) {
+      for (const move of fullMoves) {
+        if (move.move === "dive") continue;
+        const moveEnd = move.startSec + move.durationSec;
+        if (
+          move.startSec < window.until - PACING_TOLERANCE_SEC &&
+          moveEnd > window.from + PACING_TOLERANCE_SEC
+        ) {
+          findings.push(
+            `pacing/interaction-hold: scene "${scene.id}" ${move.move} ` +
+              `(${move.startSec.toFixed(1)}s-${moveEnd.toFixed(1)}s) re-frames the world while ` +
+              `interaction "${window.id}" owns the frame ` +
+              `(${window.from.toFixed(1)}s-${window.until.toFixed(1)}s, arrive → settled result) — ` +
+              `the camera must hold through a cursor's arrive→press→result. Land the move ` +
+              `before the cursor arrives, start it after the result settles, or let the ` +
+              `interaction's own focus carry the beat`,
+          );
+        }
       }
     }
 
@@ -287,6 +475,24 @@ export function auditPacing(storyboard: DirectScene[]): string[] {
               `frame while the text stays readable)`,
           );
         }
+      }
+      // 2d. Early-swap read-hold (probe-audit-01): the incoming copy of a cut
+      // must be READ before it CHANGES. A swap firing right after a non-first
+      // scene's start re-writes the just-landed frame before the viewer reads
+      // it. delayEarlySwapBeats repairs this at parse, so the finding is the
+      // residue no retime could fix (a binding it could not preserve).
+      if (
+        beat.kind === "swap" &&
+        !isFirstScene &&
+        beat.startSec - scene.startSec < ENTRY_SETTLE_SEC - PACING_TOLERANCE_SEC
+      ) {
+        findings.push(
+          `pacing/reading: scene "${scene.id}" beat "${beat.id}" swaps "${beat.component}" ` +
+            `${(beat.startSec - scene.startSec).toFixed(1)}s after the cut lands — the incoming ` +
+            `frame's copy changes before the viewer reads it. Hold the landed copy ` +
+            `>=${ENTRY_SETTLE_SEC.toFixed(1)}s before swapping it (delay the swap, or land the ` +
+            `final copy in the cut instead of swapping it in)`,
+        );
       }
       // 2c. Assemble lock hold (MD3): the film's loudest text gesture is a
       // resolve, not a drive-by — its word must hold on screen >=1.2s after the
@@ -393,10 +599,16 @@ function cameraMoveEnergyRank(move: CameraMoveIntentV1): number {
  */
 export function isLoadBearingMove(scene: DirectScene, move: CameraMoveIntentV1): boolean {
   const moveEnd = move.startSec + move.durationSec;
-  return (scene.moments ?? []).some((moment) =>
+  return (scene.moments ?? []).some((moment) => momentNeedsCamera(moment) &&
     moveEnd >= moment.atSec - EVIDENCE_BEFORE_SEC &&
     move.startSec <= moment.atSec + EVIDENCE_AFTER_SEC
   );
+}
+
+function momentNeedsCamera(moment: NonNullable<DirectScene["moments"]>[number]): boolean {
+  const intent = `${moment.motionIntent} ${moment.title} ${moment.change}`.toLowerCase();
+  return /\b(?:camera|reframe|framing|pan|whip|zoom|track|orbit|dive|push-in|pull-back)\b/
+    .test(intent);
 }
 
 /** Append host-normalization notes a scene carries into STORYBOARD.md. */
@@ -517,92 +729,625 @@ export function normalizeCameraBudget(
 }
 
 /**
+ * The concrete framing target for a host-added establishing push-in: a declared
+ * focal part, else a station-bearing component's region, else any declared
+ * component (its id is its data-part). A scene with none of these is a bare
+ * title card — pushing into it would frame a void (`camera_framed_sparse`), so
+ * it is skipped. Returned only to decide the scene HAS content to frame; the
+ * added push-in is targetless (a gentle centre zoom over whatever the scene
+ * already frames), so it never depends on a station lookup that could miss.
+ */
+function hasFramingSubject(scene: DirectScene): boolean {
+  if (scene.spatialIntent?.focalPart?.trim()) return true;
+  if ((scene.components ?? []).length > 0) return true;
+  return false;
+}
+
+/**
+ * Sentinel L2 normalize-before-retry: when the distinct-framings floor
+ * (`validateStoryboardPlan`) is short by EXACTLY one, add a single gentle
+ * establishing push-in to the longest shot that currently holds a single
+ * framing (no full camera move) and has real content to frame. This is the
+ * mechanical half of the floor's own fix hint ("add shots or give scenes camera
+ * paths"): the host cannot invent a shot, but it CAN give one held shot the
+ * establishing push a longer film needs — a full move that lifts the framing
+ * count by one. Short by >= 2 is a genuine content deficit (the film wants more
+ * shots or motion the model must author) and stays a finding.
+ *
+ * Safety: the push-in opens the scene (startSec == scene start, <= 1s) so it
+ * finishes before the shot's content beats and never cuts short a beat's
+ * reading/outcome hold (a scene with a beat inside the push window is skipped);
+ * it is targetless, so it needs no station; zoom is a gentle
+ * FRAMING_TOPUP_ZOOM. Adding one move to a zero-move scene can never breach that
+ * scene's own per-scene budget (cap >= 1). The parse-side atomic commit-or-revert
+ * reverts if the added move somehow minted any finding.
+ */
+export function topUpFramingFloor(
+  storyboard: DirectScene[],
+): { storyboard: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  const totalSec = storyboard.reduce(
+    (end, scene) => Math.max(end, scene.startSec + scene.durationSec),
+    0,
+  );
+  if (totalSec < FRAMING_FLOOR_MIN_FILM_SEC) return { storyboard, normalized };
+  const fullMoveCount = storyboard.reduce(
+    (count, scene) =>
+      count + (scene.camera?.path.filter((move) => CAMERA_FULL_MOVES.has(move.move)).length ?? 0),
+    0,
+  );
+  const framings = storyboard.length + fullMoveCount;
+  // Short by EXACTLY one; anything larger is a real content deficit.
+  if (requiredFramingCount(totalSec) - framings !== 1) return { storyboard, normalized };
+
+  const pushDuration = (scene: DirectScene): number =>
+    round(Math.min(1.0, Math.max(0.5, scene.durationSec * 0.4)));
+  // A candidate "holds a single framing" with NO declared camera path at all —
+  // a fresh single-move push-in can be created without colliding with an
+  // existing hold/drift segment at the scene start (a scene that already owns a
+  // path is left for the model). It must frame real content (else the push
+  // frames a void → camera_framed_sparse) and have no beat inside the opening
+  // push window (else the push steals a beat's hold → a pacing finding).
+  const candidates = storyboard
+    .map((scene, index) => ({ scene, index }))
+    .filter(
+      ({ scene }) =>
+        (scene.camera?.path.length ?? 0) === 0 &&
+        hasFramingSubject(scene) &&
+        !(scene.beats ?? []).some(
+          (beat) => beat.atSec <= scene.startSec + pushDuration(scene) + 0.05,
+        ),
+    )
+    .sort((a, b) => b.scene.durationSec - a.scene.durationSec || a.index - b.index);
+  const chosen = candidates[0];
+  if (!chosen) return { storyboard, normalized };
+
+  const scenes = storyboard.map((scene, index) => {
+    if (index !== chosen.index) return scene;
+    const push: CameraMoveIntentV1 = {
+      version: 1,
+      move: "push-in",
+      zoom: FRAMING_TOPUP_ZOOM,
+      startSec: round(scene.startSec),
+      durationSec: pushDuration(scene),
+    };
+    const note =
+      `added a gentle establishing push-in (zoom ${FRAMING_TOPUP_ZOOM}) to meet the ` +
+      `${requiredFramingCount(totalSec)}-framing floor for a ${totalSec.toFixed(0)}s film`;
+    normalized.push(`scene "${scene.id}": ${note}`);
+    // The candidate had no camera path, so the fresh single-move path can't
+    // collide; the host wraps its data-camera-world plane at author time.
+    return withNormalizationNotes(
+      { ...scene, camera: { version: 1, path: [push] } },
+      [note],
+    );
+  });
+  return { storyboard: scenes, normalized };
+}
+
+/**
  * Sentinel normalize-before-retry (Phase-5 hardening): a payoff/typed-copy
  * beat whose hold is cut short by a camera move that starts right after it is
  * the single most repeated `pacing/outcome` shape in the 2026-07-06 probe set
  * ("lands its payoff at Ns but the framing changes 0.0s later"). The finding's
  * own fix hint is "delay the reframe" — pure arithmetic the host can do:
  * delay the conflicting move so the payoff gets its hold, when
- *  - the move starts AT/after the beat settles (a move already in flight when
- *    the beat lands is the model's own arrival choreography — left alone),
- *  - the delay is <= MAX_PACING_STRETCH_SEC,
- *  - the delayed move still fits inside the scene and does not pass the next
- *    full move, and
+ *  - the move starts or remains in flight through the required hold,
+ *  - the delay is <= MAX_PACING_RETIME_SEC,
+ *  - the delayed move does not pass the next full move, and
  *  - the move is not load-bearing (no declared moment binds to its window).
+ * When the delayed move no longer fits before the scene's own cut, the scene
+ * boundary stretches by the overflow (<= MAX_PACING_STRETCH_SEC, 15s scene
+ * cap) and every later scene cascade-shifts — the short-scene shape the
+ * 2026-07-07 probe set kept re-rejecting ("payoff at Ns, framing changes 0.0s
+ * later" in a 1.3s scene, where a delay alone overflows the cut and a stretch
+ * alone can't move the internal conflict). Still pure arithmetic.
  * Runs inside the same parse-side atomic commit-or-revert as the clamp/stretch.
  */
 export function delayConflictingCameraMoves(
   storyboard: DirectScene[],
 ): { storyboard: DirectScene[]; normalized: string[] } {
   const normalized: string[] = [];
-  const rampSceneIds = new Set(resolveTimeRampPlan(storyboard).ramps.map((ramp) => ramp.sceneId));
   const resolvedBeatsByScene = new Map<string, ResolvedComponentBeatV1[]>(
     resolveComponentPlan(storyboard).scenes.map((scene) => [scene.sceneId, scene.beats]),
   );
-  const scenes = storyboard.map((scene) => {
-    if (rampSceneIds.has(scene.id)) return scene;
+  const out: DirectScene[] = [];
+  let cumulativeShift = 0;
+  // Detection runs in each scene's ORIGINAL frame (where the resolved beats
+  // live); the cascade shift from earlier boundary stretches preserves every
+  // within-scene distance and is applied only when emitting the output scene.
+  for (const scene of storyboard) {
+    let result = scene;
+    let stretch = 0;
     const path = scene.camera?.path;
-    if (!path?.length) return scene;
-    const sceneEnd = scene.startSec + scene.durationSec;
-    const fullMoves = path
-      .map((move, index) => ({ move, index }))
-      .filter((entry) => CAMERA_FULL_MOVES.has(entry.move.move));
-    if (!fullMoves.length) return scene;
-    const componentKinds = new Map(
-      (scene.components ?? []).map((component) => [component.id, component.kind]),
-    );
-    const beats = resolvedBeatsByScene.get(scene.id) ?? [];
-    // The latest hold each too-early move must clear, from every beat it cuts.
-    const requiredStart = new Map<number, number>();
-    for (const beat of beats) {
-      let needed = 0;
-      if ((beat.kind === "type" || beat.kind === "swap") && beat.text) {
-        needed = Math.min(
-          READING_MAX_SEC,
-          Math.max(READING_MIN_SEC, READING_SEC_PER_WORD * words(beat.text)),
-        );
+    if (path?.length) {
+      const sceneEnd = scene.startSec + scene.durationSec;
+      const fullMoves = path
+        .map((move, index) => ({ move, index }))
+        .filter((entry) => CAMERA_FULL_MOVES.has(entry.move.move));
+      const componentKinds = new Map(
+        (scene.components ?? []).map((component) => [component.id, component.kind]),
+      );
+      const beats = fullMoves.length ? resolvedBeatsByScene.get(scene.id) ?? [] : [];
+      const allBeatHolds = beatHoldWindows(scene, beats);
+      // The latest hold each too-early move must clear, from every beat it cuts.
+      const requiredStart = new Map<number, number>();
+      const conflictCount = new Map<number, number>();
+      for (const beat of beats) {
+        let needed = 0;
+        if ((beat.kind === "type" || beat.kind === "swap") && beat.text) {
+          needed = Math.min(
+            READING_MAX_SEC,
+            Math.max(READING_MIN_SEC, READING_SEC_PER_WORD * words(beat.text)),
+          );
+        }
+        const isToastOpen = beat.kind === "open" && componentKinds.get(beat.component) === "toast";
+        if (PAYOFF_BEAT_KINDS.has(beat.kind) || isToastOpen) {
+          needed = Math.max(needed, OUTCOME_HOLD_SEC);
+        }
+        if (!needed) continue;
+        for (const entry of fullMoves) {
+          const start = entry.move.startSec;
+          const activeUntil = start + entry.move.durationSec;
+          if (activeUntil <= beat.endSec + 0.05) continue;
+          if (start + PACING_TOLERANCE_SEC >= beat.endSec + needed) continue;
+          requiredStart.set(
+            entry.index,
+            Math.max(requiredStart.get(entry.index) ?? 0, round(beat.endSec + needed)),
+          );
+          conflictCount.set(entry.index, (conflictCount.get(entry.index) ?? 0) + 1);
+        }
       }
-      const isToastOpen = beat.kind === "open" && componentKinds.get(beat.component) === "toast";
-      if (PAYOFF_BEAT_KINDS.has(beat.kind) || isToastOpen) {
-        needed = Math.max(needed, OUTCOME_HOLD_SEC);
+      if (requiredStart.size) {
+        const newPath: Array<CameraMoveIntentV1 | undefined> = [...path];
+        const notes: string[] = [];
+        for (const entry of fullMoves) {
+          const required = requiredStart.get(entry.index);
+          if (required === undefined) continue;
+          const target = advanceClearOfWindows(
+            required,
+            entry.move.durationSec,
+            entry.move.startSec,
+            allBeatHolds,
+          );
+          const delay = target - entry.move.startSec;
+          const next = fullMoves.find((other) => other.move.startSec > entry.move.startSec + 1e-6);
+          // Retiming a load-bearing move is safe only while every moment that
+          // could bind to the original move still overlaps the new window.
+          const boundMoments = (scene.moments ?? []).filter((moment) =>
+            momentNeedsCamera(moment) &&
+            entry.move.startSec + entry.move.durationSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
+            entry.move.startSec <= moment.atSec + EVIDENCE_AFTER_SEC
+          );
+          const keepsBindings = boundMoments.every((moment) =>
+            target + entry.move.durationSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
+            target <= moment.atSec + EVIDENCE_AFTER_SEC
+          );
+          const overflow = target + entry.move.durationSec - sceneEnd;
+          const fitsDelay = delay > 0 && delay <= MAX_PACING_RETIME_SEC + 1e-9;
+          const fitsBeforeNext = !next || target + entry.move.durationSec <= next.move.startSec + 1e-6;
+          const fitsScene = overflow <= 1e-6 ||
+            (overflow <= MAX_PACING_STRETCH_SEC + 1e-9 &&
+              scene.durationSec + overflow <= 15 + 1e-9);
+          if (!fitsDelay || !fitsBeforeNext || !keepsBindings || !fitsScene) {
+            // One camera phrase cutting across several independent reading /
+            // payoff holds has no free slot left. When it carries no camera
+            // moment, dropping that reframe is safer than repeatedly asking
+            // the planner to solve contradictory timing (direction-live-a
+            // attempt 1: one pull-back crossed two lockup lines + the metric).
+            if (
+              (conflictCount.get(entry.index) ?? 0) >= 2 &&
+              !isLoadBearingMove(scene, entry.move)
+            ) {
+              newPath[entry.index] = undefined;
+              const note =
+                `dropped the ${entry.move.move} at ${entry.move.startSec.toFixed(2)}s — it ` +
+                `crossed ${conflictCount.get(entry.index)} reading/payoff holds and no ` +
+                `binding-safe retime fits; the resolved station holds instead`;
+              notes.push(note);
+              normalized.push(`scene "${scene.id}": ${note}`);
+            }
+            continue;
+          }
+          if (overflow > 1e-6) {
+            // The delayed move overruns the scene's own cut: stretch that cut
+            // by the overflow instead of leaving the finding to a paid retry.
+            stretch = Math.max(stretch, round(overflow));
+          }
+          newPath[entry.index] = { ...entry.move, startSec: round(target) };
+          const note =
+            `delayed the ${entry.move.move} from ${entry.move.startSec.toFixed(2)}s to ` +
+            `${target.toFixed(2)}s so the payoff/copy holds without an in-flight reframe` +
+            (overflow > 1e-6 ? ` (cut boundary stretched ${overflow.toFixed(2)}s to fit it)` : "");
+          notes.push(note);
+          normalized.push(`scene "${scene.id}": ${note}`);
+        }
+        if (notes.length) {
+          const keptPath = newPath.filter(
+            (move): move is CameraMoveIntentV1 => move !== undefined,
+          );
+          result = withNormalizationNotes(
+            {
+              ...scene,
+              ...(keptPath.length
+                ? { camera: { ...scene.camera!, path: keptPath } }
+                : { camera: undefined }),
+            },
+            notes,
+          );
+        } else {
+          stretch = 0;
+        }
       }
-      if (!needed) continue;
+    }
+    const shifted = withShiftedSceneTimes(result, cumulativeShift);
+    if (stretch > 0) {
+      out.push({ ...shifted, durationSec: round(shifted.durationSec + stretch) });
+      cumulativeShift = round(cumulativeShift + stretch);
+    } else {
+      out.push(shifted);
+    }
+  }
+  return { storyboard: out, normalized };
+}
+
+/**
+ * Sentinel normalize-before-retry (2026-07-08, probe-audit-01): a full camera
+ * move IN FLIGHT during a cursor interaction's arrive→result window stacks a
+ * reframe on a click — the storyboard's own fix hint ("start it after the
+ * result settles") is pure arithmetic. Delay each clashing move to the end of
+ * the last window it clashes with, when
+ *  - the delayed move does not pass the next full move (drift/hold fills
+ *    self-heal — the resolver clamps overlaps to its cursor),
+ *  - it still fits the scene, stretching the cut boundary by <=
+ *    MAX_PACING_STRETCH_SEC (15s scene cap) when it overruns, and
+ *  - every moment whose evidence search overlapped the original window still
+ *    overlaps the retimed one (load-bearing binding preserved).
+ * When no retime fits, a NON-load-bearing move is dropped instead (the drift
+ * auto-fill holds the framing); a load-bearing unfixable clash keeps its
+ * `pacing/interaction-hold` finding. Dives are exempt like everywhere else.
+ * Runs inside the same parse-side atomic commit-or-revert as the clamp/stretch.
+ */
+export function retimeCameraOverInteractions(
+  storyboard: DirectScene[],
+): { storyboard: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  const resolvedBeatsByScene = new Map<string, ResolvedComponentBeatV1[]>(
+    resolveComponentPlan(storyboard).scenes.map((scene) => [scene.sceneId, scene.beats]),
+  );
+  const out: DirectScene[] = [];
+  let cumulativeShift = 0;
+  for (const scene of storyboard) {
+    let result = scene;
+    let stretch = 0;
+    const path = scene.camera?.path;
+    const windows = interactionHoldWindows(scene);
+    if (path?.length && windows.length) {
+      const sceneEnd = scene.startSec + scene.durationSec;
+      const holds = beatHoldWindows(scene, resolvedBeatsByScene.get(scene.id) ?? []);
+      const fullMoves = path
+        .map((move, index) => ({ move, index }))
+        .filter((entry) => CAMERA_FULL_MOVES.has(entry.move.move) && entry.move.move !== "dive");
+      const newPath: Array<CameraMoveIntentV1 | undefined> = [...path];
+      const notes: string[] = [];
       for (const entry of fullMoves) {
-        const start = entry.move.startSec;
-        if (start < beat.endSec - 0.05) continue;
-        if (start + PACING_TOLERANCE_SEC >= beat.endSec + needed) continue;
-        requiredStart.set(
-          entry.index,
-          Math.max(requiredStart.get(entry.index) ?? 0, round(beat.endSec + needed)),
+        // Walk the start forward past every window it would be in flight
+        // through (delaying past one window can land inside the next), and —
+        // interleaved — clear of every reading/outcome hold the retime would
+        // otherwise newly cut (the probe-audit-fable-2 lesson).
+        let target = entry.move.startSec;
+        for (let round_ = 0; round_ < 4; round_ += 1) {
+          const before = target;
+          for (let pass = 0; pass <= windows.length; pass += 1) {
+            const end = target + entry.move.durationSec;
+            const clash = windows.find(
+              (window) => target < window.until - 1e-6 && end > window.from + 1e-6,
+            );
+            if (!clash) break;
+            target = Math.max(target, round(clash.until));
+          }
+          target = advanceClearOfWindows(
+            target,
+            entry.move.durationSec,
+            entry.move.startSec,
+            holds,
+          );
+          if (target === before) break;
+        }
+        if (target <= entry.move.startSec + 1e-6) continue;
+        const firstClash = windows.find(
+          (window) =>
+            entry.move.startSec < window.until - 1e-6 &&
+            entry.move.startSec + entry.move.durationSec > window.from + 1e-6,
+        )!;
+        const next = fullMoves.find((other) => other.move.startSec > entry.move.startSec + 1e-6);
+        const fitsBeforeNext = !next || target + entry.move.durationSec <= next.move.startSec + 1e-6;
+        const overflow = target + entry.move.durationSec - sceneEnd;
+        const fitsScene =
+          overflow <= 1e-6 ||
+          (overflow <= MAX_PACING_STRETCH_SEC + 1e-9 && scene.durationSec + overflow <= 15 + 1e-9);
+        // Binding preservation: every moment that could bind to the original
+        // window must still overlap the retimed one.
+        const boundMoments = (scene.moments ?? []).filter((moment) =>
+          entry.move.startSec + entry.move.durationSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
+          entry.move.startSec <= moment.atSec + EVIDENCE_AFTER_SEC
         );
+        const keepsBindings = boundMoments.every((moment) =>
+          target + entry.move.durationSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
+          target <= moment.atSec + EVIDENCE_AFTER_SEC
+        );
+        if (fitsBeforeNext && fitsScene && keepsBindings) {
+          if (overflow > 1e-6) stretch = Math.max(stretch, round(overflow));
+          newPath[entry.index] = { ...entry.move, startSec: round(target) };
+          const note =
+            `delayed the ${entry.move.move} from ${entry.move.startSec.toFixed(2)}s to ` +
+            `${target.toFixed(2)}s so the camera holds through interaction ` +
+            `"${firstClash.id}" (arrive→result)` +
+            (overflow > 1e-6 ? ` (cut boundary stretched ${overflow.toFixed(2)}s to fit it)` : "");
+          notes.push(note);
+          normalized.push(`scene "${scene.id}": ${note}`);
+        } else if (!boundMoments.length) {
+          newPath[entry.index] = undefined;
+          const note =
+            `dropped the ${entry.move.move} at ${entry.move.startSec.toFixed(2)}s — it re-framed ` +
+            `the world mid-interaction "${firstClash.id}" and no retime fits; the drift ` +
+            `auto-fill holds the framing instead`;
+          notes.push(note);
+          normalized.push(`scene "${scene.id}": ${note}`);
+        }
+      }
+      if (notes.length) {
+        result = withNormalizationNotes(
+          {
+            ...scene,
+            camera: {
+              ...scene.camera!,
+              path: newPath.filter((move): move is CameraMoveIntentV1 => move !== undefined),
+            },
+          },
+          notes,
+        );
+      } else {
+        stretch = 0;
       }
     }
-    if (!requiredStart.size) return scene;
-    const newPath = [...path];
-    const notes: string[] = [];
-    for (const entry of fullMoves) {
-      const target = requiredStart.get(entry.index);
-      if (target === undefined) continue;
-      const delay = target - entry.move.startSec;
-      if (delay <= 0 || delay > MAX_PACING_STRETCH_SEC + 1e-9) continue;
-      if (isLoadBearingMove(scene, entry.move)) continue;
-      if (target + entry.move.durationSec > sceneEnd + 1e-6) continue;
-      const next = fullMoves.find((other) => other.move.startSec > entry.move.startSec + 1e-6);
-      if (next && target + entry.move.durationSec > next.move.startSec + 1e-6) continue;
-      newPath[entry.index] = { ...entry.move, startSec: round(target) };
-      const note =
-        `delayed the ${entry.move.move} from ${entry.move.startSec.toFixed(2)}s to ` +
-        `${target.toFixed(2)}s so the payoff/copy before it holds`;
-      notes.push(note);
-      normalized.push(`scene "${scene.id}": ${note}`);
+    const shifted = withShiftedSceneTimes(result, cumulativeShift);
+    if (stretch > 0) {
+      out.push({ ...shifted, durationSec: round(shifted.durationSec + stretch) });
+      cumulativeShift = round(cumulativeShift + stretch);
+    } else {
+      out.push(shifted);
     }
-    if (!notes.length) return scene;
-    return withNormalizationNotes(
-      { ...scene, camera: { ...scene.camera!, path: newPath } },
-      notes,
-    );
+  }
+  return { storyboard: out, normalized };
+}
+
+/**
+ * Sentinel normalize-before-retry (2026-07-08, probe-audit-02): stacked entry
+ * transitions. A cut INTO a scene is already a transition, so an ENERGETIC
+ * full move (whip/orbit/dive, or a committed push/pull — see
+ * `isEnergeticCameraMove`) firing within ENTRY_SETTLE_SEC of the scene start
+ * plays as two transitions back to back; likewise two energetic moves aimed
+ * at DIFFERENT targets with less than MOVE_SETTLE_GAP_SEC between them read
+ * as churn (same-target pairs are `mergeCompoundMoves`' business and are
+ * already fused by parse time). Both are retimes the host owns: delay the
+ * move to the settle point when it fits (never passing the next full move;
+ * boundary stretch <= MAX_PACING_STRETCH_SEC, 15s scene cap) and every
+ * moment-evidence binding is preserved; otherwise leave the model's own
+ * artifact alone — spacing is polish, and an unfixable stack is not worth a
+ * veto. Connective pans/drifts/tracks stay free. Runs inside the same
+ * parse-side atomic commit-or-revert as the clamp/stretch.
+ */
+export function spaceStackedCameraMoves(
+  storyboard: DirectScene[],
+): { storyboard: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  const resolvedBeatsByScene = new Map<string, ResolvedComponentBeatV1[]>(
+    resolveComponentPlan(storyboard).scenes.map((scene) => [scene.sceneId, scene.beats]),
+  );
+  const out: DirectScene[] = [];
+  let cumulativeShift = 0;
+  storyboard.forEach((scene, sceneIndex) => {
+    let result = scene;
+    let stretch = 0;
+    const path = scene.camera?.path;
+    if (path?.length) {
+      const sceneEnd = scene.startSec + scene.durationSec;
+      // A spacing delay must never CREATE a conflict the earlier passes exist
+      // to prevent: reading/outcome holds after beats, and interaction
+      // arrive→result windows (probe-audit-fable-2: an entry-settle delay put
+      // a push-in in flight through a set-state payoff's hold).
+      const obstacles = [
+        ...beatHoldWindows(scene, resolvedBeatsByScene.get(scene.id) ?? []),
+        ...interactionHoldWindows(scene),
+      ];
+      const fullMoves = path
+        .map((move, index) => ({ move, index }))
+        .filter((entry) => CAMERA_FULL_MOVES.has(entry.move.move))
+        .sort((a, b) => a.move.startSec - b.move.startSec);
+      const newPath = [...path];
+      const notes: string[] = [];
+      // The previous full move's END in retimed coordinates, so a delayed
+      // first move spaces the second correctly.
+      let previousEnd: number | undefined;
+      let previousTarget: string | undefined;
+      for (let i = 0; i < fullMoves.length; i += 1) {
+        const entry = fullMoves[i]!;
+        const current = newPath[entry.index]!;
+        let target = current.startSec;
+        let reason = "";
+        const moveTarget = current.toPart ?? current.toRegion;
+        if (isEnergeticCameraMove(current)) {
+          // (a) entry settle: scenes after the first enter through a cut.
+          if (sceneIndex > 0 && target < scene.startSec + ENTRY_SETTLE_SEC - 1e-6) {
+            target = scene.startSec + ENTRY_SETTLE_SEC;
+            reason = "the incoming cut needs a beat to land before an energetic reframe";
+          }
+          // (b) move-to-move gap, different targets only.
+          if (
+            previousEnd !== undefined &&
+            moveTarget !== previousTarget &&
+            target < previousEnd + MOVE_SETTLE_GAP_SEC - 1e-6
+          ) {
+            target = previousEnd + MOVE_SETTLE_GAP_SEC;
+            reason = "two energetic moves at different targets need a settle between them";
+          }
+        }
+        if (target > current.startSec + 1e-6) {
+          target = advanceClearOfWindows(
+            target,
+            current.durationSec,
+            current.startSec,
+            obstacles,
+          );
+          const next = fullMoves[i + 1];
+          const fitsBeforeNext =
+            !next || target + current.durationSec <= newPath[next.index]!.startSec + 1e-6;
+          const overflow = target + current.durationSec - sceneEnd;
+          const fitsScene =
+            overflow <= 1e-6 ||
+            (overflow <= MAX_PACING_STRETCH_SEC + 1e-9 &&
+              scene.durationSec + overflow <= 15 + 1e-9);
+          const boundMoments = (scene.moments ?? []).filter((moment) =>
+            current.startSec + current.durationSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
+            current.startSec <= moment.atSec + EVIDENCE_AFTER_SEC
+          );
+          const keepsBindings = boundMoments.every((moment) =>
+            target + current.durationSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
+            target <= moment.atSec + EVIDENCE_AFTER_SEC
+          );
+          if (fitsBeforeNext && fitsScene && keepsBindings) {
+            if (overflow > 1e-6) stretch = Math.max(stretch, round(overflow));
+            newPath[entry.index] = { ...current, startSec: round(target) };
+            const note =
+              `delayed the ${current.move} from ${current.startSec.toFixed(2)}s to ` +
+              `${target.toFixed(2)}s — ${reason}` +
+              (overflow > 1e-6
+                ? ` (cut boundary stretched ${overflow.toFixed(2)}s to fit it)`
+                : "");
+            notes.push(note);
+            normalized.push(`scene "${scene.id}": ${note}`);
+          }
+        }
+        const placed = newPath[entry.index]!;
+        previousEnd = placed.startSec + placed.durationSec;
+        previousTarget = placed.toPart ?? placed.toRegion;
+      }
+      if (notes.length) {
+        result = withNormalizationNotes(
+          { ...scene, camera: { ...scene.camera!, path: newPath } },
+          notes,
+        );
+      } else {
+        stretch = 0;
+      }
+    }
+    const shifted = withShiftedSceneTimes(result, cumulativeShift);
+    if (stretch > 0) {
+      out.push({ ...shifted, durationSec: round(shifted.durationSec + stretch) });
+      cumulativeShift = round(cumulativeShift + stretch);
+    } else {
+      out.push(shifted);
+    }
   });
-  return { storyboard: scenes, normalized };
+  return { storyboard: out, normalized };
+}
+
+/**
+ * Sentinel normalize-before-retry (2026-07-08, probe-audit-01): the incoming
+ * copy of a cut needs a beat to be READ before it CHANGES. A `swap` beat firing
+ * within ENTRY_SETTLE_SEC of a non-first scene's start re-writes the just-landed
+ * frame before the viewer reads it (probe-audit-01 cta-resolve: the headline
+ * morphs in at 18.6s, then swaps its text 0.2s later at 18.8s — a pointless
+ * flash of the landed copy). The finding's own fix ("hold the landed copy before
+ * swapping it") is pure arithmetic: delay the swap to `scene.startSec +
+ * ENTRY_SETTLE_SEC`, when
+ *  - the scene is not the first (a first-scene swap has no incoming cut to hold),
+ *  - the delayed beat still fits the scene, stretching the cut boundary by <=
+ *    MAX_PACING_STRETCH_SEC (15s scene cap) when it overruns (cascade-shifting
+ *    later scenes), and
+ *  - every moment whose evidence search overlapped the original beat still
+ *    overlaps the delayed one (load-bearing binding preserved, exactly like
+ *    retimeCameraOverInteractions). If the retime would break a binding, leave
+ *    the beat alone; the audit backstop (auditPacing's pacing/reading variant)
+ *    then reports the residue.
+ * Runs inside the same parse-side atomic commit-or-revert as the other
+ * normalizers (order: after moveSpacing, before pacingStretch).
+ */
+export function delayEarlySwapBeats(
+  storyboard: DirectScene[],
+): { storyboard: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  const resolvedBeatsByScene = new Map<string, ResolvedComponentBeatV1[]>(
+    resolveComponentPlan(storyboard).scenes.map((scene) => [scene.sceneId, scene.beats]),
+  );
+  const out: DirectScene[] = [];
+  let cumulativeShift = 0;
+  storyboard.forEach((scene, sceneIndex) => {
+    let result = scene;
+    let stretch = 0;
+    const beats = scene.beats;
+    if (sceneIndex > 0 && beats?.length) {
+      const sceneEnd = scene.startSec + scene.durationSec;
+      const settlePoint = round(scene.startSec + ENTRY_SETTLE_SEC);
+      const resolved = new Map(
+        (resolvedBeatsByScene.get(scene.id) ?? []).map((beat) => [beat.id, beat]),
+      );
+      const newBeats = [...beats];
+      const notes: string[] = [];
+      for (let i = 0; i < newBeats.length; i += 1) {
+        const beat = newBeats[i]!;
+        if (beat.kind !== "swap") continue;
+        if (beat.atSec >= settlePoint - 1e-6) continue;
+        const target = settlePoint;
+        // Duration from the resolved beat (default-filled), else the intent.
+        const resolvedBeat = resolved.get(beat.id);
+        const beatStart = resolvedBeat ? resolvedBeat.startSec : beat.atSec;
+        const beatEnd = resolvedBeat ? resolvedBeat.endSec : beat.atSec + (beat.durationSec ?? 0);
+        const duration = beatEnd - beatStart;
+        const newEnd = target + duration;
+        const overflow = newEnd - sceneEnd;
+        let beatStretch = 0;
+        if (overflow > 1e-6) {
+          if (overflow > MAX_PACING_STRETCH_SEC + 1e-9) continue;
+          if (scene.durationSec + overflow > 15 + 1e-9) continue;
+          beatStretch = round(overflow);
+        }
+        // Binding preservation: every moment that could bind to the original
+        // beat window must still overlap the delayed one.
+        const boundMoments = (scene.moments ?? []).filter((moment) =>
+          beatEnd >= moment.atSec - EVIDENCE_BEFORE_SEC &&
+          beatStart <= moment.atSec + EVIDENCE_AFTER_SEC
+        );
+        const keepsBindings = boundMoments.every((moment) =>
+          newEnd >= moment.atSec - EVIDENCE_BEFORE_SEC &&
+          target <= moment.atSec + EVIDENCE_AFTER_SEC
+        );
+        if (!keepsBindings) continue;
+        newBeats[i] = { ...beat, atSec: round(target) };
+        if (beatStretch > 0) stretch = Math.max(stretch, beatStretch);
+        const note =
+          `delayed the swap beat "${beat.id}" from ${beat.atSec.toFixed(2)}s to ` +
+          `${target.toFixed(2)}s so the cut's incoming copy holds before it swaps` +
+          (overflow > 1e-6 ? ` (cut boundary stretched ${overflow.toFixed(2)}s to fit it)` : "");
+        notes.push(note);
+        normalized.push(`scene "${scene.id}": ${note}`);
+      }
+      if (notes.length) {
+        result = withNormalizationNotes({ ...scene, beats: newBeats }, notes);
+      } else {
+        stretch = 0;
+      }
+    }
+    const shifted = withShiftedSceneTimes(result, cumulativeShift);
+    if (stretch > 0) {
+      out.push({ ...shifted, durationSec: round(shifted.durationSec + stretch) });
+      cumulativeShift = round(cumulativeShift + stretch);
+    } else {
+      out.push(shifted);
+    }
+  });
+  return { storyboard: out, normalized };
 }
 
 /** Shift a scene's own start and every nested absolute time by `delta` seconds. */

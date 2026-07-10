@@ -6,6 +6,7 @@ import {
   assembleSlotComposition,
   attributeFindingsToScenes,
   extractSceneSlots,
+  normalizeSceneSlotScript,
 } from "../src/engine/sceneSlots.ts";
 import {
   authorSlotDraft,
@@ -123,8 +124,12 @@ describe("assembleSlotComposition", () => {
     // injected BEFORE the model's film style so the model may extend it but
     // positioning never depends on it.
     expect(html).toContain('<style id="sequences-slot-stage">');
-    expect(html).toContain("#root{position:relative;width:1920px;height:1080px;overflow:hidden}");
-    expect(html).toContain(".scene{position:absolute;inset:0;opacity:0}");
+    expect(html).toContain(
+      "#root{position:relative!important;width:1920px!important;height:1080px!important;overflow:hidden!important}",
+    );
+    expect(html).toContain(
+      ".scene{position:absolute!important;inset:0!important;box-sizing:border-box;opacity:0}",
+    );
     expect(html.indexOf("sequences-slot-stage")).toBeLessThan(html.indexOf(".hero{font-size:96px"));
     // Host-owned visibility: reveal at data-start, clear at window end, for
     // every scene — emitted AFTER the authored scene blocks so host sets win
@@ -143,6 +148,139 @@ describe("assembleSlotComposition", () => {
     const a = assembleSlotComposition({ storyboard, slots, compositionId: "demo-slots" });
     const b = assembleSlotComposition({ storyboard, slots, compositionId: "demo-slots" });
     expect(a.html).toBe(b.html);
+  });
+
+  it("normalizes impossible model-authored slot timeline envelopes", () => {
+    const slots = extractSceneSlots([
+      '<scene_html id="hero-open"><div class="hero">Ship</div></scene_html>',
+      '<scene_script id="hero-open">',
+      "(function(tl) {",
+      "  fromTo('.hero', { opacity: 0 }, { opacity: 1, duration: .4 }, .2);",
+      "})(window.__tl_scene_hero_open);",
+      "</scene_script>",
+      '<scene_html id="cta-close"><div>Go</div></scene_html>',
+      '<scene_script id="cta-close">window.__tl_scene_cta_close.set(".x", {}, 4);</scene_script>',
+    ].join("\n"));
+
+    const result = assembleSlotComposition({ storyboard, slots, compositionId: "demo-slots" });
+
+    expect(result.html).toContain("tl.fromTo('.hero'");
+    expect(result.html).toContain("})(tl);");
+    expect(result.html).toContain('tl.set(".x", {}, 4)');
+    expect(result.html).not.toContain("window.__tl_scene_");
+    expect(result.scriptRepairs).toEqual({
+      bareFromTo: 1,
+      pseudoTimeline: 2,
+      arrowEnvelope: 0,
+      timePosition: 0,
+      dataAttribute: 0,
+      localPosition: 0,
+    });
+  });
+
+  it("does not rewrite a locally declared fromTo helper", () => {
+    const slots = extractSceneSlots([
+      '<scene_html id="hero-open"><div>Ship</div></scene_html>',
+      '<scene_script id="hero-open">function fromTo() {}\nfromTo();</scene_script>',
+      '<scene_html id="cta-close"><div>Go</div></scene_html>',
+      '<scene_script id="cta-close">tl.set(".x", {}, 4);</scene_script>',
+    ].join("\n"));
+    const result = assembleSlotComposition({ storyboard, slots, compositionId: "demo-slots" });
+    expect(result.html).toContain("function fromTo() {}\nfromTo();");
+    expect(result.scriptRepairs.bareFromTo).toBe(0);
+  });
+
+  it("unwraps uninvoked arrow-function scene envelopes onto the host timeline", () => {
+    const slots = extractSceneSlots([
+      '<scene_html id="hero-open"><div class="hero">Ship</div></scene_html>',
+      '<scene_script id="hero-open">(tl) => { tl.from(".hero", { opacity: 0 }, 0.2); };</scene_script>',
+      '<scene_html id="cta-close"><div>Go</div></scene_html>',
+      '<scene_script id="cta-close">const animate = (tl) => { tl.to(".x", { opacity: 1 }, 4); };</scene_script>',
+    ].join("\n"));
+    const result = assembleSlotComposition({ storyboard, slots, compositionId: "demo-slots" });
+    expect(result.html).toContain('tl.from(".hero"');
+    expect(result.html).toContain('tl.to(".x"');
+    expect(result.html).not.toContain("(tl) =>");
+    expect(result.scriptRepairs.arrowEnvelope).toBe(2);
+  });
+
+  it("binds a two-argument slot envelope to the host composition root", () => {
+    const result = normalizeSceneSlotScript([
+      "(tl, root) => {",
+      "  const chip = root.querySelector('[data-part=\"chip\"]');",
+      "  tl.to(chip, { opacity: 1 }, 4.2);",
+      "}",
+    ].join("\n"), { startSec: 4, durationSec: 4 });
+
+    expect(result.script).toContain(
+      'const root = document.querySelector("[data-composition-id]");',
+    );
+    expect(result.script).toContain("root.querySelector");
+    expect(result.script).not.toContain("(tl, root) =>");
+    expect(result.repairs.arrowEnvelope).toBe(1);
+  });
+
+  it("binds the Probe 4 window.__tl wrapper to the real host timeline", () => {
+    const result = normalizeSceneSlotScript([
+      "(tl => {",
+      "  tl.fromTo('.card', { opacity: 0 }, { opacity: 1, duration: .5 }, 7.1);",
+      "})(window.__tl);",
+    ].join("\n"));
+
+    expect(result.script).toContain("})(tl);");
+    expect(result.script).not.toContain("window.__tl");
+    expect(result.repairs.pseudoTimeline).toBe(1);
+  });
+
+  it("moves Probe 4's misplaced time keys into GSAP's position argument", () => {
+    const result = normalizeSceneSlotScript([
+      "tl.fromTo(card, { opacity: 0 }, " +
+        "{ opacity: 1, duration: .7, ease: 'power3.out', time: .2 }, 0);",
+      "tl.to(card, { innerText: 'Resolved', duration: .6, time: 17.4 }, 0);",
+    ].join("\n"), { startSec: 14.9, durationSec: 4.9 });
+
+    expect(result.script).not.toMatch(/\btime\s*:/);
+    expect(result.script).toContain("}, .2)");
+    expect(result.script).toContain("}, 17.4)");
+    expect(result.repairs.timePosition).toBe(2);
+    expect(result.repairs.localPosition).toBe(0);
+  });
+
+  it("converts authored data-state CSS tweens into discrete GSAP attributes", () => {
+    const result = normalizeSceneSlotScript([
+      "tl.to(btn, { 'data-state': 'loading' }, 25.3);",
+      "tl.set(btn, { 'data-state': 'success' }, 26.1);",
+    ].join("\n"), { startSec: 24.8, durationSec: 4.5 });
+
+    expect(result.script).toContain("tl.set(btn, { attr: { 'data-state': 'loading' } }, 25.3)");
+    expect(result.script).toContain("tl.set(btn, { attr: { 'data-state': 'success' } }, 26.1)");
+    expect(result.repairs.dataAttribute).toBe(2);
+  });
+
+  it("rebases an unmistakably scene-local slot onto the film timeline", () => {
+    const result = normalizeSceneSlotScript([
+      "tl.fromTo(pane, { opacity: 0 }, { opacity: 1, duration: .6 }, 0);",
+      "tl.fromTo(rows, { y: 18 }, { y: 0, duration: .4, stagger: .12 }, .3);",
+    ].join("\n"), { startSec: 4.9, durationSec: 5 });
+
+    expect(result.script).toContain("4.9 + (0)");
+    expect(result.script).toContain("4.9 + (.3)");
+    expect(result.repairs.localPosition).toBe(2);
+  });
+
+  it("does not rebase absolute scene timing or a deliberate absolute pre-roll", () => {
+    const absolute = normalizeSceneSlotScript(
+      "tl.fromTo(pane, { opacity: 0 }, { opacity: 1, duration: .6 }, 7.1);",
+      { startSec: 4.9, durationSec: 5 },
+    );
+    const preRoll = normalizeSceneSlotScript(
+      "tl.fromTo(pane, { opacity: 0 }, { opacity: 1, duration: .6 }, 4.8);",
+      { startSec: 4.9, durationSec: 5 },
+    );
+
+    expect(absolute.repairs.localPosition).toBe(0);
+    expect(preRoll.repairs.localPosition).toBe(0);
+    expect(preRoll.script).toContain("}, 4.8)");
   });
 
   it("reports scenes whose interior or script is missing", () => {
@@ -475,5 +613,33 @@ describe("attributeFindingsToScenes", () => {
     expect(byScene.get("stat-resolve")).toHaveLength(1);
     expect(byScene.get("dashboard-overwhelm")).toHaveLength(1);
     expect(byScene.has("__film__")).toBe(false);
+  });
+
+  it("attributes colon-prefixed critic directives (the critic-economy routing shape)", () => {
+    // The continuity critic prefixes a shot-scoped directive with "<id>: …"; the
+    // critic-economy slot routing only fires when EVERY directive names a shot
+    // (no __film__ remainder), so this partition is the load-bearing contract.
+    const scoped = attributeFindingsToScenes(
+      [
+        "hero-cta: sharpen the logo lock at 11.2s",
+        "deploy-stream: hold the toast 0.3s longer before the cut",
+      ],
+      ["hero-cta", "deploy-stream", "palette-open"],
+    );
+    expect(scoped.get("hero-cta")).toHaveLength(1);
+    expect(scoped.get("deploy-stream")).toHaveLength(1);
+    expect(scoped.has("__film__")).toBe(false);
+
+    // A film-wide directive (no id prefix) lands in __film__, which cancels the
+    // slot routing and keeps the whole-document critique patch.
+    const mixed = attributeFindingsToScenes(
+      [
+        "hero-cta: sharpen the logo lock",
+        "the energy curve stays flat across the whole film",
+      ],
+      ["hero-cta", "deploy-stream"],
+    );
+    expect(mixed.get("hero-cta")).toHaveLength(1);
+    expect(mixed.get("__film__")).toHaveLength(1);
   });
 });

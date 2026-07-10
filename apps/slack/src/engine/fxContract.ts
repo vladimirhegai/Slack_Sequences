@@ -21,6 +21,13 @@ import { CAMERA_FULL_MOVES, resolveCameraPlan } from "./cameraContract.ts";
 import { resolveComponentPlan } from "./componentContract.ts";
 import { EVIDENCE_AFTER_SEC, EVIDENCE_BEFORE_SEC } from "./storyboardMoments.ts";
 import { GRADE_SHIFT_DURATION_SEC, type GradeTone } from "./gradeShift.ts";
+import {
+  directionAccentSlot,
+  directionPhraseForMoment,
+  directionScoreConsumersEnabled,
+  directionSystemOwnsWindow,
+  resolveFilmDirectionScore,
+} from "./directionScore.ts";
 import type { DirectScene } from "./directComposition.ts";
 
 export const FX_RUNTIME_VERSION = 1;
@@ -35,6 +42,15 @@ const RUNTIME_SOURCE_PATH = path.join(
 /** Sweeps are the film's loudest garnish — capped host-side, by design. */
 export const MAX_SWEEPS_PER_SCENE = 1;
 export const MAX_SWEEPS_PER_FILM = 3;
+/**
+ * Connectors were host-derived toward EVERY full-move region arrival, so a busy
+ * film drew a line at every reframe — the #1 recurring "repetitive spamming"
+ * complaint (probe-audit-01/02). Cap them like sweeps: one per scene (the
+ * earliest arrival), a handful across the film, and never in a scene that
+ * already earned a sweep (one garnish per scene reads produced; two reads busy).
+ */
+export const MAX_CONNECTORS_PER_SCENE = 1;
+export const MAX_CONNECTORS_PER_FILM = 3;
 /** No sweep inside the film's very first second — the hook owns that beat. */
 export const SWEEP_OPENING_EXCLUSION_SEC = 1;
 /**
@@ -61,7 +77,7 @@ export interface FxEffectV1 {
   kind: FxEffectKind;
   sceneId: string;
   /** sweep / glow-pulse / draw: the data-part the effect answers.
-   *  grade-shift: the optional data-part the wash expands from. */
+   *  grade-shift: legacy anchor hint (the full-frame wash ignores it). */
   target?: string;
   /** connector: the data-region whose camera arrival ends the draw. */
   region?: string;
@@ -84,10 +100,11 @@ function round(value: number): number {
  * Derive the film's FX plan from the storyboard — no planner surface, no
  * author paperwork. Automatic rungs:
  *
- * 1. Payoff sweep + glow pulse: each `primary` moment bound (by the same
- *    evidence-window arithmetic the moment contract uses) to a completing
- *    payoff beat gets one sweep + one glow pulse on the beat's component at
- *    settle time. Capped ≤1 sweep/scene, ≤3/film, none in the opening second.
+ * 1. Payoff sweep: each `primary` moment bound (by the same evidence-window
+ *    arithmetic the moment contract uses) to a completing payoff beat may get
+ *    one sweep in the direction score's free accent slot. It never stacks a
+ *    glow on the same payoff and stands down when another system owns the
+ *    phrase. Capped ≤1 sweep/scene, ≤3/film, none in the opening second.
  * 2. Planner opt-in: a `highlight` beat with `style:"sweep"` sweeps its
  *    component at the beat's own window (the ring is simply replaced).
  * 3. Author opt-in: every full camera move landing on a region emits a
@@ -97,6 +114,8 @@ function round(value: number): number {
  */
 export function resolveFxPlan(scenes: DirectScene[]): FxPlanV1 {
   const effects: FxEffectV1[] = [];
+  const direction = resolveFilmDirectionScore(scenes);
+  const directed = directionScoreConsumersEnabled();
   const beatsByScene = new Map(
     resolveComponentPlan(scenes).scenes.map((scene) => [scene.sceneId, scene.beats]),
   );
@@ -108,9 +127,10 @@ export function resolveFxPlan(scenes: DirectScene[]): FxPlanV1 {
     const beats = beatsByScene.get(scene.id) ?? [];
     let sceneSweeps = 0;
 
-    // MD4 grade shift: the scene's temperature turns at a payoff. The panel
-    // expands from fromPart (default center) and the runtime swaps the grade
-    // class at full cover. Discipline (window, aftermath, 1/scene, 2/film,
+    // MD4 grade shift: the scene's temperature turns at a payoff. The runtime
+    // fades a full-frame panel to the target grade's own steady wash, swaps
+    // the grade class at cover, and carries the tone across later same-grade
+    // scenes. Discipline (window, aftermath, 1/scene, 2/film,
     // moment coincidence) is enforced at parse (`dropUnusableGradeShifts`), so a
     // surviving gradeShift always compiles.
     if (scene.gradeShift) {
@@ -158,9 +178,13 @@ export function resolveFxPlan(scenes: DirectScene[]): FxPlanV1 {
       filmSweeps += 1;
     }
 
-    // Rung 1: automatic payoff answer at primary moments.
+    // Rung 1: one automatic payoff answer, scheduled only after the dominant
+    // component action has settled and only when the phrase leaves enough
+    // room before its next cue. The old simultaneous sweep + glow pair made
+    // garnish compete with the state change it was meant to support.
     for (const moment of scene.moments ?? []) {
       if (moment.importance !== "primary") continue;
+      if (moment.atSec < filmStart + SWEEP_OPENING_EXCLUSION_SEC) continue;
       if (filmSweeps >= MAX_SWEEPS_PER_FILM || sceneSweeps >= MAX_SWEEPS_PER_SCENE) break;
       const payoff = beats.find((beat) =>
         PAYOFF_EVIDENCE_KINDS.has(beat.kind) &&
@@ -168,9 +192,47 @@ export function resolveFxPlan(scenes: DirectScene[]): FxPlanV1 {
         moment.atSec <= beat.endSec + EVIDENCE_AFTER_SEC
       );
       if (!payoff) continue;
-      const atSec = round(payoff.endSec + SWEEP_SETTLE_DELAY_SEC);
-      if (atSec < filmStart + SWEEP_OPENING_EXCLUSION_SEC) continue;
-      if (atSec + 0.2 > sceneEnd) continue;
+      if (!directed) {
+        const atSec = round(payoff.endSec + SWEEP_SETTLE_DELAY_SEC);
+        if (atSec + 0.2 > sceneEnd) continue;
+        effects.push({
+          kind: "sweep",
+          sceneId: scene.id,
+          target: payoff.component,
+          atSec,
+          durationSec: round(Math.min(SWEEP_DURATION_SEC, sceneEnd - atSec)),
+        });
+        effects.push({
+          kind: "glow-pulse",
+          sceneId: scene.id,
+          target: payoff.component,
+          atSec: round(payoff.endSec + 0.1),
+          durationSec: round(Math.min(
+            GLOW_PULSE_DURATION_SEC,
+            sceneEnd - payoff.endSec - 0.1,
+          )),
+        });
+        sceneSweeps += 1;
+        filmSweeps += 1;
+        continue;
+      }
+      const phrase = directionPhraseForMoment(direction, scene.id, moment.id);
+      if (
+        !phrase ||
+        phrase.dominant.system !== "component" ||
+        phrase.dominant.id !== `component:${payoff.id}`
+      ) {
+        continue;
+      }
+      const atSec = directionAccentSlot(
+        phrase,
+        SWEEP_DURATION_SEC,
+        Math.max(
+          filmStart + SWEEP_OPENING_EXCLUSION_SEC,
+          payoff.endSec + SWEEP_SETTLE_DELAY_SEC,
+        ),
+      );
+      if (atSec === undefined || atSec + 0.2 > sceneEnd) continue;
       effects.push({
         kind: "sweep",
         sceneId: scene.id,
@@ -178,33 +240,48 @@ export function resolveFxPlan(scenes: DirectScene[]): FxPlanV1 {
         atSec,
         durationSec: round(Math.min(SWEEP_DURATION_SEC, sceneEnd - atSec)),
       });
-      effects.push({
-        kind: "glow-pulse",
-        sceneId: scene.id,
-        target: payoff.component,
-        atSec: round(payoff.endSec + 0.1),
-        durationSec: round(Math.min(GLOW_PULSE_DURATION_SEC, sceneEnd - payoff.endSec - 0.1)),
-      });
       sceneSweeps += 1;
       filmSweeps += 1;
     }
   }
 
-  // Rung 3: connector draw-ons toward every full-move region arrival. Pure
+  // Rung 3: connector draw-ons toward full-move region arrivals. Pure
   // decoration — the runtime no-ops when the author placed no `.fx-connector`
-  // markup — and it AIDS eye-trace: the drawn line points where the camera
-  // goes next.
+  // markup — and it AIDS eye-trace: the drawn line points where the camera goes
+  // next. Density-capped (probe-audit-01/02: a line at EVERY reframe read as
+  // spam): at most one per scene (the earliest arrival), MAX_CONNECTORS_PER_FILM
+  // across the film in scene order, and none in a scene that already earned a
+  // sweep this pass.
+  const sweepScenes = new Set(
+    effects.filter((effect) => effect.kind === "sweep").map((effect) => effect.sceneId),
+  );
+  let filmConnectors = 0;
   for (const scenePlan of resolveCameraPlan(scenes).scenes) {
-    for (const segment of scenePlan.segments) {
-      if (!CAMERA_FULL_MOVES.has(segment.move) || segment.blend < 1) continue;
-      if (!segment.toRegion) continue;
+    if (filmConnectors >= MAX_CONNECTORS_PER_FILM) break;
+    if (sweepScenes.has(scenePlan.sceneId)) continue;
+    const arrivals = scenePlan.segments
+      .filter((segment) =>
+        CAMERA_FULL_MOVES.has(segment.move) && segment.blend >= 1 && Boolean(segment.toRegion) &&
+        (!directed || directionSystemOwnsWindow(
+          direction,
+          scenePlan.sceneId,
+          "camera",
+          segment.startSec,
+          segment.endSec,
+        ))
+      )
+      .sort((a, b) => a.startSec - b.startSec)
+      .slice(0, MAX_CONNECTORS_PER_SCENE);
+    for (const arrival of arrivals) {
+      if (filmConnectors >= MAX_CONNECTORS_PER_FILM) break;
       effects.push({
         kind: "connector",
         sceneId: scenePlan.sceneId,
-        region: segment.toRegion,
-        atSec: round(segment.startSec),
-        durationSec: round(Math.max(0.2, segment.endSec - segment.startSec)),
+        region: arrival.toRegion!,
+        atSec: round(arrival.startSec),
+        durationSec: round(Math.max(0.2, arrival.endSec - arrival.startSec)),
       });
+      filmConnectors += 1;
     }
   }
 

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
+import { launchHeadlessBrowser } from "../src/engine/browserLifecycle.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
 import {
   COMPONENT_RUNTIME_FILE,
@@ -225,8 +226,7 @@ describe("MD3 text FX browser contract (assemble / rise / underline / pop)", () 
     fs.writeFileSync(path.join(dir, FX_RUNTIME_FILE), fxRuntimeSource(), "utf8");
 
     const server = await serveDir(dir);
-    const puppeteer = (await import("puppeteer-core")).default;
-    const browser = await puppeteer.launch({
+    const browser = await launchHeadlessBrowser({
       executablePath: browserPath!,
       headless: true,
       args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
@@ -352,8 +352,7 @@ describe("MD3 text FX browser contract (assemble / rise / underline / pop)", () 
     fs.writeFileSync(path.join(dir, COMPONENT_RUNTIME_FILE), componentRuntimeSource(), "utf8");
     fs.writeFileSync(path.join(dir, FX_RUNTIME_FILE), fxRuntimeSource(), "utf8");
     const server = await serveDir(dir);
-    const puppeteer = (await import("puppeteer-core")).default;
-    const browser = await puppeteer.launch({
+    const browser = await launchHeadlessBrowser({
       executablePath: browserPath!,
       headless: true,
       args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
@@ -383,6 +382,326 @@ describe("MD3 text FX browser contract (assemble / rise / underline / pop)", () 
       const second = await captureOnce();
       expect(first).toBe(second);
       expect(first.length).toBeGreaterThan(0);
+    } finally {
+      await browser.close();
+      await server.close();
+    }
+  }, 45_000);
+});
+
+describe("swap settle browser contract (probe-audit-01 residual)", () => {
+  it("removes the old copy from layout and rejoins the new copy to normal flow at the beat end, seek-safely", async () => {
+    const browserPath = findBrowserExecutable();
+    expect(browserPath, "a Chromium/Chrome/Edge executable is required").toBeTruthy();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-swap-smoke-"));
+    roots.push(dir);
+    const storyboard: DirectScene[] = [{
+      id: "hero",
+      title: "Tagline swaps",
+      purpose: "The wordmark hands off to the tagline",
+      startSec: 0,
+      durationSec: 4,
+      components: [{ version: 1, id: "hero-copy", kind: "headline", role: "hero" }],
+      beats: [
+        { version: 1, id: "tag-swap", sceneId: "hero", component: "hero-copy", kind: "swap", atSec: 1, durationSec: 0.5, text: "Ship with momentum" },
+      ],
+    }];
+    const island = JSON.stringify(resolveComponentPlan(storyboard));
+    const html = `<!doctype html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>Swap settle smoke</title><script src="gsap.min.js"></script>
+<script src="${CAMERA_RUNTIME_FILE}"></script>
+<script src="${COMPONENT_RUNTIME_FILE}"></script>${componentKitStyleTag()}<style>
+*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#0a0f16}
+body{color:#eef2f8;font-family:Arial,sans-serif}
+#root{position:relative;width:1920px;height:1080px;overflow:hidden}
+.scene{position:absolute;inset:0;display:grid;place-items:center;opacity:0}
+</style></head><body>
+<main id="root" data-composition-id="swap-smoke" data-width="1920" data-height="1080" data-duration="4">
+<section id="hero" class="scene clip" data-scene="hero" data-start="0" data-duration="4" data-track-index="1">
+<h1 class="cmp cmp-headline" data-component="headline" data-part="hero-copy"><span class="cmp-text" data-cmp-text>Cadence</span></h1>
+</section>
+</main>
+<script type="application/json" id="sequences-components">${island}</script>
+<script>
+window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
+tl.set("#hero",{opacity:1},0).set("#hero",{opacity:0},4);
+SequencesComponents.compile(tl,document.getElementById("root"));
+window.__timelines["swap-smoke"]=tl;tl.seek(0);
+</script></body></html>`;
+    fs.writeFileSync(path.join(dir, "index.html"), html, "utf8");
+    const require = createRequire(import.meta.url);
+    fs.copyFileSync(require.resolve("gsap/dist/gsap.min.js"), path.join(dir, "gsap.min.js"));
+    fs.writeFileSync(path.join(dir, CAMERA_RUNTIME_FILE), cameraRuntimeSource(), "utf8");
+    fs.writeFileSync(path.join(dir, COMPONENT_RUNTIME_FILE), componentRuntimeSource(), "utf8");
+    const server = await serveDir(dir);
+    const browser = await launchHeadlessBrowser({
+      executablePath: browserPath!,
+      headless: true,
+      args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+      const consoleErrors: string[] = [];
+      page.on("console", (message) => {
+        if (message.type() === "error" && !message.text().startsWith("Failed to load resource")) {
+          consoleErrors.push(message.text());
+        }
+      });
+      page.on("pageerror", (error) => consoleErrors.push(String(error)));
+      await page.goto(server.url, { waitUntil: "networkidle0", timeout: 30_000 });
+      await page.waitForFunction(
+        () => Object.keys((window as unknown as { __timelines?: object }).__timelines ?? {}).length > 0,
+        { timeout: 10_000 },
+      );
+      interface SwapState {
+        oldDisplay: string;
+        oldOpacity: number;
+        newPosition: string;
+        newOpacity: number;
+      }
+      const stateAt = async (time: number): Promise<SwapState> =>
+        page.evaluate((at: number) => {
+          const timelines = (window as unknown as {
+            __timelines: Record<string, { pause: () => void; seek: (t: number, s?: boolean) => void }>;
+          }).__timelines;
+          for (const timeline of Object.values(timelines)) {
+            timeline.pause();
+            timeline.seek(at, false);
+          }
+          const oldSpan = document.querySelector<HTMLElement>(".cmp-swap-old")!;
+          const newSpan = document.querySelector<HTMLElement>(".cmp-swap-new")!;
+          return {
+            oldDisplay: getComputedStyle(oldSpan).display,
+            oldOpacity: Number.parseFloat(getComputedStyle(oldSpan).opacity),
+            newPosition: getComputedStyle(newSpan).position,
+            newOpacity: Number.parseFloat(getComputedStyle(newSpan).opacity),
+          };
+        }, time);
+
+      // Before the beat: the old copy owns the slot in normal flow; the
+      // incoming copy is pre-rendered hidden, floating absolute.
+      const before = await stateAt(0.4);
+      expect(before.oldDisplay).toBe("inline-block");
+      expect(before.oldOpacity).toBe(1);
+      expect(before.newPosition).toBe("absolute");
+      expect(before.newOpacity).toBe(0);
+      // After the beat settles: the old copy has LEFT the layout entirely and
+      // the new copy sits in normal flow — no zeroed-out ghost box under an
+      // absolutely-positioned overlay for the rest of the film.
+      const settled = await stateAt(2.0);
+      expect(settled.oldDisplay).toBe("none");
+      expect(settled.newPosition).toBe("static");
+      expect(settled.newOpacity).toBe(1);
+      // Seek-safety both ways: back before the beat restores the pre-swap
+      // arrangement byte-exactly, forward again re-settles it.
+      const restored = await stateAt(0.4);
+      expect(restored).toEqual(before);
+      const replay = await stateAt(2.0);
+      expect(replay).toEqual(settled);
+      expect(consoleErrors).toEqual([]);
+    } finally {
+      await browser.close();
+      await server.close();
+    }
+  }, 45_000);
+
+  it("no-op swap to text the slot already shows builds NO old/new spans (probe-audit-01 T1)", async () => {
+    const browserPath = findBrowserExecutable();
+    expect(browserPath, "a Chromium/Chrome/Edge executable is required").toBeTruthy();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-noop-swap-"));
+    roots.push(dir);
+    const storyboard: DirectScene[] = [{
+      id: "hero",
+      title: "Wordmark resolves",
+      purpose: "The wordmark already reads Cadence; a swap to itself is not motion",
+      startSec: 0,
+      durationSec: 4,
+      components: [{ version: 1, id: "hero-copy", kind: "headline", role: "hero" }],
+      beats: [
+        { version: 1, id: "noop-swap", sceneId: "hero", component: "hero-copy", kind: "swap", atSec: 1, durationSec: 0.5, text: "Cadence" },
+      ],
+    }];
+    const island = JSON.stringify(resolveComponentPlan(storyboard));
+    const html = `<!doctype html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>No-op swap smoke</title><script src="gsap.min.js"></script>
+<script src="${CAMERA_RUNTIME_FILE}"></script>
+<script src="${COMPONENT_RUNTIME_FILE}"></script>${componentKitStyleTag()}<style>
+*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#0a0f16}
+body{color:#eef2f8;font-family:Arial,sans-serif}
+#root{position:relative;width:1920px;height:1080px;overflow:hidden}
+.scene{position:absolute;inset:0;display:grid;place-items:center;opacity:0}
+</style></head><body>
+<main id="root" data-composition-id="noop-smoke" data-width="1920" data-height="1080" data-duration="4">
+<section id="hero" class="scene clip" data-scene="hero" data-start="0" data-duration="4" data-track-index="1">
+<h1 class="cmp cmp-headline" data-component="headline" data-part="hero-copy"><span class="cmp-text" data-cmp-text>Cadence</span></h1>
+</section>
+</main>
+<script type="application/json" id="sequences-components">${island}</script>
+<script>
+window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
+tl.set("#hero",{opacity:1},0).set("#hero",{opacity:0},4);
+SequencesComponents.compile(tl,document.getElementById("root"));
+window.__timelines["noop-smoke"]=tl;tl.seek(0);
+</script></body></html>`;
+    fs.writeFileSync(path.join(dir, "index.html"), html, "utf8");
+    const require = createRequire(import.meta.url);
+    fs.copyFileSync(require.resolve("gsap/dist/gsap.min.js"), path.join(dir, "gsap.min.js"));
+    fs.writeFileSync(path.join(dir, CAMERA_RUNTIME_FILE), cameraRuntimeSource(), "utf8");
+    fs.writeFileSync(path.join(dir, COMPONENT_RUNTIME_FILE), componentRuntimeSource(), "utf8");
+    const server = await serveDir(dir);
+    const browser = await launchHeadlessBrowser({
+      executablePath: browserPath!,
+      headless: true,
+      args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+      const consoleErrors: string[] = [];
+      page.on("console", (message) => {
+        if (message.type() === "error" && !message.text().startsWith("Failed to load resource")) {
+          consoleErrors.push(message.text());
+        }
+      });
+      page.on("pageerror", (error) => consoleErrors.push(String(error)));
+      await page.goto(server.url, { waitUntil: "networkidle0", timeout: 30_000 });
+      await page.waitForFunction(
+        () => Object.keys((window as unknown as { __timelines?: object }).__timelines ?? {}).length > 0,
+        { timeout: 10_000 },
+      );
+      const snapshot = await page.evaluate(() => {
+        const timelines = (window as unknown as {
+          __timelines: Record<string, { pause: () => void; seek: (t: number, s?: boolean) => void }>;
+        }).__timelines;
+        for (const timeline of Object.values(timelines)) {
+          timeline.pause();
+          timeline.seek(2.0, false);
+        }
+        const slot = document.querySelector<HTMLElement>('[data-part="hero-copy"] .cmp-text')!;
+        return {
+          hasOld: Boolean(document.querySelector(".cmp-swap-old")),
+          hasNew: Boolean(document.querySelector(".cmp-swap-new")),
+          childElements: slot.childElementCount,
+          text: (slot.textContent || "").trim(),
+        };
+      });
+      // A swap to the text already on screen must not build the crossfade spans:
+      // the beat is a paperwork no-op, not a double-reveal.
+      expect(snapshot.hasOld).toBe(false);
+      expect(snapshot.hasNew).toBe(false);
+      expect(snapshot.childElements).toBe(0);
+      expect(snapshot.text).toBe("Cadence");
+      expect(consoleErrors).toEqual([]);
+    } finally {
+      await browser.close();
+      await server.close();
+    }
+  }, 45_000);
+});
+
+describe("typed line one-entrance-owner pin (probe-audit-03 T6)", () => {
+  it("holds a plain typewriter's slot steady while an authored reveal tries to slide it, seek-safely", async () => {
+    const browserPath = findBrowserExecutable();
+    expect(browserPath, "a Chromium/Chrome/Edge executable is required").toBeTruthy();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-typepin-"));
+    roots.push(dir);
+    const storyboard: DirectScene[] = [{
+      id: "digest",
+      title: "The digest writes itself",
+      purpose: "A terminal line types in place while an authored reveal tries to slide it up",
+      startSec: 0,
+      durationSec: 4,
+      components: [{ version: 1, id: "digest-line", kind: "terminal" }],
+      beats: [
+        { version: 1, id: "type-line", sceneId: "digest", component: "digest-line", kind: "type", atSec: 1, durationSec: 1.5, text: "shipping weekly digest to eng-leaders" },
+      ],
+    }];
+    const island = JSON.stringify(resolveComponentPlan(storyboard));
+    // The authored timeline adds a from-below reveal on the SAME slot, overlapping
+    // the type window — exactly the probe-03 self-writing-digest defect.
+    const html = `<!doctype html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>Type pin smoke</title><script src="gsap.min.js"></script>
+<script src="${CAMERA_RUNTIME_FILE}"></script>
+<script src="${COMPONENT_RUNTIME_FILE}"></script>${componentKitStyleTag()}<style>
+*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#0a0f16}
+body{color:#eef2f8;font-family:Arial,sans-serif}
+#root{position:relative;width:1920px;height:1080px;overflow:hidden}
+.scene{position:absolute;inset:0;display:grid;place-items:center;opacity:0}
+</style></head><body>
+<main id="root" data-composition-id="typepin-smoke" data-width="1920" data-height="1080" data-duration="4">
+<section id="digest" class="scene clip" data-scene="digest" data-start="0" data-duration="4" data-track-index="1">
+<div class="cmp cmp-terminal" data-component="terminal" data-part="digest-line"><span class="cmp-text" data-cmp-text>shipping weekly digest to eng-leaders</span></div>
+</section>
+</main>
+<script type="application/json" id="sequences-components">${island}</script>
+<script>
+window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
+tl.set("#digest",{opacity:1},0).set("#digest",{opacity:0},4);
+tl.fromTo('[data-part=digest-line] .cmp-text',{y:40,opacity:0},{y:0,opacity:1,duration:1.5,ease:"power3.out"},1);
+SequencesComponents.compile(tl,document.getElementById("root"));
+window.__timelines["typepin-smoke"]=tl;tl.seek(0);
+</script></body></html>`;
+    fs.writeFileSync(path.join(dir, "index.html"), html, "utf8");
+    const require = createRequire(import.meta.url);
+    fs.copyFileSync(require.resolve("gsap/dist/gsap.min.js"), path.join(dir, "gsap.min.js"));
+    fs.writeFileSync(path.join(dir, CAMERA_RUNTIME_FILE), cameraRuntimeSource(), "utf8");
+    fs.writeFileSync(path.join(dir, COMPONENT_RUNTIME_FILE), componentRuntimeSource(), "utf8");
+    const server = await serveDir(dir);
+    const browser = await launchHeadlessBrowser({
+      executablePath: browserPath!,
+      headless: true,
+      args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+      const consoleErrors: string[] = [];
+      page.on("console", (message) => {
+        if (message.type() === "error" && !message.text().startsWith("Failed to load resource")) {
+          consoleErrors.push(message.text());
+        }
+      });
+      page.on("pageerror", (error) => consoleErrors.push(String(error)));
+      await page.goto(server.url, { waitUntil: "networkidle0", timeout: 30_000 });
+      await page.waitForFunction(
+        () => Object.keys((window as unknown as { __timelines?: object }).__timelines ?? {}).length > 0,
+        { timeout: 10_000 },
+      );
+      const sample = async (time: number): Promise<{ top: number; chars: number }> =>
+        page.evaluate((at: number) => {
+          const timelines = (window as unknown as {
+            __timelines: Record<string, { pause: () => void; seek: (t: number, s?: boolean) => void }>;
+          }).__timelines;
+          for (const timeline of Object.values(timelines)) {
+            timeline.pause();
+            timeline.seek(at, false);
+          }
+          const slot = document.querySelector<HTMLElement>('[data-part="digest-line"] .cmp-text')!;
+          return {
+            top: Math.round(slot.getBoundingClientRect().top * 100) / 100,
+            chars: (slot.textContent || "").length,
+          };
+        }, time);
+
+      // The slot's viewport position must be IDENTICAL across the type window —
+      // the pin overrides the authored from-below reveal for the beat — while the
+      // caret advances (more characters land over time).
+      const start = await sample(1.1);
+      const mid = await sample(1.75);
+      const end = await sample(2.4);
+      expect(mid.top).toBeCloseTo(start.top, 1);
+      expect(end.top).toBeCloseTo(start.top, 1);
+      expect(start.chars).toBeLessThan(end.chars);
+      // Seek-safety: jumping backward then forward reproduces the same steady top.
+      await sample(0.4);
+      const replay = await sample(1.75);
+      expect(replay.top).toBeCloseTo(mid.top, 1);
+      expect(replay.chars).toBe(mid.chars);
+      expect(consoleErrors).toEqual([]);
     } finally {
       await browser.close();
       await server.close();

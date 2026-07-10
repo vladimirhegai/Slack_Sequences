@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
+import { launchHeadlessBrowser } from "../src/engine/browserLifecycle.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
 import {
   TIME_RUNTIME_FILE,
@@ -117,8 +118,7 @@ describe("time-warp browser contract (speed ramping)", () => {
     const plan = resolveTimeRampPlan(draft.storyboard);
     const warp = warpOf(plan);
     const server = await serveDir(dir);
-    const puppeteer = (await import("puppeteer-core")).default;
-    const browser = await puppeteer.launch({
+    const browser = await launchHeadlessBrowser({
       executablePath: browserPath!,
       headless: true,
       args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],

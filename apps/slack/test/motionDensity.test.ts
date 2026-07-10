@@ -88,6 +88,19 @@ tl.fromTo("#close-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: .4
     expect(report.warnings).toEqual([]);
   });
 
+  it("places deterministic forEach staggers at their earliest indexed start", () => {
+    const report = analyzeMotionDensity(html(`
+document.querySelectorAll('.severity-dot').forEach((dot, i) => {
+  tl.fromTo(dot, { opacity: .3 }, { opacity: 1, duration: .15 }, 2.45 + i * .08);
+});
+`), scenes, 15);
+    expect(report.warnings.some((warning) => warning.includes("no absolute timeline position")))
+      .toBe(false);
+    expect(report.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: "gsap.fromTo", startSec: 2.45 }),
+    ]));
+  });
+
   it("does not let ambient drift or decorative rules impersonate story beats", () => {
     const driftingScenes: DirectScene[] = scenes.map((scene) => ({
       ...scene,

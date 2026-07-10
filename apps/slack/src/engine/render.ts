@@ -47,12 +47,112 @@ interface ProducerModule {
   resolveConfig: (config: Record<string, unknown>) => unknown;
 }
 
+/**
+ * Production capture uses the host GPU whenever Chrome can reach it.
+ * SwiftShader is the producer's compatibility fallback and is documented as
+ * 5–50× slower; forcing it made a 28s film calibrate at 1.7s per frame and
+ * time out after sixteen minutes. `auto` probes once, selects the native GPU
+ * when available, and safely falls back. Capture mode remains owned by the
+ * producer's compiled compatibility hints (alpha still forces screenshot).
+ */
+export function renderProducerOverrides(
+  browserPath?: string,
+): Record<string, unknown> {
+  return {
+    browserGpuMode: "auto",
+    forceScreenshot: false,
+    ...(browserPath ? { chromePath: browserPath } : {}),
+  };
+}
+
 const FORMAT_EXT: Record<RenderFormat, string> = {
   mp4: ".mp4",
   webm: ".webm",
   mov: ".mov",
   "png-sequence": "",
 };
+
+/**
+ * Supersampled MP4 rendering (probe-audit render shakiness, 2026-07-08).
+ *
+ * A 1× screenshot at deviceScaleFactor 1 can
+ * slow sub-pixel motion — letter drift, camera push-ins, 0.3px/frame pans —
+ * quantizes to whole pixels and stair-steps in the MP4 while looking smooth
+ * in a live browser (Chrome's compositor antialiases live, the screenshot
+ * path does not). The fix is classic supersampling: capture at an integer 2×
+ * DPR (the producer's own `outputResolution` knob — the composition's
+ * authored dimensions are unchanged) and downscale back with an ffmpeg
+ * lanczos filter, which turns the whole-pixel steps back into sub-pixel
+ * shading. The 4K master is encoded near-lossless so the downscale encode is
+ * the only quality decision.
+ *
+ * Cost: a 4K frame buffer is ~4× the memory and capture time, so
+ * this is GATED to the HD tier (`quality === "high"`, the Render HD button)
+ * by default for Railway. `SLACK_SEQUENCES_RENDER_SUPERSAMPLE=1` forces it on
+ * for every tier (local verification), `=0` disables it everywhere. Any
+ * failure in the supersampled path falls back to the plain render — the
+ * delivery contract never gets worse than before this feature.
+ */
+const SUPERSAMPLE_RESOLUTIONS: Record<string, string> = {
+  "1920x1080": "landscape-4k",
+  "1080x1920": "portrait-4k",
+  "1080x1080": "square-4k",
+};
+/** Near-lossless 2× master; the lanczos downscale encode owns final quality. */
+const SUPERSAMPLE_MASTER_CRF = 16;
+
+export interface SupersamplePlan {
+  /** Producer `outputResolution` name resolving to an integer 2× DPR. */
+  outputResolution: string;
+  /** Final (composition) dimensions the master downscales back to. */
+  width: number;
+  height: number;
+}
+
+export function resolveSupersamplePlan(
+  width: number,
+  height: number,
+  quality: RenderQuality,
+): SupersamplePlan | undefined {
+  const flag = (process.env.SLACK_SEQUENCES_RENDER_SUPERSAMPLE ?? "").trim();
+  if (flag === "0") return undefined;
+  if (flag !== "1" && quality !== "high") return undefined;
+  const outputResolution = SUPERSAMPLE_RESOLUTIONS[`${width}x${height}`];
+  if (!outputResolution) return undefined;
+  return { outputResolution, width, height };
+}
+
+/** Producer job fields a supersampled MP4 master adds on top of the plain job. */
+export function supersampleJobFields(plan: SupersamplePlan): Record<string, unknown> {
+  return {
+    outputResolution: plan.outputResolution,
+    crf: SUPERSAMPLE_MASTER_CRF,
+    // The HDR compositor cannot scale via DPR (the producer rejects the
+    // combination); these compositions are SDR HTML/CSS, so skip the probe.
+    hdrMode: "force-sdr",
+  };
+}
+
+/** Lanczos downscale of the 2× master back to composition dimensions. */
+export function downscaleSupersampledRender(
+  ffmpegPath: string,
+  masterPath: string,
+  outputPath: string,
+  plan: SupersamplePlan,
+): void {
+  execFileSync(ffmpegPath, [
+    "-y",
+    "-i", masterPath,
+    "-vf", `scale=${plan.width}:${plan.height}:flags=lanczos`,
+    "-c:v", "libx264",
+    "-preset", "medium",
+    "-crf", "18",
+    "-pix_fmt", "yuv420p",
+    "-movflags", "+faststart",
+    "-c:a", "copy",
+    outputPath,
+  ], { stdio: ["ignore", "ignore", "pipe"] });
+}
 
 function pathEnvKey(): string {
   return Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
@@ -245,26 +345,46 @@ export async function renderProject(
     const producer = (await import(producerSpecifier)) as ProducerModule;
     const browserPath = options.browserPath ?? findBrowserExecutable();
     const logger = options.quiet ? undefined : producer.createConsoleLogger?.("info");
-    const job = producer.createRenderJob({
-      fps: project.meta.fps,
-      quality,
-      format,
-      workers: options.workers,
-      entryFile: "index.html",
-      logger,
-      producerConfig: producer.resolveConfig({
-        browserGpuMode: "software",
-        forceScreenshot: true,
-        ...(browserPath ? { chromePath: browserPath } : {}),
-      }),
-    });
-
-    await producer.executeRenderJob(job, buildDir, temporaryOutput, (progressJob, message) => {
+    const makeJob = (supersample?: SupersamplePlan): unknown =>
+      producer.createRenderJob({
+        fps: project.meta.fps,
+        quality,
+        format,
+        workers: options.workers,
+        entryFile: "index.html",
+        logger,
+        ...(supersample ? supersampleJobFields(supersample) : {}),
+        producerConfig: producer.resolveConfig(renderProducerOverrides(browserPath)),
+      });
+    const onProgress = (progressJob: { progress: number }, message: string): void => {
       if (options.quiet) return;
       const percent = Math.round(progressJob.progress);
       process.stdout.write(`\rrender ${percent}% ${message.padEnd(40).slice(0, 40)}`);
       if (percent >= 100) process.stdout.write("\n");
-    });
+    };
+
+    const supersample = format === "mp4"
+      ? resolveSupersamplePlan(project.meta.width, project.meta.height, quality)
+      : undefined;
+    let rendered = false;
+    if (supersample) {
+      const masterPath = path.join(jobDir, "supersample-master.mp4");
+      try {
+        await producer.executeRenderJob(makeJob(supersample), buildDir, masterPath, onProgress);
+        downscaleSupersampledRender(ffmpegPath, masterPath, temporaryOutput, supersample);
+        rendered = true;
+      } catch (error) {
+        process.stderr.write(
+          `[render] supersampled render failed, falling back to 1x: ` +
+            `${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      } finally {
+        fs.rmSync(masterPath, { force: true });
+      }
+    }
+    if (!rendered) {
+      await producer.executeRenderJob(makeJob(), buildDir, temporaryOutput, onProgress);
+    }
 
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     if (format === "png-sequence") {

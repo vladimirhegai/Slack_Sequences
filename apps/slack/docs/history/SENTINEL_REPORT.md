@@ -1777,3 +1777,578 @@ completing MOTION_DESIGN_PLAN with another agent before the next live run). The
 efficiency targets (attempts ≤1.5, ≤5 physical requests, ≤8 min tier-1, ≤45k live
 prompt) remain **unmet** on hard briefs and are the real open work — unchanged by
 this pass.
+
+---
+
+## 2026-07-07 — MOTION_DESIGN Sentinel rows, slot persistence, camera-sparse repair, honesty sweep
+
+One day of work landed after the 2026-07-06 independent audit; this section
+records the Sentinel-relevant slice (the MOTION_DESIGN_PLAN feature work itself
+is documented in that plan's own record). Commits `b20acf6`…`f662d4a`.
+
+### What changed (Sentinel scope)
+
+1. **MOTION_DESIGN normalizers registered per protocol** (`b20acf6`…`ac72800`).
+   The MD1–MD6 features (dive camera move, sequences-fx substrate, headline text
+   FX, animated grade shift, playful pops) entered through the placement tree as
+   L2 rows: `normalize.dive-window`, `normalize.fx-plan`,
+   `normalize.auto-pop-style` / `normalize.open-pop`,
+   `normalize.auto-headline-style` / `normalize.assemble-cap`,
+   `normalize.auto-grade-shift` / `normalize.grade-shift` — all in
+   `sentinel.ts` + the SENTINEL.md contract table, all closed-world-tested.
+2. **Sentinel audit fixes + the slot persistence retry rung** (`e39a78f`, 5
+   bugs): `cursor_near_miss` registered + counted; contrast-repair injection
+   hardened; layout-intent injector tolerance/anchor fixes; a `strictOk` publish
+   that still ships static-verdict moments records a `moment_static_frame:<n>`
+   degradation (never reports clean); `deriveGradeShifts` no longer matches bare
+   "cool". And the **scene-slot retry rung**: the slot map now persists across
+   paid attempts, so a rejected attempt whose findings name scenes first runs
+   `repairSlotDraftForFindings` (one bounded ≤8k-token call,
+   `strategyChanges: slot-retry:<scenes>`) before any whole-doc patch. Proof:
+   `test/slotRetry.test.ts`; SENTINEL.md "Slots persist across paid attempts".
+3. **`normalize.camera-sparse-zoom`** (`cd7b0d1`) — the first L2-at-L4 repair:
+   a measured `camera_framed_sparse` landing gets a bounded zoom-in
+   (`sqrt(0.18/fraction)`, clamped 1.0–1.8) on exactly the framing move, adopted
+   only when the finding clears, no new `camera_framed_clipped` appears, and
+   `browserQualityPenalty` strictly drops (enhancement-never-veto). Registered;
+   proven by `framingCoverage.browser.test.ts`.
+4. **Storyboard-aware safe fallback film** (`2a4768d`) — when source authoring
+   fails with a locked storyboard in hand, the fallback skins the proven 3-shot
+   film's three copy slots with the plan's own words (skin, never compile);
+   no plan → byte-identical generic reel. Label stays `fallback:{stage,reason}`.
+5. **Honesty sweep** (`f662d4a`, docs): `moment_static_frame` is advisory
+   everywhere it is described; OPERATIONS.md warns that local paid probes must
+   pass `--provider openrouter-api` (the `claude-code-cli` default stalls
+   headless runs — see the infra fail-louds below).
+
+### Probe record (2026-07-07, all fail-loud, immutable job dirs)
+
+| Probe | Purpose | Disposition |
+| --- | --- | --- |
+| `md-audit-probe-1` | MD live audit | fail-loud (pre-fix `beat.style` round-trip loss, fixed in `563940f`) |
+| `md-audit-probe-2`, `-3` | MD live audit | fail-loud — **infra, not authoring**: missing OpenRouter key in headless `sequence:check` (fixed by `0e3d97b` .env loading) |
+| `md-audit-probe-3b`, `-4` | MD live audit re-runs | **published-degraded** (least-bad-pick + honest storyboard-polish advisories) |
+| `md-autoderive-probe-1`, `-2` | MD3/4/6 auto-derive live | **published-degraded** (least-bad / one interaction quarantine) |
+| `sentinel-live-budget-broker-1`, `sentinel-live-broker-polish-2` | fresh-brief battery on the full tree | **published-degraded** (least-bad penalties 17 / 9; `timeramp-retime` committed live) |
+| `sequence-check-1783428429260` | local probe | fail-loud — **infra**: `claude.exe` local provider timed out 360s (the OPERATIONS.md provider warning) |
+| `sequence-check-1783428882649`, `-1783435156225` | latest full-tree runs | **published-degraded** |
+
+What the latest run (`sequence-check-1783435156225`) proved live:
+**`camera-sparse-zoom` committed ×2** (item 3, live-proven same day), the
+scene-scoped **validation repair fired** (slotCalls: 4 calls / 6 scenes;
+2 calls / 2 scenes in the prior run), and the MD auto-derive normalizers
+committed (`auto-headline-style` 3, `auto-grade-shift` 3, `auto-pop-style` 2,
+`dive-window` 2) alongside `pacing-stretch`. Every publish carried an honest
+ledger (`least-bad-pick`, `rows-neutral-children-shipped`, storyboard-polish
+advisories) — zero clean-but-degraded misreports, zero authoring fail-louds,
+zero fallbacks across the day's published runs.
+
+### State
+
+Defaults unchanged (SKELETON / SLOTS / CRITIC_SKIP_CLEAN ON). Open work
+unchanged: the efficiency targets (attempts ≤1.5, ≤5 physical requests, ≤8 min
+tier-1, ≤45k live prompt) remain unmet on hard briefs; the pre-judging ladder
+(Docker → `railway up` → sandbox smoke, `ALLOW_DETERMINISTIC_FALLBACK=1` on
+Railway) is still owed.
+
+---
+
+## 2026-07-07 (later) — attempt-economy sweep: the churn ledger, three loop seams, two L4 honesty fixes
+
+Final audit pass over the 2026-07-06 independent-audit changes plus a targeted
+attack on the efficiency targets. Method: aggregated every rejected attempt's
+findings across the 49-run `.data` set (`planning/attempts/*.json`) by stage and
+class, then read the eight most recent runs attempt-by-attempt.
+
+### What the ledger proved
+
+1. **Every published run burns exactly 3 source-author attempts.** Polish
+   findings block attempts 1–2 by design (`advisory-late`), and the rejected
+   attempts' finding lists are **identical, verbatim, across consecutive
+   attempts** on every recent probe — the paid patches never fix
+   `layout_intent_missing` (121 occurrences historically, the #1 class),
+   `contrast_aa` (49), overflow (45), or focal (28) findings. Attempt 3 then
+   ships the banked least-bad draft with the same findings as advisories. Two
+   paid patch calls + two browser-QA cycles per run bought a byte-identical
+   artifact.
+2. **The attempt-2 budget broker never fires** — its penalty ceiling is 4 and
+   real films carry 9–17, much of it inflated: 6× `layout_intent_missing`
+   paperwork = 6 penalty; ONE animated element sampled at five hero frames = 5
+   `contrast_aa` findings.
+3. **Storyboard retries thrash the same way** (avg 3.08): the dominant
+   rejection is the short-scene `pacing/outcome` shape — a payoff whose
+   conflicting camera move can't be delayed because the delayed move overruns
+   the scene's own cut (`delayConflictingCameraMoves` skipped; `stretch` alone
+   can't move an internal conflict) — plus `camera/energy`, framing-floor, and
+   `components/complexity`, several of which the GLM retry "fixes" by minting a
+   different class.
+
+### What changed (gates untouched — WHERE, not WHETHER)
+
+1. **`stagnant-polish-early-ship`** (`stagnantPolishShipReason`,
+   compositionRunner): a browser rejection whose finding-signature set equals
+   the previous attempt's ships the banked least-bad draft at attempt 2 —
+   recorded as a degradation. Hard failures (`browserQa.ok` false) never
+   qualify. Expected effect: source attempts 3 → 2 on the dominant path.
+2. **Paperwork weighs zero** (`PAPERWORK_ISSUE_WEIGHTS`):
+   `layout_intent_missing` no longer inflates `browserQualityPenalty` (it asks
+   for a declaration, not a visual change), un-blocking the attempt-2 broker's
+   ≤4 ceiling for otherwise-clean films. Still blocks `strictOk`, still feeds
+   repair prompts.
+3. **`normalize.camera-move-delay` delay-then-stretch**: when the delayed move
+   overruns the scene end, the cut boundary stretches by the overflow (≤1.0s,
+   15s scene cap) and later scenes cascade-shift — the same atomic
+   commit-or-revert. Kills the most-repeated storyboard rejection shape.
+4. **L4 measurement honesty (QA cache v12)**: `contrast_aa` dedupes to the
+   worst ratio per selector+text; `spatial_focal_invisible` re-samples ≤2
+   bounded later instants in the same shot before firing
+   (`focal-late-sample` — a late-entering focal is choreography, not absence;
+   a subject visible at NO sample still fires; proof:
+   `test/layoutInspector.test.ts` both directions).
+5. **Ripple churn root-caused and fixed live** (the post-sweep TraceKit probe
+   reproduced it in real time): `normalizeInteractionActors` retires an
+   authored ripple element and injects the canonical runtime actor — but its
+   bare attribute-existence test scanned the WHOLE document, so an authored
+   tween selector (`[data-part='…-ripple']` inside the inline script) read as
+   a still-bound element and the injection was skipped: the scene shipped
+   rippleless and `interaction_ripple_missing` (a BLOCKING interactions-class
+   error — the draft can't even bank as least-bad) survived every paid
+   attempt. Fix: the cursor precedent applied per ripple id — bracketed
+   selectors rewrite to `[data-sequences-retired-ripple=…]` (original quote
+   style preserved so the script still parses) BEFORE the existence test, so
+   the canonical actor always lands. Minimized replay:
+   `test/authorReliability.test.ts`.
+6. **Registry conformance for the 2026-07-06 independent-audit changes:**
+   `normalize.root-data-start` registered (the audit's deterministic root-timing
+   repair shipped unregistered — the closed-world literal scan only covers
+   finding codes, not telemetry tags, so CI stayed green; the registry row is
+   the protocol); `normalize.camera-sparse-zoom` row text corrected to the
+   raised 2.8 clamp + `framingCorrection` re-audit + lockedStoryboard adoption.
+
+### Probe record (2026-07-07, post-sweep)
+
+`sequence-check-1783463306190` (TraceKit incident-triage brief, 16s,
+openrouter): **published `hyperframes-direct`, no fallback,
+`published-degraded` with a single honest `rows-neutral-children-shipped`** —
+zero least-bad penalty. Storyboard **2** attempts (attempt 1 rejected on a
+genuine `components/complexity` + `pacing/holds` density deficit — the retry
+class deterministic arithmetic should NOT absorb), tier-1 **13.6 min**, 11
+logical / 13 physical calls, 10 content-rich thumbnails, 12 bound moments, MD
+texture live (`dive-window` ×2, `auto-pop-style` ×2, `auto-headline-style`,
+plus `root-data-start` ×4 — the 2026-07-06 audit's repair firing in
+production). Source still took 3 attempts: the run reproduced the ripple bug
+in real time (item 5 — the probe process predates the fix), with
+`interaction_ripple_missing` blocking least-bad banking on attempts 1–2 and
+the interaction finally quarantining. That was this probe's ONLY hard retry
+cause; with the ripple fix the same run banks attempt 1 and the stagnation /
+broker exits get their shot.
+
+### Audit verdict on the 2026-07-06 independent-audit (Codex) changes
+
+All verified correct: the sparse-zoom 2.8 ceiling + browser re-audit of
+corrected landings (honest, not clearing-by-skip), the stale-`lockedStoryboard`
+fix after sparse adoption (this exact bug burned attempt 2 of
+`sequence-check-1783435156225` — "sequences-camera island differs"), the root
+`data-start` repair + scaffold/golden parity, and the studio re-gate split
+(recipe workspaces through `gateWorkspace`, which persists the gate record;
+canvas keeps `regateComposition` + a real SHA-256). The one gap was the missing
+registry row (item 5 above). MOTION_DESIGN integration re-verified: all MD1–MD6
+rows registered, the authoring prompt teaches the vocabulary, and the latest
+live ledger shows the auto-derive normalizers committing.
+
+### State
+
+`stagnant-polish-early-ship` and the broker changes alter WHEN a
+published-degraded run ships, never WHAT ships. Fresh live probe(s) after this
+sweep should show: fewer verbatim-repeat rejections, source attempts ≤2 with a
+`stagnant-polish-early-ship` or `early-least-bad-pick` ledger line where
+polish stagnates, and the short-scene `pacing/outcome` shape absorbed as
+`camera-move-delay` normalizations. The efficiency targets remain the open
+work; the pre-judging ladder (Docker → `railway up` → sandbox smoke,
+`ALLOW_DETERMINISTIC_FALLBACK=1` on Railway) is still owed.
+
+Next normalization candidates, analyzed but deliberately NOT built this pass
+(each drops/changes creative content, so each needs the camera-budget-clamp
+treatment — load-bearing guards + atomic commit-or-revert — and its own
+session's care): **component-budget trim** (`components/complexity` over-count
+→ drop the fewest-beat surface that binds no moment, no interaction, no camera
+target; 4 recent rejections + the post-sweep probe's attempt 1),
+**camera/energy lift** (a peak-less plan with a push-in at zoom 1.15–1.29 →
+raise to 1.3; 3 recent rejections), and **framing-floor top-up** (one short
+push-in on the longest held scene when the count is exactly one short). The
+ripple churn is DIAGNOSED AND FIXED (item 5 above).
+
+---
+
+## 2026-07-08 — storyboard attempt-economy: the wall-clock lever + three normalizers
+
+This session attacks the **storyboard** stage — the tier-1 wall-clock hog (each
+GLM call ~6 min, baseline 2.5 attempts/run). It builds the two things the
+attempt-economy sweep recorded as next: the **scene-scoped repair rung** (the big
+lever) and the **three L2 normalizers** (component-trim, framing-floor-topup,
+camera-energy-lift). All gates untouched — WHERE an obligation is enforced, not
+WHETHER. (The author/critic stage — the 3-attempt source churn the baseline still
+shows — is the second agent's half of this plan.)
+
+### Baseline probes (the "before")
+
+Two fresh paid `openrouter-api` probes on distinct briefs, immutable job dirs:
+- `baseline-denseui-econ` (dense-UI: command palette + status tiles + incident
+  modal + deploy progress + terminal) — **published-degraded, no fallback**,
+  storyboard **2** attempts, source **3**, tier-1 **14.8 min**.
+- `baseline-interaction-econ` (interaction-heavy: cursor opens a card, toggles,
+  presses Ship → toast, filters, reassigns via avatar-stack) —
+  **published-degraded, no fallback**, storyboard **3** attempts, source **3**,
+  tier-1 **22.6 min**.
+
+**The 2026-07-07 sweep is behaving** (confirmed from the live logs + ledgers):
+`pacing-stretch` and `timeramp-retime` committed live; `focal-late-sample` fired
+**8×** on the interaction probe (the L4 honesty re-sample); contrast dedupe
+active. The interaction probe's source ran 3 attempts because the finding SET
+*shifted* between attempts (the attempt-2 recolor patch minted new `span.meta-label`
+`contrast_aa` findings) — so `stagnant-polish-early-ship` correctly did NOT fire
+(the polish did not stagnate, it whack-a-moled). That contrast churn is the
+author/critic stage — the second agent's territory. The two `pacing/... 0.0s
+later` cases that survived are NOT `camera-move-delay` misses: one is a 1.2s
+reading shortfall (> the 1.0s stretch cap) and one is the film's FINAL beat
+(no later cut to delay/stretch) — both correctly stay findings and the final
+was demoted to advisory. **What the baseline PROVES the new work targets:** the
+interaction probe's storyboard attempt 1 was rejected on `components/complexity:
+… 10 components across 16s … Keep <= 9` — an over-count by exactly ONE, the
+component-trim's exact target.
+
+Baseline aggregate (`sentinel:report`, 2 runs):
+
+| Metric | Target | Baseline |
+| --- | --- | --- |
+| Disposition | published | **published-degraded ×2, no fallback** |
+| Hard authoring failures | 0 | 0 |
+| Storyboard attempts / run (avg) | ≤ 1.5 | **2.50** |
+| Source-author attempts / run (avg) | ≤ 1.5 | 3.00 |
+| Wall-clock to tier-1 (avg) | ≤ 8 min | 18.7 min |
+| Physical model requests / published run | — | 14.0 |
+
+Storyboard normalizations present in the baseline: `pacing-stretch` 1,
+`timeramp-retime` 2 — and NONE of the three new tags (they did not exist yet).
+
+### What changed (commits `112d915`, `06561bc`)
+
+**1. Scene-scoped storyboard findings-repair rung** (`06561bc`,
+`repairStoryboardScenesForFindings`). The storyboard analogue of the author
+`repairSlotDraftForFindings`: on the first rejection whose EVERY blocking
+finding maps to a named shot (no `__film__` remainder, a proper subset), re-plan
+ONLY those shots in ONE bounded `minimal`-reasoning call (16,384-token cap)
+against the LOCKED remainder — id/startSec/durationSec forced back so the film
+stays contiguous — then re-validate the merged plan through the FULL gate
+(`parseStoryboardResponse`, judged strictly). Convergence replaces a full ~6-min
+re-plan; any miss (film-level finding, incomplete subset, call failure, still-
+rejected merge) falls through to the whole-plan ladder unchanged, so it can never
+reduce a run's chances. Once per run; kill switch
+`SLACK_SEQUENCES_STORYBOARD_SCENE_REPAIR`; telemetry
+`slotCalls.storyboard-scene-repair`. Duration-change findings are out of scope
+(the locked envelope defers them). Proof: `test/storyboardSceneRepair.test.ts`.
+
+**2. Three L2 normalizers** (`112d915`), all in the parse-side atomic
+commit-or-revert, all with registry rows + SENTINEL.md rows + minimized-replay
+tests:
+- `normalize.component-trim` — `components/complexity` over by 1–2 drops the
+  fewest-beat surface binding no moment / interaction / camera-cut focal; ≥3 over
+  or nothing safely droppable keeps the finding.
+- `normalize.framing-floor-topup` — the distinct-framings floor short by EXACTLY
+  one gets one gentle establishing push-in on the longest single-framing shot
+  with content to frame; short by ≥2 stays a finding.
+- `normalize.camera-energy-lift` — a 12s+ peak-less film with a push-in/pull-back
+  /dive at zoom [1.15, 1.3) lifts the largest to 1.3; only pans/drifts (a real
+  deficit) stays a finding.
+
+### Re-probe (the "after") — and the live bug it caught
+
+`reprobe-econ-1` (a dense funnel-explorer brief) published-degraded, no fallback,
+storyboard **3** attempts, tier-1 26.2 min. Crucially it **surfaced a real bug in
+the scene-repair rung in real time**, which is exactly the value of a live probe:
+
+- **The scene-repair never fired** (`slotCalls.storyboard-scene-repair: 0`) even
+  though attempt 1's rejection named shots (`components/complexity` on
+  `metric-cascade`, `pacing/reading` on `palette-snap`, `pacing/holds` on
+  `metric-cascade`). Root cause: `StoryboardValidationError` stored only the
+  joined message and the caller re-split it on `"; "` for attribution — but the
+  `components/complexity` finding **contains** `"; "` (`… the author cannot build
+  them; keep <= 2 (…)`), so the split produced a scene-less `keep <= 2` fragment
+  that landed in the `__film__` bucket and cancelled the repair on EVERY
+  components/complexity rejection (the dominant storyboard rejection class).
+  **Fixed in `6901a5a`:** the error now carries the raw `findings: string[]` and
+  the handler attributes THAT array; regression tests lock it (the error carries
+  the raw array; a `"; "` finding attributes to its shot, not `__film__`).
+- **`component-trim` correctly no-op'd** on `metric-cascade` — its 3 components
+  are all load-bearing (`stat-card-conv`↔`modal-cohort` are a morph pair,
+  `modal-cohort` is also the `spatialIntent` focal, `table-breakdown` is
+  moment-bearing), so "ambiguity stays a finding" fired as designed. The
+  probe confirmed the guard is conservative, not that the trim is broken.
+- The two `pacing/reading … 0.0s later` cases had a 1.2s shortfall (> the 1.0s
+  stretch cap), so `pacing-stretch`/`camera-move-delay` correctly left them as
+  findings — not a normalizer miss.
+
+A confirming probe (`confirm-econ-2`, a fresh dense release-cockpit brief) is
+run post-fix to observe the repaired rung fire live.
+
+**`confirm-econ-2` (post-fix) validated BOTH new levers live** — a fresh dense
+release-cockpit brief, published-degraded, no fallback:
+- **`component-trim` fired**: `sentinel-normalized: scene "pipeline-tick":
+  trimmed 1 unbound component(s) (cockpit-window) to fit the 10-surface film
+  budget` (normalization tag `component-trim: 1`) — a film-wide over-count
+  absorbed deterministically, no paid retry.
+- **The scene-repair fired AND converged**: `scene-repair converged: re-planned
+  1/5 shot(s) (rollout-peak) in one bounded call — saved a full re-plan`
+  (`slotCalls.storyboard-scene-repair: 1 call / 1 scene`). The attribution fix
+  works end-to-end: attempt 1's rejection named shots, the repair re-planned only
+  `rollout-peak` against the locked remainder, the merged plan passed the full
+  gate, and it was adopted.
+- **Storyboard-plan converged in 1 attempt** — the scene-repair replaced the 2
+  full ~6-min re-plans the baseline spent, so `storyboard attempts / run` = 1.00
+  (≤ 1.5 target MET, down from 2.50 baseline).
+
+### Before / after (storyboard stage)
+
+| Metric | Baseline (2 runs) | reprobe-econ-1 (pre-fix) | confirm-econ-2 (post-fix) | Target |
+| --- | --- | --- | --- | --- |
+| Disposition | published-degraded ×2 | published-degraded | published-degraded | published |
+| Visible fallbacks | 0 | 0 | 0 | 0 |
+| **Storyboard attempts / run** | **2.50** | 3.00 | **1.00** ✅ | ≤ 1.5 |
+| Source attempts / run | 3.00 | 3.00 | 3.00 | ≤ 1.5 |
+| Tier-1 wall-clock | 18.7 min | 26.2 min | 27.0 min | ≤ 8 min |
+
+**Storyboard attempts fell 2.50 → 1.00 with both levers firing live** — the
+storyboard stage's cost lever is delivered and probe-confirmed. Tier-1 did NOT
+fall because (a) `confirm-econ-2`'s attempt 1 ate a transient OpenRouter
+streaming timeout (extra wall-clock inside one attempt, not extra attempts), and
+(b) the stage that now dominates tier-1 is **source-author**, still 3.00
+attempts on contrast churn — the second agent's half of this plan (handoff
+below). reprobe-econ-1 is retained as the honest record of the attribution bug
+the live probe caught (scene-repair inert pre-fix); `6901a5a` fixed it and
+`confirm-econ-2` proves the fix.
+
+### Handoff to the author/critic-stage agent (the other half of this plan)
+
+The storyboard stage now has: three L2 normalizers (absorb the mechanically-
+recoverable over-count / framing / energy rejections) and a scene-scoped repair
+rung (replaces a full re-plan when all findings name shots — now that
+`6901a5a` un-poisoned its attribution). The **source stage remains the
+3-attempt cost center and is your half.** Discovered but NOT fixed:
+
+1. **Contrast whack-a-mole defeats `stagnant-polish-early-ship`** (highest-value
+   source lever). Both baseline runs and the reprobe burned 3 source attempts
+   because the attempt-2 recolor patch MINTED NEW `contrast_aa` findings on new
+   selectors (a recolored `div.cmp-label` surfaces a `span.meta-label` beneath
+   it), so the finding SET changed and the digit-stripped-identical stagnation
+   check never fired. Consider a coarser signal ("N consecutive attempts both
+   dominated by `contrast_aa`, none clearing a prior contrast selector") or a
+   **deterministic contrast repair** — the recolor is mechanical (nudge the
+   semantic token to meet AA), and the model keeps failing it by hand.
+2. **`camera_framed_sparse` ships on drift/hold-only scenes.** `camera-sparse-zoom`
+   can't fix a scene with no bumpable full move (baseline denseui shipped
+   `least-bad-pick:penalty=18` partly from sparse on `palette-keystroke` /
+   `deploy-progress`). Such a scene needs a host-added establishing zoom (like my
+   framing-floor top-up, but keyed on coverage, not framing count) or an
+   author-stage directive.
+3. **The film's FINAL beat can't get its outcome hold.** A `set-state` payoff at
+   the last beat (`framing changes 0.0s later`) can't be delayed (no later cut)
+   and `stretchMarginalPacingMisses` did not extend the film there — worth
+   checking whether the final-scene stretch is being skipped. Demoted to
+   advisory (not a fallback risk) but a recurring honest degradation.
+4. **`frame/type: "EB Garamond" not used`** persisted across all 3 denseui source
+   attempts — the author never uses the frame's body font. A deterministic
+   check-and-inject (or dropping an unused family from the frame contract) would
+   clear a permanent finding that inflates every attempt's list.
+
+### Verification
+
+`npm run typecheck` clean · `npm run test` **750 green** (+14 normalizer tests,
++9 scene-repair tests including the attribution regressions) · `npm run film:demo`
+byte-stable (`lint: clean · 3 static warning(s) · 48 samples · 6 warning(s)`). No
+gate loosened; no prompt/QA threshold touched; no high-visibility class demoted.
+Commits: `112d915` (three normalizers), `06561bc` (scene-repair rung), `6901a5a`
+(attribution fix + framing-floor hardening).
+
+## 2026-07-08 — Author / critic-stage attempt economy (the second half)
+
+Agent 1 delivered the storyboard stage (above). This half cuts author/critic
+waste and (task 5) will re-measure the whole system. Same doctrine: gates never
+loosened — WHERE an obligation is enforced, not WHETHER.
+
+### 1. Critic economy (landed `01e45eb`)
+
+Live evidence (`sequence-check-1783463306190`): the continuity critic's
+whole-doc critique patch failed static validation and the pre-critique draft
+shipped — 2 paid calls for a byte-identical film. Two changes, gates untouched:
+
+- **Scene-scoped critique patches** (`SLACK_SEQUENCES_CRITIC_SLOT_REPAIR`):
+  critic directives that name a shot route through the scene-scoped slot repair
+  (`repairSlotDraftForFindings`, `slotCalls.critic-scene-repair`) instead of a
+  whole-document find/replace patch — small per-scene re-authors validate far
+  more often than a patch against a large document. Fires only when the shipped
+  draft came from the slot path and EVERY directive names a shot; film-level
+  directives keep the whole-document path. Adopted on a strict non-regression
+  guard (locked scene graph intact, static + browser clean, penalty never
+  rises), so a stale slot map can only MISS the optimization, never ship a worse
+  film. The critic prompt now asks for an `<id>: …` prefix so a shot-scoped
+  directive attributes reliably.
+- **Skip the critic after a stagnant ship**: a run that shipped under
+  `stagnant-polish-early-ship` (two consecutive browser rejections with an
+  identical finding-signature set) skips the critic — a draft that provably
+  resisted two targeted patches will not absorb a third. Extended the existing
+  `criticSkippableCleanDraft` predicate (kept deliberately narrow: only the
+  stagnation reason qualifies, not the ordinary attempt-3 least-bad or the
+  budget-broker exit), under the existing `SLACK_SEQUENCES_CRITIC_SKIP_CLEAN`.
+
+Status: code + unit tests landed (colon-prefixed attribution, stagnation skip
+cases); **not yet live-probe-confirmed** — folded into the task-5 battery.
+
+### 2. kit_markup_incomplete absorption (landed `08ee588`)
+
+`kit_markup_incomplete` was the top static-rejection class (64 historical). The
+existing host completion (`topUpRowsMarkup`, childless `rows`/`select`) gained
+two siblings for the other mechanical bind gaps the kit exemplar
+(`componentContract.ts`) fully defines: `topUpChartMarkup` (a chart beat's sole
+root with no bars and no svg stroke gets direct `<i>` bars, or an svg polyline
+for a `chart-line`) and `topUpProgressMarkup` (a progress beat's sole root with
+no fill gets `<i data-cmp-fill>`, or an svg arc for an empty `progress-ring`).
+All three share one spine (`injectIntoComponentRoots` →
+`locateSoleComponentContent`), so the rows/underline top-ups were refactored onto
+it with byte-identical behavior. Host-invented placeholder SHAPE marked
+`data-sequences-neutral="chart|progress"`, so a shipped placeholder records
+`chart-neutral-bars-shipped` / `progress-neutral-fill-shipped` and the run is
+`published-degraded`, never clean. Recoverable recovers, ambiguous blocks: a
+stray nested `<i>` icon or a partial svg ring declines and stays the markup-audit
+finding. No audit behavior changed → no QA cache bump (injecting markup changes
+the content hash that already keys the browser-QA cache). Registered
+`normalize.kit-chart-complete` + `normalize.kit-progress-complete`;
+`test/authorReliability.test.ts` proves injection, idempotency, both decline
+paths, and a round-trip against the live audit.
+
+### 3. Second scene-scoped author repair — MEASURED, evidence does not support, SKIPPED
+
+The question: allow the slot validation-repair to fire a SECOND time (only when
+the first strictly improved the penalty), converting an attempt-3 full patch into
+one bounded small call. Measured across the **50** `planning/author-run.json`
+ledgers before writing any code:
+
+| Signal | Count |
+| --- | --- |
+| Source-author runs recorded | 50 |
+| Runs where the scene-browser-repair fired at all | **4** |
+| Runs that reached attempt ≥ 3 (the cost this targets) | 25 |
+| Runs where scene-repair fired AND reached attempt ≥ 3 | **1** |
+
+The precondition for a second firing to pay off — the first fired and adopted,
+and the run still reached a later attempt carrying a scene-attributable residual
+a bounded re-author could converge on — holds in **0 of 25** attempt-3 runs. In
+the single run where the scene-repair fired and the run still reached attempt 3
+(`sequence-check-1783463306190`), attempt 3 was a `full-reauthor-final-attempt`
+that dropped a binding on a **different** scene (`noise-open`:
+`component_root_missing`) — nothing the original `rollback-action` scene-repair
+could re-target. The residual finding codes on attempt-3 finals are dominated by
+`layout_intent_missing` (19, paperwork, already weighs zero), `moment_static_frame`
+(17, advisory), `interaction_not_visible` (14), `important_safe_area` (12),
+`camera_framed_sparse` (7), and `contrast_aa` (5) — cross-cutting polish and
+advisories, not the scene-structural defects the scene-scoped re-author is built
+to converge on. A second firing would burn another paid inner call against
+findings the first re-author already failed to clear, working directly against
+the ≤ 5 physical-requests target. **Skipped by design.** The data instead
+re-confirms Agent 1's handoff levers as the real author-stage cost centers:
+`contrast_aa` whack-a-mole (a whole-doc semantic-token problem the model re-fails
+by hand every attempt — wants a deterministic AA recolor) and `camera_framed_sparse`
+on drift/hold-only scenes (wants a coverage-keyed establishing zoom). Those are
+scoped for the task-5 window if probes leave room.
+
+### 4. Final proof battery (3 fresh paid probes, 2026-07-08)
+
+Three fresh `sequence:check` probes on distinct brief classes, live provider
+`openrouter-api`, prep-mode `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0`
+(fail-loud — the current live-bot posture, so the measurement is honest about
+real failures). Aggregated with `sentinel:report`.
+
+| Metric | Target | Observed (3-run avg) |
+| --- | --- | --- |
+| Hard authoring failures (fail-loud) | 0 | **0** ✅ |
+| Visible fallbacks | 0 | **0** ✅ |
+| Storyboard attempts / run | ≤ 1.5 | 2.33 ❌ |
+| Source-author attempts / run | ≤ 1.5 | 3.00 ❌ |
+| Wall-clock to tier-1 | ≤ 8 min | 23.9 min ❌ |
+| Author prompt size (max) | ≤ 45,000 | 93,391 ❌ |
+| Physical requests / clean run | ≤ 5 | 14.0 ❌ |
+| L1 scaffold present / planned | — | **100%** (42/42) ✅ |
+
+Per-run:
+
+| Run (class) | Disposition | Fallback | SB att | Src att | Phys req | Author chars | Tier-1 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| proof-denseui-1 (dense-UI) | published-degraded | none | 3 | 3 | 16 | 93,391 | 32.1 min |
+| proof-interaction-1 (interaction) | **published (clean)** | none | **1** | 3 | 14 | 89,240 | 14.6 min |
+| proof-longcopy-1 (long-copy) | published-degraded | none | 3 | 3 | 22 | 74,585 | 24.8 min |
+
+**What the battery proves.** The system ships a real `hyperframes-direct` film
+across all three brief classes with **zero fallbacks and zero fail-loud** — my
+changes did not regress robustness (full suite 780 green, `film:demo`
+byte-stable). One run (interaction) published **fully clean** (no degradations)
+with the storyboard converging in **1 attempt** — Agent 1's `storyboard-scene-repair`
+firing and converging live (`slotCalls.storyboard-scene-repair: 1/1`), re-confirming
+that lever. L1 scaffold coverage was **100%** on every run (every host-guaranteed
+binding present in the shipped document).
+
+**Honest scope — my levers did NOT get a live trigger in these three probes.**
+Their triggering conditions simply didn't arise:
+
+- `kit_markup_incomplete` chart/progress absorption — **not fired**: no run
+  produced a chartless chart or fill-less progress (no `kit_markup_incomplete`
+  finding at all; the authors built proper kit markup). Code + `authorReliability`
+  round-trip tests prove it; a live trigger needs an author to leave a declared
+  chart/progress structurally empty, which none of these three did.
+- `critic-scene-repair` (scene-scoped critique) — **not fired**: on the one run
+  whose critic ran (dense-UI) the directive set included a film-level directive,
+  so the conservative guard correctly kept the whole-document path
+  (`slotCalls.critic-scene-repair: 0`). This is the design (route scene-scoped
+  ONLY when every directive names a shot), observed working, not a defect.
+- critic skip-after-stagnant — **not fired**: no run shipped via
+  `stagnant-polish-early-ship`.
+
+So the battery is honest confirmation of **no regression + Agent 1's storyboard
+lever live**, not of my three sub-levers live. They stand on their unit +
+round-trip tests until a brief exercises them.
+
+**Why the cost targets remain unmet (unchanged by this half, by design).**
+
+- **Prompt size (93k vs 45k)** — the prompt-size diet (task 4) was the lever, and
+  it was **deliberately skipped** (operator decision, 2026-07-08): it is the
+  riskiest lever (prompt content IS quality) and not worth destabilizing quality
+  in the last days before Jul 13. Untouched.
+- **Source attempts 3.00** — the unaddressed cost center is exactly Agent 1's
+  handoff: `contrast_aa` whack-a-mole (a whole-doc semantic-token problem the
+  model re-fails by hand every attempt — every terminal finding set here is
+  contrast-dominated) and `camera_framed_sparse` on drift/hold scenes. The right
+  fixes are a deterministic AA recolor and a coverage-keyed establishing zoom,
+  both scoped-but-deferred. The critic/kit levers this half added are *downstream*
+  of source-author, so they cannot move this number.
+- **Storyboard 2.33** — the scene-repair converges it to 1 when every finding
+  names a shot (interaction), but a film-level storyboard finding (dense-UI,
+  long-copy) sends the plan to the full ladder. The lever helps when applicable,
+  not universally.
+- **Physical requests / tier-1** — inflated by transport-level faults: **11
+  failed model calls + 6 hedge duplicates** across 3 runs (OpenRouter
+  truncations/stalls), plus the 3-attempt stages. These are largely provider
+  latency/faults, not authoring logic.
+
+**Operator ladder (not run here — your call).** Docker build check, `railway up`,
+sandbox smoke, and setting `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=1` on
+Railway before judging remain the operator's steps. This session ran local
+probes only; it did not deploy.
+
+### Verification (this half)
+
+`npm run typecheck` clean · `npm run test` **780 green** (+11 chart/progress
+top-up tests incl. audit round-trips; critic-economy unit tests from `01e45eb`) ·
+`npm run film:demo` byte-stable (`lint: clean · 3 static warning(s) · 48 samples
+· 6 warning(s)`). No gate loosened; no QA threshold or reasoning-effort changed;
+no high-visibility class demoted; QA cache untouched (no audit behavior changed).
+Commits: `01e45eb` (critic economy), `08ee588` (kit chart/progress absorption),
+plus the docs commits. Probes: `proof-denseui-1`, `proof-interaction-1`,
+`proof-longcopy-1` under `.data/projects/`.

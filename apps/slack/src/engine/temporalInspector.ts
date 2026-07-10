@@ -19,9 +19,15 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { findBrowserExecutable } from "./render.ts";
+import { launchHeadlessBrowser } from "./browserLifecycle.ts";
 import { loadDirectComposition } from "./directComposition.ts";
 import { resolveCutPlan, type CutIntentV1 } from "./cutContract.ts";
 import { parseTimeRampPlan, warpInverseOf } from "./timeRamp.ts";
+import {
+  captureContinuousMotionEvidence,
+  continuousMotionEvidenceEnabled,
+  type ContinuousMotionEvidenceV1,
+} from "./continuousMotion.ts";
 
 const FRAME_WIDTH = 320;
 const LABEL_HEIGHT = 26;
@@ -50,6 +56,21 @@ export interface TemporalReport {
   cuts: TemporalCutEvidence[];
   changeCurve: Array<{ time: number; delta: number }>;
   quietWindows: Array<{ start: number; end: number }>;
+  continuousMotion?: ContinuousMotionEvidenceV1;
+}
+
+/** DOM target whose visible state should change on the outgoing cut leg. */
+export function temporalOutgoingCutSelector(
+  cut: Pick<CutIntentV1, "style" | "fromScene">,
+): string {
+  // Resolved plans speak canonical `match`/`morph`; retain the legacy aliases
+  // for exact replays of older persisted plans. Both bridge styles animate the
+  // host runtime clone, not the outgoing scene wrapper itself.
+  if (["match", "morph", "object-match", "shape-match"].includes(cut.style)) {
+    return '[data-sequences-runtime-cut="bridge"]';
+  }
+  if (cut.style === "flash-white") return '[data-sequences-runtime-cut="flash"]';
+  return `[data-scene="${cut.fromScene}"]`;
 }
 
 function serveDir(dir: string): Promise<{ url: string; close: () => void }> {
@@ -94,6 +115,17 @@ function serveDir(dir: string): Promise<{ url: string; close: () => void }> {
 
 function roundTime(value: number): number {
   return Math.round(value * 1000) / 1000;
+}
+
+function writeJsonAtomic(file: string, value: unknown): void {
+  const temporary = `${file}.temporal-${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(value, null, 2) + "\n", "utf8");
+  try {
+    fs.renameSync(temporary, file);
+  } catch {
+    fs.rmSync(file, { force: true });
+    fs.renameSync(temporary, file);
+  }
 }
 
 async function seekTo(page: import("puppeteer-core").Page, time: number): Promise<void> {
@@ -221,10 +253,9 @@ export async function reportTemporalEvidence(
   };
 
   const server = await serveDir(path.join(projectDir, "composition"));
-  const puppeteer = (await import("puppeteer-core")).default;
   let browser: import("puppeteer-core").Browser | undefined;
   try {
-    browser = await puppeteer.launch({
+    browser = await launchHeadlessBrowser({
       executablePath: browserPath,
       headless: true,
       args: [
@@ -256,13 +287,8 @@ export async function reportTemporalEvidence(
     // state on both sides of its motion window before any screenshot pass.
     const cutObservations: Array<{ cut: CutIntentV1; outgoingMoved: boolean; incomingMoved: boolean }> = [];
     for (const cut of cuts) {
-      const fromSelector = `[data-scene="${cut.fromScene}"]`;
       const toSelector = `[data-scene="${cut.toScene}"]`;
-      const outgoingSelector = cut.style === "object-match" || cut.style === "shape-match"
-        ? '[data-sequences-runtime-cut="bridge"]'
-        : cut.style === "flash-white"
-          ? '[data-sequences-runtime-cut="flash"]'
-          : fromSelector;
+      const outgoingSelector = temporalOutgoingCutSelector(cut);
       await seekTo(page, toOutputTime(Math.max(0, cut.atSec - cut.exitSec + 0.02)));
       const outgoingBefore = await wrapperState(page, outgoingSelector);
       await seekTo(page, toOutputTime(cut.atSec - 0.02));
@@ -283,6 +309,21 @@ export async function reportTemporalEvidence(
       await seekTo(page, toOutputTime(time));
       const shot = await page.screenshot({ encoding: "base64", type: "png" });
       frames.set(time, `data:image/png;base64,${shot}`);
+    }
+
+    // Higher-resolution playback evidence for developer A/B review. Browser
+    // QA already records a bounded 5 Hz advisory series at publication; the
+    // explicit temporal inspector can afford a denser 8 Hz pass (still capped)
+    // and persists it beside the direction score in motion-plan.json.
+    let continuousMotion: ContinuousMotionEvidenceV1 | undefined;
+    if (continuousMotionEvidenceEnabled() && manifest.durationSec >= 8) {
+      continuousMotion = await captureContinuousMotionEvidence(
+        page,
+        manifest.scenes,
+        manifest.durationSec,
+        { width: manifest.width, height: manifest.height },
+        { sampleHz: 8, maxSamples: 220, mapSeekTime: toOutputTime },
+      );
     }
 
     // A blank compositor page assembles the sheets and computes pixel deltas;
@@ -423,14 +464,28 @@ export async function reportTemporalEvidence(
 
     const jsonPath = path.join(outDir, "temporal.json");
     fs.writeFileSync(jsonPath, JSON.stringify({
-      version: 1,
+      version: 2,
       compositionId: manifest.compositionId,
       revision: manifest.revision,
       durationSec: manifest.durationSec,
       cuts: cutEvidence.map(({ triptychPath: _path, ...cut }) => cut),
       changeCurve,
       quietWindows,
+      ...(continuousMotion ? { continuousMotion } : {}),
     }, null, 2) + "\n");
+    if (continuousMotion) {
+      const motionPlanPath = path.join(projectDir, "composition", "motion-plan.json");
+      try {
+        const motionPlan = JSON.parse(fs.readFileSync(motionPlanPath, "utf8")) as Record<string, unknown>;
+        writeJsonAtomic(motionPlanPath, { ...motionPlan, continuousMotion });
+      } catch (error) {
+        process.stderr.write(
+          `[temporal] could not persist continuous motion evidence: ${
+            error instanceof Error ? error.message : String(error)
+          }\n`,
+        );
+      }
+    }
 
     const cutLines = cutEvidence.map((cut) =>
       `  ${cut.fromScene} → ${cut.toScene} · ${cut.style}: ` +
@@ -447,8 +502,33 @@ export async function reportTemporalEvidence(
       ...cutLines,
       "quiet windows (verify each is an intentional hold):",
       ...quietLines,
+      ...(continuousMotion
+        ? [
+            "continuous motion (advisory):",
+            `  focal visible min/mean ${(continuousMotion.summary.minimumVisibleFraction * 100).toFixed(1)}%/` +
+              `${(continuousMotion.summary.meanVisibleFraction * 100).toFixed(1)}% · ` +
+              `occupancy min/mean ${(continuousMotion.summary.minimumOccupancyFraction * 100).toFixed(1)}%/` +
+              `${(continuousMotion.summary.meanOccupancyFraction * 100).toFixed(1)}%`,
+            `  peak speed ${continuousMotion.summary.peakSpeed.toFixed(3)} diag/s · ` +
+              `${continuousMotion.summary.reversalCount} reversal(s) · ` +
+              `${continuousMotion.summary.jerkMarkerCount} jerk marker(s)`,
+            `  settles ${continuousMotion.summary.settledByWindowEndCount}/` +
+              `${continuousMotion.summary.measuredSettleWindowCount} measured ` +
+              `(${continuousMotion.summary.settleWindowCount} directed) · ` +
+              `max independent motion ${continuousMotion.summary.maxIndependentMotionCount}`,
+            ...continuousMotion.advisories.map((entry) => `  advisory: ${entry}`),
+          ]
+        : []),
     ].join("\n");
-    return { summary, stripPath, jsonPath, cuts: cutEvidence, changeCurve, quietWindows };
+    return {
+      summary,
+      stripPath,
+      jsonPath,
+      cuts: cutEvidence,
+      changeCurve,
+      quietWindows,
+      ...(continuousMotion ? { continuousMotion } : {}),
+    };
   } finally {
     await browser?.close().catch(() => {});
     server.close();

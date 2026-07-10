@@ -292,6 +292,21 @@ function evidenceActivities(report: MotionDensityReport): MotionActivity[] {
   return report.activities.filter((activity) => activity.kind !== "small");
 }
 
+/** The executable system a declared motion intent most directly describes. */
+function preferredEvidenceKind(moment: StoryboardMomentV1): MomentEvidenceKind | undefined {
+  const intent = moment.motionIntent.toLowerCase();
+  if (/camera|pan|track|zoom|whip|orbit|dive|rack/.test(intent)) return "camera";
+  if (/cursor|click|hover|drag|interaction/.test(intent)) return "interaction";
+  if (/grade|temperature|warm|cold|color/.test(intent)) return "grade-shift";
+  if (/cut|transition|wipe|match/.test(intent)) return "cut";
+  if (
+    /type|morph|reveal|resolve|state|draw|count|progress|chart|rows|stream|open|close|select|press|swap|highlight/.test(
+      intent,
+    )
+  ) return "component";
+  return undefined;
+}
+
 function bindEvidence(
   moment: StoryboardMomentV1,
   activities: MotionActivity[],
@@ -302,10 +317,14 @@ function bindEvidence(
     activity.endSec >= windowStart && activity.startSec <= windowEnd
   );
   if (!overlapping.length) return undefined;
+  const preferred = preferredEvidenceKind(moment);
   const best = overlapping.sort((a, b) => {
+    const affinity = (activity: MotionActivity): number =>
+      preferred && evidenceKind(activity) === preferred ? 0 : 1;
     const rank = (activity: MotionActivity): number => (activity.kind === "major" ? 0 : 1);
-    return rank(a) - rank(b) ||
-      Math.abs(a.startSec - moment.atSec) - Math.abs(b.startSec - moment.atSec);
+    return affinity(a) - affinity(b) ||
+      Math.abs(a.startSec - moment.atSec) - Math.abs(b.startSec - moment.atSec) ||
+      rank(a) - rank(b);
   })[0]!;
   return evidenceOf(best);
 }

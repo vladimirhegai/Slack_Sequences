@@ -116,9 +116,9 @@ export async function captureBrandFromUrl(url: string, timeoutMs = 20_000): Prom
   const browserPath = findBrowserExecutable();
   if (!browserPath) return null;
 
-  let launch: typeof import("puppeteer-core").launch;
+  let launch: typeof import("./browserLifecycle.ts").launchHeadlessBrowser;
   try {
-    ({ launch } = await import("puppeteer-core"));
+    ({ launchHeadlessBrowser: launch } = await import("./browserLifecycle.ts"));
   } catch {
     return null;
   }

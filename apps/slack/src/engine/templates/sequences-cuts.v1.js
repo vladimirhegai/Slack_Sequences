@@ -321,6 +321,44 @@
   var SHAPE_ASPECT_LIMIT = 2.5;
   var SHAPE_NODE_CAP = 60;
   var SHAPE_MIN_ONFRAME = 0.5;
+  // Structure-mismatch (probe-audit-03: a row list morphing into a
+  // chrome-header-sidebar app window reads as smearing). A morph between two
+  // surfaces whose CHILD COUNT differs by more than this, or whose subtree DEPTH
+  // differs by at least this, is a cross-family bridge — the FLIP has to invent
+  // structure mid-flight. Content that lives inside a chrome surface (a table in
+  // an app-window/modal) drags that whole surface into the transition, so those
+  // kinds are measured through their framing surface.
+  var STRUCTURE_CHILD_RATIO = 4;
+  var STRUCTURE_DEPTH_RATIO = 2;
+  var STRUCTURE_CONTENT_KIND = /\bcmp-(list|table|kanban)\b/;
+  var STRUCTURE_SURFACE_SELECTOR = ".cmp-window, .cmp-modal";
+
+  function subtreeDepth(el) {
+    var max = 0;
+    var kids = el.children;
+    for (var i = 0; i < kids.length; i += 1) {
+      var d = 1 + subtreeDepth(kids[i]);
+      if (d > max) max = d;
+    }
+    return max;
+  }
+
+  // A content surface (list/table/kanban) embedded in an app-window/modal is
+  // seen, and morphs, as that whole framed surface; a standalone element is
+  // measured as itself.
+  function framingSurface(part) {
+    if (part.className && STRUCTURE_CONTENT_KIND.test(part.className) && part.closest) {
+      var surface = part.closest(STRUCTURE_SURFACE_SELECTOR);
+      if (surface && surface !== part) return surface;
+    }
+    return part;
+  }
+
+  function structureRatio(a, b) {
+    var hi = Math.max(a, b);
+    var lo = Math.max(1, Math.min(a, b));
+    return hi / lo;
+  }
 
   // Border radius resolved to px against the element's own layout box, so a
   // "50%" circle and a "18px" card interpolate in one unit. Uses offset sizes
@@ -355,6 +393,19 @@
       toPart.querySelectorAll("*").length > SHAPE_NODE_CAP
     ) {
       return "a focal part subtree exceeds " + SHAPE_NODE_CAP + " nodes";
+    }
+    // Structure mismatch: a bare list morphing into a chrome-wrapped window is a
+    // cross-family bridge the FLIP smears through (probe-audit-03). Measure each
+    // side through its framing surface so an embedded table is compared as its
+    // whole window.
+    var surfaceA = framingSurface(fromPart);
+    var surfaceB = framingSurface(toPart);
+    var childRatio = structureRatio(surfaceA.childElementCount, surfaceB.childElementCount);
+    var depthRatio = structureRatio(subtreeDepth(surfaceA), subtreeDepth(surfaceB));
+    if (childRatio > STRUCTURE_CHILD_RATIO || depthRatio >= STRUCTURE_DEPTH_RATIO) {
+      return "focal surfaces have mismatched structure (" +
+        surfaceA.childElementCount + " vs " + surfaceB.childElementCount + " children, depth " +
+        subtreeDepth(surfaceA) + " vs " + subtreeDepth(surfaceB) + ")";
     }
     // Static scenes only: a part inside a camera world is framed by the rig
     // (live measurement tracks it), so its static position proves nothing.
@@ -438,18 +489,21 @@
     timeline.set(fromPart, { opacity: 0 }, start);
     timeline.set(bridgeA, { opacity: 1 }, start);
     timeline.set(toPart, { opacity: 0 }, Math.max(0, start - 0.001));
-    // The morph-twin overlap hoisted across the scene boundary: A dies while
-    // B is already visible on the same flight path.
+    // The morph-twin overlap STRADDLES the scene boundary: the shared element
+    // begins changing before the cut instead of waiting until the underlying
+    // scene swap. This matters when A/B geometry already matches — geometry
+    // alone then carries no outgoing anticipation, but the crossfade still
+    // hands the viewer's eye continuously across the boundary.
     tween(timeline, bridgeA, { opacity: 1 }, {
       opacity: 0,
-      duration: total * 0.3,
+      duration: total * 0.5,
       ease: "power2.in",
-    }, start + total * 0.35);
+    }, start + total * 0.12);
     tween(timeline, bridgeB, { opacity: 0 }, {
       opacity: 1,
-      duration: total * 0.3,
+      duration: total * 0.5,
       ease: "power2.out",
-    }, start + total * 0.35);
+    }, start + total * 0.12);
     timeline.to(proxy, {
       p: 1,
       duration: total,

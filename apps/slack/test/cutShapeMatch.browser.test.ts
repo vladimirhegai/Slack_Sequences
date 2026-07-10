@@ -142,6 +142,98 @@ describe("shape-match cut runtime browser contract", () => {
     expect(findings[0]!.message).not.toContain("one->two");
   }, 30_000);
 
+  it("degrades a row list → windowed table morph on structure mismatch (probe-audit-03 T8)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-structure-smoke-"));
+    roots.push(dir);
+    initializeProject(dir, { name: "Structure", brandName: "Structure", seedScreenshot: false });
+    // A bare 4-row list morphing into a table wrapped in a chrome app-window:
+    // the focal aspect ratios rhyme (both wide row stacks, so the aspect cap
+    // passes) but the incoming surface carries a header + body the list has no
+    // counterpart for — the FLIP smears. The structure audit measures the table
+    // through its framing window (depth 4) vs the standalone list (depth 2).
+    const row = (a: string, b: string, c: string): string =>
+      `<div class="cmp-item" style="display:flex;gap:24px;padding:20px 32px;background:#161c28;border:1px solid #263041;">` +
+      `<span style="width:90px;">${a}</span><span style="flex:1;">${b}</span><span style="width:120px;text-align:right;">${c}</span></div>`;
+    const trow = (a: string, b: string, c: string): string =>
+      `<div class="cmp-row" style="display:flex;gap:24px;padding:16px 24px;background:#161c28;border:1px solid #263041;">` +
+      `<span style="width:80px;">${a}</span><span style="flex:1;">${b}</span><span style="width:120px;text-align:right;">${c}</span></div>`;
+    const storyboard: DirectScene[] = [
+      {
+        id: "list",
+        title: "Aligned list",
+        purpose: "A standalone row list",
+        startSec: 0,
+        durationSec: 3,
+        cut: { version: 1, style: "morph", focalPartOut: "aligned-list", focalPartIn: "momentum-table" },
+      },
+      { id: "board", title: "Board", purpose: "A windowed table", startSec: 3, durationSec: 3 },
+    ];
+    const island = JSON.stringify(resolveCutPlan(storyboard));
+    const html = `<!doctype html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>Structure-mismatch morph smoke</title><script src="gsap.min.js"></script>
+<script src="${CAMERA_RUNTIME_FILE}"></script>
+<script src="${CUT_RUNTIME_FILE}"></script><style>
+*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#0b0f16}
+body{color:#eef2f8;font-family:Arial,sans-serif}
+#root{position:relative;width:1920px;height:1080px;overflow:hidden}
+.scene{position:absolute;inset:0;padding:120px;display:grid;place-items:center;opacity:0}
+.cmp-list{width:1200px;display:flex;flex-direction:column;gap:16px}
+.cmp-window{width:1440px;height:760px;display:flex;flex-direction:column;background:#10151f;border:1px solid #263041;border-radius:14px;overflow:hidden}
+.cmp-chrome{display:flex;align-items:center;gap:10px;padding:16px 24px;border-bottom:1px solid #263041}
+.cmp-chrome i{width:12px;height:12px;border-radius:50%;background:#F08080;display:inline-block}
+.cmp-body{padding:32px;flex:1}
+.cmp-table{width:1120px;display:flex;flex-direction:column;gap:12px}
+.cmp-head{display:flex;gap:24px;padding:12px 24px;border-bottom:2px solid #263041}
+</style></head><body>
+<main id="root" data-composition-id="structure-smoke" data-width="1920" data-height="1080" data-duration="6">
+<section id="list" class="scene clip" data-scene="list" data-start="0" data-duration="3" data-track-index="1">
+<div class="cmp-list" data-part="aligned-list" data-layout-important>
+${row("9:14", "Merged #412 — rate limiter", "shipped")}
+${row("9:32", "Debugging auth pipeline", "in progress")}
+${row("10:02", "Cannot deploy — staging down", "blocked")}
+${row("10:15", "Digest mockups ready", "draft")}
+</div>
+</section>
+<section id="board" class="scene clip" data-scene="board" data-start="3" data-duration="3" data-track-index="1">
+<div class="cmp-window">
+<div class="cmp-chrome"><i></i><i></i><i></i><span>Momentum · engineering</span></div>
+<div class="cmp-body">
+<div class="cmp-table" data-part="momentum-table" data-layout-important>
+<div class="cmp-head"><span style="width:80px;">Time</span><span style="flex:1;">Update</span><span style="width:120px;text-align:right;">Status</span></div>
+${trow("9:14", "Merged #412 — rate limiter", "shipped")}
+${trow("9:32", "Debugging auth pipeline", "in progress")}
+${trow("10:02", "Cannot deploy — staging down", "blocked")}
+</div>
+</div>
+</div>
+</section>
+</main>
+<script type="application/json" id="sequences-cuts">${island}</script>
+<script>
+window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
+tl.set("#list",{opacity:1},0).set("#list",{opacity:0},2.999);
+tl.set("#board",{opacity:1},3).set("#board",{opacity:0},6);
+tl.fromTo("#list [data-part=aligned-list]",{y:30,opacity:0},{y:0,opacity:1,duration:.5,ease:"power3.out"},0.3);
+tl.fromTo("#board [data-part=momentum-table]",{y:30,opacity:0},{y:0,opacity:1,duration:.5,ease:"power3.out"},3.3);
+SequencesCuts.compile(tl,document.getElementById("root"));
+window.__timelines["structure-smoke"]=tl;tl.seek(0);
+</script></body></html>`;
+    const draft = { storyboard, html };
+    expect(validateCutContract(draft.html, draft.storyboard).errors).toEqual([]);
+    const qa = await inspectDirectComposition(dir, draft, { captureGuide: false });
+    expect(qa.infraError).toBeUndefined();
+    const degraded = qa.warnings.filter((warning) => warning.startsWith("cut_degraded:"));
+    expect(degraded).toHaveLength(1);
+    expect(degraded[0]).toContain("list->board");
+    expect(degraded[0]).toMatch(/compiled as swipe-(left|right|up|down):/);
+    expect(degraded[0]).toContain("mismatched structure");
+    const findings = qa.issues.filter((issue) => issue.code === "cut_degraded");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.message).toContain("mismatched structure");
+    expect(qa.ok).toBe(true);
+  }, 30_000);
+
   it("keeps a cover swipe invisible to layout/near-blank audits", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-cover-smoke-"));
     roots.push(dir);

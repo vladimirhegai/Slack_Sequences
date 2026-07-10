@@ -31,7 +31,9 @@ afterEach(() => {
 const SLOT_RESPONSE = [
   "<film_style>",
   "body{background:#0b0d12;color:#f4f6fb;font-family:system-ui,sans-serif}",
-  ".scene{display:flex;align-items:center;justify-content:center;padding:120px}",
+  // Probe 4's exact cascade regression: model art direction tried to reclaim
+  // host-owned geometry. The structural floor must win despite loading first.
+  ".scene{position:relative;display:flex;align-items:center;justify-content:center;padding:120px}",
   ".hero{font-size:104px;font-weight:800;line-height:1.05;max-width:1400px}",
   ".cta{font-size:88px;font-weight:800;color:#7cc4ff}",
   "</film_style>",

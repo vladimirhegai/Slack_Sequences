@@ -16,7 +16,7 @@
       {
         "command": "/sequences",
         "description": "Turn a launch into an on-brand video",
-        "usage_hint": "[demo | mcp-test | help]",
+        "usage_hint": "[asset | demo | mcp-test | help]",
         "should_escape": false
       }
     ],
@@ -43,6 +43,7 @@
         "commands",
         "chat:write",
         "channels:join",
+        "files:read",
         "files:write",
         "app_mentions:read",
         "channels:history",

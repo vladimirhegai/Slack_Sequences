@@ -148,6 +148,36 @@ describe("validatePlannedMoments", () => {
 });
 
 describe("resolveMomentContract", () => {
+  it("binds a claimed component change instead of a nearby scene-start cut", () => {
+    const planned: DirectScene[] = [
+      {
+        ...scenes[0]!,
+        components: [{ version: 1, id: "query", kind: "search" }],
+        beats: [{
+          version: 1,
+          id: "query-types",
+          sceneId: "signal",
+          component: "query",
+          kind: "type",
+          atSec: 0.5,
+          durationSec: 1.4,
+          text: "connection timeout",
+        }],
+        moments: [moment("signal", "query-moment", 0.5, { motionIntent: "type-on" })],
+      },
+      scenes[1]!,
+      scenes[2]!,
+    ];
+    const contract = resolveMomentContract(html(DENSE_SCRIPT), planned, 15);
+    const bound = contract.moments.find((entry) => entry.id === "query-moment")!;
+    expect(bound.evidence).toMatchObject({
+      kind: "component",
+      startSec: 0.5,
+      endSec: 1.9,
+    });
+    expect(bound.evidence?.detail).toContain("component:type");
+  });
+
   it("binds declared moments to authored evidence and rejects unbound ones", () => {
     const declared = scenes.map((scene, index) => ({
       ...scene,
@@ -433,4 +463,3 @@ describe("fallback composition moment contract", () => {
     expect(validatePlannedMoments(draft.storyboard, 15)).toEqual([]);
   });
 });
-

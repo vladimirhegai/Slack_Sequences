@@ -112,6 +112,24 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "→ these codes as the L3 gate. Never labeled 'impossible' again while the " +
       "model authors the interiors.",
   },
+  {
+    id: "layout.scene-stack",
+    group: "layout",
+    layer: "scaffold",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/sceneSlots.browser.test.ts",
+    addedBecause:
+      "2026-07-10 session26-camera-probe-4: the authored film stylesheet loaded " +
+      "after the slot chassis and redefined `.scene` as position:relative. Every " +
+      "shot collapsed into a 116px grid row at y=580, which made camera targets, " +
+      "the CTA, and root-relative interaction geometry appear independently " +
+      "broken. slotStageStyle now locks only host-owned root sizing, absolute " +
+      "scene stacking, clip containment, and overlay geometry with important " +
+      "declarations; display, padding, background, and opacity remain authorable. " +
+      "The real-browser proof loads adversarial model CSS after the host floor.",
+  },
 
   // ── L2 normalize — deterministic repair, zero paid attempts ─────────────────
   {
@@ -197,9 +215,211 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "was pacing/outcome 'framing changes 0.0s later' — a camera move starting " +
       "right after a payoff/typed-copy beat. delayConflictingCameraMoves delays " +
       "the move (<= MAX_PACING_STRETCH_SEC) so the hold lands, only when the move " +
-      "starts AT/after the beat settles, still fits the scene, does not pass the " +
-      "next full move, and is not load-bearing. Same atomic commit-or-revert. " +
-      "Telemetry tag: camera-move-delay. Visible in STORYBOARD.md.",
+      "starts AT/after the beat settles, does not pass the next full move, and is " +
+      "not load-bearing. 2026-07-07 attempt-economy sweep: when the delayed move " +
+      "overruns the scene's own cut (the short-scene shape every probe re-rejected), " +
+      "the boundary stretches by the overflow (<= MAX_PACING_STRETCH_SEC, 15s scene " +
+      "cap) and later scenes cascade-shift — still pure arithmetic. Same atomic " +
+      "commit-or-revert. Telemetry tag: camera-move-delay. Visible in STORYBOARD.md.",
+  },
+  {
+    id: "normalize.interaction-hold-retime",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/pacingAudit.test.ts",
+    addedBecause:
+      "2026-07-08 probe-audit-01: a whip re-framed the world DURING a cursor " +
+      "click (arrive 8.4s, press 8.5s, whip in flight 8.1-8.8s). " +
+      "retimeCameraOverInteractions delays any full move (dive exempt — its " +
+      "held middle exists to frame an act) out of every interaction's " +
+      "arrive→result window (+lead/settle), never passing the next full move, " +
+      "stretching the cut boundary <= MAX_PACING_STRETCH_SEC when it overruns, " +
+      "and preserving every moment-evidence binding; an unfittable " +
+      "NON-load-bearing move drops to the drift auto-fill. The backstop gate is " +
+      "auditPacing's pacing/interaction-hold (pacing.holds row, advisory-late), " +
+      "which only fires on residue no retime could fix. Same atomic " +
+      "commit-or-revert. Telemetry tag: interaction-hold-retime.",
+  },
+  {
+    id: "normalize.move-spacing",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/pacingAudit.test.ts",
+    addedBecause:
+      "2026-07-08 probe-audit-02: stacked entry transitions — a hard cut then a " +
+      "whip 0.2s later, a morph then a push-in 0.3s later — play as two " +
+      "transitions back to back, and mergeCompoundMoves only fuses SAME-target " +
+      "pairs. spaceStackedCameraMoves delays an ENERGETIC full move " +
+      "(whip/orbit/dive/committed push-pull) to ENTRY_SETTLE_SEC after a scene's " +
+      "incoming cut and to MOVE_SETTLE_GAP_SEC after a previous energetic move " +
+      "aimed at a DIFFERENT target, under the same fit/binding constraints as " +
+      "the interaction retime; an unfittable stack is left alone (spacing is " +
+      "polish, never worth a veto — no backstop finding). Live probe " +
+      "probe-audit-fable-2 lesson: both retime normalizers walk their targets " +
+      "CLEAR of reading/outcome hold windows + interaction windows " +
+      "(advanceClearOfWindows) so a spacing delay can never mint the " +
+      "pacing/outcome conflict delayConflictingCameraMoves (which runs earlier) " +
+      "exists to prevent. Same atomic commit-or-revert. Telemetry tag: " +
+      "move-spacing.",
+  },
+  {
+    id: "normalize.early-swap-delay",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/pacingAudit.test.ts",
+    addedBecause:
+      "2026-07-08 probe-audit-01: the incoming copy of a cut must be READ before " +
+      "it CHANGES. A `swap` beat firing within ENTRY_SETTLE_SEC of a non-first " +
+      "scene's start re-writes the just-landed frame before the viewer reads it " +
+      "(cta-resolve: headline morphs in at 18.6s, swaps its text 0.2s later at " +
+      "18.8s — a pointless flash of the landed copy). delayEarlySwapBeats delays " +
+      "the swap to scene.startSec + ENTRY_SETTLE_SEC (shift atSec, keep duration) " +
+      "when the beat still fits the scene — stretching the cut boundary <= " +
+      "MAX_PACING_STRETCH_SEC (15s scene cap) when it overruns — and preserving " +
+      "every moment-evidence binding (EVIDENCE_BEFORE/AFTER overlap, like " +
+      "retimeCameraOverInteractions); a retime that would break a binding leaves " +
+      "the beat alone. The backstop gate is auditPacing's pacing/reading variant " +
+      "(pacing.holds row, advisory-late), which fires only on the residue. Same " +
+      "atomic commit-or-revert (order: after move-spacing, before pacing-stretch). " +
+      "Telemetry tag: early-swap-delay.",
+  },
+  {
+    id: "normalize.component-trim",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/componentContract.test.ts",
+    addedBecause:
+      "2026-07-07 attempt-economy sweep (recorded next candidate): a " +
+      "components/complexity over-count by 1-2 is the arithmetic the host can do " +
+      "without inventing anything. trimOverBudgetComponents (parseStoryboard, in " +
+      "the atomic commit-or-revert) drops the fewest-beat surface(s) that bind NO " +
+      "declared moment (a beat inside a moment's evidence window), NO interaction " +
+      "targetPart, and NO camera toPart/focus.part or cut focalPartOut/In — the " +
+      "finding's own 'drop the set dressing' fix. Over-count >= 3 or nothing " +
+      "safely droppable keeps the blocking finding (ambiguity stays a finding). " +
+      "It PREVENTS the components.complexity row's components/complexity. " +
+      "Telemetry tag: component-trim. Visible in STORYBOARD.md.",
+  },
+  {
+    id: "normalize.framing-floor-topup",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/pacingAudit.test.ts",
+    addedBecause:
+      "2026-07-07 attempt-economy sweep (recorded next candidate): the " +
+      "distinct-framings floor (validateStoryboardPlan) short by EXACTLY one is " +
+      "the mechanical half of its own fix hint. topUpFramingFloor (parseStoryboard, " +
+      "in the atomic commit-or-revert) adds ONE gentle establishing push-in " +
+      "(FRAMING_TOPUP_ZOOM 1.15, <= 1s, opening the shot so it never steals a " +
+      "beat's hold) to the longest single-framing shot that has real content to " +
+      "frame — lifting the framing count by one without inventing a shot. Short by " +
+      ">= 2 is a real content deficit and stays a finding. It PREVENTS the " +
+      "framing-density floor error. Telemetry tag: framing-floor-topup. Visible in " +
+      "STORYBOARD.md.",
+  },
+  {
+    id: "normalize.camera-energy-lift",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/cameraContract.test.ts",
+    addedBecause:
+      "2026-07-07 attempt-economy sweep (recorded next candidate): a 12s+ film " +
+      "with no high-energy peak (auditCameraEnergy's camera/energy) that ALREADY " +
+      "commits to a mild zoom-in. liftCameraEnergyPeak (parseStoryboard, in the " +
+      "atomic commit-or-revert) raises the single largest push-in/pull-back/dive " +
+      "whose effective zoom is in [MILD_ENERGY_ZOOM_MIN 1.15, HIGH_ENERGY_PUSH_ZOOM " +
+      "1.3) up to 1.3 — the audit's own remediation advice ('a push-in with " +
+      "zoom:1.35'), never inventing a move or verb. Fires only with no energetic " +
+      "cut and a liftable candidate; a peak-less film with only pans/drifts is a " +
+      "real energy deficit that stays a finding. It PREVENTS the camera.energy " +
+      "row's camera/energy. Telemetry tag: camera-energy-lift. Visible in " +
+      "STORYBOARD.md.",
+  },
+  {
+    id: "normalize.rack-focus-topup",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/cameraContract.test.ts",
+    addedBecause:
+      "2026-07-10 session26-camera-probe-1: three consecutive storyboard " +
+      "attempts supplied a rich multi-station camera path but omitted the " +
+      "brief-required rack-focus modifier. topUpRequiredRackFocus attaches the " +
+      "focus pull to the strongest existing non-whip full move with an already " +
+      "declared part target (its toPart, otherwise the scene focal); it never " +
+      "invents a move or target, and a plan without either stays blocking. " +
+      "Telemetry tag: rack-focus-topup. Visible in STORYBOARD.md.",
+  },
+  {
+    id: "normalize.camera-landing-reserve",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/cameraContract.test.ts",
+    addedBecause:
+      "2026-07-10 session26-camera-probe-1 visual audit: multi-station pans " +
+      "and the final push-in landed exactly on the next cut/film end, so the " +
+      "audience saw travel but no readable destination. reserveFinalCameraLanding " +
+      "shortens only a substantial, non-dive final full move ending on the " +
+      "scene boundary by 0.42s; the ordinary resolver fills that tail with " +
+      "destination drift, preserving continuous movement. Targets, cues, scene " +
+      "timing, short impact moves, explicit holds, and dive envelopes stay " +
+      "unchanged. Telemetry tag: camera-landing-reserve. Visible in STORYBOARD.md.",
+  },
+  {
+    id: "normalize.camera-connective-yield",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/cameraContract.test.ts",
+    addedBecause:
+      "2026-07-10 session26-camera-probe-7 temporal audit: pacing retimers " +
+      "changed startSec values without restoring path order, while connective " +
+      "drift could overlap a decisive full move. The resolver consequently " +
+      "squeezed a declared 2s parallax pass into 0.3s and produced the film's " +
+      "largest jerk cluster. normalizeConnectiveCameraSchedule makes drift/hold " +
+      "yield to full moves, drops only remnants below 150ms, and chronologically " +
+      "sorts the path after every retime. Full moves and creative targets remain " +
+      "unchanged. Telemetry tag: camera-connective-yield. Visible in STORYBOARD.md.",
+  },
+  {
+    id: "normalize.root-data-start",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/authorReliability.test.ts",
+    addedBecause:
+      "2026-07-07 independent audit: a model-authored composition root that omits " +
+      "data-start=\"0\" breaks host timeline arithmetic downstream. " +
+      "applyDeterministicSourceRepairs inserts it on the data-composition-id root " +
+      "when absent (ensureRootDataStart) — idempotent, never duplicates. " +
+      "Telemetry tag: root-data-start.",
   },
   {
     id: "normalize.dive-window",
@@ -384,6 +604,27 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "Runs inside the atomic commit-or-revert (a twin that would breach " +
       "components/complexity reverts). Telemetry tag: morph-twin-reconcile.",
   },
+  {
+    id: "normalize.embedded-development-fold",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/authorReliability.test.ts",
+    addedBecause:
+      "2026-07-10 session26-camera-probe-2: a findings rescue supplied the " +
+      "missing metric development at the correct seconds but wrapped it in a " +
+      "new scene fully embedded inside the existing metric scene. Generic " +
+      "contiguous timing rebasing moved the patch later and recreated the same " +
+      "moment gap. mergeEmbeddedDevelopmentScenes folds only a contained scene " +
+      "whose exact component ids/kinds and focal part already exist on its " +
+      "parent, whose cues remain inside the parent, and whose only camera work " +
+      "is hold/drift. New surfaces, interactions, plugins, recipes, premium " +
+      "cuts, timed modifiers, full reframes, or escaped cues keep the ordinary " +
+      "blocking path. Telemetry tag: embedded-development-fold. Visible in " +
+      "STORYBOARD.md.",
+  },
 
   {
     id: "normalize.gsap-call-shape",
@@ -398,13 +639,58 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "<number>)` call (toVars omitted) makes GSAP treat the position number as " +
       "the to-object and the compile throws 'Cannot create property parent on " +
       "number' — a runtime_bind_exception and a burned paid attempt for a " +
-      "call-shape typo. repairMalformedFromToCalls rewrites only a settled `.to` " +
-      "state when the same selector has an earlier opposite-state initialization; " +
-      "hidden/off-position could mean entrance or exit, so it and every mixed, " +
-      "cue-less, or lone-final call stays blocking rather than " +
-      "silently reversing motion. Only string-literal targets with a flat vars " +
-      "object match (conservative). " +
+      "call-shape typo. repairMalformedFromToCalls rewrites a settled `.to` " +
+      "state when the same selector has an earlier opposite-state initialization. " +
+      "The 2026-07-10 Vectorline probe proved a second unambiguous shape: a " +
+      "visible/settled <=50ms pin is also `.to`, because it has no perceptible " +
+      "entrance/exit and preserves its sole declared state at the declared cue. " +
+      "Hidden/off-position, mixed, and ordinary-duration lone-final calls stay " +
+      "blocking rather than silently reversing motion. Only string-literal " +
+      "targets with a flat vars object match (conservative). " +
       "It PREVENTS the runtime.invariants row's runtime_bind_exception.",
+  },
+  {
+    id: "normalize.slot-script-envelope",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/sceneSlots.test.ts",
+    addedBecause:
+      "2026-07-09 polish-audit live probe: two paid source attempts reached the " +
+      "browser with mechanically invalid slot bindings. One emitted line-leading " +
+      "bare fromTo(...) calls (not a browser global); the next wrapped valid scene " +
+      "statements around window.__tl_scene_<id>, which the host never creates, so " +
+      "the wrapper received undefined and threw on tl.fromTo. The later " +
+      "direction-live-b probe wrapped every otherwise-valid slot in an uninvoked " +
+      "(tl) => {...} expression (including a const-assigned variant), making all " +
+      "authored motion a silent no-op. Probes 4 and 6 added the equally mechanical " +
+      "forms: window.__tl, two-argument `(tl, root) => {...}` envelopes, top-level " +
+      "`time` variables used as GSAP positions, data-* names inside JS vars, and " +
+      "later-scene cues expressed in unmistakably scene-local time. " +
+      "normalizeSceneSlotScript binds or rewrites only those complete shapes to the " +
+      "host-owned timeline/root/absolute film clock; it preserves targets, visual " +
+      "vars, durations, and locally declared fromTo helpers. Telemetry tag: " +
+      "slot-script-envelope.",
+  },
+  {
+    id: "normalize.inline-source-syntax",
+    group: "normalize",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/authorReliability.test.ts",
+    addedBecause:
+      "2026-07-10 session26-camera-probe-6: one otherwise usable source put a " +
+      "bare CSS `var(--positive)` token in a GSAP object and another used a " +
+      "literal ellipsis as decorative SVG path geometry. The first cannot parse " +
+      "as JavaScript; the second is not SVG geometry. Executable inline scripts " +
+      "now quote only bare var() values, leaving styles/JSON untouched. Invalid " +
+      "ellipsis paths are removed only when decorative; any path carrying a part, " +
+      "component, or important-layout binding stays blocking. Telemetry tags: " +
+      "bare-css-var and invalid-svg-placeholder.",
   },
   {
     id: "normalize.moment-demote-last-resort",
@@ -440,15 +726,38 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "degradation was least-bad-pick:penalty=7 from camera_framed_sparse on a " +
       "resolve-scene landing). correctSparseFraming raises a landing the browser " +
       "measured as a tiny subject adrift back to the 18% coverage floor with a " +
-      "bounded zoom-in (sqrt(0.18/fraction), clamped 1.0..1.8) on exactly the " +
-      "camera move that frames it — a storyboard mutation re-injected through the " +
-      "persistUpgradedStoryboard seam, adopted in authorCompositionLoop ONLY when " +
-      "the sparse finding clears, no new camera_framed_clipped appears, and " +
-      "browserQualityPenalty strictly decreases (enhancement-never-veto). It " +
-      "PREVENTS the camera.framing row's camera_framed_sparse; drift/hold-only " +
-      "and camera-less scenes have no bumpable move and keep the model/least-bad " +
-      "path (a storyboard zoom cannot invent content). Telemetry tag: " +
-      "camera-sparse-zoom.",
+      "bounded zoom-in (sqrt(0.18/fraction), clamped 1.0..2.8 — the camera " +
+      "contract's own fit-multiplier ceiling since the 2026-07-07 independent " +
+      "audit, which also marks the move framingCorrection:\"camera-sparse-zoom\" " +
+      "so browser QA keeps auditing the zoomed landing instead of skipping it) on " +
+      "exactly the camera move that frames it — a storyboard mutation re-injected " +
+      "through the persistUpgradedStoryboard seam, adopted in " +
+      "authorCompositionLoop ONLY when the sparse finding clears, no new " +
+      "camera_framed_clipped appears, and browserQualityPenalty strictly " +
+      "decreases (enhancement-never-veto); the adopted storyboard also replaces " +
+      "args.lockedStoryboard so later repair passes re-inject the corrected " +
+      "island. It PREVENTS the camera.framing row's camera_framed_sparse; " +
+      "drift/hold-only and camera-less scenes have no bumpable move and keep the " +
+      "model/least-bad path (a storyboard zoom cannot invent content). Telemetry " +
+      "tag: camera-sparse-zoom.",
+  },
+  {
+    id: "normalize.focal-late-sample",
+    group: "layout",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/layoutInspector.test.ts",
+    addedBecause:
+      "2026-07-07 attempt-economy sweep: spatial_focal_invisible repeated " +
+      "VERBATIM across paid patch attempts when the declared focal simply " +
+      "entered after the single 58% hero sample (a command palette opening a " +
+      "beat later). The inspector now re-samples <=2 bounded later instants " +
+      "inside the same shot and drops the finding when the subject is visible " +
+      "there — measurement honesty (the WS7 thumbnail walk applied to QA), " +
+      "never a gate change: a subject visible at NO sample still fires. " +
+      "Telemetry tag: focal-late-sample.",
   },
 
   {
@@ -469,6 +778,182 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "recipe knowledge already reached the planner at Level 0 (retrieval), " +
       "so a dropped declaration costs influence, never a paid attempt. " +
       "Telemetry tags: recipe-reconcile, recipe-inject.",
+  },
+  {
+    id: "normalize.plugin-lower",
+    group: "plugins",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/pluginContract.test.ts",
+    addedBecause:
+      "2026-07-08 host plugins (the seventh contract): storyboards may invoke " +
+      "parameterized GENERATORS as typed `plugins:[{kind,params}]` forms. " +
+      "reconcileAndLowerPlugins (parseStoryboard, before the dive/pop/moment " +
+      "machinery) is the L2 governor AND the lowering: unknown kinds no-op " +
+      "with a note, params default/clamp/drop, the MAX_PLUGINS_PER_FILM " +
+      "budget trims, and kept units lower into ordinary typed components " +
+      "(stamped pluginUid) + beats so every existing gate judges the executed " +
+      "plan. A unit counts ONCE in complexity/pacing budgets " +
+      "(componentUnitCount / sceneIntroductionTimes) and its children are " +
+      "never trimmed piecemeal. Probe-audit-01/02/03 motivation: geometry, " +
+      "believable content, and N-element entrances are host strengths the " +
+      "model reliably fumbles. 2026-07-09 plugin-live-1 lessons folded in: " +
+      "entrance beats wait for the camera's arrival at the unit's station " +
+      "(cameraArrivalSec — count-ups no longer play off-screen), the injected " +
+      "wrapper carries placement self-defense (grid-column:1/-1, min-width:0) " +
+      "so an author grid station can never squeeze it, and author-drawn " +
+      "markup duplicating an ABSORBED component (pluginAbsorbedParts) is " +
+      "hidden by a host style block at injection. Telemetry tags: " +
+      "plugin-reconcile, plugin-inject.",
+  },
+  {
+    id: "normalize.asset-lower",
+    group: "plugins",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/assetRuntime.test.ts",
+    addedBecause:
+      "2026-07-09 asset animation runtime (ASSETS.md): each declared " +
+      "asset-<id> unit lowers to ONE internal `asset` component (host-only " +
+      "kind — normalizeStoryboardComponents rejects it from models) plus " +
+      "host-derived typed `animate` beats (the asset's trigger:enter " +
+      "animation at the shared entrance anchor, then each trigger:payoff in " +
+      "sequence), so pacing/motion-density/moments/complexity judge the " +
+      "spring choreography like any other beat while " +
+      "applyDeterministicSourceRepairs injects the sequences-assets island + " +
+      "runtime + compile call from the SAME resolved timing. Kill switch " +
+      "SLACK_SEQUENCES_ASSETS. Telemetry tag: asset-inject.",
+  },
+  {
+    id: "normalize.kit-chart-complete",
+    group: "markup-audit",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/authorReliability.test.ts",
+    addedBecause:
+      "2026-07-08 attempt-economy (kit_markup_incomplete absorption — the top " +
+      "static-rejection class, 64 historical): a chart beat whose SOLE root has " +
+      "neither an svg stroke nor bar children aborts the component compile, the " +
+      "same mechanical bind gap topUpRowsMarkup fixes. topUpChartMarkup " +
+      "(applyDeterministicSourceRepairs) injects the kit exemplar's required " +
+      "structure host-side — direct <i> bars for a bars/generic chart, an svg " +
+      "polyline for a line chart — marked data-sequences-neutral=\"chart\" so a " +
+      "SHIPPED placeholder records the chart-neutral-bars-shipped degradation " +
+      "(never a clean publish). Fires only on the mechanically certain case: " +
+      "exactly one root with no stroke, no revealable children, and no stray " +
+      "<i>. Anything content-bearing stays the markup-audit finding. It PREVENTS " +
+      "the markup-audit row's kit_markup_incomplete for chartless charts.",
+  },
+  {
+    id: "normalize.kit-progress-complete",
+    group: "markup-audit",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/authorReliability.test.ts",
+    addedBecause:
+      "2026-07-08 attempt-economy (kit_markup_incomplete absorption): a progress " +
+      "beat whose SOLE root has no .cmp-ring-fg, [data-cmp-fill], or direct <i> " +
+      "fill aborts the compile. topUpProgressMarkup injects the kit exemplar's " +
+      "fill host-side — <i data-cmp-fill> for a horizontal bar, an svg arc for a " +
+      "ring (ONLY into a root with no <svg>; a partial svg is ambiguous and " +
+      "stays a finding) — marked data-sequences-neutral=\"progress\" " +
+      "(progress-neutral-fill-shipped on ship). Same host-completion pattern as " +
+      "topUpRowsMarkup. It PREVENTS the markup-audit row's kit_markup_incomplete " +
+      "for fill-less progress.",
+  },
+  {
+    id: "normalize.world-layout-derive",
+    group: "camera",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/directComposition.test.ts",
+    addedBecause:
+      "2026-07-09 fix-probe-1: a camera scene naming regions but declaring NO " +
+      "worldLayout reached the skeleton as rect-less stations, and the author " +
+      "freestyled geometry — a 7680px wall station put the plugin unit in a " +
+      "quarter-frame void at fit zoom and shipped stations without " +
+      "position:absolute. parseStoryboard now synthesizes one viewport-sized " +
+      "cell per camera-path region (first-appearance order) so " +
+      "worldStationRects/cameraWorldStyle emit sane rects by construction. " +
+      "Declared worldLayout always wins. Telemetry tag world-layout-derive.",
+  },
+  {
+    id: "normalize.gsap-repeat-clamp",
+    group: "runtime-invariants",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/directComposition.test.ts",
+    addedBecause:
+      "2026-07-09 plugin-probe-1 attempt 1 died on the static invariant " +
+      "`repeat: -1` (infinite repeats are unbounded under deterministic " +
+      "capture). The author's intent — an ambient pulse — survives a finite " +
+      "clamp, so applyDeterministicSourceRepairs rewrites repeat:-1 to " +
+      "repeat: 2 before the lint (telemetry tag gsap-repeat-clamp). The " +
+      "invariant gate is unchanged; the obligation moved to L2.",
+  },
+  {
+    id: "normalize.station-position",
+    group: "camera",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/directComposition.test.ts",
+    addedBecause:
+      "2026-07-09 plugin-live-1: a camera-world station authored with a " +
+      "left/top placement rect but NO position:absolute is static flow — the " +
+      "rect is ignored, the station spans the full world plane, and its " +
+      "content (including host plugin units) overflows every clip audit " +
+      "(canvas_overflow 240px on plugin tiles). The intent is mechanically " +
+      "certain, so repairStationPositioning completes the declaration " +
+      "(telemetry tag station-position).",
+  },
+  {
+    id: "normalize.brand-base",
+    group: "brand",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/directComposition.test.ts",
+    addedBecause:
+      "2026-07-09 probes 2/3 both burned browser attempts on `frame/type: " +
+      "body family not used` — a committed-brand fact the host already knows. " +
+      "injectBrandBase (applyDeterministicSourceRepairs) renders frame.md's " +
+      "committed tokens as a host style block BEFORE authored styles: :root " +
+      "custom properties (--canvas/--accent/--font-*), base body/heading/mono " +
+      "font rules, and the kit's var() fallbacks bind to brand instead of " +
+      "default blue. Authored rules still win the cascade; the frame/type " +
+      "warning class becomes unrepresentable and the first frame carries the " +
+      "tinted canvas (no white flash). Telemetry tag brand-base.",
+  },
+  {
+    id: "normalize.dead-tween-strip",
+    group: "runtime-invariants",
+    layer: "normalize",
+    blocking: "deterministic-repair",
+    findingPrefixes: [],
+    promptCostChars: 0,
+    test: "test/authorReliability.test.ts",
+    addedBecause:
+      "2026-07-09 asset-probe-2: the author emitted literal-selector GSAP tweens " +
+      "against markup it did not ship. GSAP reports a browser warning but executes " +
+      "a no-op, so stripDeadGsapTweens queries the parsed final document and removes " +
+      "only standalone literal calls with invalid/missing selectors after host markup " +
+      "injection. Dynamic and chained calls remain untouched; moment/motion gates " +
+      "still catch any load-bearing missing animation. Telemetry tag dead-tween-strip.",
   },
 
   // ── L3 static — linkedom / regex / plan-stage audits; cheap findings-retry ──
@@ -493,6 +978,42 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "before the time-wrap), so these codes are reachable only if the " +
       "injection seam breaks or a declaration survives reconciliation without " +
       "a library entry. Never a routine authoring finding; no prompt prose.",
+  },
+  {
+    id: "plugins.contract",
+    group: "plugins",
+    layer: "static",
+    blocking: "blocking",
+    findingPrefixes: ["plugin_unknown", "plugin_island_missing"],
+    promptCostChars: 0,
+    test: "test/pluginContract.test.ts",
+    addedBecause:
+      "2026-07-08 host plugins: validatePluginContract is a host-plumbing " +
+      "self-check (the validateRecipeContract disposition) — the host strips " +
+      "and re-generates every declared unit's markup from the locked " +
+      "storyboard on every repair pass (injectPluginContract in " +
+      "applyDeterministicSourceRepairs, before component-binding " +
+      "reconciliation), so these codes are reachable only if the injection " +
+      "seam breaks. Never a routine authoring finding; no prompt prose.",
+  },
+  {
+    id: "assets.contract",
+    group: "plugins",
+    layer: "static",
+    blocking: "blocking",
+    findingPrefixes: ["asset_island_missing", "asset_island_stale", "asset_runtime_missing"],
+    promptCostChars: 0,
+    test: "test/assetRuntime.test.ts",
+    addedBecause:
+      "2026-07-09 asset animation runtime (ASSETS.md): validateAssetContract " +
+      "is a host-plumbing self-check (the validatePluginContract disposition) " +
+      "— the asset plugin lowering emits typed `animate` beats and the host " +
+      "injects the sequences-assets island + sequences-assets.v1.js + compile " +
+      "call itself (applyDeterministicSourceRepairs, telemetry tag " +
+      "asset-inject, behind SLACK_SEQUENCES_ASSETS), so these codes are " +
+      "reachable only if the injection seam breaks. Stands down when the " +
+      "assets flag is off (animate beats then no-op in the components " +
+      "runtime). Never a routine authoring finding; no prompt prose.",
   },
   {
     id: "camera.energy",
@@ -548,6 +1069,22 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "is the designed pattern and never flagged. Late-attempt polish demotion.",
   },
   {
+    id: "pacing.opening-subject",
+    group: "pacing",
+    layer: "static",
+    blocking: "blocking",
+    findingPrefixes: ["storyboard/opening-subject"],
+    promptCostChars: 0,
+    test: "test/pacingAudit.test.ts",
+    addedBecause:
+      "2026-07-10 session26-camera-probe-6: a 4s cold open withheld its first " +
+      "declared product subject until 2.8s, so browser QA correctly rejected the " +
+      "film as near-blank only after source authoring. auditPacing now requires " +
+      "the first declared subject within 1.25s. This story-structure failure is " +
+      "always blocking and intentionally does not share the advisory-late pacing/ " +
+      "prefix used for marginal hold arithmetic.",
+  },
+  {
     id: "pacing.holds",
     group: "pacing",
     layer: "static",
@@ -561,7 +1098,10 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "press/set-state/toast outcome holds; all viewer-time. pacing/* blocks " +
       "attempts 1-2 of the primary rung and demotes to advisory from its final " +
       "attempt (degrade-never-veto, the improve-ws32-1 lesson). Marginal misses " +
-      "are first absorbed deterministically by normalize.pacing-stretch above.",
+      "are first absorbed deterministically by normalize.pacing-stretch above. " +
+      "2026-07-08 adds pacing/interaction-hold: no full move in flight during a " +
+      "cursor interaction's arrive→result window (dive exempt) — repaired first " +
+      "by normalize.interaction-hold-retime, so the finding is residue-only.",
   },
   {
     id: "moments.plan",
@@ -697,8 +1237,10 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
     addedBecause:
       "2026-07-04 rendered temporal judge: before/mid/after frame triples around " +
       "every evidence-bound moment, pixel-diffed in-page; an invisible claimed " +
-      "change is a moment_static_frame polish finding (repair guidance, never " +
-      "unpublishes a runnable draft). SLACK_SEQUENCES_TEMPORAL_JUDGE=0 disables.",
+      "change is a moment_static_frame finding. Primary moments consume source " +
+      "repair budget and weigh least-bad selection; supporting moments remain " +
+      "diagnostic. Neither alone unpublishes a runnable draft. " +
+      "SLACK_SEQUENCES_TEMPORAL_JUDGE=0 disables.",
   },
   {
     id: "eye-trace",
@@ -826,6 +1368,8 @@ export const FINDING_SOURCE_FILES: readonly string[] = [
   "storyboardMoments.ts",
   "kitMarkupAudit.ts",
   "recipeContract.ts",
+  "pluginContract.ts",
+  "assetRuntime.ts",
   "frameValidation.ts",
   "layoutInspector.ts",
   "directComposition.ts",

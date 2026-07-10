@@ -96,6 +96,8 @@ describe("sentinel telemetry — cost honesty", () => {
       "truncation-continuation": { calls: 1, scenes: 2 },
       "scaffold-repair": { calls: 1, scenes: 1 },
       "validation-repair": { calls: 0, scenes: 0 },
+      "storyboard-scene-repair": { calls: 0, scenes: 0 },
+      "critic-scene-repair": { calls: 0, scenes: 0 },
     });
     expect(run.scaffoldCoverage).toEqual({ present: 7, planned: 9 });
     expect(run.scaffoldRestorationEvents).toEqual({

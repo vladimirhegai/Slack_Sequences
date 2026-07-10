@@ -72,10 +72,17 @@ function coverageFilm(): { storyboard: DirectScene[]; html: string } {
       durationSec: 3,
     },
     {
+      id: "static-scattered",
+      title: "Scattered fragments",
+      purpose: "A huge bounding box made from two tiny painted islands",
+      startSec: 17,
+      durationSec: 3,
+    },
+    {
       id: "close",
       title: "Closing resolve",
       purpose: "A deliberately compact end card (exempt as the final scene)",
-      startSec: 17,
+      startSec: 20,
       durationSec: 2.5,
     },
   ];
@@ -95,12 +102,13 @@ body{color:#e8edf6;font-family:Arial,sans-serif}
 .station{position:absolute;display:grid;place-items:center;left:240px;top:160px;width:1600px;height:900px}
 .small-card{width:360px;height:180px;border-radius:20px;background:#22314a;display:grid;place-items:center;font-size:28px}
 .big-panel{width:1500px;height:820px;border-radius:24px;background:#1c2c44;display:grid;place-items:center;font-size:48px}
+.scatter-card{position:absolute;width:140px;height:90px;border-radius:12px;background:#22314a;display:grid;place-items:center}
 .center{position:absolute;inset:0;display:grid;place-items:center}
 </style></head><body>
-<main id="root" data-composition-id="coverage-smoke" data-width="1920" data-height="1080" data-duration="19.5">
+<main id="root" data-composition-id="coverage-smoke" data-width="1920" data-height="1080" data-duration="22.5">
 <section id="sparse-cam" class="scene clip" data-scene="sparse-cam" data-start="0" data-duration="4" data-track-index="1">
 <div class="world" data-camera-world>
-<div class="station" data-region="lonely"><div class="small-card" data-part="lonely-card">one card</div></div>
+<div class="station" data-region="lonely" data-camera-frame="region"><div class="small-card" data-part="lonely-card">one card</div></div>
 </div>
 </section>
 <section id="filled-cam" class="scene clip" data-scene="filled-cam" data-start="4" data-duration="4" data-track-index="1">
@@ -110,7 +118,7 @@ body{color:#e8edf6;font-family:Arial,sans-serif}
 </section>
 <section id="drift-sparse" class="scene clip" data-scene="drift-sparse" data-start="8" data-duration="3" data-track-index="1">
 <div class="world" data-camera-world>
-<div class="station" data-region="adrift"><div class="small-card" data-part="adrift-card">tiny toast</div></div>
+<div class="station" data-region="adrift" data-camera-frame="region"><div class="small-card" data-part="adrift-card">tiny toast</div></div>
 </div>
 </section>
 <section id="static-sparse" class="scene clip" data-scene="static-sparse" data-start="11" data-duration="3" data-track-index="1">
@@ -119,7 +127,10 @@ body{color:#e8edf6;font-family:Arial,sans-serif}
 <section id="static-filled" class="scene clip" data-scene="static-filled" data-start="14" data-duration="3" data-track-index="1">
 <div class="center"><div class="big-panel" data-part="big-static">frame-filling</div></div>
 </section>
-<section id="close" class="scene clip" data-scene="close" data-start="17" data-duration="2.5" data-track-index="1">
+<section id="static-scattered" class="scene clip" data-scene="static-scattered" data-start="17" data-duration="3" data-track-index="1">
+<div class="scatter-card" style="left:140px;top:120px">A</div><div class="scatter-card" style="right:140px;bottom:120px">B</div>
+</section>
+<section id="close" class="scene clip" data-scene="close" data-start="20" data-duration="2.5" data-track-index="1">
 <div class="center"><div class="small-card" data-part="end-card">the end card</div></div>
 </section>
 </main>
@@ -131,10 +142,11 @@ tl.set("#filled-cam",{opacity:1},4).set("#filled-cam",{opacity:0},7.999);
 tl.set("#drift-sparse",{opacity:1},8).set("#drift-sparse",{opacity:0},10.999);
 tl.set("#static-sparse",{opacity:1},11).set("#static-sparse",{opacity:0},13.999);
 tl.set("#static-filled",{opacity:1},14).set("#static-filled",{opacity:0},16.999);
-tl.set("#close",{opacity:1},17).set("#close",{opacity:0},19.5);
+tl.set("#static-scattered",{opacity:1},17).set("#static-scattered",{opacity:0},19.999);
+tl.set("#close",{opacity:1},20).set("#close",{opacity:0},22.5);
 tl.fromTo("#static-sparse [data-part=tiny-static]",{opacity:0},{opacity:1,duration:.4},11.2);
 tl.fromTo("#static-filled [data-part=big-static]",{opacity:0},{opacity:1,duration:.4},14.2);
-tl.fromTo("#close [data-part=end-card]",{opacity:0},{opacity:1,duration:.4},17.2);
+tl.fromTo("#close [data-part=end-card]",{opacity:0},{opacity:1,duration:.4},20.2);
 SequencesCamera.compile(tl,document.getElementById("root"));
 window.__timelines["coverage-smoke"]=tl;tl.seek(0);
 </script></body></html>`;
@@ -166,6 +178,8 @@ describe("framing coverage browser audit (camera_framed_sparse)", () => {
     expect(sparse.some((issue) => issue.selector === '[data-scene="static-sparse"]')).toBe(true);
     // …the frame-filling camera-less scene stays silent…
     expect(sparse.some((issue) => issue.selector.includes("static-filled"))).toBe(false);
+    // A large diagonal bbox made from tiny painted islands is still sparse.
+    expect(sparse.some((issue) => issue.selector === '[data-scene="static-scattered"]')).toBe(true);
     // …and the film's final resolve is exempt: a compact end card is deliberate.
     expect(sparse.some((issue) => issue.selector.includes("close"))).toBe(false);
     // Sparse framings are polish findings: they block strictOk (the repair

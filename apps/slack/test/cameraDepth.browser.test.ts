@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
+import { launchHeadlessBrowser } from "../src/engine/browserLifecycle.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
 import {
   CAMERA_RUNTIME_FILE,
@@ -91,6 +92,44 @@ window.__timelines["depth-smoke"]=tl;tl.seek(0);
   return { storyboard, html };
 }
 
+function importantCompanionFilm(): { storyboard: DirectScene[]; html: string } {
+  const storyboard: DirectScene[] = [{
+    id: "resolve",
+    title: "Metric and lockup",
+    purpose: "Keep the load-bearing lockup with its metric",
+    startSec: 0,
+    durationSec: 3,
+    camera: {
+      version: 1,
+      path: [{
+        version: 1,
+        move: "push-in",
+        fromPart: "ring",
+        toPart: "ring",
+        startSec: 0.2,
+        durationSec: 1.2,
+      }],
+    },
+  }];
+  const island = JSON.stringify(resolveCameraPlan(storyboard));
+  return {
+    storyboard,
+    html: `<!doctype html><html><head><meta charset="UTF-8">
+<script src="gsap.min.js"></script><script src="${CAMERA_RUNTIME_FILE}"></script>
+<style>*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#090d14}
+#root,.scene{position:absolute;inset:0;overflow:hidden}.world{position:relative;width:1920px;height:1080px}
+.station{position:absolute;inset:0}.lockup{position:absolute;left:510px;top:170px;width:900px;height:190px;background:#1c2635;color:#fff;font:700 52px Arial;display:grid;place-items:center}
+.ring{position:absolute;left:810px;top:500px;width:300px;height:300px;border-radius:50%;background:#3b82f6}</style></head><body>
+<main id="root" data-composition-id="companion" data-width="1920" data-height="1080" data-duration="3">
+<section class="scene" data-scene="resolve"><div class="world" data-camera-world><div class="station" data-region="resolve">
+<div class="lockup" data-part="lockup" data-layout-important="1">OrbitOps resolved</div>
+<div class="ring" data-part="ring" data-layout-important="1"></div>
+</div></div></section></main><script type="application/json" id="sequences-camera">${island}</script>
+<script>window.__timelines={};const tl=gsap.timeline({paused:true});SequencesCamera.compile(tl,document.getElementById("root"));window.__timelines.companion=tl;tl.seek(0);</script>
+</body></html>`,
+  };
+}
+
 function serveDir(dir: string): Promise<{ url: string; close: () => Promise<void> }> {
   const mime: Record<string, string> = {
     ".html": "text/html; charset=utf-8",
@@ -131,7 +170,52 @@ interface DepthState {
   textureFilter: string;
 }
 
+interface FramingState {
+  width: number;
+  centerX: number;
+  centerY: number;
+}
+
 describe("camera depth browser contract (orbit + rack focus)", () => {
+  it("keeps load-bearing station companions in a part-targeted shot", async () => {
+    const browserPath = findBrowserExecutable();
+    expect(browserPath, "a Chromium/Chrome/Edge executable is required").toBeTruthy();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-camera-companion-"));
+    roots.push(dir);
+    const draft = importantCompanionFilm();
+    fs.writeFileSync(path.join(dir, "index.html"), draft.html, "utf8");
+    const require = createRequire(import.meta.url);
+    fs.copyFileSync(require.resolve("gsap/dist/gsap.min.js"), path.join(dir, "gsap.min.js"));
+    fs.writeFileSync(path.join(dir, CAMERA_RUNTIME_FILE), cameraRuntimeSource(), "utf8");
+    const server = await serveDir(dir);
+    const browser = await launchHeadlessBrowser({
+      executablePath: browserPath!,
+      headless: true,
+      args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+      await page.goto(server.url, { waitUntil: "networkidle0", timeout: 30_000 });
+      const state = await page.evaluate(() => {
+        const timeline = (window as unknown as {
+          __timelines: Record<string, { seek: (time: number, suppress?: boolean) => void }>;
+        }).__timelines.companion!;
+        timeline.seek(1.6, false);
+        const lockup = document.querySelector<HTMLElement>(".lockup")!.getBoundingClientRect();
+        const ring = document.querySelector<HTMLElement>(".ring")!.getBoundingClientRect();
+        return { lockupTop: lockup.top, lockupBottom: lockup.bottom, ringTop: ring.top, ringBottom: ring.bottom };
+      });
+      expect(state.lockupTop).toBeGreaterThan(90);
+      expect(state.lockupBottom).toBeLessThan(990);
+      expect(state.ringTop).toBeGreaterThan(90);
+      expect(state.ringBottom).toBeLessThan(990);
+    } finally {
+      await browser.close();
+      await server.close();
+    }
+  }, 30_000);
+
   it("orbits in 3D and pulls focus deterministically under out-of-order seek", async () => {
     const browserPath = findBrowserExecutable();
     expect(browserPath, "a Chromium/Chrome/Edge executable is required").toBeTruthy();
@@ -145,8 +229,7 @@ describe("camera depth browser contract (orbit + rack focus)", () => {
     fs.writeFileSync(path.join(dir, CAMERA_RUNTIME_FILE), cameraRuntimeSource(), "utf8");
 
     const server = await serveDir(dir);
-    const puppeteer = (await import("puppeteer-core")).default;
-    const browser = await puppeteer.launch({
+    const browser = await launchHeadlessBrowser({
       executablePath: browserPath!,
       headless: true,
       args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
@@ -186,6 +269,31 @@ describe("camera depth browser contract (orbit + rack focus)", () => {
             textureFilter: texture.style.filter,
           };
         }, time);
+
+      const framing = async (time: number): Promise<FramingState> =>
+        page.evaluate((at: number) => {
+          const timelines = (window as unknown as {
+            __timelines: Record<string, { pause: () => void; seek: (t: number, s?: boolean) => void }>;
+          }).__timelines;
+          for (const timeline of Object.values(timelines)) {
+            timeline.pause();
+            timeline.seek(at, false);
+          }
+          const rect = document.querySelector<HTMLElement>(".mark")!.getBoundingClientRect();
+          return {
+            width: rect.width,
+            centerX: rect.left + rect.width / 2,
+            centerY: rect.top + rect.height / 2,
+          };
+        }, time);
+
+      // A viewport-sized station containing one compact hero frames the hero,
+      // not the station rectangle. This is the live mega-station/top-left
+      // failure class: the mark should arrive large and optically centered.
+      const heroFrame = await framing(3.1);
+      expect(heroFrame.width).toBeGreaterThan(700);
+      expect(heroFrame.centerX).toBeCloseTo(960, 0);
+      expect(heroFrame.centerY).toBeCloseTo(540, 0);
 
       // Mid-orbit: the world plane must actually rotate in 3D, with
       // perspective owned by the scene wrapper, and no focus blur yet.
@@ -332,8 +440,7 @@ describe("camera depth level 2 (preserve-3d layers + whip lens)", () => {
     fs.writeFileSync(path.join(dir, CAMERA_RUNTIME_FILE), cameraRuntimeSource(), "utf8");
 
     const server = await serveDir(dir);
-    const puppeteer = (await import("puppeteer-core")).default;
-    const browser = await puppeteer.launch({
+    const browser = await launchHeadlessBrowser({
       executablePath: browserPath!,
       headless: true,
       args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
@@ -491,8 +598,7 @@ describe("dive camera browser contract (MD5)", () => {
     fs.copyFileSync(require.resolve("gsap/dist/gsap.min.js"), path.join(dir, "gsap.min.js"));
     fs.writeFileSync(path.join(dir, CAMERA_RUNTIME_FILE), cameraRuntimeSource(), "utf8");
     const server = await serveDir(dir);
-    const puppeteer = (await import("puppeteer-core")).default;
-    const browser = await puppeteer.launch({
+    const browser = await launchHeadlessBrowser({
       executablePath: browserPath!,
       headless: true,
       args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],

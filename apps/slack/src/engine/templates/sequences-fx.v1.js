@@ -30,14 +30,6 @@
     }
   }
 
-  function swooshEase() {
-    try {
-      return global.gsap.parseEase("seqSwoosh") ? "seqSwoosh" : "power2.inOut";
-    } catch (error) {
-      return "power2.inOut";
-    }
-  }
-
   // ------------------------------------------------------------------ sweep
   // A masked specular band travels across the target — the CC Light Sweep
   // idiom in pure transform/opacity. The mask wrapper honors the target's
@@ -168,13 +160,19 @@
   }
 
   // --------------------------------------------------------- grade shift (MD4)
-  // The scene's temperature turns at a payoff. An oversized border-radius:50%
-  // kit panel scales from fromPart's center (default frame center) to cover the
-  // frame over ~0.9s; at full cover the scene's grade CLASS swaps under the
-  // panel (CSS custom props snap the key light + bloom tint) and the panel fades
-  // out into the incoming grade's steady ::after wash. Transform + opacity only
-  // — the world element never gains a filter, and the panel (not a pseudo)
-  // avoids the double-wash trap during the crossover.
+  // The scene's temperature turns at a payoff — as GRADING, never as a shape
+  // (probe-audit-01/02: the old expanding wash circle read as an "ugly orange
+  // circle" that overshot far brighter than the settled grade). A full-frame
+  // panel wearing the TARGET grade's own class fades gently in: its ::after IS
+  // that grade's steady wash, so at full opacity the panel paints exactly the
+  // pixels the settled grade will paint. At cover the scene's grade class
+  // swaps and the panel drops out in the same instant — identical pixels
+  // change owner, so there is no overshoot, no wipe geometry, no double wash.
+  // The turn then CARRIES across cuts: every LATER scene still wearing the
+  // pre-shift tone is re-classed to the new tone at cover time, so the film's
+  // temperature does not hard-reset at the next boundary; a later scene the
+  // author deliberately graded to a DIFFERENT tone ends the carry (that is the
+  // color script speaking).
   var GRADE_CLASSES = ["grade-cold", "grade-neutral", "grade-warm", "grade-noir"];
   function gradeClassString(current, toGrade) {
     var tokens = String(current || "").split(/\s+/).filter(function (token) {
@@ -183,55 +181,59 @@
     tokens.push("grade-" + toGrade);
     return tokens.join(" ");
   }
-  function bindGradeShift(timeline, scene, effect) {
-    var origin = { x: scene.offsetWidth / 2, y: scene.offsetHeight / 2 };
-    if (effect.target) {
-      var part = scene.querySelector('[data-part="' + CSS.escape(effect.target) + '"]');
-      if (part) {
-        var x = 0;
-        var y = 0;
-        var node = part;
-        while (node && node !== scene && node !== document.body) {
-          x += node.offsetLeft || 0;
-          y += node.offsetTop || 0;
-          node = node.offsetParent;
-        }
-        origin = { x: x + (part.offsetWidth || 0) / 2, y: y + (part.offsetHeight || 0) / 2 };
-      }
+  function gradeToneClass(className) {
+    var tokens = String(className || "").split(/\s+/);
+    for (var i = 0; i < tokens.length; i += 1) {
+      if (GRADE_CLASSES.indexOf(tokens[i]) >= 0) return tokens[i];
     }
-    var size = 2.4 * Math.hypot(scene.offsetWidth || 1920, scene.offsetHeight || 1080);
+    return "";
+  }
+  function bindGradeShift(timeline, root, scene, effect) {
     if (getComputedStyle(scene).position === "static") scene.style.position = "relative";
     var panel = document.createElement("div");
     panel.setAttribute("data-sequences-fx", "grade");
     panel.setAttribute("data-layout-ignore", "");
     panel.setAttribute("aria-hidden", "true");
-    panel.style.cssText =
-      "position:absolute;border-radius:50%;pointer-events:none;z-index:55;opacity:0;" +
-      "width:" + size + "px;height:" + size + "px;" +
-      "left:" + (origin.x - size / 2) + "px;top:" + (origin.y - size / 2) + "px;" +
-      "background:var(--cinema-panel-" + effect.toGrade + ",rgba(255,255,255,0.12))";
+    // The grade class paints the incoming wash via its own ::after (inset:0 of
+    // the panel = the full frame); no z-index so the panel stacks where the
+    // scene's generated ::after wash stacks.
+    panel.className = "grade-" + effect.toGrade;
+    panel.style.cssText = "position:absolute;inset:0;pointer-events:none;opacity:0";
     scene.appendChild(panel);
     var coverAt = effect.atSec + effect.durationSec;
     var startClass = scene.className;
     timeline.set(scene, { className: startClass }, 0);
-    timeline.set(panel, { opacity: 0, scale: 0 }, 0);
-    timeline.set(panel, { opacity: 1 }, effect.atSec);
-    tween(timeline, panel, { scale: 0 }, {
-      scale: 1,
+    timeline.set(panel, { opacity: 0 }, 0);
+    tween(timeline, panel, { opacity: 0 }, {
+      opacity: 1,
       duration: effect.durationSec,
-      ease: swooshEase(),
+      ease: glideEase(),
     }, effect.atSec);
-    // At full cover: swap the grade class under the panel, then fade the panel
-    // out so the new grade's static ::after wash is the steady state (no double
-    // wash — the panel never lingers over the ::after).
+    // Handoff at cover: the scene's own grade class takes over the exact wash
+    // the panel finished fading in, so this frame and the previous one paint
+    // the same grade and the panel leaves without a visible step.
     timeline.set(scene, { className: gradeClassString(startClass, effect.toGrade) }, coverAt);
-    tween(timeline, panel, { opacity: 1 }, {
-      opacity: 0,
-      duration: 0.4,
-      ease: "power2.out",
-    }, coverAt);
-    timeline.set(panel, { opacity: 0 }, coverAt + 0.4);
-    return { kind: "grade-shift", sceneId: effect.sceneId, toGrade: effect.toGrade };
+    timeline.set(panel, { opacity: 0 }, coverAt);
+    // Carry across cuts (document order == scene order): later scenes still on
+    // the pre-shift tone inherit the turn; the first deliberate re-grade to a
+    // third tone ends the carry. Zero-duration className sets restore the
+    // authored classes under backward seek exactly like the scene's own swap.
+    var preTone = gradeToneClass(startClass);
+    var scenes = root.querySelectorAll("[data-scene]");
+    var carried = [];
+    var past = false;
+    for (var i = 0; i < scenes.length; i += 1) {
+      var later = scenes[i];
+      if (later === scene) {
+        past = true;
+        continue;
+      }
+      if (!past) continue;
+      if (gradeToneClass(later.className) !== preTone) break;
+      timeline.set(later, { className: gradeClassString(later.className, effect.toGrade) }, coverAt);
+      carried.push(later.getAttribute("data-scene") || "");
+    }
+    return { kind: "grade-shift", sceneId: effect.sceneId, toGrade: effect.toGrade, carried: carried };
   }
 
   function compile(timeline, root) {
@@ -251,7 +253,7 @@
       else if (effect.kind === "glow-pulse") binding = bindGlowPulse(timeline, scene, effect);
       else if (effect.kind === "connector") binding = bindConnector(timeline, scene, effect);
       else if (effect.kind === "draw") binding = bindDraw(timeline, scene, effect);
-      else if (effect.kind === "grade-shift") binding = bindGradeShift(timeline, scene, effect);
+      else if (effect.kind === "grade-shift") binding = bindGradeShift(timeline, root, scene, effect);
       if (binding) bindings.push(binding);
     });
     global.__sequencesFxBindings = bindings;

@@ -38,6 +38,26 @@
     timeline.fromTo(target, fromVars, toVars, at);
   }
 
+  // One entrance owner per text element (probe-audit-03): a `type`/split reveal
+  // never moves its own slot, but an AUTHORED from-below/opacity reveal on the
+  // same element makes the line type WHILE sliding up. Hold the slot's own
+  // transform (and, for the plain typewriter, opacity) steady across the beat
+  // window with a spanning identity tween. The component runtime compiles AFTER
+  // the authored tweens and GSAP resolves overlapping same-property tweens by
+  // timeline position (the later child wins per frame), so this pins the window
+  // WITHOUT touching the author's tween object — seek-safe by construction
+  // (immediateRender:false reverts control before beat.startSec, the move()
+  // precedent). Split styles own their per-unit opacity, so they pin x/y only.
+  function pinSlotIdentity(timeline, slot, beat, pinOpacity) {
+    var from = { x: 0, y: 0 };
+    var to = { x: 0, y: 0, duration: Math.max(0.01, beat.endSec - beat.startSec), ease: "none" };
+    if (pinOpacity) {
+      from.opacity = 1;
+      to.opacity = 1;
+    }
+    move(timeline, slot, from, to, beat.startSec);
+  }
+
   function firstMatch(scope, selectors) {
     for (var i = 0; i < selectors.length; i += 1) {
       var found = scope.querySelector(selectors[i]);
@@ -71,6 +91,96 @@
 
   function setState(timeline, el, state, at) {
     timeline.set(el, { attr: { "data-state": state } }, at);
+  }
+
+  /* ------------------------------------------------ exclusive list selection */
+  // Nav/list single-active (probe-audit-01): when a list item becomes active,
+  // its siblings must go inactive, or a default-active item stays highlighted
+  // beside the selected one (TWO active nav items). The kit doesn't own state
+  // motion, so the runtime clears siblings — for a `select` beat AND for a
+  // cursor click (routed here from the interactions runtime, so the beat/click,
+  // never a per-target hack, owns HOW state changes). Every write is a
+  // zero-duration timeline.set: GSAP records the built value and reverts it on a
+  // backward seek, so the authored state is restored under out-of-order seek.
+
+  // Which channel the authored markup uses to mark an item active.
+  function itemActiveState(item) {
+    if (item.getAttribute && item.getAttribute("data-active") === "true") return "data-active";
+    if (item.getAttribute && item.getAttribute("data-state") === "active") return "data-state";
+    if (item.classList && item.classList.contains("active")) return "class";
+    return "";
+  }
+
+  function setItemActive(timeline, item, active, mechanism, atSec) {
+    if (mechanism === "data-state") {
+      timeline.set(item, { attr: { "data-state": active ? "active" : "inactive" } }, atSec);
+      return;
+    }
+    if (mechanism === "class") {
+      var base = (item.className || "").replace(/(^|\s)active(?=\s|$)/g, "").replace(/\s+/g, " ").trim();
+      timeline.set(item, { className: active ? (base ? base + " active" : "active") : base }, atSec);
+      return;
+    }
+    timeline.set(item, { attr: { "data-active": active ? "true" : "false" } }, atSec);
+  }
+
+  // The channel a set of items uses (whatever one already carries), default
+  // data-active — the kit's own active selector across sidebar/tabs/table.
+  function activeMechanismOf(items) {
+    for (var i = 0; i < items.length; i += 1) {
+      var mechanism = itemActiveState(items[i]);
+      if (mechanism) return mechanism;
+    }
+    return "data-active";
+  }
+
+  // Make exactly `chosen` active among `items`, at `atSec`. Each item also gets a
+  // t=0 set of its AUTHORED state: a gained-active item is authored inactive, and
+  // GSAP cannot restore "no attribute" under immediateRender on a backward seek,
+  // so the t=0 anchor is the value the seek reverts to (the addEchoTrail /
+  // compileSwap seek-safety precedent). The anchor reproduces the authored visual
+  // state exactly (the kit's active selector only matches the active token).
+  function activateAmong(timeline, items, chosen, atSec) {
+    var mechanism = activeMechanismOf(items);
+    for (var i = 0; i < items.length; i += 1) {
+      setItemActive(timeline, items[i], Boolean(itemActiveState(items[i])), mechanism, 0);
+      setItemActive(timeline, items[i], items[i] === chosen, mechanism, atSec);
+    }
+  }
+
+  // The item's exclusive-selection peers: same-signature direct siblings under
+  // one parent. childItems() only knows kit classes (.cmp-row/.cmp-item/…), but
+  // authored navs use their own class (.sidebar-item), so match on the item's
+  // own leading class token (else its tag).
+  function listSiblings(item) {
+    var parent = item.parentElement;
+    if (!parent) return [item];
+    var token = (item.className || "").trim().split(/\s+/)[0] || "";
+    var out = [];
+    var kids = parent.children;
+    for (var i = 0; i < kids.length; i += 1) {
+      var kid = kids[i];
+      if (kid === item) { out.push(kid); continue; }
+      var kidToken = (kid.className || "").trim().split(/\s+/)[0] || "";
+      if (token ? kidToken === token : kid.tagName === item.tagName) out.push(kid);
+    }
+    return out.length ? out : [item];
+  }
+
+  // Cursor-driven exclusive activation (called from the interactions runtime).
+  // Fires only when the target has real peers AND one already carries an active
+  // marker — proof this is a selection list, not arbitrary content — so a click
+  // on a plain button never grows a spurious active state.
+  function activateExclusiveItem(timeline, item, atSec) {
+    if (!item || atSec == null) return;
+    var siblings = listSiblings(item);
+    if (siblings.length < 2) return;
+    var hasActive = false;
+    for (var i = 0; i < siblings.length; i += 1) {
+      if (itemActiveState(siblings[i])) { hasActive = true; break; }
+    }
+    if (!hasActive) return;
+    activateAmong(timeline, siblings, item, atSec);
   }
 
   // Deterministic 32-bit string hash + seeded [0,1) generator — the assemble
@@ -145,6 +255,9 @@
     var slot = textSlot(el);
     var full = beat.text != null ? String(beat.text) : (slot.textContent || "");
     if (!full) return;
+    // Pin the slot's transform for the window (x/y only — the per-unit spans
+    // own opacity/scale). One-entrance-owner rule, shared with compileType.
+    pinSlotIdentity(timeline, slot, beat, false);
     var duration = beat.endSec - beat.startSec;
     var wordCount = full.split(/\s+/).filter(Boolean).length;
     // rise: per-word for a sentence (>6 words), else per-letter; pop: per-word;
@@ -260,6 +373,10 @@
     slot.textContent = "";
     var caret = ensureCaret(slot);
     var duration = beat.endSec - beat.startSec;
+    // The plain typewriter writes in place — pin the slot's transform AND
+    // opacity so an authored reveal on the same element cannot slide or fade the
+    // line while it types (probe-audit-03 self-writing-digest).
+    pinSlotIdentity(timeline, slot, beat, true);
     var proxy = { n: 0 };
     move(timeline, proxy, { n: 0 }, {
       n: full.length,
@@ -344,6 +461,11 @@
     if (ring && typeof ring.getTotalLength === "function") {
       var length = ring.getTotalLength();
       ring.style.strokeDasharray = String(length);
+      // Eager pre-beat state (the compileCount format(0) precedent): the kit
+      // markup carries the FULL final state, so without this the ring renders
+      // full from t=0, snaps empty at the beat, then animates — the
+      // flash-of-full tell. The inline write is what a pre-beat seek shows.
+      ring.style.strokeDashoffset = String(length);
       move(timeline, ring, { strokeDashoffset: length }, {
         strokeDashoffset: length * (1 - value),
         duration: duration,
@@ -353,6 +475,7 @@
     }
     var fill = firstMatch(el, ["[data-cmp-fill]", ":scope > i"]);
     if (!fill) fail(beat.id, "progress component has no fill element");
+    fill.style.transform = "scaleX(0)";
     move(timeline, fill, { scaleX: 0 }, {
       scaleX: value,
       duration: duration,
@@ -366,6 +489,9 @@
     if (stroke && typeof stroke.getTotalLength === "function") {
       var length = stroke.getTotalLength();
       stroke.style.strokeDasharray = String(length);
+      // Same flash-of-full guard as compileProgress: hide the stroke until
+      // its draw-on beat starts (the fx drawStrokes anchor discipline).
+      stroke.style.strokeDashoffset = String(length);
       move(timeline, stroke, { strokeDashoffset: length }, {
         strokeDashoffset: 0,
         duration: duration,
@@ -478,11 +604,9 @@
     var index = clamp((beat.item || 1) - 1, 0, items.length - 1);
     var chosen = items[index];
     var duration = beat.endSec - beat.startSec;
-    for (var i = 0; i < items.length; i += 1) {
-      timeline.set(items[i], {
-        attr: { "data-active": i === index ? "true" : "false" },
-      }, beat.startSec + duration * 0.4);
-    }
+    // Single-active: the chosen item goes active, every sibling inactive, across
+    // whatever channel the markup uses (data-active/data-state/.active class).
+    activateAmong(timeline, items, chosen, beat.startSec + duration * 0.4);
     move(timeline, chosen, { scale: 1 }, {
       scale: 0.96,
       duration: duration * 0.35,
@@ -543,24 +667,34 @@
       el.appendChild(ring);
     }
     var duration = beat.endSec - beat.startSec;
-    move(timeline, ring, { opacity: 0, scale: 0.94 }, {
-      opacity: 0.95,
+    // Quick rise, long settle, near-still scale: the ring is a focus glow now
+    // (hairline + bloom in the kit CSS), so the motion whispers instead of
+    // popping a 6% scale jump.
+    move(timeline, ring, { opacity: 0, scale: 0.985 }, {
+      opacity: 1,
       scale: 1,
-      duration: duration * 0.35,
+      duration: duration * 0.3,
       ease: "power2.out",
     }, beat.startSec);
-    move(timeline, ring, { opacity: 0.95, scale: 1 }, {
+    move(timeline, ring, { opacity: 1, scale: 1 }, {
       opacity: 0,
-      scale: 1.05,
-      duration: duration * 0.65,
-      ease: "power2.in",
-    }, beat.startSec + duration * 0.35);
+      scale: 1.015,
+      duration: duration * 0.7,
+      ease: "sine.in",
+    }, beat.startSec + duration * 0.3);
   }
 
   function compileSwap(timeline, el, beat) {
     var slot = firstMatch(el, ["[data-cmp-value]", ".cmp-value", "[data-cmp-text]", ".cmp-text", ".cmp-title"]) || el;
-    var duration = beat.endSec - beat.startSec;
     var incoming = String(beat.text || "");
+    // No-op swap (probe-audit-01): the slot already reads the incoming text, so
+    // swapping to itself is a pointless double-reveal — the same word flies out
+    // and the same word flies back in. Bail BEFORE building the old/new spans or
+    // any tween: a swap to itself is not motion (the beat still counts for
+    // paperwork, and a moment bound to it earns at most an advisory
+    // moment_static_frame from the temporal judge, never a block).
+    if ((slot.textContent || "").trim() === incoming.trim()) return;
+    var duration = beat.endSec - beat.startSec;
     slot.style.position = slot.style.position || "relative";
     var old = document.createElement("span");
     old.className = "cmp-swap-old";
@@ -587,6 +721,17 @@
       duration: duration * 0.55,
       ease: beat.ease,
     }, beat.startSec + duration * 0.4);
+    // Settle (probe-audit-01 "faint ghost"): during the crossfade the slot is
+    // laid out by the OLD copy while the new copy floats absolute over it, so
+    // leaving that arrangement forever means the settled text never rejoins
+    // normal flow (it overlaps neighbors whenever lengths differ) and the
+    // zeroed-out old copy still owns the slot's box. At the beat's end the old
+    // span leaves the layout and the new span takes the slot in normal flow.
+    // Zero-duration sets are seek-safe: GSAP records the start values on first
+    // render, so seeking back before endSec restores inline-block + absolute
+    // (the addEchoTrail t=0-pin precedent).
+    timeline.set(old, { display: "none" }, beat.endSec);
+    timeline.set(next, { position: "static" }, beat.endSec);
   }
 
   // An overlay kind's root spans the whole scene (.cmp-modal is inset:0 with a
@@ -597,13 +742,124 @@
     return el.querySelector(".cmp-dialog") || el;
   }
 
+  function commonMorphHost(scene, from, to) {
+    var ancestors = new Set();
+    var node = from.parentElement;
+    while (node && scene.contains(node)) {
+      ancestors.add(node);
+      node = node.parentElement;
+    }
+    node = to.parentElement;
+    while (node && node !== scene) {
+      if (ancestors.has(node) && getComputedStyle(node).position !== "static") return node;
+      node = node.parentElement;
+    }
+    return scene;
+  }
+
+  function positionWithin(element, host) {
+    var elementBox = layoutPosition(element);
+    var hostBox = layoutPosition(host);
+    return {
+      x: elementBox.x - hostBox.x,
+      y: elementBox.y - hostBox.y,
+      width: elementBox.width,
+      height: elementBox.height,
+    };
+  }
+
+  function stripMorphCloneBindings(root) {
+    var nodes = [root].concat(Array.prototype.slice.call(root.querySelectorAll("*")));
+    for (var i = 0; i < nodes.length; i += 1) {
+      nodes[i].removeAttribute("id");
+      nodes[i].removeAttribute("data-part");
+      nodes[i].removeAttribute("data-component");
+      nodes[i].removeAttribute("data-layout-important");
+    }
+  }
+
+  function surfaceVars(element) {
+    var style = getComputedStyle(element);
+    return {
+      backgroundColor: style.backgroundColor,
+      borderColor: style.borderTopColor,
+      borderRadius: style.borderTopLeftRadius,
+      borderWidth: style.borderTopWidth,
+      boxShadow: style.boxShadow,
+    };
+  }
+
+  function buildMorphBridge(host, fromElement, from, toElement) {
+    var bridge = document.createElement("div");
+    bridge.className = "seq-component-morph-bridge";
+    bridge.setAttribute("aria-hidden", "true");
+    bridge.style.cssText =
+      "position:absolute;pointer-events:none;overflow:hidden;box-sizing:border-box;" +
+      "z-index:70;opacity:0;visibility:hidden;margin:0;transform-origin:0 0;";
+    bridge.style.left = from.x + "px";
+    bridge.style.top = from.y + "px";
+    bridge.style.width = from.width + "px";
+    bridge.style.height = from.height + "px";
+    var fromSurface = surfaceVars(fromElement);
+    for (var key in fromSurface) bridge.style[key] = fromSurface[key];
+
+    // The clone preserves the first frame exactly, then its internals leave
+    // before the shell changes aspect. It owns no ids/contracts, so runtime
+    // selectors and browser QA continue addressing only the live components.
+    var content = fromElement.cloneNode(true);
+    stripMorphCloneBindings(content);
+    content.classList.add("seq-component-morph-content");
+    content.style.cssText +=
+      ";position:absolute!important;left:0!important;top:0!important;margin:0!important;" +
+      "width:" + from.width + "px!important;height:" + from.height + "px!important;" +
+      "transform:none!important;transform-origin:0 0!important;pointer-events:none!important;";
+    bridge.appendChild(content);
+    host.appendChild(bridge);
+    return { bridge: bridge, content: content, targetSurface: surfaceVars(toElement) };
+  }
+
   function compileMorph(timeline, scene, el, beat) {
     var target = scene.querySelector('[data-part="' + CSS.escape(beat.morphTo) + '"]');
     if (!target) fail(beat.id, 'morph target "' + beat.morphTo + '" is absent');
-    var from = layoutPosition(morphVisualBox(el));
-    var to = layoutPosition(morphVisualBox(target));
+    var fromElement = morphVisualBox(el);
+    var toElement = morphVisualBox(target);
+    var host = commonMorphHost(scene, fromElement, toElement);
+    var from = positionWithin(fromElement, host);
+    var to = positionWithin(toElement, host);
     var duration = beat.endSec - beat.startSec;
-    var revealAt = beat.startSec + duration * 0.45;
+    var revealAt = beat.startSec + duration * 0.56;
+    var handoffAt = beat.startSec + duration * 0.72;
+    var built = buildMorphBridge(host, fromElement, from, toElement);
+
+    // Swap the live source for a pixel-identical bridge on one frame. The
+    // bridge's source content fades before the aspect ratio changes enough to
+    // distort it; only the empty material shell interpolates width/height.
+    timeline.set(built.bridge, { autoAlpha: 1 }, beat.startSec);
+    timeline.set(el, { opacity: 0 }, beat.startSec);
+    move(timeline, built.content, { opacity: 1, filter: "blur(0px)" }, {
+      opacity: 0,
+      filter: "blur(5px)",
+      duration: duration * 0.3,
+      ease: "power2.in",
+    }, beat.startSec + duration * 0.08);
+    move(timeline, built.bridge, {
+      left: from.x,
+      top: from.y,
+      width: from.width,
+      height: from.height,
+    }, {
+      left: to.x,
+      top: to.y,
+      width: to.width,
+      height: to.height,
+      backgroundColor: built.targetSurface.backgroundColor,
+      borderColor: built.targetSurface.borderColor,
+      borderRadius: built.targetSurface.borderRadius,
+      borderWidth: built.targetSurface.borderWidth,
+      boxShadow: built.targetSurface.boxShadow,
+      duration: duration * 0.82,
+      ease: beat.ease,
+    }, beat.startSec);
     // The twin arrives only through this morph: pre-rendered hidden at build.
     // A morph IS the twin's entrance, so it must do everything `open` would —
     // kit CSS keeps an overlay's scrim/panel/items at opacity 0 until opened,
@@ -611,7 +867,7 @@
     // (it would re-run the entrance over this reveal and flash).
     reveal(timeline, target, { opacity: 0 }, {
       opacity: 1,
-      duration: duration * 0.45,
+      duration: duration * 0.34,
       ease: "power2.out",
     }, revealAt);
     setState(timeline, target, "open", revealAt);
@@ -641,25 +897,15 @@
         ease: "power3.out",
       }, revealAt + itemStep * i);
     }
-    move(timeline, el, {
-      x: 0,
-      y: 0,
-      scaleX: 1,
-      scaleY: 1,
-      transformOrigin: "0 0",
-    }, {
-      x: to.x - from.x,
-      y: to.y - from.y,
-      scaleX: to.width / from.width,
-      scaleY: to.height / from.height,
-      duration: duration,
-      ease: beat.ease,
-    }, beat.startSec);
-    move(timeline, el, { opacity: 1 }, {
+    move(timeline, built.bridge, { opacity: 1 }, {
       opacity: 0,
-      duration: duration * 0.4,
-      ease: "power2.in",
-    }, beat.startSec + duration * 0.55);
+      duration: duration * 0.28,
+      ease: "power2.out",
+    }, handoffAt);
+    // Visibility belongs only to the start swap. A second autoAlpha set here
+    // leaves visibility:hidden behind when the timeline seeks backward even
+    // though opacity restores, making the replayed morph shell disappear.
+    timeline.set(built.bridge, { opacity: 0 }, beat.endSec);
   }
 
   /* ------------------------------------------------------------ compile */
@@ -715,6 +961,14 @@
     var beats = staggerBeats(scenePlan.beats);
     for (var i = 0; i < beats.length; i += 1) {
       var beat = beats[i];
+      // Asset spring animations are compiled by the host assets runtime
+      // (sequences-assets) from its own island — one owner per visual channel
+      // (the compileHighlight/fx precedent). Skip before the element lookup so
+      // a flag-flipped film without injected units cannot crash the compile.
+      if (beat.kind === "animate") {
+        bound += 1;
+        continue;
+      }
       var el = scene.querySelector('[data-part="' + CSS.escape(beat.component) + '"]');
       if (!el) fail(beat.id, 'component "' + beat.component + '" is absent');
       if (beat.kind === "morph") {
@@ -750,5 +1004,6 @@
   global.SequencesComponents = Object.freeze({
     version: VERSION,
     compile: compile,
+    activateExclusiveItem: activateExclusiveItem,
   });
 })(window);

@@ -10,17 +10,19 @@ export interface FrameCompositionValidation {
   warnings: string[];
 }
 
-interface ParsedFrame {
+export interface ParsedFrame {
   brandMatched: boolean;
   accentCommitted: boolean;
   accent?: string;
+  /** The frame's tinted canvas hex (semantic token table row). */
+  canvas?: string;
   palette: string[];
   display?: string;
   body?: string;
   mono?: string;
 }
 
-function parseFrame(frameMd: string): ParsedFrame {
+export function parseFrame(frameMd: string): ParsedFrame {
   const metadata = frameMd.match(/<!--\s*sequences-frame:\s*(\{.*?\})\s*-->/s)?.[1];
   let brandMatched = false;
   let accentCommitted = false;
@@ -46,6 +48,9 @@ function parseFrame(frameMd: string): ParsedFrame {
     accentCommitted,
     accent: normalizeHex(
       frameMd.match(/\|\s*Committed accent\s*\|\s*`(#[0-9a-f]{6})`/i)?.[1] ?? "",
+    ),
+    canvas: normalizeHex(
+      frameMd.match(/\|\s*Canvas\s*\|\s*`(#[0-9a-f]{6})`/i)?.[1] ?? "",
     ),
     palette: [...new Set(palette)],
     display: font("Display / headlines"),

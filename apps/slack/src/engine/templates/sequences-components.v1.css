@@ -11,20 +11,59 @@
  * (--surface, --surface-2, --accent, --accent-text, --text, --muted) plus the
  * cinema kit's edge/radius variables. Pair surfaces with .material /
  * .material-hero / .inset-well from the cinema kit for light response.
+ * Basis: dark-first values; a `.cinema-light` ancestor (the cinema kit's
+ * light-basis marker) re-tunes scrims, elevation, and segmented controls at
+ * the end of this sheet.
  *
  * Scale: every component sets font-size:24px (video scale) and sizes its
  * internals in em — restyle a whole component with one font-size override.
  */
+
+/* Base canvas: authors style #root but rarely html/body, so the first frame
+ * (and any letterboxed edge) flashed the UA's white before content painted.
+ * A tinted near-black default under --canvas keeps the void on-brand; the kit
+ * injects before authored styles, so an authored body rule still wins. */
+html,
+body {
+  background: var(--canvas, #0a0c10);
+}
 
 .cmp {
   position: relative;
   box-sizing: border-box;
   font-size: 24px;
   color: var(--text, #edf0f6);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Popover elevation used by floating panels (search results); re-tuned by
+   * the light basis at the end of the sheet. */
+  --cmp-pop-shadow:
+    0 18px 44px rgba(3, 6, 14, 0.5),
+    0 3px 10px rgba(3, 6, 14, 0.3);
 }
 .cmp *,
 .cmp *::before,
 .cmp *::after {
+  box-sizing: border-box;
+}
+/* Rolling numbers (count/progress beats) must not jitter as digits change
+ * width — every value slot renders tabular. */
+.cmp [data-cmp-value],
+.cmp .cmp-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pre-built asset unit roots (assetContract.ts): each asset's LOOK lives in
+ * its own library stylesheet; the kit only guarantees the root behaves as one
+ * self-contained unit inside any station or flex/grid wrapper. */
+.asset {
+  position: relative;
+  box-sizing: border-box;
+  flex: none;
+}
+.asset *,
+.asset *::before,
+.asset *::after {
   box-sizing: border-box;
 }
 
@@ -50,17 +89,29 @@
   color: var(--cmp-danger, #ef6a6a);
 }
 
-/* Status chip (tables, lists, stats). */
+/* Status chip (tables, lists, stats). A leading dot in the chip's own state
+ * color gives status a mark, not just a tint — the language every real SaaS
+ * table speaks. The inset hairline keeps the pill crisp on both bases. */
 .cmp .cmp-chip {
   display: inline-flex;
   align-items: center;
-  padding: 0.2em 0.6em;
+  gap: 0.42em;
+  padding: 0.2em 0.62em;
   border-radius: 999px;
   font-size: 0.72em;
   font-weight: 700;
   letter-spacing: 0.04em;
   background: color-mix(in srgb, var(--muted, #9aa5b4) 18%, transparent);
   color: var(--muted, #9aa5b4);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 22%, transparent);
+}
+.cmp .cmp-chip::before {
+  content: "";
+  flex: none;
+  width: 0.46em;
+  height: 0.46em;
+  border-radius: 50%;
+  background: currentColor;
 }
 .cmp .cmp-chip.cmp-ok,
 .cmp .cmp-icon.cmp-ok {
@@ -84,17 +135,25 @@
   width: 0.09em;
   height: 1.05em;
   margin-left: 0.08em;
+  border-radius: 1px;
   vertical-align: text-bottom;
   background: var(--accent, #6ea8ff);
+  box-shadow: 0 0 0.4em color-mix(in srgb, var(--accent, #6ea8ff) 55%, transparent);
   opacity: 0;
 }
 
-/* Highlight ring the runtime synthesizes for `highlight` beats. */
+/* Highlight ring the runtime synthesizes for `highlight` beats. A hairline
+ * ring + soft accent bloom + faint fill — a focus glow, not the 3px solid
+ * "blue pulse" rectangle the live probes flagged as amateurish. */
 .cmp .cmp-highlight-ring {
   position: absolute;
-  inset: -0.3em;
-  border: 3px solid var(--accent, #6ea8ff);
-  border-radius: var(--cinema-radius, 14px);
+  inset: -0.35em;
+  border: 1.5px solid color-mix(in srgb, var(--accent, #6ea8ff) 65%, transparent);
+  border-radius: calc(var(--cinema-radius, 14px) + 0.2em);
+  background: color-mix(in srgb, var(--accent, #6ea8ff) 7%, transparent);
+  box-shadow:
+    0 0 0.9em color-mix(in srgb, var(--accent, #6ea8ff) 22%, transparent),
+    inset 0 0 0.7em color-mix(in srgb, var(--accent, #6ea8ff) 10%, transparent);
   opacity: 0;
   pointer-events: none;
 }
@@ -109,10 +168,14 @@
   background: var(--surface, #161b24);
 }
 .cmp-window .cmp-chrome {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.38em;
   padding: 0.6em 0.85em;
+  /* The title pill is out of flow (centered absolutely below); the bar keeps
+   * its full height explicitly so the chrome never collapses to dot height. */
+  min-height: 2.35em;
   background: var(--surface-2, color-mix(in srgb, var(--surface, #161b24) 82%, #fff 4%));
   border-bottom: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
 }
@@ -125,14 +188,26 @@
 .cmp-window .cmp-chrome i:nth-child(1) { background: #e5605a; }
 .cmp-window .cmp-chrome i:nth-child(2) { background: #d9a13c; }
 .cmp-window .cmp-chrome i:nth-child(3) { background: #58b568; }
+/* The title reads as a URL/tab pill centered in the chrome (the browser
+ * idiom), not a left-hugging label. Absolute centering keeps the dots and
+ * the pill on independent geometry; long titles ellipsize instead of
+ * colliding with the traffic lights. */
 .cmp-window .cmp-chrome-title {
-  margin-left: 0.6em;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 56%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 0.18em 0.9em;
   border-radius: 999px;
   font-size: 0.72em;
   letter-spacing: 0.03em;
   color: var(--muted, #9aa5b4);
   background: color-mix(in srgb, #000 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted, #9aa5b4) 12%, transparent);
 }
 .cmp-window .cmp-body {
   flex: 1;
@@ -151,6 +226,23 @@
   padding: 0.7em 0.55em;
   min-width: 8.5em;
   border-right: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
+}
+/* Icon slot: a quiet rounded tile in front of each nav label. Real product
+ * rails carry icons; a neutral tile gives the rail that rhythm without
+ * inventing glyphs the author didn't write. The active item's tile takes the
+ * accent so selection reads at a glance even when the row tint is off-frame. */
+.cmp-sidebar .cmp-item::before {
+  content: "";
+  flex: none;
+  width: 1em;
+  height: 1em;
+  border-radius: 0.3em;
+  background: color-mix(in srgb, var(--muted, #9aa5b4) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted, #9aa5b4) 16%, transparent);
+}
+.cmp-sidebar .cmp-item[data-active="true"]::before {
+  background: color-mix(in srgb, var(--accent, #6ea8ff) 38%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #6ea8ff) 36%, transparent);
 }
 
 /* ── search ───────────────────────────────────────────────────────────── */
@@ -176,7 +268,7 @@
   border-radius: var(--cinema-radius, 14px);
   background: var(--surface-2, #1b212c);
   border: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--cmp-pop-shadow);
   opacity: 0; /* closed until an `open` beat reveals it */
   transform: translateY(-0.35em);
   z-index: 30;
@@ -194,9 +286,32 @@
   align-items: center;
   gap: 0.55em;
   padding: 0.62em 0.85em;
-  margin-bottom: 0.55em;
+  margin-bottom: 0.6em;
   border-radius: calc(var(--cinema-radius, 14px) * 0.6);
   font-size: 1.05em;
+}
+/* Result rows carry an icon slot (the ⌘K idiom — every Raycast/Linear row
+ * leads with one). A subtly lit tile, accent-tinted on the active row. */
+.cmp-palette .cmp-item::before {
+  content: "";
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  border-radius: 0.34em;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--muted, #9aa5b4) 24%, transparent) 0%,
+    color-mix(in srgb, var(--muted, #9aa5b4) 13%, transparent) 100%
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted, #9aa5b4) 18%, transparent);
+}
+.cmp-palette .cmp-item[data-active="true"]::before {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent, #6ea8ff) 46%, transparent) 0%,
+    color-mix(in srgb, var(--accent, #6ea8ff) 26%, transparent) 100%
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #6ea8ff) 40%, transparent);
 }
 
 /* ── dropdown + context menu ──────────────────────────────────────────── */
@@ -247,9 +362,16 @@
   font: inherit;
   font-weight: 800;
   letter-spacing: 0.01em;
+  white-space: nowrap;
   color: var(--accent-text, #0a1018);
-  background: var(--accent, #6ea8ff);
-  box-shadow: 0 10px 30px color-mix(in srgb, var(--accent, #6ea8ff) 34%, transparent);
+  /* Sheen over the accent: a lit pill, not a flat fill. background-color
+   * stays the pure accent so morph bridges sample the true surface color. */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0) 52%)
+    var(--accent, #6ea8ff);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 10px 30px color-mix(in srgb, var(--accent, #6ea8ff) 34%, transparent);
 }
 .cmp-button .cmp-spinner {
   display: none;
@@ -263,8 +385,12 @@
 .cmp-button[data-state="loading"] .cmp-spinner { display: inline-block; }
 .cmp-button[data-state="success"] .cmp-check { display: inline; }
 .cmp-button[data-state="success"] {
-  background: var(--cmp-ok, #4cc38a);
-  box-shadow: 0 10px 30px color-mix(in srgb, var(--cmp-ok, #4cc38a) 34%, transparent);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0) 52%)
+    var(--cmp-ok, #4cc38a);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 10px 30px color-mix(in srgb, var(--cmp-ok, #4cc38a) 34%, transparent);
 }
 
 /* ── toggle ───────────────────────────────────────────────────────────── */
@@ -275,10 +401,16 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--muted, #9aa5b4) 32%, transparent);
   border: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.22);
 }
 .cmp-toggle[data-state="on"] {
   background: var(--accent, #6ea8ff);
+  box-shadow:
+    inset 0 2px 4px color-mix(in srgb, #000 18%, transparent),
+    0 0 12px color-mix(in srgb, var(--accent, #6ea8ff) 30%, transparent);
 }
+/* Knob geometry is load-bearing: the runtime derives travel from offsetLeft +
+ * offsetWidth, so the knob stays positioned by symmetric left/top insets. */
 .cmp-toggle .cmp-knob {
   position: absolute;
   top: 0.12em;
@@ -286,8 +418,10 @@
   width: 1.08em;
   height: 1.08em;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  background: linear-gradient(180deg, #ffffff 0%, #eceef4 100%);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.35),
+    0 0 0 0.5px rgba(0, 0, 0, 0.12);
 }
 
 /* ── toast ────────────────────────────────────────────────────────────── */
@@ -308,6 +442,7 @@
   height: 1.6em;
   border-radius: 50%;
   font-weight: 900;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 26%, transparent);
 }
 .cmp-toast .cmp-title { font-weight: 700; }
 .cmp-toast .cmp-meta {
@@ -325,10 +460,17 @@
   place-items: center;
   z-index: 40;
 }
+/* The scrim is a vignette, not a flat slab: deeper at the edges so the
+ * dialog sits in a pool of focus. Light basis re-tints it at the end of the
+ * sheet. */
 .cmp-modal .cmp-scrim {
   position: absolute;
   inset: 0;
-  background: rgba(4, 6, 12, 0.55);
+  background: radial-gradient(
+    120% 100% at 50% 42%,
+    rgba(4, 6, 12, 0.5) 30%,
+    rgba(3, 4, 10, 0.68) 100%
+  );
   opacity: 0; /* revealed by the `open` beat */
 }
 .cmp-modal .cmp-dialog {
@@ -342,6 +484,7 @@
 .cmp-modal .cmp-title {
   font-size: 1.25em;
   font-weight: 800;
+  letter-spacing: -0.01em;
   margin-bottom: 0.45em;
 }
 
@@ -371,6 +514,8 @@
 }
 .cmp-stat .cmp-delta {
   align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
   padding: 0.14em 0.55em;
   border-radius: 999px;
   font-size: 0.72em;
@@ -405,9 +550,10 @@
 .cmp-table .cmp-head {
   font-size: 0.72em;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted, #9aa5b4);
+  background: color-mix(in srgb, var(--muted, #9aa5b4) 7%, transparent);
   border-bottom: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
 }
 .cmp-table .cmp-row + .cmp-row {
@@ -475,6 +621,7 @@
   border-bottom-right-radius: 0.25em;
   align-self: flex-end;
   background: color-mix(in srgb, var(--accent, #6ea8ff) 22%, var(--surface, #161b24));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #6ea8ff) 14%, transparent);
   line-height: 1.35;
 }
 .cmp-chat .cmp-msg.cmp-ai {
@@ -483,6 +630,7 @@
   border-bottom-left-radius: 0.25em;
   background: var(--surface-2, #1b212c);
   border: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
+  box-shadow: none;
 }
 .cmp-chat .cmp-typing {
   display: inline-flex;
@@ -505,31 +653,50 @@
 
 /* ── charts ───────────────────────────────────────────────────────────── */
 
+/* Faint horizontal gridlines turn both charts from floating marks into an
+ * instrument. Non-repeating gradient rows: one hairline per quarter-height,
+ * data furniture rather than decoration. */
 .cmp-chart-bars {
   display: flex;
   align-items: flex-end;
   gap: 0.55em;
   height: 8em;
   padding: 0.4em 0.2em 0;
+  background-image: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--muted, #9aa5b4) 14%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 100% 25%;
 }
 .cmp-chart-bars i {
   flex: 1;
   min-width: 1.1em;
   border-radius: 0.28em 0.28em 0 0;
+  /* Solid at the base — a bar fading to transparent reads as a reflection
+   * artifact, not data. Light catches the top, weight stays grounded. */
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--accent, #6ea8ff) 88%, #fff 6%) 0%,
-    color-mix(in srgb, var(--accent, #6ea8ff) 40%, transparent) 100%
+    color-mix(in srgb, var(--accent, #6ea8ff) 86%, #fff 10%) 0%,
+    color-mix(in srgb, var(--accent, #6ea8ff) 78%, transparent) 100%
   );
   transform-origin: bottom;
 }
 .cmp-chart-bars i.cmp-hero {
   background: linear-gradient(
     180deg,
-    var(--accent, #6ea8ff) 0%,
-    color-mix(in srgb, var(--accent, #6ea8ff) 55%, transparent) 100%
+    color-mix(in srgb, var(--accent, #6ea8ff) 90%, #fff 10%) 0%,
+    var(--accent, #6ea8ff) 100%
   );
   box-shadow: 0 0 26px color-mix(in srgb, var(--accent, #6ea8ff) 40%, transparent);
+}
+.cmp-chart-line {
+  background-image: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--muted, #9aa5b4) 14%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 100% 25%;
 }
 .cmp-chart-line svg {
   display: block;
@@ -543,6 +710,8 @@
   stroke-width: 4;
   stroke-linecap: round;
   stroke-linejoin: round;
+  /* Glow rides the drawn portion of the stroke, so draw-on beats carry it. */
+  filter: drop-shadow(0 5px 12px color-mix(in srgb, var(--accent, #6ea8ff) 38%, transparent));
 }
 
 /* ── progress ring + bar ──────────────────────────────────────────────── */
@@ -565,11 +734,12 @@
   stroke-width: 9;
 }
 .cmp-ring .cmp-ring-bg {
-  stroke: color-mix(in srgb, var(--muted, #9aa5b4) 22%, transparent);
+  stroke: color-mix(in srgb, var(--muted, #9aa5b4) 20%, transparent);
 }
 .cmp-ring .cmp-ring-fg {
   stroke: var(--accent, #6ea8ff);
   stroke-linecap: round;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent, #6ea8ff) 35%, transparent));
 }
 .cmp-ring .cmp-value {
   font-size: 1.35em;
@@ -578,9 +748,10 @@
   font-variant-numeric: tabular-nums;
 }
 .cmp-progress {
-  height: 0.42em;
+  height: 0.5em;
   border-radius: 999px;
   background: color-mix(in srgb, var(--muted, #9aa5b4) 20%, transparent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
   overflow: hidden;
   min-width: 10em;
 }
@@ -589,7 +760,11 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--accent, #6ea8ff);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent, #6ea8ff) 88%, #fff 12%) 0%,
+    var(--accent, #6ea8ff) 100%
+  );
   transform-origin: left;
 }
 
@@ -599,10 +774,33 @@
   display: flex;
   flex-direction: column;
   gap: 0.45em;
-  padding: 1em 1.15em;
+  padding: 0.85em 1.15em 1em;
   border-radius: var(--cinema-radius, 14px);
   font-family: var(--font-mono, "JetBrains Mono", "Space Mono", monospace);
   font-size: 22px;
+}
+/* Quiet traffic dots give the card its terminal identity without competing
+ * with the app-window chrome — monochrome, one element, two shadow copies. */
+.cmp-terminal::before {
+  content: "";
+  flex: none;
+  width: 0.5em;
+  height: 0.5em;
+  margin-bottom: 0.3em;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted, #9aa5b4) 38%, transparent);
+  box-shadow:
+    1em 0 0 color-mix(in srgb, var(--muted, #9aa5b4) 26%, transparent),
+    2em 0 0 color-mix(in srgb, var(--muted, #9aa5b4) 16%, transparent);
+}
+/* Terminals wrap long commands instead of clipping them (fix-probe-2's
+ * clipped_text: a typed command wider than the card died in browser QA twice).
+ * The typewriter grows textContent, so wrapping mid-type is native terminal
+ * behavior, not a glitch. */
+.cmp-terminal .cmp-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: visible;
 }
 .cmp-terminal .cmp-line {
   display: flex;
@@ -624,6 +822,7 @@
   border-radius: 999px;
   background: color-mix(in srgb, #000 22%, transparent);
   border: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.18);
 }
 .cmp-tabs .cmp-item {
   border-radius: 999px;
@@ -632,7 +831,9 @@
 }
 .cmp-tabs .cmp-item[data-active="true"] {
   background: var(--surface-2, #232a36);
-  box-shadow: inset 0 0 0 1px var(--cinema-edge, rgba(255, 255, 255, 0.09));
+  box-shadow:
+    inset 0 0 0 1px var(--cinema-edge, rgba(255, 255, 255, 0.09)),
+    0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
 /* ── avatar-stack ─────────────────────────────────────────────────────── */
@@ -649,21 +850,29 @@
   width: 1.9em;
   height: 1.9em;
   border-radius: 50%;
-  font-size: 0.78em;
+  font-size: 0.72em;
   font-style: normal;
   font-weight: 800;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   color: var(--text, #edf0f6);
-  background: color-mix(in srgb, var(--accent, #6ea8ff) 30%, var(--surface, #161b24));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 55%),
+    color-mix(in srgb, var(--accent, #6ea8ff) 30%, var(--surface, #161b24));
   border: 2px solid var(--surface, #161b24);
 }
+/* Shallower overlap than the classic -50%: initials need air, and the cut
+ * crescent still reads as a stack. */
 .cmp-avatars i + i,
-.cmp-avatars i + .cmp-more { margin-left: -0.55em; }
+.cmp-avatars i + .cmp-more { margin-left: -0.36em; }
 .cmp-avatars i:nth-child(2) {
-  background: color-mix(in srgb, var(--accent, #6ea8ff) 52%, var(--surface, #161b24));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 55%),
+    color-mix(in srgb, var(--accent, #6ea8ff) 52%, var(--surface, #161b24));
 }
 .cmp-avatars i:nth-child(3) {
-  background: color-mix(in srgb, var(--accent, #6ea8ff) 74%, var(--surface, #161b24));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 55%),
+    color-mix(in srgb, var(--accent, #6ea8ff) 74%, var(--surface, #161b24));
 }
 .cmp-avatars .cmp-more {
   background: var(--surface-2, #1b212c);
@@ -688,6 +897,8 @@
   letter-spacing: -0.03em;
   color: var(--text, #edf0f6);
 }
+/* No text-wrap:balance here: the typewriter grows textContent frame by frame
+ * and balancing would re-break earlier words mid-type. Greedy wrap only. */
 .cmp-headline .cmp-text {
   display: inline-block;
   min-height: 0;
@@ -699,4 +910,43 @@
   display: inline-block;
   white-space: pre;
   will-change: transform, opacity;
+}
+
+/* ── light basis ──────────────────────────────────────────────────────────
+ * The cinema kit marks a light-basis composition with `.cinema-light` on the
+ * root; dark-tuned scrims, elevation, and the segmented control re-tune here
+ * (same structure, same states — only the light response changes).
+ */
+.cinema-light .cmp {
+  --cmp-pop-shadow:
+    0 16px 40px rgba(24, 30, 48, 0.16),
+    0 3px 8px rgba(24, 30, 48, 0.1);
+}
+.cinema-light .cmp-modal .cmp-scrim {
+  background: radial-gradient(
+    120% 100% at 50% 42%,
+    rgba(22, 26, 40, 0.3) 30%,
+    rgba(18, 22, 34, 0.44) 100%
+  );
+}
+.cinema-light .cmp-tabs {
+  background: color-mix(in srgb, var(--muted, #5c6675) 16%, transparent);
+  box-shadow: inset 0 1px 3px rgba(24, 30, 48, 0.12);
+}
+.cinema-light .cmp-tabs .cmp-item[data-active="true"] {
+  background: var(--surface, #ffffff);
+  box-shadow:
+    inset 0 0 0 1px rgba(20, 24, 38, 0.06),
+    0 1px 5px rgba(20, 24, 38, 0.18);
+}
+.cinema-light .cmp-window .cmp-chrome-title {
+  background: color-mix(in srgb, var(--muted, #5c6675) 14%, transparent);
+}
+.cinema-light .cmp-toggle {
+  box-shadow: inset 0 1px 3px rgba(24, 30, 48, 0.14);
+}
+.cinema-light .cmp-toggle .cmp-knob {
+  box-shadow:
+    0 1px 3px rgba(24, 30, 48, 0.3),
+    0 0 0 0.5px rgba(24, 30, 48, 0.14);
 }

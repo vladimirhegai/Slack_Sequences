@@ -7,6 +7,7 @@ import type { BlockAction, MessageShortcut, ViewSubmitAction } from "@slack/bolt
 import type { GenericMessageEvent } from "@slack/types";
 import type { WebClient } from "@slack/web-api";
 import {
+  buildAssetBriefModal,
   buildCreateModal,
   buildReviseModal,
   buildShareModal,
@@ -55,6 +56,17 @@ import {
   visibleEtaMs,
 } from "./engine/stageTimings.ts";
 import { loadJobFrame, publicFrameMd } from "./engine/frameDesign.ts";
+import {
+  assetBriefContext,
+  assetBriefPlanningOffer,
+  clearAssetBrief,
+  extractPaletteFromImages,
+  loadAssetBrief,
+  renderAssetBriefPreview,
+  saveAssetBrief,
+  storeReferenceImages,
+  type ChannelAssetBrief,
+} from "./assetBrief.ts";
 
 const botToken = process.env.SLACK_BOT_TOKEN;
 const appToken = process.env.SLACK_APP_TOKEN;
@@ -77,6 +89,20 @@ function readInput(state: ViewState, blockId: string): string {
 
 function readSelect(state: ViewState, blockId: string): string {
   return state.values[blockId]?.value?.selected_option?.value ?? "";
+}
+
+/** A modal `file_input` submission entry (typed loosely — Bolt lags the API). */
+interface SubmittedFile {
+  id?: string;
+  name?: string;
+  mimetype?: string;
+  url_private_download?: string;
+  url_private?: string;
+}
+
+function readSubmittedFiles(state: ViewState, blockId: string): SubmittedFile[] {
+  const value = state.values[blockId]?.value as { files?: SubmittedFile[] } | undefined;
+  return Array.isArray(value?.files) ? value.files : [];
 }
 
 function readConversation(state: ViewState, blockId: string): string {
@@ -559,6 +585,25 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     }
   }
 
+  // Channel brand brief (`/sequences asset`): committed brand truth captured
+  // from the user's own screenshots outranks anything inferred, so it is
+  // appended AFTER workspace context. The deterministic demo skips it.
+  if (!args.presetPlan) {
+    const assetBrief = loadAssetBrief(args.channel);
+    if (assetBrief) {
+      // The planning offer names 3-4 fitting pre-built asset kinds with the
+      // brief's accent prefilled (declare-by-default, droppable). It is empty
+      // unless the asset library rides the plugin rails (assetsEnabled()).
+      enrichedContext = [
+        enrichedContext,
+        assetBriefContext(assetBrief),
+        assetBriefPlanningOffer(assetBrief),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    }
+  }
+
   // Execution plane: direct HyperFrames authoring + MCP validation/checkpointing
   // + thumbnails, then MP4. The preset demo keeps the frozen Plan path.
   let result: VideoResult;
@@ -923,6 +968,7 @@ app.command("/sequences", async ({ command, ack, client, respond }) => {
       text:
         "*Sequences — from shipped to shown.*\n" +
         "• `/sequences` — open the modal and turn a launch into an on-brand video.\n" +
+        "• `/sequences asset` — upload UI screenshots once; every video in this channel picks up your brand (`asset clear` to forget).\n" +
         "• `/sequences demo` — build a ready-made *Relay v2* launch reel (no setup).\n" +
         "• `/sequences mcp-test` — self-check every service (MCP, render host, Slack, config).\n" +
         "• `/sequences debug on|off` — show/hide the model-stage receipt trail on results.\n" +
@@ -962,6 +1008,31 @@ app.command("/sequences", async ({ command, ack, client, respond }) => {
         });
       })(),
     );
+    return;
+  }
+
+  if (text === "asset" || text === "assets") {
+    // Brand intake: slash commands can't carry files, so the modal's
+    // file_input block is where the screenshots actually arrive.
+    await client.views.open({
+      trigger_id: command.trigger_id,
+      view: buildAssetBriefModal({
+        channel: command.channel_id,
+        userId: command.user_id,
+        teamId: command.team_id,
+      }),
+    });
+    return;
+  }
+
+  if (text === "asset clear" || text === "assets clear") {
+    const removed = clearAssetBrief(command.channel_id);
+    await respond({
+      response_type: "ephemeral",
+      text: removed
+        ? ":wastebasket: Forgot this channel's brand brief — videos go back to inferred styling."
+        : "No brand brief is stored for this channel. `/sequences asset` to capture one.",
+    });
     return;
   }
 
@@ -1058,6 +1129,95 @@ app.view("create_video", async ({ ack, view, client }) => {
           }
         : undefined,
     }),
+  );
+});
+
+app.view("asset_brief", async ({ ack, view, client }) => {
+  await ack();
+  const meta = JSON.parse(view.private_metadata || "{}") as {
+    channel?: string;
+    userId?: string;
+  };
+  const channel = meta.channel ?? "";
+  const files = readSubmittedFiles(view.state, "images");
+  const notes = readInput(view.state, "notes") || undefined;
+  runInBackground(
+    "asset brief",
+    (async () => {
+      try {
+        const images: Array<{ name: string; mimetype: string; buffer: Buffer }> = [];
+        for (const file of files.slice(0, 5)) {
+          const url = file.url_private_download ?? file.url_private;
+          if (!url) continue;
+          const response = await fetch(url, {
+            headers: { authorization: `Bearer ${botToken}` },
+          });
+          if (!response.ok) {
+            throw new Error(
+              `could not download "${file.name ?? "image"}" (HTTP ${response.status})` +
+                (response.status === 403
+                  ? " — the bot token likely lacks the files:read scope; reinstall after the manifest update"
+                  : ""),
+            );
+          }
+          const buffer = Buffer.from(await response.arrayBuffer());
+          if (buffer.byteLength > 12_000_000) continue; // palette needs pixels, not posters
+          images.push({
+            name: file.name ?? "ref.png",
+            mimetype: file.mimetype ?? "image/png",
+            buffer,
+          });
+        }
+        if (!images.length) throw new Error("no readable images arrived in the submission");
+        const palette = await extractPaletteFromImages(images);
+        const refs = storeReferenceImages(channel, images);
+        const brief: ChannelAssetBrief = {
+          version: 1,
+          channel,
+          userId: meta.userId,
+          notes,
+          palette: palette ?? { colors: [] },
+          refs,
+          imageCount: images.length,
+          createdAt: new Date().toISOString(),
+        };
+        saveAssetBrief(brief);
+        const paletteText = palette
+          ? [
+              palette.accent ? `accent \`${palette.accent}\`` : undefined,
+              palette.background ? `canvas \`${palette.background}\`` : undefined,
+            ].filter(Boolean).join(" · ")
+          : "palette extraction unavailable on this host — notes stored, colors will be inferred per launch";
+        await postMessageWithAutoJoin(client, {
+          channel,
+          text:
+            `:art: Captured your brand from ${images.length} screenshot${images.length === 1 ? "" : "s"}` +
+            (paletteText ? ` — ${paletteText}.` : ".") +
+            " Every `/sequences` video in this channel now uses it. `/sequences asset clear` to forget.",
+        });
+        if (palette) {
+          const preview = await renderAssetBriefPreview(brief);
+          if (preview) {
+            await client.files.uploadV2({
+              channel_id: channel,
+              file: preview,
+              filename: "asset-preview.png",
+              initial_comment: "The asset kit in your brand :point_down:",
+            });
+          }
+        }
+      } catch (error) {
+        logBackgroundError("asset brief failed", error);
+        const message = `:warning: Couldn't capture the brand brief: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+        if (meta.userId) {
+          await client.chat
+            .postMessage({ channel: meta.userId, text: message })
+            .catch((dmError) => logBackgroundError("asset brief DM failed", dmError));
+        }
+      }
+    })(),
   );
 });
 

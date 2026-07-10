@@ -111,7 +111,7 @@ export function canonicalCutStyle(
  * geometry — the runtime measures live rects — and exist purely so the model
  * self-checks that the two focal parts genuinely rhyme as silhouettes.
  */
-export type CutShapeHint = "pill" | "bar" | "card" | "circle" | "window";
+export type CutShapeHint = "pill" | "bar" | "card" | "circle" | "window" | "list" | "table";
 
 export const CUT_SHAPE_HINTS: ReadonlySet<CutShapeHint> = new Set<CutShapeHint>([
   "pill",
@@ -119,6 +119,8 @@ export const CUT_SHAPE_HINTS: ReadonlySet<CutShapeHint> = new Set<CutShapeHint>(
   "card",
   "circle",
   "window",
+  "list",
+  "table",
 ]);
 
 /** Cut styles that carry a focal element across the boundary via a bridge.
@@ -160,17 +162,23 @@ export function isEnergeticCutIntent(cut: SceneCutIntentV1 | undefined): boolean
 
 /**
  * Silhouette families for plan-time sanity: strips (pill, bar) rhyme with
- * strips, blocks (card, circle, window) rhyme with blocks. A cross-family
- * pair — a pill landing as a card, a circle as a bar — cannot stay inside the
- * runtime's 2.5x aspect cap at any plausible size, so a shape-match declared
- * with such hints is known-hopeless before any source is authored.
+ * strips, blocks (card, circle, window) rhyme with blocks, and grids (list,
+ * table) rhyme with grids. A cross-family pair — a pill landing as a card, a
+ * circle as a bar, a row list becoming an app window (probe-audit-03) — cannot
+ * stay inside the runtime's 2.5x aspect / structure cap at any plausible size,
+ * so a shape-match declared with such hints is known-hopeless before any source
+ * is authored. A `list`/`table` (a multi-row grid) is deliberately a DIFFERENT
+ * family from a `window`/`card` (a chrome surface): a morph between them is the
+ * smearing case the bind-time structure audit catches when hints are absent.
  */
-const SHAPE_HINT_FAMILY: Record<CutShapeHint, "strip" | "block"> = {
+const SHAPE_HINT_FAMILY: Record<CutShapeHint, "strip" | "block" | "grid"> = {
   pill: "strip",
   bar: "strip",
   card: "block",
   circle: "block",
   window: "block",
+  list: "grid",
+  table: "grid",
 };
 
 /** Whether two silhouette hints can plausibly rhyme as shape-match endpoints. */

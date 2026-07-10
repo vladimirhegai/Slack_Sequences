@@ -1,5 +1,6 @@
 {
   "format": 2,
+  "revision": 11,
   "id": "last-word-roulette",
   "title": "Locked sentence with a final-word roulette payoff",
   "description": "Hero headline whose last word ticks through candidates on a masked wheel, then snaps onto the payoff word with an accent underline and glow.",
@@ -80,7 +81,6 @@
     }
   ],
   "engine": {
-    "storyboardContract": 14,
     "kitVersions": {
       "componentKit": 1,
       "componentRuntime": 1,
@@ -92,6 +92,5 @@
       "cinemaKit": 1
     }
   },
-  "revision": 3,
   "fragmentHash": "3da85bc3da217b4d38c8f691b25c3602d417647f787b0874f37df308eeca12ba"
 }

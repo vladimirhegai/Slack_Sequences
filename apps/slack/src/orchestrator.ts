@@ -102,6 +102,14 @@ const TONE_HINT: Record<Tone, string> = {
   "bold-launch": "bold and high-energy (launch)",
 };
 
+/**
+ * Pacing center when the caller never picked a length (🎬 shortcut, thread
+ * replies): probes at the storyboard's own discretion routinely landed ~12-15s
+ * films that read as truncated. ~24s gives the hook→proof→CTA arc room, and
+ * `pacing/duration:` in `validateStoryboardPlan` holds the plan to the target.
+ */
+export const DEFAULT_TARGET_LENGTH_SEC = 24;
+
 /** Assemble the modal/thread fields into one brief string for the planner. */
 export function assembleBrief(fields: BriefFields): string {
   const lines = [
@@ -695,7 +703,8 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       skeleton: sentinelSkeletonEnabled(),
       slots: sentinelSlotsEnabled(),
     });
-    const brief = assembleBrief(options);
+    const targetLengthSec = options.lengthSec ?? DEFAULT_TARGET_LENGTH_SEC;
+    const brief = assembleBrief({ ...options, lengthSec: targetLengthSec });
     const skills = retrieveHyperframesSkillContext("create", brief);
     skillsUsed = skills.skillNames;
     // Named authoring stages. Each model stage is caught separately so a
@@ -786,7 +795,7 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
         projectDir: dir,
         skills,
         frameMd: frame.frameMd,
-        targetDurationSec: options.lengthSec,
+        targetDurationSec: targetLengthSec,
         attempts: storyboardAttempts,
       }));
     setStageAttempts("storyboard-plan", storyboardAttempts.count);
@@ -847,7 +856,7 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
         product: options.product,
         whatShipped: options.whatShipped,
         audience: options.audience,
-        lengthSec: options.lengthSec,
+        lengthSec: targetLengthSec,
         frameMd: frame.frameMd,
         // Skin the safe film with the plan's own copy when source authoring
         // failed with a proven storyboard in hand (planned.value is undefined

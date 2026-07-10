@@ -181,6 +181,17 @@ describe("island round-trip invariant — camera / cut / time / fx", () => {
         camera: { version: 1, path: [{ version: 1, move: "pan", toRegion: "metrics", startSec: 0.5, durationSec: 1 }] },
         moments: [{ version: 1, id: "m", sceneId: "turn", atSec: 2.6, title: "metric lands", visualState: "x", change: "y", motionIntent: "ui-state", importance: "primary" }],
       },
+      // A second scene WITHOUT a sweep: its camera arrival still earns a
+      // connector, so the fixture keeps exercising the "region" field even though
+      // the sweep-holding "turn" scene now skips its own connector (T3 caps).
+      {
+        id: "reveal",
+        title: "reveal",
+        purpose: "p",
+        startSec: 8,
+        durationSec: 6,
+        camera: { version: 1, path: [{ version: 1, move: "push-in", toRegion: "board", startSec: 8.5, durationSec: 1.2, zoom: 1.3 }] },
+      },
     ];
     // parseFxPlan is an identity parse, but the invariant guards against a future
     // reconstruction ever dropping toGrade / region / target.

@@ -111,6 +111,8 @@ describe("rendered temporal judge", () => {
     // strictOk (bounded polish), and never blocks a runnable draft.
     expect(qa.issues.some((issue) =>
       issue.code === "moment_static_frame" && issue.selector === "moment:m-ghost")).toBe(true);
+    expect(qa.issues.find((issue) => issue.selector === "moment:m-ghost")?.momentImportance)
+      .toBe("primary");
     expect(qa.warnings.some((warning) => warning.includes("moment_static_frame"))).toBe(true);
     expect(qa.strictOk).toBe(false);
     expect(qa.ok).toBe(true);

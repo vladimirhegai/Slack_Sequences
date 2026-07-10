@@ -102,7 +102,7 @@ export function buildRecipeDemoDraft(
     </style>
   </head>
   <body>
-    <div id="root" data-composition-id="recipe-demo" data-width="1920" data-height="1080" data-duration="${durationSec}">
+    <div id="root" data-composition-id="recipe-demo" data-start="0" data-width="1920" data-height="1080" data-duration="${durationSec}">
       <section id="stage" class="scene clip" data-scene="stage" data-start="0" data-duration="${stageSec}" data-track-index="1">
         <div class="stage-key" data-layout-ignore></div>
         <div class="stage-floor" data-layout-ignore></div>

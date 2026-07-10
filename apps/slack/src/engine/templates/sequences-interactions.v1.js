@@ -278,6 +278,22 @@
         },
       }, intent.startSec);
       bindPress(timeline, intent, cursorElement, target);
+      // Nav/list single-active (probe-audit-01): a cursor click that selects a
+      // list item must clear the active state on its siblings, or a
+      // default-active item stays highlighted beside the clicked one. The
+      // components runtime owns the exclusive-active mechanism (ONE owner); route
+      // the click through it at the press instant so the click, never a
+      // per-target hack, defines HOW state changes. It self-guards to real
+      // selection lists, so a click on a plain button is a no-op.
+      if (
+        (intent.action === "click" || intent.action === "press" ||
+          intent.feedback === "press" || intent.feedback === "press-ripple") &&
+        global.SequencesComponents &&
+        typeof global.SequencesComponents.activateExclusiveItem === "function"
+      ) {
+        var activateAt = intent.pressSec != null ? intent.pressSec : intent.arriveSec;
+        global.SequencesComponents.activateExclusiveItem(timeline, target, activateAt);
+      }
       if (intent.action === "drag" && intent.pressSec != null && intent.releaseSec != null) {
         followTarget(
           timeline,

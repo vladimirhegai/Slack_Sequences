@@ -5,13 +5,18 @@ import { describe, expect, it } from "vitest";
 import {
   CAMERA_FULL_MOVES,
   CAMERA_RUNTIME_FILE,
+  HIGH_ENERGY_PUSH_ZOOM,
   SEQUENCES_EASES,
   auditCameraEnergy,
   cameraMotionWindows,
   cameraRuntimeSource,
+  liftCameraEnergyPeak,
   normalizeStoryboardCameraIntent,
   parseCameraPlan,
+  reserveFinalCameraLanding,
   resolveCameraPlan,
+  topUpRequiredRackFocus,
+  normalizeConnectiveCameraSchedule,
   validateCameraContract,
 } from "../src/engine/cameraContract.ts";
 import { buildFallbackComposition } from "../src/engine/fallbackComposition.ts";
@@ -165,6 +170,63 @@ describe("normalizeStoryboardCameraIntent", () => {
 });
 
 describe("resolveCameraPlan", () => {
+  it("turns resolver-owned travel into a hold while a dominant payoff settles", () => {
+    const plan = resolveCameraPlan([scene({
+      id: "directed-journey",
+      startSec: 0,
+      durationSec: 6,
+      spatialIntent: {
+        version: 1,
+        focalPart: "proof-stat",
+        composition: "metric first, destination second",
+        relationships: [],
+      },
+      components: [{ version: 1, id: "proof-stat", kind: "stat-card" }],
+      beats: [{
+        version: 1,
+        id: "proof-count",
+        sceneId: "directed-journey",
+        component: "proof-stat",
+        kind: "count",
+        atSec: 1.5,
+        durationSec: 1,
+        value: 99,
+      }],
+      moments: [{
+        version: 1,
+        id: "proof-lands",
+        sceneId: "directed-journey",
+        atSec: 2.5,
+        title: "Proof lands",
+        visualState: "99 is visible",
+        change: "The number completed",
+        motionIntent: "ui-state",
+        importance: "primary",
+      }],
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "pan",
+          toRegion: "details",
+          startSec: 4.5,
+          durationSec: 1,
+        }],
+      },
+    })]);
+
+    const segments = plan.scenes[0]!.segments;
+    const hold = segments.find((segment) =>
+      segment.move === "hold" && segment.startSec >= 2.5 - 0.01
+    );
+    expect(hold).toMatchObject({ startSec: 2.5, endSec: 3.05, blend: 0 });
+    expect(segments.some((segment) => segment.move === "pan" && segment.startSec === 4.5))
+      .toBe(true);
+    for (let index = 1; index < segments.length; index += 1) {
+      expect(segments[index]!.startSec).toBe(segments[index - 1]!.endSec);
+    }
+  });
+
   it("builds a contiguous chain covering the scene and fills gaps with drift", () => {
     const plan = resolveCameraPlan([
       scene({
@@ -183,16 +245,17 @@ describe("resolveCameraPlan", () => {
     expect(plan.scenes).toHaveLength(1);
     const segments = plan.scenes[0]!.segments;
     // The fill before a whip is split: approach drift, then a short
-    // seqAnticipate wind-up that dips the camera backward before the commit.
+    // seqAnticipate wind-up that dips the camera backward before the commit;
+    // the direction score then gives the arrival a real settle hold.
     expect(segments.map((segment) => segment.move))
-      .toEqual(["hold", "drift", "drift", "whip", "drift"]);
+      .toEqual(["hold", "drift", "drift", "whip", "hold", "drift"]);
     // Contiguous and covering [0, 10].
     expect(segments[0]!.startSec).toBe(0);
     for (let index = 1; index < segments.length; index += 1) {
       expect(segments[index]!.startSec).toBe(segments[index - 1]!.endSec);
     }
     expect(segments[segments.length - 1]!.endSec).toBe(10);
-    // The gap drift approaches the upcoming framing; the tail drift creeps.
+    // The gap drift approaches the upcoming framing; the tail settles, then creeps.
     expect(segments[1]).toMatchObject({ toRegion: "metrics", blend: 0.24 });
     expect(segments[2]).toMatchObject({
       move: "drift",
@@ -201,7 +264,133 @@ describe("resolveCameraPlan", () => {
       toRegion: "metrics",
     });
     expect(segments[2]!.endSec - segments[2]!.startSec).toBeCloseTo(0.22, 5);
-    expect(segments[4]).toMatchObject({ toRegion: "metrics", blend: 0 });
+    expect(segments[4]).toMatchObject({
+      move: "hold",
+      startSec: 3.5,
+      toRegion: "metrics",
+      blend: 0,
+    });
+    expect(segments[5]).toMatchObject({ toRegion: "metrics", blend: 0 });
+  });
+
+  it("reserves reverse anticipation for whips, not ordinary pushes or tracks", () => {
+    const plan = resolveCameraPlan([
+      scene({
+        id: "operated",
+        startSec: 0,
+        durationSec: 8,
+        camera: {
+          version: 1,
+          path: [
+            { version: 1, move: "push-in", toRegion: "hero", startSec: 2, durationSec: 1 },
+            { version: 1, move: "track-to-anchor", toPart: "cta", startSec: 5, durationSec: 1 },
+          ],
+        },
+      }),
+    ]);
+    const segments = plan.scenes[0]!.segments;
+    expect(segments.filter((segment) => segment.ease === "seqAnticipate")).toEqual([]);
+    expect(segments.some((segment) => segment.move === "drift" && segment.blend === 0.24)).toBe(true);
+  });
+
+  it("starts a delayed first move on the scene focal instead of its future destination", () => {
+    const plan = resolveCameraPlan([
+      scene({
+        id: "proof",
+        startSec: 10,
+        durationSec: 5,
+        spatialIntent: {
+          version: 1,
+          focalPart: "laurel",
+          composition: "laurel first, rating second",
+          relationships: ["rating supports laurel"],
+        },
+        camera: {
+          version: 1,
+          path: [{
+            version: 1,
+            move: "track-to-anchor",
+            toPart: "rating",
+            startSec: 12,
+            durationSec: 1.2,
+          }],
+        },
+      }),
+    ]);
+    const segments = plan.scenes[0]!.segments;
+    expect(segments[0]).toMatchObject({
+      move: "drift",
+      fromPart: "laurel",
+      toPart: "rating",
+      blend: 0.24,
+    });
+    expect(segments.find((segment) => segment.move === "track-to-anchor"))
+      .toMatchObject({ toPart: "rating" });
+  });
+
+  it("establishes an immediate first station instead of opening on a later scene focal", () => {
+    const plan = resolveCameraPlan([
+      scene({
+        id: "signals",
+        startSec: 3.5,
+        durationSec: 5,
+        spatialIntent: {
+          version: 1,
+          focalPart: "later-metric",
+          composition: "feed first, metric second",
+          relationships: ["the feed motivates the metric"],
+        },
+        camera: {
+          version: 1,
+          path: [{
+            version: 1,
+            move: "drift",
+            toRegion: "signal-feed",
+            startSec: 3.5,
+            durationSec: 1.5,
+          }, {
+            version: 1,
+            move: "pan",
+            toRegion: "later-metric",
+            startSec: 5,
+            durationSec: 2,
+          }],
+        },
+      }),
+    ]);
+    expect(plan.scenes[0]!.segments[0]).toMatchObject({
+      move: "drift",
+      fromRegion: "signal-feed",
+      toRegion: "signal-feed",
+    });
+  });
+
+  it("honors an explicit entry frame before the scene focal fallback", () => {
+    const plan = resolveCameraPlan([
+      scene({
+        id: "tour",
+        startSec: 0,
+        durationSec: 5,
+        spatialIntent: {
+          version: 1,
+          focalPart: "fallback",
+          composition: "explicit entry wins",
+          relationships: ["start before destination"],
+        },
+        camera: {
+          version: 1,
+          path: [{
+            version: 1,
+            move: "pan",
+            fromPart: "explicit-entry",
+            toPart: "destination",
+            startSec: 1,
+            durationSec: 1,
+          }],
+        },
+      }),
+    ]);
+    expect(plan.scenes[0]!.segments[0]!.fromPart).toBe("explicit-entry");
   });
 
   it("applies per-move zoom and ease defaults", () => {
@@ -264,6 +453,35 @@ describe("resolveCameraPlan", () => {
     expect(
       plan.scenes[0]!.segments.filter((segment) => segment.move === "drift" && segment.focus),
     ).toEqual([]);
+    const parsed = parseCameraPlan(
+      `<script type="application/json" id="sequences-camera">${JSON.stringify(plan)}</script>`,
+    );
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.plan).toEqual(plan);
+  });
+
+  it("carries host sparse-framing corrections through the island round-trip", () => {
+    const plan = resolveCameraPlan([
+      scene({
+        id: "hero",
+        startSec: 0,
+        durationSec: 4,
+        camera: {
+          version: 1,
+          path: [{
+            version: 1,
+            move: "pan",
+            toRegion: "hero-card",
+            startSec: 0.4,
+            durationSec: 1,
+            zoom: 1.34,
+            framingCorrection: "camera-sparse-zoom",
+          }],
+        },
+      }),
+    ]);
+    const segment = plan.scenes[0]!.segments.find((entry) => entry.move === "pan")!;
+    expect(segment.framingCorrection).toBe("camera-sparse-zoom");
     const parsed = parseCameraPlan(
       `<script type="application/json" id="sequences-camera">${JSON.stringify(plan)}</script>`,
     );
@@ -412,6 +630,286 @@ describe("auditCameraEnergy", () => {
     ]);
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatch(/all 4 full camera moves are "whip"/);
+  });
+});
+
+describe("Sentinel — liftCameraEnergyPeak (normalize-before-retry)", () => {
+  const push = (region: string, zoom?: number): NonNullable<DirectScene["camera"]> => ({
+    version: 1,
+    path: [
+      {
+        version: 1,
+        move: "push-in",
+        toRegion: region,
+        ...(zoom !== undefined ? { zoom } : {}),
+        startSec: 1,
+        durationSec: 1,
+      },
+    ],
+  });
+
+  it("lifts a mild push-in to the peak so a 12s+ peak-less film clears camera/energy", () => {
+    // A default push-in resolves to zoom 1.22 (in [1.15, 1.3)).
+    const storyboard = [
+      scene({ id: "a", startSec: 0, durationSec: 6, camera: push("hero") }),
+      scene({ id: "b", startSec: 6, durationSec: 7 }),
+    ];
+    expect(auditCameraEnergy(storyboard).some((f) => f.startsWith("camera/energy"))).toBe(true);
+    const result = liftCameraEnergyPeak(storyboard);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.storyboard[0]!.camera!.path[0]!.zoom).toBe(HIGH_ENERGY_PUSH_ZOOM);
+    expect(auditCameraEnergy(result.storyboard).some((f) => f.startsWith("camera/energy"))).toBe(false);
+  });
+
+  it("is a no-op when the film already has a high-energy peak (a whip)", () => {
+    const whip: NonNullable<DirectScene["camera"]> = {
+      version: 1,
+      path: [{ version: 1, move: "whip", toRegion: "m", startSec: 1, durationSec: 0.5 }],
+    };
+    const storyboard = [
+      scene({ id: "a", startSec: 0, durationSec: 6, camera: whip }),
+      scene({ id: "b", startSec: 6, durationSec: 7, camera: push("hero") }),
+    ];
+    expect(liftCameraEnergyPeak(storyboard).normalized).toEqual([]);
+  });
+
+  it("never lifts when an energetic cut already carries the peak", () => {
+    const storyboard = [
+      scene({
+        id: "a",
+        startSec: 0,
+        durationSec: 6,
+        camera: push("hero"),
+        cut: { version: 1, style: "zoom-through" },
+      }),
+      scene({ id: "b", startSec: 6, durationSec: 7 }),
+    ];
+    expect(liftCameraEnergyPeak(storyboard).normalized).toEqual([]);
+  });
+
+  it("leaves a genuine energy deficit as a finding (only pans/drifts — nothing liftable)", () => {
+    const pan: NonNullable<DirectScene["camera"]> = {
+      version: 1,
+      path: [{ version: 1, move: "pan", toRegion: "m", startSec: 1, durationSec: 1 }],
+    };
+    const storyboard = [
+      scene({ id: "a", startSec: 0, durationSec: 6, camera: pan }),
+      scene({ id: "b", startSec: 6, durationSec: 7 }),
+    ];
+    const result = liftCameraEnergyPeak(storyboard);
+    expect(result.normalized).toEqual([]);
+    expect(auditCameraEnergy(result.storyboard).some((f) => f.startsWith("camera/energy"))).toBe(true);
+  });
+
+  it("does not touch a short (<12s) film", () => {
+    const storyboard = [
+      scene({ id: "a", startSec: 0, durationSec: 4, camera: push("hero") }),
+      scene({ id: "b", startSec: 4, durationSec: 4 }),
+    ];
+    expect(liftCameraEnergyPeak(storyboard).normalized).toEqual([]);
+  });
+
+  it("lifts the largest-zoom candidate — the smallest nudge that reaches the peak", () => {
+    const storyboard = [
+      scene({ id: "a", startSec: 0, durationSec: 6, camera: push("hero", 1.18) }),
+      scene({ id: "b", startSec: 6, durationSec: 7, camera: push("metrics", 1.25) }),
+    ];
+    const result = liftCameraEnergyPeak(storyboard);
+    expect(result.storyboard[0]!.camera!.path[0]!.zoom).toBe(1.18); // untouched
+    expect(result.storyboard[1]!.camera!.path[0]!.zoom).toBe(HIGH_ENERGY_PUSH_ZOOM); // lifted
+  });
+});
+
+describe("Sentinel — topUpRequiredRackFocus", () => {
+  it("attaches a required focus pull to the strongest existing part landing", () => {
+    const storyboard = [
+      scene({
+        id: "journey",
+        startSec: 0,
+        durationSec: 8,
+        spatialIntent: {
+          version: 1,
+          focalPart: "release-map",
+          composition: "map",
+          relationships: [],
+        },
+        camera: {
+          version: 1,
+          path: [
+            { version: 1, move: "pan", toRegion: "map", startSec: 0, durationSec: 2 },
+            {
+              version: 1,
+              move: "track-to-anchor",
+              toPart: "risk-node",
+              startSec: 3,
+              durationSec: 1.5,
+            },
+          ],
+        },
+        moments: [{
+          version: 1,
+          id: "risk-lands",
+          sceneId: "journey",
+          atSec: 4.5,
+          title: "Risk lands",
+          visualState: "Risk isolated",
+          change: "Camera isolates risk",
+          motionIntent: "camera arrival",
+          importance: "primary",
+        }],
+      }),
+    ];
+    const result = topUpRequiredRackFocus(storyboard);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.storyboard[0]!.camera!.path[1]!.focus).toEqual({
+      part: "risk-node",
+      blurMaxPx: 6,
+    });
+    expect(result.storyboard[0]!.sentinelNormalizations?.at(-1)).toContain("rack-focus");
+  });
+
+  it("is idempotent and never invents a move or focus target", () => {
+    const focused = scene({
+      id: "focused",
+      startSec: 0,
+      durationSec: 4,
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "push-in",
+          toPart: "hero",
+          startSec: 0,
+          durationSec: 1,
+          focus: { part: "hero", blurMaxPx: 4 },
+        }],
+      },
+    });
+    expect(topUpRequiredRackFocus([focused]).normalized).toEqual([]);
+    expect(topUpRequiredRackFocus([
+      scene({ id: "no-target", startSec: 0, durationSec: 4 }),
+    ]).normalized).toEqual([]);
+  });
+});
+
+describe("Sentinel — normalizeConnectiveCameraSchedule", () => {
+  it("lets Probe 7 connective drift yield to decisive moves and restores chronological order", () => {
+    const storyboard = [scene({
+      id: "service-map",
+      startSec: 4,
+      durationSec: 9,
+      camera: {
+        version: 1,
+        // A pacing retime moved push-in later without reordering the array;
+        // the authored drift now spans both decisive moves.
+        path: [
+          { version: 1, move: "pan", toRegion: "map", startSec: 4, durationSec: 1.2 },
+          { version: 1, move: "push-in", toRegion: "node", startSec: 8, durationSec: 1.5 },
+          { version: 1, move: "drift", startSec: 7.2, durationSec: 4 },
+          { version: 1, move: "parallax-pass", toRegion: "node", startSec: 9.5, durationSec: 2 },
+        ],
+      },
+    })];
+
+    const result = normalizeConnectiveCameraSchedule(storyboard);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.storyboard[0]!.camera!.path.map((move) => move.move)).toEqual([
+      "pan",
+      "drift",
+      "push-in",
+      "parallax-pass",
+    ]);
+    expect(result.storyboard[0]!.camera!.path[1]).toMatchObject({
+      startSec: 7.2,
+      durationSec: 0.8,
+    });
+    const parallax = resolveCameraPlan(result.storyboard).scenes[0]!.segments.find(
+      (segment) => segment.move === "parallax-pass",
+    )!;
+    expect(parallax.endSec - parallax.startSec).toBeCloseTo(2, 3);
+    expect(normalizeConnectiveCameraSchedule(result.storyboard).normalized).toEqual([]);
+  });
+
+  it("moves connective drift to the far side of a full move it starts inside", () => {
+    const storyboard = [scene({
+      id: "orbit",
+      startSec: 13,
+      durationSec: 8,
+      camera: {
+        version: 1,
+        path: [
+          { version: 1, move: "orbit-lite", toRegion: "chip", startSec: 16.2, durationSec: 3 },
+          { version: 1, move: "drift", startSec: 18, durationSec: 3 },
+        ],
+      },
+    })];
+    const result = normalizeConnectiveCameraSchedule(storyboard);
+    expect(result.storyboard[0]!.camera!.path[1]).toMatchObject({
+      move: "drift",
+      startSec: 19.2,
+      durationSec: 1.8,
+    });
+  });
+});
+
+describe("Sentinel — reserveFinalCameraLanding", () => {
+  it("reserves a destination dwell when a substantial final move lands on the cut", () => {
+    const storyboard = [scene({
+      id: "route",
+      startSec: 0,
+      durationSec: 6,
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "pan",
+          toRegion: "chat",
+          startSec: 4.5,
+          durationSec: 1.5,
+        }],
+      },
+    })];
+    const result = reserveFinalCameraLanding(storyboard);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.storyboard[0]!.camera!.path[0]!.durationSec).toBe(1.08);
+    expect(result.storyboard[0]!.sentinelNormalizations?.[0]).toContain("destination dwell");
+    expect(reserveFinalCameraLanding(result.storyboard).normalized).toEqual([]);
+  });
+
+  it("preserves explicit holds, short impact moves, and dive envelopes", () => {
+    const explicitHold = scene({
+      id: "held",
+      startSec: 0,
+      durationSec: 4,
+      camera: {
+        version: 1,
+        path: [
+          { version: 1, move: "pan", toRegion: "hero", startSec: 1, durationSec: 2 },
+          { version: 1, move: "hold", toRegion: "hero", startSec: 3, durationSec: 1 },
+        ],
+      },
+    });
+    const shortWhip = scene({
+      id: "whip",
+      startSec: 4,
+      durationSec: 1,
+      camera: {
+        version: 1,
+        path: [{ version: 1, move: "whip", toRegion: "risk", startSec: 4.5, durationSec: 0.5 }],
+      },
+    });
+    const dive = scene({
+      id: "dive",
+      startSec: 5,
+      durationSec: 3,
+      camera: {
+        version: 1,
+        path: [{ version: 1, move: "dive", toPart: "search", startSec: 5, durationSec: 3 }],
+      },
+    });
+    const result = reserveFinalCameraLanding([explicitHold, shortWhip, dive]);
+    expect(result.normalized).toEqual([]);
+    expect(result.storyboard).toEqual([explicitHold, shortWhip, dive]);
   });
 });
 
