@@ -37,4 +37,12 @@ describe("Luna art-direction seed", () => {
       expect(seed.authority).toMatch(/not a template/i);
     }
   });
+
+  it("keeps explicit product actions and active surfaces in the visual payoff", () => {
+    const principles = lunaArtDirectionSeed(facts, true).principles.join("\n");
+    expect(principles).toMatch(/explicit user-requested beat order/i);
+    expect(principles).toMatch(/active product surface/i);
+    expect(principles).toMatch(/real product action/i);
+    expect(principles).toMatch(/duplicated generic CTA/i);
+  });
 });

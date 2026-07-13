@@ -864,3 +864,26 @@ model-free before any further live action. That terminal run now passes the
 current static and browser gate with `modelCalls: 0`; its layout, contrast,
 framing, liveness, and moment findings remain visible as advisory evidence for
 the output audit rather than being misclassified as protocol failure.
+
+### asset capture coupled to inaccessible channel plus expired worker session (fixed; Slack retry next)
+
+Two `/sequences assets` attempts stored their screenshots successfully, but the
+following progress notification failed with Slack `channel_not_found`. Slack can
+return that code for a private channel the app cannot access; because the post
+was part of the capture transaction, the command incorrectly reported that the
+brand brief itself had failed and never reached UI-pack authoring.
+
+Asset capture is now durable independently of Slack notification delivery. A
+channel access failure falls back to an actionable direct message that asks the
+user to `/invite @Sequences`, while the saved brief continues into authoring.
+Preview upload failures are also delivery failures now: they are logged without
+relabeling an already accepted UI pack as an authoring failure. Regressions cover
+`channel_not_found`, DM fallback, and simultaneous channel/DM delivery failure.
+
+The two worker asset jobs (`asset-73e663f2-8241-4f7c-bcbc-80df4f52c0a6` and
+`asset-d5db673a-bafd-43e3-bca9-fc499901a681`) had a separate failure: Codex
+returned `token_invalidated` / `refresh_token_invalidated` before producing an
+asset pack. The exact mounted worker `CODEX_HOME` was reauthenticated with
+ChatGPT, and `codex login status` now succeeds. No model, provider, fallback, or
+attempt policy changed. A fresh Slack command after deployment is the validation
+path; no additional paid run was spent during the fix.

@@ -27,6 +27,14 @@ benefits. Camera motion must be motivated by a new semantic focal subject,
 arrive, settle, and let that subject read. Connective motion stays below the one
 dominant energy peak. End with a genuine resting hold.
 
+Preserve explicit user-requested beat order, opening/closing surfaces, and
+named product actions from the verified brief. Frame the active UI surface at a
+decisive hero scale rather than floating a small panel in a large empty field.
+If a real control is the turning point, keep that exact control and its visible
+consequence through the peak; do not replace it with a detached graphic that
+repeats the same CTA. Product controls should press and settle with restrained
+utility motion. Reserve elastic overshoot for a rare brand moment, if anywhere.
+
 The optional `inputs/references/slack-ad-motion-principles.md` describes lessons from a
 strong internal film. It is a motion-quality reference only. Do not copy its
 brand, appearance, palette, type treatment, copy, shot sequence, layouts,
@@ -154,6 +162,9 @@ Author one complete, local-only 1920x1080 HTML document:
 - Semantic primary subjects, boundary anchors, interaction targets/results, and
   camera targets must exist at the declared times. Keep important content in the
   48px horizontal / 38px vertical safe inset.
+- On hero product beats, compose around the declared primary subject. Legibility
+  alone is not enough when the important surface remains tiny inside avoidable
+  dead space.
 - The final resting-hold window has no transform or opacity tween on its primary
   subject. Subtle ambient motion elsewhere is optional and must remain
   seek-deterministic.

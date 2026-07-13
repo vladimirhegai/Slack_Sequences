@@ -125,7 +125,12 @@ export function lunaArtDirectionSeed(
     principles: [
       "Treat this as a launch ad: earn attention through contrast between acts, not one accreting tableau.",
       "Use dynamic range — vary brightness, scale, and density between beats instead of holding one register.",
-      "Fill the frame on hero beats; reach display scale where the type carries the message.",
+      "Frame the active product surface decisively on hero beats; avoid leaving a small centered UI panel " +
+        "inside a large field of dead space. Reach display scale where type carries the message.",
+      "Preserve explicit user-requested beat order, opening and closing surfaces, and named product actions " +
+        "unless verified facts make one impossible.",
+      "When a real product action is the turning point, keep that control and its consequence as the payoff. " +
+        "Do not abandon it for a duplicated generic CTA or a detached restaging of the same action.",
       "Build to one dominant energy peak, then land a genuine resting hold.",
       "Resolve on a committed payoff — a brand or product lockup, or a decisive closing statement — " +
         "not a diagram left mid-thought.",

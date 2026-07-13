@@ -55,6 +55,18 @@ describe("Luna prompt and tool-less context budgets", () => {
     }
   });
 
+  it("carries the deadline-safe product-payoff direction through authoring and review", () => {
+    const direction = prompt("luna-direction.md");
+    const build = prompt("luna-director.md");
+    const review = prompt("luna-self-review.md");
+    for (const value of [direction, build, review]) {
+      expect(value).toMatch(/explicit/i);
+      expect(value).toMatch(/product (control|action)/i);
+      expect(value).toMatch(/(dead space|tiny)/i);
+      expect(value).toMatch(/(generic CTA|payoff)/i);
+    }
+  });
+
   it("leaves headroom for a production-shaped create envelope", () => {
     const facts = JSON.stringify({
       version: 1,

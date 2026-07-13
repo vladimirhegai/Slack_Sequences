@@ -48,8 +48,10 @@ import {
 } from "./jobStore.ts";
 import { EventDeduper, parseThreadReply, type ThreadReply } from "./messageEvents.ts";
 import {
+  postMessageWithDmFallback,
   postMessageWithAutoJoin,
   userFacingSlackError,
+  type SlackMessageDelivery,
 } from "./slackApi.ts";
 import { summarizeThread, type ThreadMessage } from "./thread.ts";
 import { getSlackUserToken } from "./slackTokenStore.ts";
@@ -136,6 +138,11 @@ function actionValue(body: BlockAction): string {
 
 function logBackgroundError(label: string, error: unknown): void {
   process.stderr.write(`[slack] ${label}: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+}
+
+function logSlackDelivery(label: string, delivery: SlackMessageDelivery): void {
+  if (delivery.channelError) logBackgroundError(`${label} channel delivery failed`, delivery.channelError);
+  if (delivery.dmError) logBackgroundError(`${label} DM fallback failed`, delivery.dmError);
 }
 
 function runInBackground(label: string, task: Promise<void>): void {
@@ -1379,13 +1386,14 @@ app.view("asset_brief", async ({ ack, view, client }) => {
               palette.background ? `canvas \`${palette.background}\`` : undefined,
             ].filter(Boolean).join(" · ")
           : "palette extraction unavailable on this host — notes stored, colors will be inferred per launch";
-        await postMessageWithAutoJoin(client, {
+        const captureDelivery = await postMessageWithDmFallback(client, {
           channel,
           text:
             `:art: Captured ${images.length} UI screenshot${images.length === 1 ? "" : "s"}` +
             (paletteText ? ` — ${paletteText}.` : ".") +
             " Luna is recreating the reusable component states and motion hooks now…",
-        });
+        }, meta.userId);
+        logSlackDelivery("asset brief capture notice", captureDelivery);
         const reservation = reserveLunaAssetPack(channel);
         try {
           const authoredPack = await authorLunaAssetPack({
@@ -1410,7 +1418,7 @@ app.view("asset_brief", async ({ ack, view, client }) => {
             createdAt: new Date().toISOString(),
           };
           saveAssetBrief(brief);
-          await postMessageWithAutoJoin(client, {
+          const successDelivery = await postMessageWithDmFallback(client, {
             channel,
             text:
               `:white_check_mark: Luna built a versioned UI kit with ` +
@@ -1418,37 +1426,49 @@ app.view("asset_brief", async ({ ack, view, client }) => {
               `${authoredPack.validated.pack.components.length === 1 ? "" : "s"}. ` +
               "Future `/sequences` films in this channel can animate its real states and parts. " +
               "`/sequences assets clear` to forget.",
-          });
+          }, meta.userId);
+          logSlackDelivery("asset brief success notice", successDelivery);
           const preview = await renderLunaAssetPackPreview(
             path.join(authoredPack.runDir, "deliverables"),
             path.join(reservation.projectDir, "asset-preview.png"),
           );
-          if (preview) {
-            await client.files.uploadV2({
-              channel_id: channel,
-              file: preview,
-              filename: "luna-ui-kit.png",
-              initial_comment: "The code-native UI kit Luna will hand to future film threads :point_down:",
-            });
+          if (preview && successDelivery.channelPosted) {
+            try {
+              await client.files.uploadV2({
+                channel_id: channel,
+                file: preview,
+                filename: "luna-ui-kit.png",
+                initial_comment: "The code-native UI kit Luna will hand to future film threads :point_down:",
+              });
+            } catch (uploadError) {
+              // The pack is already accepted and saved. Preview delivery is
+              // useful evidence, not a reason to relabel authoring as failed.
+              logBackgroundError("Luna asset pack preview upload failed", uploadError);
+            }
           }
         } catch (packError) {
           logBackgroundError("Luna asset pack authoring failed; raw references retained", packError);
           const deterministicPreview = palette ? await renderAssetBriefPreview(brief) : null;
-          if (deterministicPreview) {
-            await client.files.uploadV2({
-              channel_id: channel,
-              file: deterministicPreview,
-              filename: "asset-evidence-preview.png",
-              initial_comment: "Screenshot palette captured; Luna's reusable UI-pack turn needs a retry.",
-            });
+          if (deterministicPreview && captureDelivery.channelPosted) {
+            try {
+              await client.files.uploadV2({
+                channel_id: channel,
+                file: deterministicPreview,
+                filename: "asset-evidence-preview.png",
+                initial_comment: "Screenshot palette captured; Luna's reusable UI-pack turn needs a retry.",
+              });
+            } catch (uploadError) {
+              logBackgroundError("asset evidence preview upload failed", uploadError);
+            }
           }
-          await postMessageWithAutoJoin(client, {
+          const failureDelivery = await postMessageWithDmFallback(client, {
             channel,
             text:
               ":warning: The screenshots are stored, but Luna couldn't finish the reusable UI kit. " +
               "Run `/sequences assets` again to retry it; an ordinary `/sequences` run can still " +
               "synthesize product UI inside its own director thread.",
-          });
+          }, meta.userId);
+          logSlackDelivery("asset brief UI-kit failure notice", failureDelivery);
         }
       } catch (error) {
         logBackgroundError("asset brief failed", error);

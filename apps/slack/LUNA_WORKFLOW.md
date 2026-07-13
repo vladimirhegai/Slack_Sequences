@@ -111,9 +111,14 @@ no knowledge of the catalog, or a legacy planner disguised as a Luna prompt.
    direction-only artifact contract: treatment and timed storyboard, but no
    film HTML or guessed DOM selectors. Luna owns concept, structure, visual
    thesis, spatial world, motion motif, transition grammar, camera philosophy,
-   pacing, and one energy peak. A prepared channel pack is supplied as visual
-   vocabulary, never a shot template. Without one, this turn also creates a
-   product-specific synthetic UI pack, so no-assets runs remain supported.
+   pacing, and one energy peak. Explicit user-requested beat order,
+   opening/closing surfaces, and named product actions remain part of the
+   brief. Direction states how active product surfaces reach a decisive hero
+   scale and keeps a real product control/consequence as the payoff instead of
+   restaging it as a duplicate generic CTA. A prepared channel pack is supplied
+   as visual vocabulary, never a shot template. Without one, this turn also
+   creates a product-specific synthetic UI pack, so no-assets runs remain
+   supported.
 4. **Motion intent.** Before source, Luna declares semantic primary subjects,
    persistent entities, chosen boundary anchors/strategies, causal actions,
    meaningful camera arrival/settle/hold windows, the peak, and final rest.
@@ -141,7 +146,11 @@ no knowledge of the catalog, or a legacy planner disguised as a Luna prompt.
    declared-boundary before/at/after sheets, camera
    start/arrival/settle/hold sheets with target visibility measurements, and
    spatial/mechanical sidecars plus the exact accepted canonical bundle to the
-   exact thread. Luna chooses `keep` or makes one coherent polish pass. A failed optional polish rolls source,
+   exact thread. Luna checks the explicit brief order, hero-subject framing,
+   and whether a real product action was abandoned for a detached duplicate
+   payoff; framing problems call for one subtractive crop/push polish, not
+   another peak or more decoration. Luna chooses `keep` or makes one coherent
+   polish pass. A failed optional polish rolls source,
    assets, thumbnails, and temporal evidence back to the first accepted cut. The
    consumed worker generation is still recorded separately from that accepted
    cut, so a later revision resumes the exact next generation while receiving

@@ -32,6 +32,16 @@ slides. Check continuity and causality at the declared boundaries, camera
 arrival/settle/hold, interaction-to-result readability, the single energy peak,
 and the ending rest. These are questions for your judgment, not quotas.
 
+Also compare the accepted treatment and verified brief against the evidence:
+did the film preserve any explicit opening/closing surface, beat order, and
+named product action? Inspect the spatial measurements and rendered sheets for
+hero subjects that are technically visible but still tiny inside dead space. If
+the film leaves a real product control at the moment of action and cuts to a
+duplicated generic CTA, prefer one coherent subtractive polish that keeps the
+actual control, pushes into it, and lets its consequence or a motivated register
+cut carry the payoff. Do not add a second peak or more decoration to solve a
+framing problem.
+
 Choose exactly one outcome:
 
 1. Keep the film. Return `decision: "keep"`, the exact worker-supplied

@@ -1,5 +1,7 @@
 import type { ChatPostMessageArguments, WebClient } from "@slack/web-api";
 
+const CHANNEL_ACCESS_CODES = new Set(["not_in_channel", "channel_not_found"]);
+
 /** Read Slack's machine-readable error without coupling callers to SDK classes. */
 export function slackErrorCode(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return undefined;
@@ -35,7 +37,13 @@ export async function postMessageWithAutoJoin(
   try {
     return await client.chat.postMessage(args);
   } catch (error) {
-    if (slackErrorCode(error) !== "not_in_channel") throw error;
+    const code = slackErrorCode(error);
+    if (code === "channel_not_found") {
+      // Slack intentionally hides private channels from bots that have not
+      // been invited. conversations.join cannot recover that case.
+      throw new ChannelAccessError(args.channel, error);
+    }
+    if (code !== "not_in_channel") throw error;
   }
 
   try {
@@ -47,10 +55,47 @@ export async function postMessageWithAutoJoin(
   try {
     return await client.chat.postMessage(args);
   } catch (error) {
-    if (slackErrorCode(error) === "not_in_channel") {
+    if (CHANNEL_ACCESS_CODES.has(slackErrorCode(error) ?? "")) {
       throw new ChannelAccessError(args.channel, error);
     }
     throw error;
+  }
+}
+
+export interface SlackMessageDelivery {
+  channelPosted: boolean;
+  dmPosted: boolean;
+  channelError?: unknown;
+  dmError?: unknown;
+}
+
+/**
+ * Asset capture is durable work, so a channel notification must never become
+ * its transaction boundary. Fall back to an actionable DM and return the
+ * delivery evidence instead of throwing either Slack error into the caller.
+ */
+export async function postMessageWithDmFallback(
+  client: WebClient,
+  args: ChatPostMessageArguments,
+  userId?: string,
+): Promise<SlackMessageDelivery> {
+  try {
+    await postMessageWithAutoJoin(client, args);
+    return { channelPosted: true, dmPosted: false };
+  } catch (channelError) {
+    if (!userId) return { channelPosted: false, dmPosted: false, channelError };
+    const originalText = "text" in args && typeof args.text === "string"
+      ? args.text
+      : "Sequences finished an update.";
+    try {
+      await client.chat.postMessage({
+        channel: userId,
+        text: `${originalText}\n\n${userFacingSlackError(channelError)}`,
+      });
+      return { channelPosted: false, dmPosted: true, channelError };
+    } catch (dmError) {
+      return { channelPosted: false, dmPosted: false, channelError, dmError };
+    }
   }
 }
 
@@ -58,6 +103,9 @@ export async function postMessageWithAutoJoin(
 export function userFacingSlackError(error: unknown): string {
   if (error instanceof ChannelAccessError) return error.message;
   const code = slackErrorCode(error);
+  if (CHANNEL_ACCESS_CODES.has(code ?? "")) {
+    return new ChannelAccessError("unknown", error).message;
+  }
   if (code === "missing_scope") {
     return (
       "Sequences is missing a Slack permission. Update the app from `manifest.json`, " +
