@@ -754,10 +754,19 @@ describe("Luna direct route", () => {
           version: 1,
           assets: [{ path: "assets/luna/mark.svg", verifiedSha256: sha256(Buffer.from(assetSvg)) }],
         });
-      const sentFiles = worker.requests[0]!.body.files as Array<{ path: string; sha256: string }>;
-      expect(sentFiles.some((file) => file.path.startsWith("inputs/brand-assets/"))).toBe(true);
-      expect(sentFiles.find((file) => file.path.startsWith("inputs/brand-assets/"))?.sha256)
-        .toBe(sha256(Buffer.from("approved-brand-bytes")));
+      const approvedDigest = sha256(Buffer.from("approved-brand-bytes"));
+      for (const requestIndex of [0, 1]) {
+        const sentFiles = worker.requests[requestIndex]!.body.files as Array<{
+          path: string;
+          sha256: string;
+        }>;
+        const approvedFiles = sentFiles.filter((file) =>
+          file.path.startsWith("inputs/brand-assets/")
+        );
+        expect(approvedFiles).toEqual([
+          expect.objectContaining({ sha256: approvedDigest }),
+        ]);
+      }
       expect(worker.requests[0]!.authorization).toMatch(/^Bearer /);
 
       fs.mkdirSync(path.join(projectDir, "composition"), { recursive: true });

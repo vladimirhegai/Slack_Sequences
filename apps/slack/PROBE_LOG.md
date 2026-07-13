@@ -795,3 +795,29 @@ suite still hard-fails a real four-pixel regression, and a model-free regression
 proves the exact incident matrices are equivalent while a 40px translation and a
 15-degree rotation are not. No new paid run was spent; retry after the Slack
 deployment is the validation path.
+
+### approved asset omitted from the Luna build turn (fixed; rerun authorized)
+
+Live Slack job `31dba47b-0c08-4c38-95ec-296efef46ecb` completed its direction
+turn, then failed terminally in `luna-build` with `asset_copy_mismatch`. The
+exact paid response and rollout remain on the worker, while the host preserved
+the direction bundle and integrity-only failure receipt. Luna selected the
+approved Sequences logo using the exact intake path and SHA-256 from
+`asset-brief.md`; this was a valid creative choice, not a hallucinated asset.
+
+Model-free replay of the downloaded raw envelope reproduced the worker result:
+with the build request's empty approved-input set it failed
+`asset_copy_mismatch`; with the four original approved input descriptors and
+bytes restored, the same envelope materialized
+`deliverables/assets/luna/01-sequences-logo.png` at the exact declared hash.
+The worker's strict hash/path gate was therefore correct.
+
+The deterministic owner was `directionBuildInputs()`, which intentionally
+removed every `inputs/brand-assets/**` file after direction while leaving their
+copy descriptors visible in the inline asset brief. Build turns now retain the
+same root-checked, size-bounded, SHA-bound approved files. The route regression
+proves the exact approved digest is present on both direction and build; the
+existing outside-root intake test and worker wrong-hash copy test remain the
+negative controls. This changes no prompt, story, gate, fallback, or attempt
+count. One fresh asset-prepared probe is authorized by the owner after local
+verification and deployment.

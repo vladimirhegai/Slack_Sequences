@@ -1670,9 +1670,10 @@ function directionBuildInputs(
   direction: LunaDirectionResult,
 ): LunaWorkerInputFile[] {
   const files = baseFiles
-    // The direction turn has already extracted visual facts from screenshots;
-    // avoid paying the binary context cost again on source authoring.
-    .filter((file) => !file.path.startsWith("inputs/brand-assets/"))
+    // Approved binaries remain part of the build turn because the artifact
+    // envelope may adopt them only through a hash-bound copyFromInput binding.
+    // Omitting them after direction leaves Luna with a truthful descriptor in
+    // asset-brief.md but makes the worker unable to materialize that choice.
     .map((file) => ({ ...file }));
   const byPath = new Map(files.map((file) => [file.path, file]));
   for (const name of ["director-treatment.md", "storyboard.json"]) {
