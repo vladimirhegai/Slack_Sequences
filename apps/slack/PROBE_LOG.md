@@ -717,3 +717,29 @@ sequence-check report, render, or MP4. A repair request may have begun before
 the process tree was stopped; without a ledger its call count is unprovable.
 These findings are the primary S6.9/S6.11 controls: they remain visible for
 human review but must not spend another author call or trigger a new probe.
+
+## 2026-07-13 Luna-native production probe
+
+### `luna-prod-probe-6808f5d-01` (rendered, no fallback)
+
+The deployed `gpt-5.6-luna` / high-reasoning route simulated `/sequences`
+after Slack field collection for a 16-second Relay launch film. No prepared
+assets were supplied, so Luna authored the direction and a synthetic UI pack
+before building the composition. The create candidate failed the hard browser
+gate; one Luna repair received the complete finding set and passed. Rendered
+self-review then kept the accepted direction and asset pack, revised only the
+composition, and produced accepted revision 2.
+
+Terminal evidence: `runtimeValid=true`, browser validation passed, 10 temporal
+thumbnails and a 1920x1080 H.264 MP4 exist, and `fallback=null`. The four paid
+stages were direction succeeded, build failed, repair succeeded, and
+self-review succeeded. Visual review found a coherent signal-to-shared-view
+story and a readable close; the synthetic no-assets UI is intentionally
+sparser than an asset-prepared film.
+
+The initial sequence-check summary falsely reported `fail` after successful
+acceptance because its final revalidation omitted Luna's declared primary
+selectors and reintroduced legacy source-shape errors. The probe harness now
+passes the persisted selector intent into the same direct validator. Exact
+model-free replay of the downloaded run remains the authority; no second paid
+probe was spent.

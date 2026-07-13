@@ -327,6 +327,9 @@ async function main(): Promise<void> {
     const validation = await validateDirectComposition(result.projectDir, {
       html: current.html,
       storyboard: current.manifest.scenes,
+      ...(current.manifest.declaredPrimarySelectors
+        ? { declaredPrimarySelectors: current.manifest.declaredPrimarySelectors }
+        : {}),
     });
     const motionPlan = safeReadJson(path.join(result.projectDir, "composition", "motion-plan.json")) as
       | { motionDensity?: unknown }

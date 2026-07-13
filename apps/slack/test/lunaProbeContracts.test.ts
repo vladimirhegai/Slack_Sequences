@@ -50,6 +50,12 @@ describe("Luna probe and CI contracts", () => {
     expect(source).toContain("legacyRepairs: 0");
   });
 
+  it("keeps Luna declared-intent authority during post-run sequence-check validation", () => {
+    const source = fs.readFileSync(path.join(appDir, "scripts", "sequenceCheck.ts"), "utf8");
+    expect(source).toContain("current.manifest.declaredPrimarySelectors");
+    expect(source).toContain("declaredPrimarySelectors: current.manifest.declaredPrimarySelectors");
+  });
+
   it("settles accepted films honestly on render failure and binds retries to the current actor", () => {
     const source = fs.readFileSync(path.join(appDir, "src", "index.ts"), "utf8");
     expect(source).toContain('updateJob(args.jobId, { status: "ready", mp4Path: undefined })');
