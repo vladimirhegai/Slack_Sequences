@@ -837,11 +837,15 @@ describe("Luna direct route", () => {
     );
     const normalized = normalizeLunaSourceMechanics(invalid, "route-proof");
     expect(normalized).toContain('window.__timelines["route-proof"]=master');
+    expect(normalized).toContain('id="sequences-authored-seek-bridge"');
+    expect(normalized).toContain("authoredSeek(time)");
     expect(normalizeLunaSourceMechanics(normalized, "route-proof")).toBe(normalized);
-    expect(normalizeLunaSourceMechanics(
+    const unrelated = normalizeLunaSourceMechanics(
       "window.__timelines.somewhereElse=master",
       "route-proof",
-    )).toBe("window.__timelines.somewhereElse=master");
+    );
+    expect(unrelated).toContain("window.__timelines.somewhereElse=master");
+    expect(unrelated).toContain('id="sequences-authored-seek-bridge"');
   });
 
   it("materializes inside the duration window, binds declared subjects, and normalizes typed cuts", async () => {
@@ -952,7 +956,7 @@ describe("Luna direct route", () => {
         assetReferencePaths: [reference],
         assetReferenceRoot: root,
       });
-      expect(authored.draft.html).toBe(html);
+      expect(authored.draft.html).toBe(normalizeLunaSourceMechanics(html, "route-proof"));
       expect(fs.readFileSync(
         path.join(authored.runDir, "deliverables", "composition.html"),
         "utf8",
@@ -1118,7 +1122,7 @@ describe("Luna direct route", () => {
       });
       expect(revised.worker.runCount).toBe(4);
       expect(worker.requests[3]!.body.expectedRunCount).toBe(3);
-      expect(revised.draft.html).toBe(html);
+      expect(revised.draft.html).toBe(normalizeLunaSourceMechanics(html, "route-proof"));
       expect(loadLunaSession(projectDir)).toMatchObject({
         workerRunCount: 4,
         workerCursorDisposition: "unaccepted",

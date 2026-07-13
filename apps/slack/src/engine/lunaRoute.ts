@@ -1014,10 +1014,39 @@ function validateLunaHtmlSecurity(html: string): void {
  */
 export function normalizeLunaSourceMechanics(html: string, compositionId: string): string {
   const escaped = compositionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return html.replace(
+  let normalized = html.replace(
     new RegExp(`window\\.__timelines\\.${escaped}(?=\\s*=)`, "g"),
     `window.__timelines[${JSON.stringify(compositionId)}]`,
   );
+  const bridgeId = "sequences-authored-seek-bridge";
+  if (normalized.includes(`id="${bridgeId}"`) || normalized.includes(`id='${bridgeId}'`)) {
+    return normalized;
+  }
+  // Luna's contract requires both a registered paused GSAP timeline and
+  // window.__seek(t). The authored hook may deterministically pin scenes or
+  // data-state values that are not represented by tweens. Browser QA and the
+  // renderer seek the registered timeline directly, so bridge those seeks
+  // through the authored hook. The guard lets that hook call its original
+  // timeline.seek without recursing.
+  const bridge = `<script id="${bridgeId}" data-sequences-host="1">
+(function(){
+  var id=${JSON.stringify(compositionId)};
+  var timeline=window.__timelines&&window.__timelines[id];
+  var authoredSeek=window.__seek;
+  if(!timeline||typeof timeline.seek!=="function"||typeof authoredSeek!=="function")return;
+  var originalSeek=timeline.seek.bind(timeline),bridging=false;
+  timeline.seek=function(time,suppressEvents){
+    if(bridging)return originalSeek(time,suppressEvents);
+    bridging=true;
+    try{authoredSeek(time);return timeline;}finally{bridging=false;}
+  };
+})();
+</script>`;
+  const bodyClose = /<\/body>/i.exec(normalized);
+  normalized = bodyClose?.index !== undefined
+    ? normalized.slice(0, bodyClose.index) + bridge + "\n" + normalized.slice(bodyClose.index)
+    : normalized.trimEnd() + "\n" + bridge + "\n";
+  return normalized;
 }
 
 function validateAssetBytes(relativePath: string, mediaType: string, bytes: Buffer): void {
