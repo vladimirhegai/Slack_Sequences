@@ -41,10 +41,10 @@ model-issued commands write access only to the job workspace and denies root,
 the auth directory, temporary-directory aliases, `.env` files, and network.
 The worker does not pass a legacy `--sandbox` flag, because the named
 permissions profile is the execution boundary.
-Startup stops before opening the HTTP port unless
-`codex --strict-config login status` succeeds against the mounted `CODEX_HOME`;
-every author turn also uses strict config. This catches unknown permission
-fields or rejected login before Railway marks the worker healthy. Resume turns
+Startup stops before opening the HTTP port unless `codex login status`
+succeeds against the mounted `CODEX_HOME`. The login subcommand does not accept
+the strict-config flag; every author turn does use `--strict-config`, so unknown
+permission fields still fail closed before the model can act. Resume turns
 also remove and reject symlinks or model-authored instruction layers such as
 `AGENTS.md`, `.codex`, and `SKILL.md` before they can influence a later turn.
 
