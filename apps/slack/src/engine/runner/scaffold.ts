@@ -293,15 +293,12 @@ export function buildSceneSlotInteriors(scenes: DirectScene[]): Map<string, stri
   );
 }
 /**
- * The scaffold-contract violations the L2 reconcilers CANNOT mechanically fix:
- * a required camera station or declared component root COMPLETELY absent from
- * a returned scene interior. Near-misses stay out deliberately —
- * `reconcileContractBindings` claims an exact-name/unique-candidate station and
- * `reconcileComponentBindings` claims a kind-marked or semantically unique
- * element for free — so this only names the states that would otherwise burn a
- * whole-document paid retry (`component_root_missing` / `camera_region_missing`).
- * The missing camera-world plane is likewise excluded: `reconcileCameraWorldPlanes`
- * wraps the interior deterministically.
+ * Raw scaffold-contract gaps visible before host assembly. This is diagnostic,
+ * NOT paid-retry eligibility: the complete L2 registry has richer evidence
+ * (exact ids, semantic candidates, component-region ownership, and the host
+ * chassis) and must run before L3 decides whether a provider repair is needed.
+ * Near-misses already obvious at this layer stay out, as does a missing
+ * camera-world plane that `reconcileCameraWorldPlanes` always wraps.
  */
 export function slotScaffoldViolations(
   storyboard: DirectScene[],
@@ -313,6 +310,32 @@ export function slotScaffoldViolations(
     const html = slots.scenes.get(scene.id)?.html?.trim();
     if (!html) continue; // a wholly missing interior is the truncation path
     const notes: string[] = [];
+    // Plugin-owned roots are host-injected AFTER authoring — their absence
+    // from a returned interior is the designed state, never a violation.
+    const authorOwned = (scene.components ?? []).filter((component) => !component.pluginUid);
+    const componentsByKind = new Map<string, NonNullable<DirectScene["components"]>>();
+    for (const component of authorOwned) {
+      const group = componentsByKind.get(component.kind) ?? [];
+      group.push(component);
+      componentsByKind.set(component.kind, group);
+    }
+    const componentHasL2Candidate = (
+      component: NonNullable<DirectScene["components"]>[number],
+    ): boolean => {
+      const rootRe = new RegExp(
+        `\\bdata-part\\s*=\\s*["']${regexpEscape(component.id)}["']`,
+        "i",
+      );
+      if (rootRe.test(html)) return true;
+      const kindRe = new RegExp(
+        `\\bdata-component\\s*=\\s*["']${regexpEscape(component.kind)}["']`,
+        "i",
+      );
+      // One component of this kind is an obvious raw near-miss. L2 may safely
+      // recognize additional exact-id/semantic shapes after host assembly;
+      // callers must not treat this diagnostic as a complete classifier.
+      return (componentsByKind.get(component.kind)?.length ?? 0) === 1 && kindRe.test(html);
+    };
     const cameraScene = scene.camera?.path?.length ? cameraById.get(scene.id) : undefined;
     if (cameraScene) {
       const required = new Set<string>();
@@ -324,41 +347,28 @@ export function slotScaffoldViolations(
         [...html.matchAll(/\bdata-region\s*=\s*["']([^"']+)["']/gi)].map((m) => m[1]!),
       );
       // Count tolerance: with as many stations as required, a renamed station
-      // is a near-miss the L2 reconciler owns; fewer stations than required is
-      // a true omission no reconciler can invent.
+      // is an obvious near-miss. With fewer stations, suppress the raw gap when
+      // this layer can already see a typed component anchor: L2 will stamp the
+      // declared region and rehome it into the station. Other candidates (for
+      // example an exact HTML id) remain diagnostic here and are still allowed
+      // to recover in the complete L2 registry before any paid decision.
       if (present.size < required.size) {
         for (const region of required) {
-          if (!present.has(region)) {
+          const l2Anchor = authorOwned.some((component) =>
+            component.region === region && componentHasL2Candidate(component)
+          );
+          if (!present.has(region) && !l2Anchor) {
             notes.push(`camera station data-region="${region}" is missing from this scene`);
           }
         }
       }
     }
-    // Plugin-owned roots are host-injected AFTER authoring — their absence
-    // from a returned interior is the designed state, never a violation.
-    const authorOwned = (scene.components ?? []).filter((component) => !component.pluginUid);
-    const componentsByKind = new Map<string, NonNullable<DirectScene["components"]>>();
     for (const component of authorOwned) {
-      const group = componentsByKind.get(component.kind) ?? [];
-      group.push(component);
-      componentsByKind.set(component.kind, group);
-    }
-    for (const component of authorOwned) {
-      const rootRe = new RegExp(
-        `\\bdata-part\\s*=\\s*["']${regexpEscape(component.id)}["']`,
-        "i",
-      );
-      const kindRe = new RegExp(
-        `\\bdata-component\\s*=\\s*["']${regexpEscape(component.kind)}["']`,
-        "i",
-      );
       // A kind-marked element is a safe L2 near-miss only when the storyboard
       // declares exactly ONE component of that kind. With repeated buttons,
       // cards, etc. the kind marker cannot identify which missing id it meant;
       // guessing there can bind motion to the wrong object.
-      const uniqueKindCandidate =
-        (componentsByKind.get(component.kind)?.length ?? 0) === 1 && kindRe.test(html);
-      if (!rootRe.test(html) && !uniqueKindCandidate) {
+      if (!componentHasL2Candidate(component)) {
         notes.push(
           `component root data-part="${component.id}" data-component="${component.kind}" ` +
             "is missing from this scene",

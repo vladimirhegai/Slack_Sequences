@@ -11,6 +11,7 @@ import {
   authorLunaComposition,
   confirmLunaComposition,
   loadLunaSession,
+  lunaDurationBounds,
   normalizeLunaSourceMechanics,
   parseLunaMotionIntent,
   reconcileLunaSessionAfterUndo,
@@ -91,6 +92,7 @@ function deliverable(relativePath: string, text: string) {
 async function fakeWorker(options: {
   assetSvg?: string;
   compositionHtml?: string;
+  storyboardScenes?: unknown[];
   corruptRawEnvelopeHash?: boolean;
   corruptMaterializedFingerprint?: boolean;
   invalidHtmlOnRunCount?: number;
@@ -118,7 +120,10 @@ async function fakeWorker(options: {
       const responseIntent = options.omitMotionIntentVersion ? motionIntentWithoutVersion : intent;
       const deliverables = [
         deliverable("composition.html", runHtml),
-        deliverable("storyboard.json", JSON.stringify({ storyboard }, null, 2) + "\n"),
+        deliverable(
+          "storyboard.json",
+          JSON.stringify({ storyboard: options.storyboardScenes ?? storyboard }, null, 2) + "\n",
+        ),
         deliverable("motion-intent.json", JSON.stringify(responseIntent, null, 2) + "\n"),
         deliverable("director-treatment.md", "# Treatment\nOne state becomes the next.\n"),
         deliverable("assets-manifest.json", JSON.stringify([{
@@ -314,6 +319,40 @@ describe("Luna direct route", () => {
     )).toThrow(/matches no element/);
   });
 
+  it("accepts a boundary that carries nothing while validating declared anchors", () => {
+    const hardCutBoundary = {
+      id: "problem-solution",
+      atSec: 3,
+      fromScene: "problem",
+      toScene: "solution",
+      strategy: "motivated-hard-cut",
+      mechanicalOwner: "authored",
+      cause: "The register changes deliberately; nothing carries across.",
+    };
+    expect(parseLunaMotionIntent(
+      JSON.stringify({ ...intent, boundaries: [hardCutBoundary] }),
+      html,
+      storyboard,
+    ).boundaries[0]!.outgoingAnchorSelector).toBeUndefined();
+    expect(() => parseLunaMotionIntent(
+      JSON.stringify({
+        ...intent,
+        boundaries: [{ ...hardCutBoundary, outgoingAnchorSelector: "#does-not-exist" }],
+      }),
+      html,
+      storyboard,
+    )).toThrow(/matches no element/);
+  });
+
+  it("accepts any duration inside the envelope window and rejects outside it", () => {
+    expect(lunaDurationBounds({ targetDurationSec: 16, minDurationSec: 12, maxDurationSec: 19 }))
+      .toEqual({ minSec: 12, maxSec: 19 });
+    expect(lunaDurationBounds({ targetDurationSec: 16 })).toEqual({ minSec: 16, maxSec: 16 });
+    expect(() => lunaDurationBounds({ targetDurationSec: 20, minDurationSec: 12, maxDurationSec: 19 }))
+      .toThrow(/duration window/);
+    expect(() => lunaDurationBounds({ targetDurationSec: 0 })).toThrow(/duration window/);
+  });
+
   it("supplies omitted v1 protocol metadata but rejects explicit unknown motion-intent versions", () => {
     const { version: _version, ...withoutVersion } = intent;
     expect(parseLunaMotionIntent(JSON.stringify(withoutVersion), html, storyboard))
@@ -350,6 +389,53 @@ describe("Luna direct route", () => {
       "window.__timelines.somewhereElse=master",
       "route-proof",
     )).toBe("window.__timelines.somewhereElse=master");
+  });
+
+  it("materializes inside the duration window, binds declared subjects, and normalizes typed cuts", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-window-"));
+    roots.push(root);
+    const worker = await fakeWorker({
+      storyboardScenes: [
+        { ...storyboard[0], cut: { version: 1, style: "dissolve" } },
+        { ...storyboard[1], cut: { version: 1, style: "object-match", focalPartOut: "mark", focalPartIn: "mark" } },
+      ],
+    });
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_TOKEN", "test-worker-token-that-is-at-least-thirty-two-characters");
+    const facts = {
+      version: 1 as const,
+      product: "Harborview",
+      brandName: "Harborview",
+      whatShipped: "Feedback routing",
+      provenance: {
+        source: "slack-user-and-authorized-workspace-context" as const,
+        unsupportedClaimsAllowed: false as const,
+      },
+    };
+    try {
+      // The film is 6.0s. A 5s target with a 4-7s accepted window takes it.
+      const authored = await authorLunaComposition({
+        projectDir: path.join(root, "windowed"),
+        jobId: "luna-duration-window-proof",
+        facts: { ...facts, targetDurationSec: 5, minDurationSec: 4, maxDurationSec: 7 },
+      });
+      expect(authored.intent.durationSec).toBe(6);
+      expect(authored.draft.declaredPrimarySelectors).toEqual({
+        problem: "#problem-primary",
+        solution: "#solution-primary",
+      });
+      // Unknown style degrades to no cut; legacy names canonicalize.
+      expect(authored.draft.storyboard[0]!.cut).toBeUndefined();
+      expect(authored.draft.storyboard[1]!.cut).toMatchObject({ style: "match" });
+      // Without a window the target stays exact, as on self-review/revision.
+      await expect(authorLunaComposition({
+        projectDir: path.join(root, "exact"),
+        jobId: "luna-duration-exact-proof",
+        facts: { ...facts, targetDurationSec: 5 },
+      })).rejects.toThrow(/accepts 5-5s/);
+    } finally {
+      await worker.close();
+    }
   });
 
   it("preserves exact raw source bytes, hashes approved assets, and persists the exact thread", async () => {

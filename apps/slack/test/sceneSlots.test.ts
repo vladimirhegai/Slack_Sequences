@@ -9,7 +9,9 @@ import {
   normalizeSceneSlotScript,
 } from "../src/engine/sceneSlots.ts";
 import {
+  applyDeterministicSourceRepairs,
   authorSlotDraft,
+  rehomeRegionComponents,
   repairSlotDraftForFindings,
   slotScaffoldViolations,
 } from "../src/engine/compositionRunner.ts";
@@ -339,7 +341,7 @@ describe("assembleSlotComposition", () => {
   });
 });
 
-describe("slotScaffoldViolations — only states the L2 reconcilers cannot fix", () => {
+describe("slotScaffoldViolations — raw pre-L2 diagnostics only", () => {
   const componentScene = (): DirectScene => ({
     ...scene("hero-open", 0),
     components: [{ version: 1, id: "deploy-btn", kind: "button", role: "hero" }],
@@ -403,13 +405,41 @@ describe("slotScaffoldViolations — only states the L2 reconcilers cannot fix",
     expect(slotScaffoldViolations([cameraScene], renamed).size).toBe(0);
   });
 
+  it("defers a missing station to L2 when its typed component root survived", () => {
+    const cameraScene: DirectScene = {
+      ...scene("tour", 0, 8),
+      camera: {
+        version: 1,
+        path: [
+          { version: 1, move: "hold", toRegion: "metric-wall", startSec: 0, durationSec: 4 },
+        ],
+      },
+      components: [
+        {
+          version: 1,
+          id: "metric-card",
+          kind: "stat-card",
+          region: "metric-wall",
+          role: "hero",
+        },
+      ],
+    };
+    const slots = extractSceneSlots(
+      '<scene_html id="tour"><div data-camera-world>' +
+        '<div class="cmp cmp-stat-card" data-component="stat-card" ' +
+        'data-part="metric-card"><strong>20 min</strong></div></div></scene_html>',
+    );
+
+    expect(slotScaffoldViolations([cameraScene], slots).size).toBe(0);
+  });
+
   it("never flags a scene whose interior is wholly missing (that is the truncation path)", () => {
     const slots = extractSceneSlots("<film_style>.x{}</film_style>");
     expect(slotScaffoldViolations([componentScene()], slots).size).toBe(0);
   });
 });
 
-describe("authorSlotDraft — script-aware continuation + scene-scoped scaffold repair", () => {
+describe("authorSlotDraft — script-aware continuation + post-L2 scaffold ownership", () => {
   const roots: string[] = [];
   beforeEach(() => {
     vi.stubEnv("SLACK_SEQUENCES_HEDGED_REQUESTS", "0");
@@ -485,7 +515,7 @@ describe("authorSlotDraft — script-aware continuation + scene-scoped scaffold 
     );
   });
 
-  it("scene-scoped scaffold repair: a dropped component root re-requests ONLY that scene with findings and the previous interior", async () => {
+  it("defers a truly absent component root until the assembled draft has passed through L2", async () => {
     const sb: DirectScene[] = [
       {
         ...scene("hero-open", 0),
@@ -501,28 +531,139 @@ describe("authorSlotDraft — script-aware continuation + scene-scoped scaffold 
       htmlSlot("cta-close", '<div class="hero">Go</div>'),
       scriptSlot("cta-close", 'tl.from(".hero", { scale: 0.9, duration: 0.4 }, 4.2);'),
     ].join("\n");
-    const repaired = [
-      htmlSlot(
-        "hero-open",
-        '<div class="hero">Ship faster</div>' +
-          '<button class="cmp cmp-button" data-component="button" data-part="deploy-btn">Deploy</button>',
-      ),
-      scriptSlot("hero-open", 'tl.from(".hero", { opacity: 0, duration: 0.4 }, 0.2);'),
-    ].join("\n");
-    const { provider, complete } = providerOf([first, repaired]);
+    const { provider, complete } = providerOf([first]);
 
     const result = await authorSlotDraft(provider, argsOf(sb), "PROMPT", {});
 
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.draft.html).not.toContain('data-part="deploy-btn"');
+  });
+
+  it("Harborview-shaped station loss stays on the free L2 path and costs one author call", async () => {
+    const sb: DirectScene[] = [
+      {
+        ...scene("scatter-sources", 0, 4),
+        camera: {
+          version: 1,
+          path: [
+            { version: 1, move: "hold", toRegion: "sheet-source", startSec: 0, durationSec: 4 },
+          ],
+        },
+        components: [
+          { version: 1, id: "email-feed", kind: "list", region: "email-source" },
+          { version: 1, id: "chat-export", kind: "chat", region: "chat-source" },
+          { version: 1, id: "sheet-rows", kind: "table", region: "sheet-source" },
+        ],
+      },
+      {
+        ...scene("converge-rail", 4, 4),
+        camera: {
+          version: 1,
+          path: [
+            { version: 1, move: "hold", toRegion: "rail-converge", startSec: 4, durationSec: 4 },
+          ],
+        },
+        components: [
+          { version: 1, id: "inbox-form", kind: "list", region: "rail-converge" },
+        ],
+      },
+      {
+        ...scene("inbox-action-metric", 8, 4),
+        camera: {
+          version: 1,
+          path: [
+            { version: 1, move: "hold", toPart: "assign-btn", startSec: 8, durationSec: 4 },
+          ],
+        },
+        components: [
+          { version: 1, id: "inbox-locked", kind: "list", region: "inbox-station" },
+          { version: 1, id: "assign-btn", kind: "button", region: "inbox-station" },
+          { version: 1, id: "triage-metric", kind: "stat-card", region: "metric-station" },
+        ],
+      },
+      scene("cta-resolve", 12, 4),
+    ];
+    // The paid response itself was not persisted, so this fixture uses the
+    // exact three Harborview offender scenes with the strongest minimized L2
+    // shape: authored surfaces survive under their typed ids, while every
+    // data-part/data-component/data-region binding is absent.
+    const root = (id: string, kind: string, copy: string): string =>
+      `<div id="${id}" class="authored-${kind}">${copy}</div>`;
+    const response = [
+      "<film_style>.cmp{color:#fff}</film_style>",
+      htmlSlot(
+        "scatter-sources",
+        `<div data-camera-world>${root("email-feed", "list", "Email")}` +
+          `${root("chat-export", "chat", "Chat")}${root("sheet-rows", "table", "Sheet")}</div>`,
+      ),
+      scriptSlot("scatter-sources", "tl.set('#scatter', {}, 0);"),
+      htmlSlot(
+        "converge-rail",
+        `<div data-camera-world>${root("inbox-form", "list", "Inbox")}</div>`,
+      ),
+      scriptSlot("converge-rail", "tl.set('#converge', {}, 4);"),
+      htmlSlot(
+        "inbox-action-metric",
+        `<div data-camera-world>${root("inbox-locked", "list", "Themes")}` +
+          `${root("assign-btn", "button", "Assign")}` +
+          `${root("triage-metric", "stat-card", "20 min")}</div>`,
+      ),
+      scriptSlot("inbox-action-metric", "tl.set('#action', {}, 8);"),
+      htmlSlot("cta-resolve", '<h1 data-part="cta-lockup">Start triaging</h1>'),
+      scriptSlot("cta-resolve", "tl.set('#cta', {}, 12);"),
+    ].join("\n");
+    const { provider, complete } = providerOf([response]);
+    const args = argsOf(sb);
+
+    const result = await authorSlotDraft(provider, args, "PROMPT", {});
+
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.slots.scenes.get("cta-resolve")?.html).toBe(
+      '<h1 data-part="cta-lockup">Start triaging</h1>',
+    );
+    const normalized = applyDeterministicSourceRepairs(result.draft, args.projectDir, sb);
+    const homed = rehomeRegionComponents(normalized.html, sb).html;
+    expect(rehomeRegionComponents(homed, sb).html).toBe(homed);
+    for (const region of [
+      "email-source",
+      "chat-source",
+      "sheet-source",
+      "rail-converge",
+      "inbox-station",
+      "metric-station",
+    ]) {
+      expect(homed).toContain(`data-region="${region}"`);
+    }
+  });
+
+  it("carries the paid first slot response through a failed continuation subcall", async () => {
+    const sb: DirectScene[] = [scene("hero-open", 0), scene("cta-close", 4)];
+    const first = [
+      htmlSlot("hero-open", '<div class="hero">Ship faster</div>'),
+      scriptSlot("hero-open", 'tl.from(".hero", { opacity: 0 }, 0.2);'),
+      htmlSlot("cta-close", '<div class="cta">Start now</div>'),
+      // Missing cta-close script forces the same nested paid-subcall seam.
+    ].join("\n");
+    const { provider, complete } = providerOf([first]);
+    complete.mockRejectedValueOnce(
+      new Error("model-call budget exhausted before author source: 6 logical calls"),
+    );
+
+    let preservedRaw: string | undefined;
+    let caught: unknown;
+    try {
+      await authorSlotDraft(provider, argsOf(sb), "PROMPT", {}, (raw) => {
+        preservedRaw = raw;
+      });
+    } catch (error) {
+      caught = error;
+    }
+
     expect(complete).toHaveBeenCalledTimes(2);
-    const repairPrompt = complete.mock.calls[1]![0] as string;
-    expect(repairPrompt).toContain("Host-contract findings");
-    expect(repairPrompt).toContain('data-part="deploy-btn"');
-    // Minimal-edit baseline: the model's own defective interior rides along.
-    expect(repairPrompt).toContain('<previous_scene_html id="hero-open">');
-    expect(repairPrompt).toContain('<previous_scene_script id="hero-open">');
-    expect(repairPrompt).toContain('tl.from(".hero"');
-    expect(repairPrompt).not.toContain('<scene_html id="cta-close">');
-    expect(result.draft.html).toContain('data-part="deploy-btn"');
+    expect(caught).toEqual(
+      new Error("model-call budget exhausted before author source: 6 logical calls"),
+    );
+    expect(preservedRaw).toBe(first);
   });
 
   it("a clean slot response costs exactly one call (no repair round fires)", async () => {

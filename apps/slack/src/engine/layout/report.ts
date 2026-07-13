@@ -150,6 +150,8 @@ export interface DirectLayoutIssue {
   componentRootPart?: string;
   /** Importance of a storyboard moment when this issue is moment-scoped. */
   momentImportance?: "primary" | "supporting";
+  /** The finding sits on (or inside) the author-declared primary subject. */
+  declaredPrimary?: boolean;
   insideCameraWorld?: boolean;
   /** The subject IS a data-camera-world plane (overflow there is by design). */
   isCameraWorld?: boolean;
@@ -699,7 +701,10 @@ function loadBrowserAudit(name: "layout-audit.browser.js" | "contrast-audit.brow
 // entrance motion, and explicit full-move destinations become primary routes.
 // v40: typed primary focal/camera samples persist structured containment bounds
 // for the one measured, same-attempt S6.10 repair and its reinspection proof.
-const QA_CACHE_VERSION = 40;
+// v41: author-declared per-scene primary selectors (Luna motion intent) drive
+// continuous-motion focal attention, waive layout_intent_missing, and flag
+// contrast findings on the declared primary subject.
+const QA_CACHE_VERSION = 41;
 
 /** Everything environment-side that can change the verdict for the same draft. */
 let cachedStaticFingerprint: string | undefined;
@@ -779,6 +784,8 @@ function qaCacheKey(projectDir: string, draft: DirectCompositionDraft): string {
     .update(draft.html)
     .update("\0")
     .update(JSON.stringify(draft.storyboard))
+    .update("\0")
+    .update(JSON.stringify(draft.declaredPrimarySelectors ?? null))
     .digest("hex");
 }
 
@@ -3564,9 +3571,9 @@ function formatIssue(value: DirectLayoutIssue): string {
   const when = (value.occurrences ?? 0) > 1
     ? `t=${value.firstSeen?.toFixed(2)}–${value.lastSeen?.toFixed(2)}s`
     : `t=${value.time.toFixed(2)}s`;
-  return `${value.code} ${value.selector} (${when}): ${value.message}${
-    value.fixHint ? ` Fix: ${value.fixHint}` : ""
-  }`;
+  return `${value.code}${value.declaredPrimary ? " [declared primary subject]" : ""} ${
+    value.selector
+  } (${when}): ${value.message}${value.fixHint ? ` Fix: ${value.fixHint}` : ""}`;
 }
 
 /* ----------------------------------------------- rendered temporal judge */
@@ -4399,6 +4406,46 @@ export async function inspectDirectComposition(
             ...(entry.suggestedColor ? { suggestedColor: entry.suggestedColor } : {}),
           },
         });
+      }
+      // Author-declared primary subjects make contrast triage honest: low
+      // contrast ON the declared subject is load-bearing feedback, while
+      // supporting microcopy stays ordinary advisory evidence. Best-effort
+      // annotation only; it never changes severity.
+      const declaredScene = draft.declaredPrimarySelectors
+        ? draft.storyboard.find((scene) =>
+          time >= scene.startSec && time < scene.startSec + scene.durationSec)
+        : undefined;
+      const declaredPrimarySelector = declaredScene
+        ? draft.declaredPrimarySelectors?.[declaredScene.id]
+        : undefined;
+      if (declaredPrimarySelector && sampleIssues.length) {
+        const declaredFlags = await page.evaluate(
+          (payload: { selectors: string[]; primary: string }) => {
+            let primary: Element | null = null;
+            try {
+              primary = document.querySelector(payload.primary);
+            } catch {
+              return payload.selectors.map(() => false);
+            }
+            return payload.selectors.map((selector) => {
+              try {
+                const element = selector ? document.querySelector(selector) : null;
+                return Boolean(
+                  element && primary && (element === primary || primary.contains(element)),
+                );
+              } catch {
+                return false;
+              }
+            });
+          },
+          {
+            selectors: sampleIssues.map((issue) => issue.selector ?? ""),
+            primary: declaredPrimarySelector,
+          },
+        );
+        for (const [flagIndex, sampleIssue] of sampleIssues.entries()) {
+          if (declaredFlags[flagIndex]) sampleIssue.declaredPrimary = true;
+        }
       }
       // Resolve while the page is still parked on THIS sample. Deferring until
       // after the loop used the final seek's DOM state and, more importantly,
@@ -5477,7 +5524,17 @@ export async function inspectDirectComposition(
           ]
         : [];
 
-    const issues = collapseIssues(rawIssues.filter((issue) =>
+    // The declared-intent contract (per-scene primary subjects) replaces the
+    // legacy data-layout declaration expectation. A film authored under that
+    // contract is not additionally asked to annotate data-layout-* attributes
+    // it never promised; every measured geometry finding still applies.
+    const declaredIntentPresent = Boolean(
+      draft.declaredPrimarySelectors && Object.keys(draft.declaredPrimarySelectors).length,
+    );
+    const routeIssues = declaredIntentPresent
+      ? rawIssues.filter((issue) => issue.code !== "layout_intent_missing")
+      : rawIssues;
+    const issues = collapseIssues(routeIssues.filter((issue) =>
       issue.code.startsWith("interaction_") ||
       // A degraded cut's time IS its boundary window — the window suppression
       // exists for geometry heuristics sampled mid-motion, not for this
@@ -5576,7 +5633,12 @@ export async function inspectDirectComposition(
           draft.storyboard,
           duration,
           { width, height },
-          { mapSeekTime: toOutputTime },
+          {
+            mapSeekTime: toOutputTime,
+            ...(draft.declaredPrimarySelectors
+              ? { declaredFocalBySceneId: draft.declaredPrimarySelectors }
+              : {}),
+          },
         );
         for (const window of continuousMotion.quietWindows.filter(
           (entry) =>

@@ -2744,21 +2744,22 @@ function recordSlotScriptRepairs(repairs: {
  * truncated tail by re-requesting only the missing scenes (keeping every
  * completed scene AND treating a scene whose <scene_script> is missing as
  * incomplete — an interior without a script assembles into a scene that never
- * moves), then enforces the scaffold contract with ONE scene-scoped repair
- * round (the bounded scene-scoped retry: a dropped component root or camera
- * station re-requests only the offending scenes at ~continuation cost instead
- * of burning a whole-document paid attempt). A response missing every scene,
- * or still missing interiors/scripts after continuation, throws so the loop
- * falls back to the whole-doc ladder.
+ * moves). Raw scaffold gaps are assembled without a paid call so the complete
+ * deterministic source registry gets first ownership; only bindings still
+ * rejected by L3 reach the outer scene-scoped repair seam. A response missing
+ * every scene, or still missing interiors/scripts after continuation, throws
+ * so the loop falls back to the whole-doc ladder.
  */
 export async function authorSlotDraft(
   provider: AgentProvider,
   args: DirectCompositionArgs,
   initialPrompt: string,
   completeOptions: CompleteOptions,
+  onRaw?: (raw: string) => void,
 ): Promise<{ draft: DirectCompositionDraft; raw: string; slots: ParsedSceneSlots }> {
   const storyboard = args.lockedStoryboard!;
   let raw = await completeSourceWithContinuation(provider, initialPrompt, completeOptions);
+  onRaw?.(raw);
   let slots = extractSceneSlots(raw);
   const missingOf = (parsed: ParsedSceneSlots): DirectScene[] =>
     storyboard.filter((scene) => {
@@ -2783,6 +2784,7 @@ export async function authorSlotDraft(
     }
     if (!slots.filmStyle && contSlots.filmStyle) slots = { ...slots, filmStyle: contSlots.filmStyle };
     raw = `${raw}\n<!-- slot continuation -->\n${contRaw}`;
+    onRaw?.(raw);
   };
   let missing = missingOf(slots);
   const anyHtml = storyboard.some((scene) => slots.scenes.get(scene.id)?.html?.trim());
@@ -2795,29 +2797,18 @@ export async function authorSlotDraft(
     await requestScenes(missing);
     missing = missingOf(slots);
   }
-  // Scaffold-contract enforcement (the scene-scoped retry): one bounded repair
-  // round for scenes that dropped a host-guaranteed binding the L2 reconcilers
-  // cannot restore. If the round does not converge, assemble anyway — the L3
-  // static gate still owns the finding (gates are never loosened).
+  // Raw slot markup cannot know what the complete deterministic source
+  // registry will restore after host assembly. Harborview reached a paid
+  // scaffold re-request here before L2 could rebuild the missing bindings.
+  // Keep the raw gaps visible, but let assembly + the full L2 registry run
+  // before the existing L3 scene-repair seam considers another provider call.
   const violations = slotScaffoldViolations(storyboard, slots);
   if (violations.size) {
     const offenders = storyboard.filter((scene) => violations.has(scene.id));
     process.stderr.write(
-      `[author] slot scaffold repair: ${violations.size} scene(s) dropped host-contract ` +
-        `bindings (${offenders.map((s) => s.id).join(", ")}); re-requesting only those scenes\n`,
+      `[author] slot scaffold preflight: ${violations.size} scene(s) have raw host-contract ` +
+        `gaps (${offenders.map((s) => s.id).join(", ")}); deferring to deterministic L2\n`,
     );
-    const violationCount = [...violations.values()].reduce((sum, notes) => sum + notes.length, 0);
-    await requestScenes(offenders, violations, "scaffold-repair");
-    const remaining = slotScaffoldViolations(storyboard, slots);
-    const remainingCount = [...remaining.values()].reduce((sum, notes) => sum + notes.length, 0);
-    const restored = Math.max(0, violationCount - remainingCount);
-    if (restored) recordSentinelScaffoldRestoration("scene-repair", restored);
-    if (remaining.size) {
-      process.stderr.write(
-        `[author] slot scaffold repair left ${remaining.size} scene(s) unresolved; ` +
-          `assembling for the unchanged L3 gate: ${[...remaining.keys()].join(", ")}\n`,
-      );
-    }
   }
   const { html, missingHtml, missingScript, scriptRepairs } = assembleSlotComposition({
     storyboard,
@@ -3194,7 +3185,17 @@ async function authorCompositionLoop(
       }
       if (!parsedDraft) {
         if (useSlots) {
-          const slotResult = await authorSlotDraft(provider, args, prompt, completeOptions);
+          const slotResult = await authorSlotDraft(
+            provider,
+            args,
+            prompt,
+            completeOptions,
+            (value) => {
+              // Persist the already-paid initial response even if a bounded
+              // continuation fails before authorSlotDraft can return.
+              attemptRaw = value;
+            },
+          );
           raw = slotResult.raw;
           parsedDraft = slotResult.draft;
           activeSlots = slotResult.slots;
@@ -3261,6 +3262,13 @@ async function authorCompositionLoop(
             const candidateValidation = await validateDirectComposition(args.projectDir, candidate);
             const beforeCount = new Set(validation.errors.map(findingSignature)).size;
             const afterCount = new Set(candidateValidation.errors.map(findingSignature)).size;
+            const scaffoldCount = (errors: string[]): number =>
+              new Set(errors.map(findingSignature).filter((signature) =>
+                /^(?:camera_region_missing|component_root_missing|component_beat_unbound):/.test(
+                  signature,
+                )
+              )).size;
+            const beforeScaffoldCount = scaffoldCount(validation.errors);
             if (candidateValidation.ok || afterCount < beforeCount) {
               process.stderr.write(
                 `[author] scene-scoped static repair improved ${sceneRepair.sceneIds.join(", ")}: ` +
@@ -3274,6 +3282,13 @@ async function authorCompositionLoop(
               activeSlots = sceneRepair.slots;
               raw = `${raw}\n<!-- scene validation repair -->\n${sceneRepair.raw}`;
               attemptRaw = raw;
+              const restoredScaffoldBindings = Math.max(
+                0,
+                beforeScaffoldCount - scaffoldCount(candidateValidation.errors),
+              );
+              if (restoredScaffoldBindings) {
+                recordSentinelScaffoldRestoration("scene-repair", restoredScaffoldBindings);
+              }
             } else {
               process.stderr.write(
                 `[author] scene-scoped static repair did not reduce findings; keeping the previous draft\n`,

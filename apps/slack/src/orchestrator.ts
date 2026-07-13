@@ -772,6 +772,9 @@ async function captureLunaTemporalEvidence(
 ): Promise<void> {
   await reportTemporalEvidence(dir, {
     framesPerShot: 5,
+    declaredPrimarySelectors: Object.fromEntries(
+      intent.acts.map((act) => [act.sceneId, act.primarySelector]),
+    ),
     declaredBoundaries: intent.boundaries.map((boundary) => ({
       fromScene: boundary.fromScene,
       toScene: boundary.toScene,
@@ -796,6 +799,7 @@ async function createVideoWithLuna(
   const stages: StageReceipt[] = [];
   const directorStarted = performance.now();
   pulseAuthorStage(options.onStageProgress, "luna-director", "started");
+  const targetDurationSec = options.lengthSec ?? DEFAULT_TARGET_LENGTH_SEC;
   const facts: LunaFactEnvelope = {
     version: 1,
     product: options.product,
@@ -803,7 +807,11 @@ async function createVideoWithLuna(
     whatShipped: options.whatShipped,
     ...(options.audience ? { audience: options.audience } : {}),
     ...(options.tone ? { tone: options.tone } : {}),
-    targetDurationSec: options.lengthSec ?? DEFAULT_TARGET_LENGTH_SEC,
+    targetDurationSec,
+    // The same pacing freedom the legacy brief always granted in prose
+    // ("a pacing center, not an exact duration"), declared as data.
+    minDurationSec: Math.min(targetDurationSec, Math.max(6, Math.floor(targetDurationSec * 0.8))),
+    maxDurationSec: Math.max(targetDurationSec, Math.min(60, Math.ceil(targetDurationSec * 1.2))),
     ...((options.lunaContext ?? options.context)
       ? { context: options.lunaContext ?? options.context }
       : {}),

@@ -221,6 +221,14 @@ export interface DirectScene {
 export interface DirectCompositionDraft {
   html: string;
   storyboard: DirectScene[];
+  /**
+   * Author-declared semantic primary selector per scene id (Luna motion
+   * intent). When present, browser/temporal QA measures focal visibility and
+   * motion against these declared subjects instead of synthesized tween
+   * attention, and the legacy data-layout declaration expectation is waived —
+   * the declared-intent contract replaces it.
+   */
+  declaredPrimarySelectors?: Record<string, string>;
 }
 
 export interface DirectCompositionManifest {

@@ -31,8 +31,11 @@ Responses API and the invoking user's Slack OAuth token. Keep its
 ## One-session creative sequence
 
 1. **Verified intake.** The Slack host writes a fact envelope containing the
-   product, launch facts, audience, target runtime, authorized workspace
-   context, and unsupported-claim prohibition.
+   product, launch facts, audience, target runtime with an accepted
+   min/max duration window (the legacy brief's "pacing center" freedom,
+   declared as data), authorized workspace context, and unsupported-claim
+   prohibition. Luna chooses the exact duration inside the window on create;
+   self-review and revision stay exact to the accepted cut.
 2. **Asset intake first.** `/sequences assets` remains deterministic. It stores
    approved screenshots and palette notes. On create, the host copies only
    those regular files into the isolated worker workspace and verifies their
@@ -45,6 +48,11 @@ Responses API and the invoking user's Slack OAuth token. Keep its
    persistent entities, chosen boundary anchors/strategies, causal actions,
    meaningful camera arrival/settle/hold windows, the peak, and final rest.
    These are Luna's choices. The host only validates their existence/timing.
+   Boundary anchors are declared only when a boundary carries an element; a
+   boundary that carries nothing (a motivated hard cut) omits them, and a
+   declared anchor must exist. Browser and temporal QA measure focal
+   visibility and motion against each act's declared `primarySelector`, never
+   against synthesized tween attention.
 5. **Full source.** The same thread authors the storyboard, DOM/CSS/SVG assets,
    paused seekable GSAP timeline, camera, transitions, and interactions. Railway
    does not permit the Codex Linux namespace sandbox, so Luna calls no tools; it
@@ -113,14 +121,20 @@ motion. Their rollback is removal after persisted Luna evidence shows the
 literal protocol field and canonical bracket binding are consistently emitted;
 the `data-scene` binding is the permanent runtime contract.
 
-Some existing direct-composition findings still encode taste as correctness
-(for example quiet-gap/beat density and the minimum scene count). Audit those
-later using real Luna artifacts. Move only proven taste rules to advisory for
-the Luna route; keep factual, security, seeking, visibility, binding, browser,
-and encoding failures hard. Repair prompts are also later work: an authored
-hard defect should return to the same thread with exact mechanical evidence,
-while an engine defect is fixed model-free at its lowest owner. Never restore
-the old multi-model repair committee around Luna.
+The first taste-vs-mechanics pass ran 2026-07-13 against real Luna artifacts
+(PROBE_LOG): films authored under the declared-intent contract waive
+`layout_intent_missing` (the contract replaces the legacy data-layout
+declaration expectation), continuous-motion focal tracking binds to the
+declared per-act primary selector, and `contrast_aa` findings on the declared
+primary subject are flagged so triage separates load-bearing copy from
+supporting microcopy. Quiet windows, frame underfill, and static-frame
+findings remain visible advisories. Storyboard `cut` declarations normalize on
+this route exactly as on the legacy route (malformed declarations degrade to no
+cut). Keep factual, security, seeking, visibility, binding, browser, and
+encoding failures hard. Repair prompts are still later work: an authored hard
+defect should return to the same thread with exact mechanical evidence, while
+an engine defect is fixed model-free at its lowest owner. Never restore the
+old multi-model repair committee around Luna.
 
 ## Route and worker configuration
 

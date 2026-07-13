@@ -88,13 +88,18 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "plane + data-region stations at their exact worldLayout rects " +
       "(buildSceneSkeletons/buildSceneSlotInteriors). HONESTY (2026-07-06 final " +
       "audit): the model returns the interiors, so omission stays representable " +
-      "— the ladder is: template → slotScaffoldViolations scene-scoped repair " +
-      "(missing stations re-request ONLY that scene) → reconcileCameraWorldPlanes " +
-      "L2 plane wrap → L3 prose findings canonicalized by findingSignature as " +
+      "— the ladder is now: template → raw gap diagnostics → host assembly → " +
+      "reconcileCameraWorldPlanes/component bindings/region homes at L2 → L3 " +
+      "findings canonicalized by findingSignature as " +
       "camera_region_missing / camera_part_missing. The old 'impossible' label " +
       "overstated the guarantee (p6/p7 probes still hit the codes); the L1 " +
       "telemetry now counts bindings PRESERVED in the shipped document, not " +
-      "planned by the template.",
+      "planned by the template. Harborview 2026-07-13 exposed an ordering false " +
+      "positive: three scenes reached a paid scaffold-repair seam before the " +
+      "existing component-binding/region-home L2 passes could restore station " +
+      "wrappers from surviving typed component evidence. Raw gap checks are now " +
+      "observational only; an empty or ambiguous station that remains missing " +
+      "after L2/L3 is still blocking and paid scene-repair eligible.",
   },
   {
     id: "components.root",
@@ -108,11 +113,12 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "2026-07-05 incident 1b: a declared component had no data-part root. " +
       "The templates stamp the kit exemplar root (correct tag, cmp-<kind> class, " +
       "real id as data-part) inside its station (componentSkeletonMarkup). " +
-      "HONESTY (2026-07-06 final audit): same ladder as camera.world-plane — " +
-      "template → scene-scoped slot repair for a root with NO trace at all → " +
-      "reconcileComponentBindings for near-misses (kind-marked/unique candidate) " +
-      "→ these codes as the L3 gate. Never labeled 'impossible' again while the " +
-      "model authors the interiors.",
+      "HONESTY (2026-07-06 final audit, corrected by Harborview 2026-07-13): " +
+      "the model may still drop it, but the paid decision occurs only after " +
+      "reconcileComponentBindings handles exact-id/kind/semantic near-misses and " +
+      "L3 emits these codes. A root with genuinely no safe candidate then receives " +
+      "one scene-scoped repair. Never labeled 'impossible' while the model authors " +
+      "the interiors.",
   },
   {
     id: "layout.scene-stack",

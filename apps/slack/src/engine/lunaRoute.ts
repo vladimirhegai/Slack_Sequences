@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { parseHTML } from "linkedom";
 import type { ProviderId } from "@sequences/platform/providers";
+import { normalizeStoryboardCutIntent } from "./cutContract.ts";
 import type { DirectCompositionDraft, DirectScene } from "./directComposition.ts";
 import { resolveFeatureFlag, type SlackSequencesEnvSource } from "./featureFlags.ts";
 import {
@@ -54,6 +55,12 @@ export interface LunaFactEnvelope {
   audience?: string;
   tone?: string;
   targetDurationSec: number;
+  /**
+   * Host-accepted duration window. Luna chooses the exact cut length inside
+   * it; when absent the target is exact (self-review/revision resumes).
+   */
+  minDurationSec?: number;
+  maxDurationSec?: number;
   context?: string;
   provenance: {
     source: "slack-user-and-authorized-workspace-context";
@@ -79,8 +86,13 @@ export interface LunaMotionIntentV1 {
     fromScene: string;
     toScene: string;
     strategy: string;
-    outgoingAnchorSelector: string;
-    incomingAnchorSelector: string;
+    /**
+     * Anchors are declared only when the boundary carries or hands off an
+     * element. A boundary that carries nothing (a motivated hard cut) has no
+     * anchor; the host validates anchors when present, never requires them.
+     */
+    outgoingAnchorSelector?: string;
+    incomingAnchorSelector?: string;
   }>;
   cameraMoves: Array<Record<string, unknown> & {
     sceneId: string;
@@ -144,6 +156,29 @@ export interface LunaAuthoredComposition {
 export interface LunaAssetTransaction {
   commit(): void;
   rollback(): void;
+}
+
+/**
+ * The host-accepted duration window for a fresh create. The legacy brief
+ * always treated the requested length as a pacing center, not an exact
+ * duration; the director route gets the same freedom, declared as data in
+ * the fact envelope rather than prose.
+ */
+export function lunaDurationBounds(
+  facts: Pick<LunaFactEnvelope, "targetDurationSec" | "minDurationSec" | "maxDurationSec">,
+): { minSec: number; maxSec: number } {
+  const target = facts.targetDurationSec;
+  const minSec = facts.minDurationSec ?? target;
+  const maxSec = facts.maxDurationSec ?? target;
+  if (
+    !Number.isFinite(target) || target <= 0 ||
+    !Number.isFinite(minSec) || minSec <= 0 ||
+    !Number.isFinite(maxSec) || maxSec < minSec ||
+    target < minSec || target > maxSec
+  ) {
+    throw new Error("Luna fact envelope has an invalid accepted duration window");
+  }
+  return { minSec, maxSec };
 }
 
 export function resolveAuthorRoute(
@@ -384,6 +419,15 @@ function parseStoryboard(raw: string): DirectScene[] {
       throw new Error(`Luna storyboard scene ${index + 1} has an invalid or duplicate core field`);
     }
     ids.add(candidate.id);
+    // The optional typed cut is host mechanics: normalize it exactly like the
+    // legacy route does, so a malformed declaration degrades to no cut (the
+    // film stays buildable) instead of reaching the runtime compiler raw.
+    const record = candidate as Record<string, unknown>;
+    if (record.cut !== undefined) {
+      const cut = normalizeStoryboardCutIntent(record.cut);
+      if (cut) record.cut = cut;
+      else delete record.cut;
+    }
   }
   return scenes as DirectScene[];
 }
@@ -574,6 +618,20 @@ function finite(value: unknown, label: string): number {
   return value;
 }
 
+/**
+ * Validate a creative declaration the director chose to make. Absence is a
+ * valid creative choice (a hard cut carries no anchor); a present selector
+ * must still resolve, because declared-but-dangling intent is mechanical.
+ */
+function optionalSelector(
+  document: ReturnType<typeof parseHTML>["document"],
+  selector: unknown,
+  label: string,
+): void {
+  if (selector === undefined || selector === null || selector === "") return;
+  requireSelector(document, selector, label);
+}
+
 function requireSelector(
   document: ReturnType<typeof parseHTML>["document"],
   selector: unknown,
@@ -720,8 +778,8 @@ export function parseLunaMotionIntent(
     ) {
       throw new Error(`Luna boundary ${index + 1} does not match its scene handoff`);
     }
-    requireSelector(document, boundary.outgoingAnchorSelector, `boundaries[${index}].outgoingAnchorSelector`);
-    requireSelector(document, boundary.incomingAnchorSelector, `boundaries[${index}].incomingAnchorSelector`);
+    optionalSelector(document, boundary.outgoingAnchorSelector, `boundaries[${index}].outgoingAnchorSelector`);
+    optionalSelector(document, boundary.incomingAnchorSelector, `boundaries[${index}].incomingAnchorSelector`);
   }
   for (const [index, camera] of intent.cameraMoves.entries()) {
     if (!sceneIds.has(camera.sceneId)) throw new Error(`Luna camera move ${index + 1} names an unknown scene`);
@@ -977,7 +1035,7 @@ function materializeLunaResult(
   projectDir: string,
   kind: string,
   result: LunaWorkerResult,
-  expectedDurationSec: number,
+  acceptedDuration: { minSec: number; maxSec: number },
 ): LunaAuthoredComposition {
   const persisted = persistWorkerResult(projectDir, kind, result);
   const html = requiredText(persisted.files, "composition.html");
@@ -988,9 +1046,13 @@ function materializeLunaResult(
     html,
     storyboard,
   );
-  if (Math.abs(intent.durationSec - expectedDurationSec) > 0.05) {
+  if (
+    intent.durationSec < acceptedDuration.minSec - 0.05 ||
+    intent.durationSec > acceptedDuration.maxSec + 0.05
+  ) {
     throw new Error(
-      `Luna authored ${intent.durationSec}s but the verified duration is ${expectedDurationSec}s`,
+      `Luna authored ${intent.durationSec}s but the verified envelope accepts ` +
+        `${acceptedDuration.minSec}-${acceptedDuration.maxSec}s`,
     );
   }
   requiredText(persisted.files, "director-treatment.md");
@@ -1012,7 +1074,16 @@ function materializeLunaResult(
       .sort(),
   ].join("\n"));
   return {
-    draft: { html: executableHtml, storyboard },
+    draft: {
+      html: executableHtml,
+      storyboard,
+      // Browser/temporal QA measures focal visibility and motion against the
+      // director's declared semantic subjects instead of synthesized tween
+      // attention (the 2026-07-13 simulator probe's noise source).
+      declaredPrimarySelectors: Object.fromEntries(
+        intent.acts.map((act) => [act.sceneId, act.primarySelector]),
+      ),
+    },
     intent,
     worker: result,
     rawSourceSha256,
@@ -1040,7 +1111,7 @@ export async function authorLunaComposition(input: {
     files,
   });
   if (result.jobId !== input.jobId) throw new Error("Luna worker returned a different job ID");
-  return materializeLunaResult(input.projectDir, "create", result, input.facts.targetDurationSec);
+  return materializeLunaResult(input.projectDir, "create", result, lunaDurationBounds(input.facts));
 }
 
 function acceptedBundleFiles(
@@ -1200,7 +1271,12 @@ export async function selfReviewLunaComposition(input: {
     status: "completed",
     rolloutSha256: result.rolloutSha256,
   }, "worker turn completed; host acceptance pending");
-  return materializeLunaResult(input.projectDir, "self-review", result, session.durationSec);
+  // The accepted film's duration is settled on resume; only a fresh create
+  // with a new verified envelope may change runtime.
+  return materializeLunaResult(input.projectDir, "self-review", result, {
+    minSec: session.durationSec,
+    maxSec: session.durationSec,
+  });
 }
 
 export async function reviseLunaComposition(input: {
@@ -1269,7 +1345,10 @@ export async function reviseLunaComposition(input: {
     status: "completed",
     rolloutSha256: result.rolloutSha256,
   }, "worker turn completed; host acceptance pending");
-  return materializeLunaResult(input.projectDir, "revision", result, session.durationSec);
+  return materializeLunaResult(input.projectDir, "revision", result, {
+    minSec: session.durationSec,
+    maxSec: session.durationSec,
+  });
 }
 
 export function activateLunaAssets(

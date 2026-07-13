@@ -10,11 +10,156 @@ fix the lowest deterministic owner, add a regression, and record the honest
 terminal status. Provider faults are environmental but still count in call
 accounting.
 
-Current boundary (2026-07-12): this ledger now runs through the early-stopped
-ProofLane J probe. The next work is S6.9's guardrail/retry inventory, not probe
-K. The active sprint permits at most two new paid probes total and stops after
-the first runtime-valid, human-acceptable MP4; advisory-only residue is not a
-reason to rerun.
+Current boundary (2026-07-13): this ledger now runs through the Luna
+official-route create probes (job `d` and its model-free replays), the live
+Slack boundary-anchor hard failure, and their deterministic fixes below.
+
+## 2026-07-13 Luna official-route create probes
+
+### Harborview — `luna-official-route-20260713-d` (paid worker turn; host materialization hard-fail, later fixed)
+
+First create through the real `codex-worker`: `gpt-5.6-luna` / high, Codex CLI
+0.144.1, one authenticated turn, 4m32s, 10,978 input / 14,856 output tokens
+(4,716 reasoning). Luna returned a complete six-file bundle on its first pass
+(23,335-byte composition, treatment, storyboard, motion intent, asset manifest,
+one 539-byte agent-created SVG mark). The host then hard-failed materialization
+on `Luna motion intent must declare version 1 and compositionId` — Luna omitted
+only the literal `version: 1` protocol field. No render; the paid bytes and
+worker receipt are preserved under `slack-project/planning/luna/runs/0001-create/`.
+
+Deterministic fix (already committed): the v1 parser supplies the missing
+numeric version in memory while explicit unknown versions stay hard; raw bytes
+are never rewritten. Proven by the model-free replays below.
+
+### `luna-official-route-20260713-d-replay` / `-replay-2` (model-free exact replays)
+
+The same paid bundle materialized offline through the fixed parser, then the
+full static + real-browser gate, temporal evidence, and render. Replay-2
+result: runtime valid, 0 hard errors, 48 browser samples, 33 advisory issues
+(14 `contrast_aa`, 4 `layout_intent_missing`, 4 `composition_frame_underfilled`,
+4 `motion_quiet_window`, 3 `content_overlap`, 2 `moment_static_frame`, 2 info),
+4 rendered quiet windows (longest 5.00s), no reversal/jerk markers, and a
+published 16.0s 1920x1080 H.264 MP4 (`renders/harborview-20260713-103803.mp4`).
+Human review: coherent, on-brief, deliberately sparse editorial film. The
+advisory residue is taste evidence, not a rerun justification. The rendered
+self-review leg has still never executed on the real route.
+
+### Live Slack create — boundary-anchor hard failure (fail-loud; fixed below)
+
+An owner-run live `/sequences` create on Railway died at materialization with
+`Luna motion intent is missing boundaries[0].outgoingAnchorSelector`: the host
+required anchor selectors on every declared boundary, including strategies that
+carry nothing across the cut. Luna's omission was a valid creative declaration;
+the paid turn was lost to host over-strictness, the exact class the 2026-07-13
+route audit flagged. The rejected artifact lives in the Railway worker volume
+(`$CODEX_HOME/sequences-jobs/`), not locally.
+
+#### Post-probe deterministic fixes — 2026-07-13 (this commit)
+
+All model-free, at the lowest owner, with regressions in `lunaRoute.test.ts`
+and `continuousMotion.test.ts`:
+
+1. **Boundary anchors are optional.** `parseLunaMotionIntent` validates
+   anchor selectors when declared, never requires them (a motivated hard cut
+   carries no anchor). Declared-but-dangling anchors remain hard.
+2. **Duration is a window, not an exact equality.** The fact envelope now
+   carries `minDurationSec`/`maxDurationSec` (the same 0.8x-1.2x pacing
+   freedom the legacy brief granted in prose); create accepts any duration
+   inside the window; self-review/revision stay exact to the accepted cut.
+3. **QA measures Luna against its declared intent.** Browser and temporal
+   continuous-motion focal tracking now follow each act's declared
+   `primarySelector` instead of synthesized tween attention (the simulator
+   probe's 51-sample noise source). QA cache bumped to v41.
+4. **Advisory reclassification.** `layout_intent_missing` is waived for films
+   authored under the declared-intent contract; `contrast_aa` findings on the
+   declared primary subject are flagged `[declared primary subject]` so
+   self-review triage separates load-bearing copy from supporting microcopy.
+   No hard gate was loosened; no advisory severity was raised.
+5. **Typed cuts normalize on the Luna route.** `parseStoryboard` runs
+   `normalizeStoryboardCutIntent` so a malformed optional `cut` declaration
+   degrades to no cut instead of reaching the runtime compiler raw.
+6. **Prompt contract updates** (`luna-director.md`): anchors documented as
+   conditional, the duration window, the inline-vs-file asset animation
+   boundary, the declared-primary measurement contract, and a verified typed
+   `cut` reference replacing the previous dangling mention.
+
+No probe rerun is performed here; the next authorized create should prove the
+end-to-end path including the rendered self-review leg.
+
+## 2026-07-13 Post-freeze motion-design audit probe (Harborview)
+
+### Harborview — `motion-audit-harborview-20260713` (fail-loud; no repair attempted)
+
+One owner-authorized probe to look for motion-design defects on an ordinary
+brief (new domain, 16s, before→action→result→CTA, one supplied metric fact).
+Documented probe environment: fallback `0`, continuity on, composition audit,
+`--provider openrouter-api --mcp --render --temporal --format both`. Preflight
+at HEAD `80aa701`: Slack typecheck and exact `replay:all` (25/0/0) green.
+
+The run failed loud at `source-author` after ~12 minutes with **no storyboard
+preview, source, render, temporal evidence, or MP4**. Recorded accounting:
+5 logical / 8 physical requests (frame-design 3/4, storyboard 1/2,
+source-author 1/2), one failed physical request, two hedges. Stage durations:
+frame-design 45s, storyboard-plan 7m03s, source-author 1m58s.
+
+Why it failed, step by step: the concept call was slow and hedged (hedge won);
+storyboard attempt 1 exhausted its completion budget and recovered through the
+bounded compact-artifact retry inside one logical attempt, then was accepted
+with three advisory pacing degradations; the first author slot response dropped
+host-contract bindings in three scenes (scatter-sources, converge-rail,
+inbox-action-metric). The scene-scoped repair re-request was then refused by
+the S6.11 atomic reservation — `model-call budget exhausted before author
+source: 6 logical calls` — with the physical budget simultaneously at its 8/8
+cap. Author attempts 1 and 2 both terminated on that reservation exception
+without a provider call; fallback was disabled, so the run wrote `FAILURE.md`
+and published nothing. The budget enforcement behaved as designed; what
+consumed the headroom was planning overhead (three frame-design calls) plus
+latency hedges, leaving no room to repair one ordinary authoring defect.
+
+Motion-design evidence: none rendered. The only motion-relevant findings are
+the storyboard's three advisory pacing degradations — the payoff scene
+introduces 5 surfaces with the last landing 85% into the scene, and both
+2-word metric swaps (`metric-before`, `metric-after`) change framing 0.0s
+after the swap with no reading hold. S6.11's advisory demotion worked: they
+cost zero paid retries. Terminal triage: fail-loud, `runtimeValid=false`,
+status `warn`. Artifacts preserved under
+`.data/projects/motion-audit-harborview-20260713/` (attempt ledger, author
+run, both author exception records, `FAILURE.md`, triage). At probe time this
+failure was recorded without a fix, replay, or rerun.
+
+#### Post-probe deterministic fix — 2026-07-13
+
+Offline investigation found an L2/L5 ordering defect, not a call-budget defect.
+`authorSlotDraft` inspected raw slot markup and immediately bought a
+`scaffold-repair` subcall before `applyDeterministicSourceRepairs` could use
+exact ids, typed component ownership, and region-home reconciliation to restore
+the bindings for free. Raw scaffold gaps are now observational: the host first
+assembles the document and runs the complete deterministic source registry;
+only an unresolved hard L3 binding finding can reach the existing scene-scoped
+paid repair. Logical/physical caps, hedging, hard gates, and prompts are
+unchanged.
+
+The incident also exposed a preservation bug. The 17,962-character first author
+response lived only inside `authorSlotDraft`; when the nested reservation threw,
+the caller's `attemptRaw` was still unset, so the exception artifacts lost the
+paid response. Nested slot failures now carry that raw response back to attempt
+persistence. The original Harborview bytes remain unrecoverable, so the fix is
+proved honestly with a minimized fixture using the exact three offender scene
+ids and their persisted typed obligations, not described as an exact source
+replay. That fixture reproduces the raw-gap pattern and proves existing L2
+restores the typed components/stations with one author response; a no-candidate
+root still reaches one post-L2 scene repair. No provider call, probe rerun,
+fallback, publish, or deploy was performed for the fix.
+
+Stable-tree verification: root and Slack typechecks; focused slot, reliability,
+Sentinel, and telemetry regressions; complete Slack unit suite (82 files / 1,396
+tests); complete root suite (125 files / 1,608 tests, including browser); exact
+S6.12 Probe A and B source replays; `replay:all` (25/0/0); and model-free
+`demo`, `mcp:demo`, `direct:demo`, plus `sequence:check --demo --no-mcp --format
+both`, all green. The A/B replays retain their pre-existing advisory warnings;
+the direct demo remains runtime-valid with its existing one static and ten
+browser warnings. No Harborview render can be inspected because the failed run
+produced neither source nor frames, and no paid rerun was authorized.
 
 ## 2026-07-12 Hackathon stabilization probe preflight
 

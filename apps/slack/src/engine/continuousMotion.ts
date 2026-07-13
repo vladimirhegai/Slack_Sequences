@@ -1000,6 +1000,7 @@ export function continuousMotionAttentionAt(
   scenes: DirectScene[],
   score: ReturnType<typeof resolveFilmDirectionScore>,
   time: number,
+  declaredFocalBySceneId?: Readonly<Record<string, string>>,
 ): {
   scene: DirectScene;
   phrase?: DirectionPhraseV1;
@@ -1009,15 +1010,21 @@ export function continuousMotionAttentionAt(
   if (!scene) return undefined;
   const scoreScene = score.scenes.find((entry) => entry.sceneId === scene.id);
   const phrase = phraseAt(scoreScene?.phrases ?? [], time);
-  const attention = phrase?.attention?.part
-    ? { kind: "part" as const, id: phrase.attention.part }
-    : phrase?.attention?.region
-      ? { kind: "region" as const, id: phrase.attention.region }
-      : phrase?.attention?.selector
-        ? { kind: "selector" as const, id: phrase.attention.selector }
-        : scene.spatialIntent?.focalPart
-          ? { kind: "part" as const, id: scene.spatialIntent.focalPart }
-          : undefined;
+  // An author-declared semantic subject outranks synthesized tween attention:
+  // measuring a 4px accent rail as the focal produced false sub-visibility and
+  // tiny-focal noise on frames that read coherently (2026-07-13 probe).
+  const declared = declaredFocalBySceneId?.[scene.id];
+  const attention = declared
+    ? { kind: "selector" as const, id: declared }
+    : phrase?.attention?.part
+      ? { kind: "part" as const, id: phrase.attention.part }
+      : phrase?.attention?.region
+        ? { kind: "region" as const, id: phrase.attention.region }
+        : phrase?.attention?.selector
+          ? { kind: "selector" as const, id: phrase.attention.selector }
+          : scene.spatialIntent?.focalPart
+            ? { kind: "part" as const, id: scene.spatialIntent.focalPart }
+            : undefined;
   return { scene, ...(phrase ? { phrase } : {}), ...(attention ? { attention } : {}) };
 }
 
@@ -1032,6 +1039,8 @@ export async function captureContinuousMotionEvidence(
     maxSamples?: number;
     /** Converts content time to the registered timeline's physical time. */
     mapSeekTime?: (time: number) => number;
+    /** Author-declared per-scene focal selectors; outrank synthesized attention. */
+    declaredFocalBySceneId?: Readonly<Record<string, string>>;
   } = {},
 ): Promise<ContinuousMotionEvidenceV1> {
   // tsx/esbuild annotates nested functions inside page.evaluate with __name;
@@ -1047,7 +1056,12 @@ export async function captureContinuousMotionEvidence(
   const score = resolveFilmDirectionScore(scenes);
   const raw: ContinuousMotionRawSnapshotV1[] = [];
   for (const time of times) {
-    const directed = continuousMotionAttentionAt(scenes, score, time);
+    const directed = continuousMotionAttentionAt(
+      scenes,
+      score,
+      time,
+      options.declaredFocalBySceneId,
+    );
     if (!directed) continue;
     const snapshot = await page.evaluate(
       (payload: {

@@ -257,6 +257,8 @@ export async function reportTemporalEvidence(
     curveStepSec?: number;
     declaredBoundaries?: readonly TemporalDeclaredBoundary[];
     declaredCameraMoves?: readonly TemporalDeclaredCameraMove[];
+    /** Author-declared per-scene focal selectors; outrank synthesized attention. */
+    declaredPrimarySelectors?: Readonly<Record<string, string>>;
   } = {},
 ): Promise<TemporalReport> {
   const browserPath = findBrowserExecutable();
@@ -464,7 +466,14 @@ export async function reportTemporalEvidence(
         manifest.scenes,
         manifest.durationSec,
         { width: manifest.width, height: manifest.height },
-        { sampleHz: 8, maxSamples: 220, mapSeekTime: toOutputTime },
+        {
+          sampleHz: 8,
+          maxSamples: 220,
+          mapSeekTime: toOutputTime,
+          ...(options.declaredPrimarySelectors
+            ? { declaredFocalBySceneId: options.declaredPrimarySelectors }
+            : {}),
+        },
       );
     }
     const continuityGraph = parseContinuityGraph(current.html);

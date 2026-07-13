@@ -190,6 +190,36 @@ describe("continuous motion evidence", () => {
     expect(attention?.attention).toEqual({ kind: "region", id: "ci-station" });
   });
 
+  it("lets an author-declared primary selector outrank synthesized attention", () => {
+    const routed: DirectScene = {
+      ...scene,
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "pan",
+          toRegion: "ci-station",
+          startSec: 0,
+          durationSec: 2,
+        }],
+      },
+    };
+    const attention = continuousMotionAttentionAt(
+      [routed],
+      resolveFilmDirectionScore([routed]),
+      1,
+      { [routed.id]: "#declared-primary" },
+    );
+    expect(attention?.attention).toEqual({ kind: "selector", id: "#declared-primary" });
+    const withoutDeclared = continuousMotionAttentionAt(
+      [routed],
+      resolveFilmDirectionScore([routed]),
+      1,
+      {},
+    );
+    expect(withoutDeclared?.attention?.kind).not.toBe("selector");
+  });
+
   it("does not derive jerk from boundary micro-samples", () => {
     const evidence = analyzeContinuousMotionSnapshots(
       [scene],

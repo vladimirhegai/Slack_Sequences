@@ -112,6 +112,96 @@ const cleanQa = {
 };
 
 describe("scene-slot retry rung — slots persist across paid attempts", () => {
+  it("persists the paid initial slot response when a nested reservation fails", async () => {
+    const dir = projectDir();
+    const first = [
+      htmlSlot("hero-open", '<div class="hero">Ship faster</div>'),
+      scriptSlot("hero-open", 'tl.from(".hero", { opacity: 0 }, 0.2);'),
+      htmlSlot("cta-close", '<div class="cta">Try it</div>'),
+      // Missing cta-close script enters the bounded continuation subcall.
+    ].join("\n");
+    const budgetError = new Error(
+      "model-call budget exhausted before author source: 6 logical calls",
+    );
+    const complete = vi.fn()
+      .mockResolvedValueOnce(first)
+      .mockRejectedValue(budgetError);
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+
+    await expect(requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: SKILLS,
+      lockedStoryboard: [scene("hero-open", 0), scene("cta-close", 4)],
+    })).rejects.toThrow(/model-call budget exhausted/);
+
+    expect(
+      fs.readFileSync(
+        path.join(dir, "planning", "attempts", "author-1-exception.raw.txt"),
+        "utf8",
+      ),
+    ).toBe(first);
+  });
+
+  it("runs free L2 before buying a scene repair for a truly missing typed root", async () => {
+    const dir = projectDir();
+    const storyboard: DirectScene[] = [
+      {
+        ...scene("hero-open", 0),
+        components: [{ version: 1, id: "deploy-btn", kind: "button", role: "hero" }],
+      },
+      scene("cta-close", 4),
+    ];
+    const first = [
+      "<film_style>.hero{color:#fff}</film_style>",
+      htmlSlot("hero-open", '<div class="hero">Ship faster</div>'),
+      scriptSlot("hero-open", 'tl.from(".hero", { opacity: 0 }, 0.2);'),
+      htmlSlot("cta-close", '<div class="cta">Try it</div>'),
+      scriptSlot("cta-close", 'tl.from(".cta", { opacity: 0 }, 4.2);'),
+    ].join("\n");
+    const repaired = [
+      htmlSlot(
+        "hero-open",
+        '<div class="hero">Ship faster</div>' +
+          '<button class="cmp cmp-button" data-component="button" ' +
+          'data-part="deploy-btn">Deploy</button>',
+      ),
+      scriptSlot("hero-open", 'tl.from(".hero", { opacity: 0 }, 0.2);'),
+    ].join("\n");
+    const complete = vi.fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(repaired);
+    inspectMock.mockResolvedValue(cleanQa as never);
+    const provider: AgentProvider = {
+      id: "openrouter-api",
+      label: "test author",
+      kind: "api",
+      detect: async () => ({ available: true, detail: "test" }),
+      complete,
+    };
+
+    const result = await requestDirectComposition(provider, {
+      brief: "Launch Relay",
+      projectDir: dir,
+      skills: SKILLS,
+      lockedStoryboard: storyboard,
+    });
+
+    expect(result.attempts).toBe(1);
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(String(complete.mock.calls[1]?.[0])).toContain('data-part="deploy-btn"');
+    expect(String(complete.mock.calls[1]?.[0])).toContain(
+      '<previous_scene_html id="hero-open">',
+    );
+    expect(result.draft.html).toContain('data-part="deploy-btn"');
+  });
+
   it("repairs only the failing scene on attempt 2 instead of a whole-document patch", async () => {
     const dir = projectDir();
     const complete = vi.fn()
