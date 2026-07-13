@@ -44,7 +44,7 @@ export interface LunaWorkerResult {
   runCount: number;
   threadId: string;
   status: "completed";
-  model: "gpt-5.6-luna";
+  model: "gpt-5.6-sol";
   reasoningEffort: "high";
   codexVersion: "0.144.1";
   artifactContractSha256: string;
@@ -120,7 +120,7 @@ export class LunaWorkerJobError extends Error {
 
 export function lunaWorkerHealthIsExact(health: LunaWorkerHealth): boolean {
   return health.ok === true && health.authenticated === true &&
-    health.model === "gpt-5.6-luna" && health.reasoningEffort === "high" &&
+    health.model === "gpt-5.6-sol" && health.reasoningEffort === "high" &&
     health.artifactProtocol === ARTIFACT_PROTOCOL &&
     health.artifactSchemaSha256 === ARTIFACT_SCHEMA_SHA256 &&
     health.permissionProfileSha256 === PERMISSION_PROFILE_SHA256 &&
@@ -225,7 +225,7 @@ function assertWorkerResult(value: unknown): LunaWorkerResult {
     candidate.runCount < 1 ||
     typeof candidate.threadId !== "string" ||
     candidate.status !== "completed" ||
-    candidate.model !== "gpt-5.6-luna" ||
+    candidate.model !== "gpt-5.6-sol" ||
     candidate.reasoningEffort !== "high" ||
     candidate.codexVersion !== REQUIRED_CODEX_CLI_VERSION ||
     typeof candidate.artifactContractSha256 !== "string" ||

@@ -13,6 +13,7 @@ import {
   confirmLunaComposition,
   loadLunaSession,
   lunaDurationBounds,
+  type LunaMotionIntentV1,
   normalizeLunaSourceMechanics,
   parseLunaMotionIntent,
   reconcileLunaSessionAfterUndo,
@@ -224,7 +225,7 @@ async function fakeWorker(options: {
         runCount: latest.runCount,
         threadId: "019f5a36-c85c-7541-94d7-c474a8e26d33",
         status: "completed",
-        model: "gpt-5.6-luna",
+        model: "gpt-5.6-sol",
         reasoningEffort: "high",
         codexVersion: "0.144.1",
         artifactContractSha256,
@@ -289,12 +290,12 @@ describe("Luna direct route", () => {
       .toBe("legacy-provider");
   });
 
-  it("requires the exact authenticated Luna/high worker health envelope", () => {
+  it("requires the exact authenticated Sol/high worker health envelope", () => {
     expect(lunaWorkerHealthIsExact({
       ok: true,
       status: "ready",
       version: "0.144.1",
-      model: "gpt-5.6-luna",
+      model: "gpt-5.6-sol",
       reasoningEffort: "high",
       artifactProtocol: "luna-tool-less-artifact-v2",
       artifactSchemaSha256: "7fa551fb261b6dee573aca74507202f5ab0b30ca00fe60cd04141dea8dfe104d",
@@ -304,14 +305,14 @@ describe("Luna direct route", () => {
     expect(lunaWorkerHealthIsExact({
       ok: true,
       version: "0.144.1",
-      model: "gpt-5.6-luna",
+      model: "gpt-5.6-sol",
       reasoningEffort: "medium",
       authenticated: true,
     })).toBe(false);
     expect(lunaWorkerHealthIsExact({
       ok: true,
       version: "0.144.1",
-      model: "gpt-5.6-luna",
+      model: "gpt-5.6-sol",
       reasoningEffort: "high",
       authenticated: false,
     })).toBe(false);
@@ -360,7 +361,7 @@ describe("Luna direct route", () => {
       ]));
       expect(loadLunaSession(result.projectDir)).toMatchObject({
         threadId: "019f5a36-c85c-7541-94d7-c474a8e26d33",
-        model: "gpt-5.6-luna",
+        model: "gpt-5.6-sol",
         reasoningEffort: "high",
       });
     } finally {
@@ -685,6 +686,77 @@ describe("Luna direct route", () => {
     }
   });
 
+  it("accepts the exact repaired final-hold artifact from job 142fe4e5 without spending another Luna turn", () => {
+    const fixturePath = path.join(
+      import.meta.dirname,
+      "fixtures",
+      "luna-final-hold-subject-selector-20260713",
+      "motion-intent.json",
+    );
+    // The paid artifact intentionally had no trailing newline; keep the source
+    // fixture editor-friendly while reconstructing those exact 5,920 bytes.
+    const rawIntent = fs.readFileSync(fixturePath, "utf8").replace(/\r?\n$/, "");
+    expect(sha256(Buffer.from(rawIntent, "utf8")))
+      .toBe("128056f10b7c1f452a34e5c6c687ff35fb3c21e3d7b0b7cd2880e3a9d74eed63");
+
+    const incident = JSON.parse(rawIntent) as Omit<LunaMotionIntentV1, "finalRestingHold"> & {
+      finalRestingHold: { startSec: number; endSec: number; subjectSelector: string };
+    };
+    const incidentStoryboard = incident.acts.map((act) => ({
+      id: act.sceneId,
+      title: act.sceneId,
+      purpose: `Preserve the accepted storyboard window for ${act.sceneId}.`,
+      startSec: act.startSec,
+      durationSec: act.endSec - act.startSec,
+    }));
+    const selectors = new Set<string>();
+    const rememberSelector = (candidate: unknown) => {
+      if (typeof candidate === "string" && /^#[A-Za-z][\w-]*$/.test(candidate)) {
+        selectors.add(candidate.slice(1));
+      }
+    };
+    incident.acts.forEach((act) => rememberSelector(act.primarySelector));
+    incident.boundaries.forEach((boundary) => {
+      rememberSelector(boundary.outgoingAnchorSelector);
+      rememberSelector(boundary.incomingAnchorSelector);
+    });
+    incident.cameraMoves.forEach((move) => rememberSelector(move.targetSelector));
+    incident.interactions.forEach((interaction) => {
+      rememberSelector(interaction.actorSelector);
+      rememberSelector(interaction.targetSelector);
+      rememberSelector(interaction.resultSelector);
+    });
+    rememberSelector(incident.finalRestingHold.subjectSelector);
+    const incidentHtml = `<main data-composition-id="${incident.compositionId}" data-duration="${incident.durationSec}">
+      ${incidentStoryboard.map((scene, index) => `<section id="incident-scene-${index}" data-scene="${scene.id}" data-start="${scene.startSec}" data-duration="${scene.durationSec}"></section>`).join("\n")}
+      ${[...selectors].map((id) => `<div id="${id}"></div>`).join("\n")}
+    </main>`;
+
+    const parsed = parseLunaMotionIntent(rawIntent, incidentHtml, incidentStoryboard);
+    expect(parsed.finalRestingHold.primarySelector).toBe("#closing-copy");
+  });
+
+  it("keeps missing and conflicting final-hold selector aliases fail-loud", () => {
+    expect(() => parseLunaMotionIntent(JSON.stringify({
+      ...intent,
+      finalRestingHold: {
+        startSec: 5,
+        endSec: 6,
+        subjectSelector: "#missing",
+      },
+    }), html, storyboard)).toThrow(/primarySelector matches no element/);
+
+    expect(() => parseLunaMotionIntent(JSON.stringify({
+      ...intent,
+      finalRestingHold: {
+        startSec: 5,
+        endSec: 6,
+        selector: "#solution-primary",
+        subjectSelector: "#problem-primary",
+      },
+    }), html, storyboard)).toThrow(/conflicting selector aliases/);
+  });
+
   it("canonicalizes the live interaction selector aliases without overriding canonical fields", () => {
     const parsed = parseLunaMotionIntent(JSON.stringify({
       ...intent,
@@ -884,7 +956,7 @@ describe("Luna direct route", () => {
       expect(loadLunaSession(projectDir)).toMatchObject({
         workerJobId: "luna-route-proof",
         threadId: "019f5a36-c85c-7541-94d7-c474a8e26d33",
-        model: "gpt-5.6-luna",
+        model: "gpt-5.6-sol",
         reasoningEffort: "high",
         latestRawSourceSha256: authored.rawSourceSha256,
         committedRevision: 1,

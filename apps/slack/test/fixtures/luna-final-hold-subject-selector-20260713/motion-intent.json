@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "compositionId": "sequences-launch-film",
+  "durationSec": 25,
+  "creativeOwner": "Luna director/build turn",
+  "acts": [
+    {"sceneId":"opener-question","startSec":0,"endSec":2.2,"primarySelector":"#opener-copy","persistentEntityIds":["sequences-accent"]},
+    {"sceneId":"create-launch-channel","startSec":2.2,"endSec":5.1,"primarySelector":"#channel-dialog","persistentEntityIds":["launch-name"]},
+    {"sceneId":"launch-workspace","startSec":5.1,"endSec":8.3,"primarySelector":"#workspace-shell","persistentEntityIds":["workspace-shell","launch-name"]},
+    {"sceneId":"launch-question","startSec":8.3,"endSec":10.8,"primarySelector":"#message-question","persistentEntityIds":["workspace-shell"]},
+    {"sceneId":"sequences-reply","startSec":10.8,"endSec":13,"primarySelector":"#message-reply","persistentEntityIds":["workspace-shell","sequences-name"]},
+    {"sceneId":"slash-command","startSec":13,"endSec":16.2,"primarySelector":"#slash-command","persistentEntityIds":["workspace-shell","composer"]},
+    {"sceneId":"launch-dialog-payoff","startSec":16.2,"endSec":19.5,"primarySelector":"#launch-dialog","persistentEntityIds":["sequences-name"]},
+    {"sceneId":"release-to-field","startSec":19.5,"endSec":21.3,"primarySelector":"#release-field","persistentEntityIds":[]},
+    {"sceneId":"closing-statement","startSec":21.3,"endSec":25,"primarySelector":"#closing-copy","persistentEntityIds":["sequences-accent"]}
+  ],
+  "boundaries": [
+    {"id":"b01-question-to-channel","atSec":2.2,"fromScene":"opener-question","toScene":"create-launch-channel","strategy":"hard","mechanicalOwner":"cut","cause":"The unresolved question cuts into the actual product surface that can organize the launch.","evidenceSampleTimes":[2.12,2.24]},
+    {"id":"b02-channel-to-workspace","atSec":5.1,"fromScene":"create-launch-channel","toScene":"launch-workspace","strategy":"match","mechanicalOwner":"continuity","cause":"Pressing Next completes the channel setup and reveals the resulting #launch workspace.","outgoingAnchorSelector":"#launch-name-input","incomingAnchorSelector":"#launch-channel-title","evidenceSampleTimes":[4.65,5.22]},
+    {"id":"b03-workspace-to-question","atSec":8.3,"fromScene":"launch-workspace","toScene":"launch-question","strategy":"authored","mechanicalOwner":"authored","cause":"The settled empty channel gives way to the first message being composed in the same workspace.","evidenceSampleTimes":[8.18,8.48]},
+    {"id":"b04-question-to-reply","atSec":10.8,"fromScene":"launch-question","toScene":"sequences-reply","strategy":"authored","mechanicalOwner":"continuity","cause":"The reply is caused by the visible unresolved launch question.","evidenceSampleTimes":[10.66,11.05]},
+    {"id":"b05-reply-to-command","atSec":13,"fromScene":"sequences-reply","toScene":"slash-command","strategy":"match","mechanicalOwner":"continuity","cause":"The word Sequences in the reply becomes the camera's target, then attention continues into the composer.","outgoingAnchorSelector":"#message-reply","incomingAnchorSelector":"#composer","evidenceSampleTimes":[12.86,13.28]},
+    {"id":"b06-command-to-dialog","atSec":16.2,"fromScene":"slash-command","toScene":"launch-dialog-payoff","strategy":"morph","mechanicalOwner":"continuity","cause":"Submitting the real /sequences command visibly causes the launch dialog to take over the workspace.","outgoingAnchorSelector":"#send-command","incomingAnchorSelector":"#launch-dialog","evidenceSampleTimes":[16.05,16.38]},
+    {"id":"b07-dialog-to-release","atSec":19.5,"fromScene":"launch-dialog-payoff","toScene":"release-to-field","strategy":"hard","mechanicalOwner":"cut","cause":"After the dialog has been read, the product surface clears to release tension before the resolved statement.","evidenceSampleTimes":[19.38,19.62]},
+    {"id":"b08-release-to-close","atSec":21.3,"fromScene":"release-to-field","toScene":"closing-statement","strategy":"authored","mechanicalOwner":"authored","cause":"The cleared field becomes the resting surface for the final product statement.","evidenceSampleTimes":[21.18,21.5]}
+  ],
+  "cameraMoves": [
+    {"sceneId":"slash-command","worldSelector":"#workspace-camera","targetSelector":"#composer","startSec":13.05,"arrivalSec":14.15,"settleEndSec":14.55,"holdEndSec":16.05,"motivation":"The semantic focal subject changes from the reply to the actual command control; the push makes /sequences a hero interaction."}
+  ],
+  "interactions": [
+    {"actorSelector":"#cursor-channel","targetSelector":"#channel-next","resultSelector":"#workspace-shell","startSec":4.35,"actionSec":4.62,"settleSec":4.92,"beforeSampleSec":4.3,"afterSampleSec":5.22,"observableStateChange":"The subdued Next control presses, the channel dialog exits, and #launch becomes the active workspace."},
+    {"actorSelector":"#cursor-command","targetSelector":"#send-command","resultSelector":"#launch-dialog","startSec":15.55,"actionSec":16.05,"settleSec":16.5,"beforeSampleSec":15.45,"afterSampleSec":16.65,"observableStateChange":"The send control presses and the Sequences launch dialog opens over the dimmed workspace."}
+  ],
+  "energyPeak":{"startSec":15.8,"endSec":17.25,"subjectSelector":"#launch-dialog","reason":"The real /sequences submission and its visible modal consequence are the film's single dominant product payoff."},
+  "finalRestingHold":{"startSec":22.2,"endSec":25,"subjectSelector":"#closing-copy","reason":"The closing statement remains readable on a clean field with no primary-subject transform or opacity tween."},
+  "geometryPolicy":{"measuredPairs":[{"from":"#launch-name-input","to":"#launch-channel-title","purpose":"Align the channel name across the setup-to-workspace handoff."},{"from":"#composer","to":"#slash-command","purpose":"Center the camera on the command inside the real composer."},{"from":"#send-command","to":"#launch-dialog","purpose":"Anchor the peak modal takeover to the submitted control."}]}
+}

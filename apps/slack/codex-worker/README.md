@@ -63,7 +63,7 @@ errors into a hard worker failure before any artifact can be accepted.
 ## Runtime
 
 The image pins Node 22 and `@openai/codex@0.144.1`. The worker refuses to start
-unless `LUNA_MODEL=gpt-5.6-luna` and `LUNA_REASONING_EFFORT=high`. Other defaults
+unless `LUNA_MODEL=gpt-5.6-sol` and `LUNA_REASONING_EFFORT=high`. Other defaults
 are `PORT=3000`, a 30-minute `LUNA_JOB_TIMEOUT_MS`, queue depth 4, a 128 MB
 per-workspace ceiling, and a 512 MB volume free-space reserve. Railway does not
 permit the Linux namespace operation used by the Codex command sandbox. The

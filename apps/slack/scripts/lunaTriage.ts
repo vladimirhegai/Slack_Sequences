@@ -84,8 +84,8 @@ export function buildLunaTriageReport(source: string): LunaTriageReport {
     findings.push("This evidence history has no film bundle; browser film replay is not applicable yet.");
   }
   if (latest.status !== "completed") findings.push(`Latest worker status is ${latest.status}, not completed.`);
-  if (latest.model !== "gpt-5.6-luna" || latest.reasoningEffort !== "high") {
-    findings.push(`Latest turn used ${latest.model}/${latest.reasoningEffort}, not the pinned Luna/high route.`);
+  if (latest.model !== "gpt-5.6-sol" || latest.reasoningEffort !== "high") {
+    findings.push(`Latest turn used ${latest.model}/${latest.reasoningEffort}, not the pinned Sol/high route.`);
   }
   return {
     schemaVersion: 1,

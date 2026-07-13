@@ -209,7 +209,11 @@ Construct version 1 with:
   `resultSelector`, `startSec`, `actionSec`, `settleSec`, `beforeSampleSec`,
   `afterSampleSec`, and `observableStateChange` (never abbreviate the selector
   keys to `actor`, `target`, or `result`, and never nest the timing fields);
-- one `energyPeak` window and one `finalRestingHold` window;
+- one `energyPeak` window with the literal properties `startSec`, `endSec`, and
+  `reason`;
+- one `finalRestingHold` window with the literal properties `startSec`,
+  `endSec`, `primarySelector`, and `reason` (do not rename `primarySelector` to
+  `subjectSelector` or `selector`);
 - `geometryPolicy` naming every measured pair used for load-bearing placement.
 
 Arrays may be empty when the idea honestly needs none. Do not invent motion to

@@ -19,7 +19,7 @@ if (resolveAuthorRoute() === "luna-direct") {
     );
   }
   console.log(
-    `[luna] worker ready; model=${health.model ?? "gpt-5.6-luna"}; version=${health.version ?? "unknown"}`,
+    `[luna] worker ready; model=${health.model ?? "gpt-5.6-sol"}; version=${health.version ?? "unknown"}`,
   );
 }
 const httpServer = await startAppHttpServer();

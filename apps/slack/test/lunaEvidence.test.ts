@@ -87,7 +87,7 @@ function evidenceRun(
     runCount,
     threadId: "019f5a36-c85c-7541-94d7-c474a8e26d33",
     status: "completed",
-    model: "gpt-5.6-luna",
+    model: "gpt-5.6-sol",
     reasoningEffort: "high",
     codexVersion: "0.144.1",
     rawEnvelopeSha256: sha256(finalMessage),

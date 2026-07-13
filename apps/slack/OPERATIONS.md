@@ -28,7 +28,7 @@ Railway hosts:
 - `sequences-slack`: Bolt/Socket Mode, OAuth, fact/asset intake, deterministic
   Sequences validation, Chromium/FFmpeg, render, and Slack delivery;
 - `codex-worker`: private authenticated HTTP service, persisted ChatGPT login,
-  serialized `gpt-5.6-luna`/high Codex CLI sessions.
+  serialized `gpt-5.6-sol`/high Codex CLI sessions.
 
 Neither service exposes a public MCP endpoint. The worker must not have a public
 domain.
@@ -138,7 +138,7 @@ Essential `codex-worker` groups:
 ```text
 PORT=3000
 LUNA_WORKER_TOKEN=<same independent 32+ character secret>
-LUNA_MODEL=gpt-5.6-luna
+LUNA_MODEL=gpt-5.6-sol
 LUNA_REASONING_EFFORT=high
 LUNA_JOB_TIMEOUT_MS=1800000
 LUNA_MAX_QUEUE_DEPTH=4
@@ -157,7 +157,7 @@ each operation to a host-declared artifact contract and exact base fingerprint
 before transactional keep/inherit/replace materialization. The Codex permission profile denies
 all model-visible filesystem/network access, and the worker scans the exact
 persisted rollout to catch tool calls omitted from exec JSONL. Readiness also fails when the exact
-Luna/high identity, artifact schema digest, or free-space reserve is wrong.
+Sol/high model identity, artifact schema digest, or free-space reserve is wrong.
 
 Do not route ordinary authoring through `SLACK_SEQUENCES_PROVIDER`; Luna is
 selected by `SLACK_SEQUENCES_AUTHOR_ROUTE=luna-direct`. `OPENROUTER_API_KEY`
@@ -225,7 +225,7 @@ Invoke-WebRequest "$baseUrl/healthz" | Select-Object StatusCode, Content
 - Deploy the worker from the exact `.publish/apps/slack/codex-worker` root with
   `--path-as-root`; deploy Slack from `.publish`. A worker upload from the
   public root can archive the wrong process and interrupt the real worker.
-- Deploy the worker first, wait for `SUCCESS` and its `gpt-5.6-luna`/high log,
+- Deploy the worker first, wait for `SUCCESS` and its `gpt-5.6-sol`/high log,
   then deploy Slack. Do not use `railway down` as a pending-deploy cancel; it
   can remove the active healthy deployment instead.
 - Railway's SSH argument parser strips ordinary shell quoting. For a probe,

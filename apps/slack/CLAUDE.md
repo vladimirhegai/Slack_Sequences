@@ -45,7 +45,7 @@ There are two different bots and one deterministic engine:
    with the invoking user's OAuth token. This path requires `OPENAI_API_KEY`.
 2. `src/engine/lunaRoute.ts` sends verified facts/assets to the private
    `codex-worker`, where one persistent Codex CLI thread runs
-   `gpt-5.6-luna` with high reasoning. That thread owns treatment, assets,
+   `gpt-5.6-sol` with high reasoning. That thread owns treatment, assets,
    motion intent, storyboard, source, rendered self-review, and structural
    revisions through a tool-less schema-constrained artifact exchange. The
    trusted worker, not Luna, validates and atomically materializes bytes.

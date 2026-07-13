@@ -190,7 +190,7 @@ async function checkLunaWorker(): Promise<DiagnosticCheck> {
     return {
       label: "Luna Codex worker",
       status: "ok",
-      detail: `${health.model ?? "gpt-5.6-luna"} · ${health.version ?? "Codex CLI"} · authenticated`,
+      detail: `${health.model ?? "gpt-5.6-sol"} · ${health.version ?? "Codex CLI"} · authenticated`,
       core: true,
     };
   } catch (error) {

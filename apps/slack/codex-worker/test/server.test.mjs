@@ -184,7 +184,7 @@ test("HTTP boundary exposes private readiness and protects every v1 route", asyn
     ok: true,
     status: "ready",
     version: "0.144.1",
-    model: "gpt-5.6-luna",
+    model: "gpt-5.6-sol",
     reasoningEffort: "high",
     artifactProtocol: "luna-tool-less-artifact-v2",
     artifactSchemaSha256: "7fa551fb261b6dee573aca74507202f5ab0b30ca00fe60cd04141dea8dfe104d",

@@ -561,17 +561,17 @@ test("request parsing requires a prompt, unique files, and job ID only on create
   }, { requireJobId: true }), HttpError);
 });
 
-test("Codex arguments use Luna high reasoning and exact thread resume", () => {
+test("Codex arguments use Sol high reasoning and exact thread resume", () => {
   const fresh = buildCodexArgs({
     mode: "new",
     workspace: "/root/.codex/sequences-jobs/job/workspace",
-    model: "gpt-5.6-luna",
+    model: "gpt-5.6-sol",
     reasoningEffort: "high",
     imagePaths: ["/root/.codex/sequences-jobs/job/workspace/inputs/frame.png"],
     outputSchemaPath: "/opt/sequences-codex-worker/artifact-envelope.schema.json",
   });
   assert.deepEqual(fresh.slice(0, 4), ["exec", "--json", "-C", "/root/.codex/sequences-jobs/job/workspace"]);
-  assert.ok(fresh.includes("gpt-5.6-luna"));
+  assert.ok(fresh.includes("gpt-5.6-sol"));
   assert.ok(fresh.includes("--strict-config"));
   assert.ok(fresh.includes('model_reasoning_effort="high"'));
   assert.ok(fresh.includes("--image"));
@@ -588,7 +588,7 @@ test("Codex arguments use Luna high reasoning and exact thread resume", () => {
     mode: "resume",
     workspace: "/root/.codex/sequences-jobs/job/workspace",
     threadId: "019abcde-0000-7000-8000-000000000000",
-    model: "gpt-5.6-luna",
+    model: "gpt-5.6-sol",
     reasoningEffort: "high",
     outputSchemaPath: "/opt/sequences-codex-worker/artifact-envelope.schema.json",
   });

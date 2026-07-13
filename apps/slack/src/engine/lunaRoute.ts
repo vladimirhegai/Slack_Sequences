@@ -214,7 +214,7 @@ export interface LunaSessionReceiptV1 {
   workerRunCount: number;
   threadId: string;
   codexVersion: string;
-  model: "gpt-5.6-luna";
+  model: "gpt-5.6-sol";
   reasoningEffort: "high";
   durationSec: number;
   committedRevision: number;
@@ -1161,16 +1161,20 @@ export function parseLunaMotionIntent(
   if (!intent.energyPeak || !intent.finalRestingHold) {
     throw new Error("Luna motion intent must declare one energy peak and final resting hold");
   }
-  // Protocol-v1 drafts sometimes used the unambiguous `selector` spelling for
-  // the final hold while every other semantic subject used `primarySelector`.
-  // Canonicalize that exact alias in memory (raw paid bytes remain untouched in
-  // the evidence run) so a repair turn is reserved for executable defects.
+  // Protocol-v1 drafts have used the unambiguous `selector` and
+  // `subjectSelector` spellings for the final hold while acts use
+  // `primarySelector`. Canonicalize those exact aliases in memory (raw paid
+  // bytes remain untouched in the evidence run) so a repair turn is reserved
+  // for executable defects. Two disagreeing aliases are not unambiguous and
+  // must still fail loud.
   const restingHold = intent.finalRestingHold as Record<string, unknown>;
-  if (
-    restingHold.primarySelector === undefined &&
-    typeof restingHold.selector === "string" && restingHold.selector.trim()
-  ) {
-    restingHold.primarySelector = restingHold.selector;
+  if (restingHold.primarySelector === undefined) {
+    const aliasValues = [restingHold.selector, restingHold.subjectSelector]
+      .filter((candidate): candidate is string => typeof candidate === "string" && Boolean(candidate.trim()));
+    if (new Set(aliasValues).size > 1) {
+      throw new Error("Luna final resting hold declares conflicting selector aliases");
+    }
+    if (aliasValues[0]) restingHold.primarySelector = aliasValues[0];
   }
   // The live launch-film probe exposed the same protocol-v1 wording gap for
   // interaction subjects: the director emitted the unambiguous `actor`,
@@ -1397,7 +1401,7 @@ function saveSession(
     workerRunCount: authored.worker.runCount,
     threadId: authored.worker.threadId,
     codexVersion: authored.worker.codexVersion,
-    model: "gpt-5.6-luna",
+    model: "gpt-5.6-sol",
     reasoningEffort: "high",
     durationSec: authored.intent.durationSec,
     committedRevision: committed.revision,

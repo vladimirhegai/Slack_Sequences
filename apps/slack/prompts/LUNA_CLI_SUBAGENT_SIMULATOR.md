@@ -11,7 +11,7 @@ You are the trusted host simulator for Sequences' official Luna route.
 
 Create exactly one capable sub-agent and preserve its stable agent/thread ID for
 the whole film. The sub-agent represents one
-`codex exec --model gpt-5.6-luna -c model_reasoning_effort="high"` session; a
+`codex exec --model gpt-5.6-sol -c model_reasoning_effort="high"` session; a
 follow-up to that exact same sub-agent represents
 `codex exec resume <exact-thread-id>`. Never create a new director for review or
 revision and never use a generic "last session" shortcut.

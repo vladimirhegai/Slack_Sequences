@@ -16,7 +16,7 @@ path requires `OPENAI_API_KEY`; do not conflate it with video authoring.
 worker:
 
 - `luna-director.md` — treatment, assets, motion intent, storyboard, and full
-  seekable source in one persistent `gpt-5.6-luna`/high thread.
+  seekable source in one persistent `gpt-5.6-sol`/high thread.
 - `luna-motion-reference.md` — distilled continuity/cinematography principles
   from the golden film, explicitly not a visual or shot template.
 - `luna-self-review.md` — rendered evidence returned to the exact thread for

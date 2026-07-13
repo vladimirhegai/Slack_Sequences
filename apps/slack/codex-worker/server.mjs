@@ -43,7 +43,7 @@ const OUTPUT_SCHEMA_PATH = path.join(
 const BUNDLED_CONFIG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "config.toml");
 const INSTALLED_CONFIG_PATH = path.join(CODEX_HOME, "config.toml");
 const TOKEN = process.env.LUNA_WORKER_TOKEN || "";
-const MODEL = process.env.LUNA_MODEL || "gpt-5.6-luna";
+const MODEL = process.env.LUNA_MODEL || "gpt-5.6-sol";
 const REASONING_EFFORT = process.env.LUNA_REASONING_EFFORT || "high";
 const CODEX_VERSION = "0.144.1";
 const EXPECTED_CODEX_VERSION_OUTPUT = `codex-cli ${CODEX_VERSION}`;
@@ -76,8 +76,8 @@ if (!Array.isArray(CODEX_PREFIX_ARGS) || !CODEX_PREFIX_ARGS.every((entry) => typ
   console.error("[luna-worker] invalid test Codex prefix arguments");
   process.exit(1);
 }
-if (MODEL !== "gpt-5.6-luna") {
-  console.error("[luna-worker] LUNA_MODEL must be gpt-5.6-luna");
+if (MODEL !== "gpt-5.6-sol") {
+  console.error("[luna-worker] LUNA_MODEL must be gpt-5.6-sol");
   process.exit(1);
 }
 if (REASONING_EFFORT !== "high") {

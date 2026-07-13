@@ -1,6 +1,6 @@
 # Official Luna workflow
 
-Luna (`gpt-5.6-luna`, high reasoning) is the default creative author for
+Luna (`gpt-5.6-sol`, high reasoning) is the default creative author for
 ordinary `/sequences` creates and structural revisions. It runs through the
 authenticated Codex CLI in a private Railway worker. OpenRouter is retired from
 production and is never an automatic fallback.
@@ -16,7 +16,7 @@ Slack command / shortcut
   -> sequences-slack (facts, approved assets, host validation, render, upload)
   -> private HTTP + bearer token
   -> codex-worker (embed verified inputs, attach images, persisted exact thread)
-  -> gpt-5.6-luna / high
+  -> gpt-5.6-sol / high
   -> schema-constrained tool-less artifact envelope
   -> worker validation + atomic deliverable materialization
   -> sequences-slack static + real-browser gate
@@ -265,7 +265,7 @@ Worker service:
 ```text
 PORT=3000
 LUNA_WORKER_TOKEN=<same secret>
-LUNA_MODEL=gpt-5.6-luna
+LUNA_MODEL=gpt-5.6-sol
 LUNA_REASONING_EFFORT=high
 LUNA_JOB_TIMEOUT_MS=1800000
 LUNA_MAX_QUEUE_DEPTH=4
