@@ -1,3 +1,12 @@
 # Per-project Sequences workspaces + the Slack job map (regenerated at runtime)
 .data/
-demo-output/
+# Render output is local by default. Keep only the bounded golden evidence and
+# exact model-free demo binary needed by Luna and the deployed Slack command.
+demo-output/*
+!demo-output/slack-ad-luna/
+demo-output/slack-ad-luna/*
+!demo-output/slack-ad-luna/README.txt
+!demo-output/slack-ad-luna/contact-sheet.jpg
+!demo-output/slack-ad-luna/temporal-strip.jpg
+!demo-output/slack-ad-luna/qa-report.json
+!demo-output/slack-ad-luna/slack-ad-luna-with-audio.mp4
