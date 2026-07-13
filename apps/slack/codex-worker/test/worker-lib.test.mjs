@@ -46,6 +46,14 @@ function requiredTextArtifacts() {
   ];
 }
 
+function assertLinuxGlobExpansionIsBounded(config) {
+  const hasUnboundedDenyGlob = /"[^"\n]*\*\*[^"\n]*"\s*=\s*"deny"/.test(config);
+  const cap = config.match(/^\s*glob_scan_max_depth\s*=\s*(\d+)\s*$/m);
+  if (hasUnboundedDenyGlob && (!cap || Number(cap[1]) < 1)) {
+    throw new Error("unbounded Linux deny globs require glob_scan_max_depth");
+  }
+}
+
 test("tool-less artifact protocol binds the exact bundled output schema", async () => {
   const schema = await readFile(new URL("../artifact-envelope.schema.json", import.meta.url));
   const config = await readFile(new URL("../config.toml", import.meta.url), "utf8");
@@ -55,6 +63,12 @@ test("tool-less artifact protocol binds the exact bundled output schema", async 
   assert.match(config, /":root" = "deny"/);
   assert.match(config, /":minimal" = "deny"/);
   assert.match(config, /"\." = "deny"/);
+  assert.match(config, /^glob_scan_max_depth = 16$/m);
+  assert.doesNotThrow(() => assertLinuxGlobExpansionIsBounded(config));
+  assert.throws(
+    () => assertLinuxGlobExpansionIsBounded(config.replace(/^glob_scan_max_depth = 16\r?\n/m, "")),
+    /unbounded Linux deny globs require glob_scan_max_depth/,
+  );
   assert.match(config, /enabled = false/);
 });
 

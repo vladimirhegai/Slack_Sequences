@@ -196,7 +196,7 @@ describe("Luna direct route", () => {
       reasoningEffort: "high",
       artifactProtocol: "luna-tool-less-artifact-v1",
       artifactSchemaSha256: "ac487766f625ecd680541cbf3b7a6e0018a3570e1037e65c9c629d8af52569cb",
-      permissionProfileSha256: "0c8565ee79930bddb66469f4672e5eb57b0ba87e8919fe5389556f8b28695e42",
+      permissionProfileSha256: "ebd9f548aaa2f1d48df15ea1e124462350791ede65267f7677e9a834fa0060c6",
       authenticated: true,
     })).toBe(true);
     expect(lunaWorkerHealthIsExact({

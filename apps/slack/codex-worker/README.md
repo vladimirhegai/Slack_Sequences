@@ -55,6 +55,11 @@ immutable permission-profile digest alongside the artifact schema digest. Both
 digests also participate in operation IDs, so a retry cannot silently cross an
 execution-contract change.
 
+The deny-all filesystem profile gives unbounded `**` deny globs a finite
+`glob_scan_max_depth = 16`. Codex requires that cap when Linux expands glob
+matches before sandbox startup; removing it turns the emitted configuration
+errors into a hard worker failure before any artifact can be accepted.
+
 ## Runtime
 
 The image pins Node 22 and `@openai/codex@0.144.1`. The worker refuses to start

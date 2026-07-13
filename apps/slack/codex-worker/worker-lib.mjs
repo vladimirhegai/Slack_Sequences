@@ -53,7 +53,7 @@ const REQUIRED_DELIVERABLE_PATHS = new Set([
 ]);
 export const ARTIFACT_PROTOCOL_VERSION = "luna-tool-less-artifact-v1";
 export const ARTIFACT_SCHEMA_SHA256 = "ac487766f625ecd680541cbf3b7a6e0018a3570e1037e65c9c629d8af52569cb";
-export const PERMISSION_PROFILE_SHA256 = "0c8565ee79930bddb66469f4672e5eb57b0ba87e8919fe5389556f8b28695e42";
+export const PERMISSION_PROFILE_SHA256 = "ebd9f548aaa2f1d48df15ea1e124462350791ede65267f7677e9a834fa0060c6";
 const DISABLED_TOOL_FEATURES = Object.freeze([
   "shell_tool",
   "multi_agent",

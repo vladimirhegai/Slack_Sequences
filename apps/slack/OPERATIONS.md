@@ -202,6 +202,10 @@ validation, rendering, upload, or film quality; the end-to-end rehearsal does.
 - Worker returns `tool_use_forbidden`: preserve the raw JSONL event log and fail
   visibly. Do not add a sandbox bypass, materialize the final response, or cross
   into the legacy route.
+- Worker returns `codex_error_item` naming `glob_scan_max_depth`: preserve the
+  failed job, verify the bundled profile still caps Linux `**` expansion, and
+  redeploy the hash-bound profile. Do not retry the same failed job ID or remove
+  deny globs to silence the error.
 - Worker rejects the artifact envelope: preserve the raw envelope and replay its
   schema/path/hash validation model-free before changing prompts or contracts.
 - Authored source fails a hard gate: preserve the raw run directory and replay

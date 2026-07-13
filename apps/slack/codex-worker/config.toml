@@ -8,6 +8,7 @@ default_permissions = "luna-worker"
 extends = ":workspace"
 
 [permissions.luna-worker.filesystem]
+glob_scan_max_depth = 16
 ":root" = "deny"
 ":minimal" = "deny"
 ":tmpdir" = "deny"
