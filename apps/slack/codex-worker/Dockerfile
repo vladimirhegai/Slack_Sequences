@@ -15,7 +15,6 @@ RUN chmod 755 start.sh \
     && mkdir -p /root/.codex/sequences-jobs \
     && chmod 700 /root/.codex /root/.codex/sequences-jobs
 
-VOLUME ["/root/.codex"]
 EXPOSE 3000
 
 ENTRYPOINT ["/opt/sequences-codex-worker/start.sh"]
