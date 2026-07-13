@@ -8,9 +8,13 @@ mechanical boundary. The exact rejected canonical bytes are embedded beneath
 accepted for this create. The verbatim blocking evidence is the `findings[]`
 array in `inputs/repair/hard-findings.json`.
 `inputs/repair/complete-host-diagnostic.json` repeats every blocking line and
-extracts bounded structured timeline evidence when present. Treat the whole
-file as one repair batch: fix all proven defects together instead of stopping
-after the first bullet.
+extracts bounded structured mechanical evidence when present. Its
+`repairRequirements` are hard ownership facts. In particular, an action-time
+interaction failure cannot be fixed by changing only `beforeSampleSec` or
+`afterSampleSec`: change `composition.html` so the actor hotspot and real target
+are visible and aligned at `actionSec`. Treat the whole file as one repair
+batch: fix all proven defects together instead of stopping after the first
+bullet.
 
 Those findings contain mechanical evidence only: schema/source completeness,
 security, deterministic seeking, declared bindings/selectors, browser runtime,

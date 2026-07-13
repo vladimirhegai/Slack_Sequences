@@ -28,6 +28,23 @@ import {
   type LunaAssetPackV1,
   type ValidatedLunaAssetPack,
 } from "./lunaAssetPack.ts";
+import {
+  AUDIO_DIRECTOR_CATALOG,
+  stageAudioAssets,
+  validateAudioPlan,
+  type AudioPlanV1,
+} from "./audioContract.ts";
+import { BACKGROUND_CATALOG, backgroundById } from "./backgroundCatalog.ts";
+import {
+  injectEnvironmentContract,
+  injectEnvironmentKit,
+  injectEnvironmentRuntimeCall,
+  injectEnvironmentRuntimeTag,
+  resolveEnvironmentPlan,
+  stageEnvironmentAssets,
+  type EnvironmentPlanV1,
+  type EnvironmentShape,
+} from "./environmentContract.ts";
 
 const PROMPT_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -204,7 +221,17 @@ export interface LunaMotionIntentV1 {
     endSec: number;
     primarySelector: string;
   };
+  audio?: AudioPlanV1;
+  environment?: LunaEnvironmentIntentV1;
   geometryPolicy?: Record<string, unknown>;
+}
+
+export interface LunaEnvironmentIntentV1 {
+  wallpaperId: string;
+  scenes: Array<{
+    sceneId: string;
+    shape: Exclude<EnvironmentShape, "generated-field">;
+  }>;
 }
 
 export interface LunaSessionReceiptV1 {
@@ -244,6 +271,8 @@ export interface LunaAuthoredComposition {
   artifactFingerprint: string;
   runDir: string;
   assetFiles: Array<{ relativePath: string; bytes: Buffer }>;
+  audioPlan: AudioPlanV1;
+  environmentPlan?: EnvironmentPlanV1;
 }
 
 export interface LunaAuthoredAssetPack {
@@ -510,6 +539,38 @@ function goldenDemoReferenceInputs(
   }
 }
 
+const LUNA_BACKGROUND_DIRECTOR_CATALOG = Object.freeze({
+  version: 1,
+  authority:
+    "Choose at most one wallpaper for the film and declare only scenes where a complete app/window " +
+    "should sit above it. The host owns the file, crop, overlay, ambient motion, and license staging.",
+  shapes: ["desktop-stage", "screen-over-wallpaper", "full-app-view"],
+  wallpapers: BACKGROUND_CATALOG.map((entry) => ({
+    id: entry.id,
+    dimensions: entry.dimensions,
+    aspect: entry.aspect,
+    focalPoint: entry.focalPoint,
+    textSafeSide: entry.textSafeSide,
+    energy: entry.energy,
+    crop: entry.crop,
+    overlay: entry.overlay,
+    motion: entry.motion,
+  })),
+});
+
+function creativeMediaReferenceInputs(): LunaWorkerInputFile[] {
+  return [
+    workerInputFile(
+      "inputs/references/audio-catalog.json",
+      JSON.stringify(AUDIO_DIRECTOR_CATALOG, null, 2) + "\n",
+    ),
+    workerInputFile(
+      "inputs/references/background-catalog.json",
+      JSON.stringify(LUNA_BACKGROUND_DIRECTOR_CATALOG, null, 2) + "\n",
+    ),
+  ];
+}
+
 // Per-job art-direction seed embedded for the direction and build turns. Gated
 // by SLACK_SEQUENCES_LUNA_ART_DIRECTION; the director may honor, adapt, or
 // decline it, so this is data, never planner fields.
@@ -562,6 +623,7 @@ function initialWorkerFiles(
       "inputs/references/slack-ad-motion-principles.md",
       prompt("luna-motion-reference.md"),
     ),
+    ...creativeMediaReferenceInputs(),
     ...goldenDemoReferenceInputs(),
     ...artDirectionSeedInput(facts, assets.manifest.length > 0 || preparedPack.validated != null),
     workerInputFile("inputs/ui-pack-status.json", JSON.stringify({
@@ -1128,6 +1190,7 @@ export function parseLunaMotionIntent(
   raw: string,
   html: string,
   storyboard: DirectScene[],
+  options: { requireAudio?: boolean } = {},
 ): LunaMotionIntentV1 {
   let value: unknown;
   try {
@@ -1152,6 +1215,11 @@ export function parseLunaMotionIntent(
     throw new Error("Luna motion intent must declare its creative owner");
   }
   const duration = finite(intent.durationSec, "durationSec");
+  if (intent.audio !== undefined) {
+    intent.audio = validateAudioPlan(intent.audio, duration);
+  } else if (options.requireAudio) {
+    throw new Error("Luna motion intent must declare audio");
+  }
   if (!Array.isArray(intent.acts) || !intent.acts.length) {
     throw new Error("Luna motion intent must declare at least one act");
   }
@@ -1313,8 +1381,10 @@ export function parseLunaMotionIntent(
     const action = finite(interaction.actionSec, `interactions[${index}].actionSec`);
     const settle = finite(interaction.settleSec, `interactions[${index}].settleSec`);
     const after = finite(interaction.afterSampleSec, `interactions[${index}].afterSampleSec`);
-    if (!(before >= 0 && before <= start && start < action && action <= settle && settle <= after && after <= duration)) {
-      throw new Error(`Luna interaction ${index + 1} lacks before/start/action/settle/after ordering`);
+    if (!(before >= 0 && before < action && start >= 0 && start < action && action <= settle && settle <= after && after <= duration)) {
+      throw new Error(
+        `Luna interaction ${index + 1} requires start and before-sample before action, then settle and after-sample`,
+      );
     }
     if (
       typeof interaction.observableStateChange !== "string" ||
@@ -1338,7 +1408,69 @@ export function parseLunaMotionIntent(
     throw new Error("Luna final resting hold must stay inside the final scene");
   }
   requireSelector(document, intent.finalRestingHold.primarySelector, "finalRestingHold.primarySelector", true);
+  if (intent.environment !== undefined) {
+    if (!intent.environment || typeof intent.environment !== "object" || Array.isArray(intent.environment)) {
+      throw new Error("Luna environment intent must be an object");
+    }
+    const environment = intent.environment as Partial<LunaEnvironmentIntentV1>;
+    if (typeof environment.wallpaperId !== "string" || !backgroundById(environment.wallpaperId)) {
+      throw new Error("Luna environment intent must choose one catalog wallpaperId");
+    }
+    if (!Array.isArray(environment.scenes) || !environment.scenes.length) {
+      throw new Error("Luna environment intent must declare at least one scene");
+    }
+    const seenEnvironmentScenes = new Set<string>();
+    const scenes = environment.scenes.map((scene, index) => {
+      if (!scene || typeof scene !== "object") {
+        throw new Error(`Luna environment scene ${index + 1} must be an object`);
+      }
+      if (typeof scene.sceneId !== "string" || !sceneIds.has(scene.sceneId)) {
+        throw new Error(`Luna environment scene ${index + 1} names an unknown scene`);
+      }
+      if (seenEnvironmentScenes.has(scene.sceneId)) {
+        throw new Error(`Luna environment scene ${index + 1} duplicates a scene`);
+      }
+      seenEnvironmentScenes.add(scene.sceneId);
+      if (
+        scene.shape !== "desktop-stage" &&
+        scene.shape !== "screen-over-wallpaper" &&
+        scene.shape !== "full-app-view"
+      ) {
+        throw new Error(`Luna environment scene ${index + 1} has an unsupported shape`);
+      }
+      return { sceneId: scene.sceneId, shape: scene.shape };
+    });
+    intent.environment = { wallpaperId: environment.wallpaperId, scenes };
+  }
   return intent as LunaMotionIntentV1;
+}
+
+function environmentPlanForIntent(
+  intent: LunaMotionIntentV1,
+  storyboard: DirectScene[],
+): EnvironmentPlanV1 | undefined {
+  if (!intent.environment) return undefined;
+  const selectedSceneIds = new Set(intent.environment.scenes.map((scene) => scene.sceneId));
+  const readingWindowsByScene = Object.fromEntries(
+    intent.environment.scenes.flatMap((scene) => {
+      const windows = intent.cameraMoves
+        .filter((camera) => camera.sceneId === scene.sceneId)
+        .map((camera) => ({ startSec: camera.settleEndSec, endSec: camera.holdEndSec }));
+      return windows.length ? [[scene.sceneId, windows] as const] : [];
+    }),
+  );
+  const plan = resolveEnvironmentPlan(storyboard, {
+    compositionId: intent.compositionId,
+    wallpaperId: intent.environment.wallpaperId,
+    shapeByScene: Object.fromEntries(
+      intent.environment.scenes.map((scene) => [scene.sceneId, scene.shape]),
+    ),
+    readingWindowsByScene,
+  });
+  return {
+    ...plan,
+    scenes: plan.scenes.filter((scene) => selectedSceneIds.has(scene.sceneId)),
+  };
 }
 
 function sessionPath(projectDir: string): string {
@@ -1564,12 +1696,14 @@ export function reconcileLunaSessionAfterUndo(projectDir: string): boolean {
     : receipt;
   writeJsonAtomic(sessionPath(projectDir), restored);
 
-  const activeAssets = path.join(projectDir, "assets", "luna");
-  const committedAssets = path.join(projectDir, "composition", "assets", "luna");
-  fs.rmSync(activeAssets, { recursive: true, force: true });
-  if (fs.existsSync(committedAssets)) {
-    fs.mkdirSync(path.dirname(activeAssets), { recursive: true });
-    fs.cpSync(committedAssets, activeAssets, { recursive: true });
+  for (const assetKind of ["luna", "audio", "wallpapers"] as const) {
+    const activeAssets = path.join(projectDir, "assets", assetKind);
+    const committedAssets = path.join(projectDir, "composition", "assets", assetKind);
+    fs.rmSync(activeAssets, { recursive: true, force: true });
+    if (fs.existsSync(committedAssets)) {
+      fs.mkdirSync(path.dirname(activeAssets), { recursive: true });
+      fs.cpSync(committedAssets, activeAssets, { recursive: true });
+    }
   }
   return true;
 }
@@ -1582,10 +1716,12 @@ function materializeLunaResultUnchecked(
   const html = requiredText(persisted.files, "composition.html");
   validateLunaHtmlSecurity(html);
   const storyboard = parseStoryboard(requiredText(persisted.files, "storyboard.json"));
+  const rawMotionIntent = requiredText(persisted.files, "motion-intent.json");
   const intent = parseLunaMotionIntent(
-    requiredText(persisted.files, "motion-intent.json"),
+    rawMotionIntent,
     html,
     storyboard,
+    { requireAudio: true },
   );
   if (
     intent.durationSec < acceptedDuration.minSec - 0.05 ||
@@ -1599,7 +1735,22 @@ function materializeLunaResultUnchecked(
   requiredText(persisted.files, "director-treatment.md");
   const assetManifest = requiredText(persisted.files, "assets-manifest.json");
   const rawSourceSha256 = sha256(Buffer.from(html, "utf8"));
-  const executableHtml = normalizeLunaSourceMechanics(html, intent.compositionId);
+  let executableHtml = normalizeLunaSourceMechanics(html, intent.compositionId);
+  const environmentPlan = environmentPlanForIntent(intent, storyboard);
+  if (environmentPlan) {
+    const injected = injectEnvironmentContract(executableHtml, environmentPlan);
+    if (injected.skippedScenes.length) {
+      throw new Error(
+        `Luna environment scenes are missing authored roots: ${injected.skippedScenes.join(", ")}`,
+      );
+    }
+    executableHtml = injectEnvironmentRuntimeCall(
+      injectEnvironmentRuntimeTag(injectEnvironmentKit(injected.html)),
+    );
+    if (!executableHtml.includes("SequencesEnvironment.compile(")) {
+      throw new Error("Luna environment could not bind to the authored master timeline");
+    }
+  }
   const assetFiles = [...persisted.files.entries()]
     .filter(([name]) => name.startsWith("deliverables/assets/luna/"))
     .map(([name, bytes]) => ({
@@ -1610,6 +1761,7 @@ function materializeLunaResultUnchecked(
   const artifactFingerprint = sha256([
     `composition:${rawSourceSha256}`,
     `storyboard:${sha256(Buffer.from(requiredText(persisted.files, "storyboard.json"), "utf8"))}`,
+    `motion-intent:${sha256(Buffer.from(rawMotionIntent, "utf8"))}`,
     ...assetFiles
       .map((asset) => `${asset.relativePath}:${sha256(asset.bytes)}`)
       .sort(),
@@ -1643,6 +1795,8 @@ function materializeLunaResultUnchecked(
     artifactFingerprint,
     runDir: persisted.runDir,
     assetFiles,
+    audioPlan: intent.audio!,
+    ...(environmentPlan ? { environmentPlan } : {}),
   };
 }
 
@@ -1889,6 +2043,38 @@ export async function authorLunaAssetPack(input: {
   }
 }
 
+export interface LunaRepairRequirementsV1 {
+  version: 1;
+  requiredChangedDeliverables: string[];
+  actionTimeInteractionFinding: boolean;
+  evidenceTimingOnlyRepairAllowed: boolean;
+  reason: string;
+}
+
+/**
+ * Action-time geometry is executable-source state. Moving only a diagnostic
+ * sample cannot move the pointer, reveal its target, or change the rendered
+ * frame, so make that ownership explicit in the repair evidence bundle.
+ */
+export function lunaRepairRequirements(
+  hardFindings: readonly string[],
+): LunaRepairRequirementsV1 {
+  const actionTimeInteractionFinding = hardFindings.some((finding) =>
+    /interaction_(?:target_miss|not_visible|target_occluded|binding_missing)/.test(finding)
+  );
+  return {
+    version: 1,
+    requiredChangedDeliverables: actionTimeInteractionFinding
+      ? ["deliverables/composition.html"]
+      : [],
+    actionTimeInteractionFinding,
+    evidenceTimingOnlyRepairAllowed: !actionTimeInteractionFinding,
+    reason: actionTimeInteractionFinding
+      ? "Action-time pointer geometry and visibility live in composition.html. Changing only before/after evidence sample times cannot repair the rendered action."
+      : "No action-time interaction source obligation was inferred; follow the verbatim hard finding.",
+  };
+}
+
 function rejectedBundleInputs(
   result: LunaWorkerResult,
   hardFindings: readonly string[],
@@ -1925,16 +2111,19 @@ function rejectedBundleInputs(
     findings: hardFindings,
     advisoryFindingsIncluded: false,
   }, null, 2) + "\n"));
-  const timelineEvidence = hardFindings.flatMap((finding) => {
-    const marker = "evidence=";
-    const start = finding.indexOf(marker);
-    if (start < 0) return [];
-    try {
-      return [JSON.parse(finding.slice(start + marker.length)) as unknown];
-    } catch {
-      return [];
-    }
-  });
+  const mechanicalEvidence = hardFindings.flatMap((finding) =>
+    finding.split(/\r?\n/).flatMap((line) => {
+      const marker = "evidence=";
+      const start = line.indexOf(marker);
+      if (start < 0) return [];
+      try {
+        return [JSON.parse(line.slice(start + marker.length)) as unknown];
+      } catch {
+        return [];
+      }
+    })
+  );
+  const repairRequirements = lunaRepairRequirements(hardFindings);
   files.push(workerInputFile("inputs/repair/complete-host-diagnostic.json", JSON.stringify({
     version: 1,
     disposition: "blocking",
@@ -1943,7 +2132,8 @@ function rejectedBundleInputs(
     blockingLines: hardFindings.flatMap((finding) =>
       finding.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
     ),
-    ...(timelineEvidence.length ? { timelineContractEvidence: timelineEvidence } : {}),
+    repairRequirements,
+    ...(mechanicalEvidence.length ? { mechanicalEvidence } : {}),
   }, null, 2) + "\n"));
   files.push(workerInputFile("inputs/repair/rejected-bundle-host.json", JSON.stringify({
     version: 1,
@@ -2325,6 +2515,7 @@ export async function reviseLunaComposition(input: {
       version: 1,
       instruction: input.instruction,
     }, null, 2) + "\n"),
+    ...creativeMediaReferenceInputs(),
   ];
   currentFiles.push(...acceptedBundleFiles(input.projectDir, session));
   for (const [source, relative] of [
@@ -2443,6 +2634,63 @@ export function activateLunaAssets(
       fs.rmSync(target, { recursive: true, force: true });
       if (hadPrevious && fs.existsSync(backup)) fs.renameSync(backup, target);
       else fs.rmSync(backup, { recursive: true, force: true });
+    },
+  };
+}
+
+/** Atomically activate authored image assets plus host-owned audio/wallpaper media. */
+export function activateLunaCompositionAssets(
+  projectDir: string,
+  authored: LunaAuthoredComposition,
+): LunaAssetTransaction {
+  const luna = activateLunaAssets(projectDir, authored.assetFiles);
+  const managedKinds = ["audio", "wallpapers"] as const;
+  const backups = managedKinds.map((kind) => ({
+    target: path.join(projectDir, "assets", kind),
+    backup: path.join(projectDir, `.luna-${kind}-backup-${randomUUID()}`),
+    hadPrevious: false,
+  }));
+  const restoreMedia = (): void => {
+    for (const entry of backups) {
+      fs.rmSync(entry.target, { recursive: true, force: true });
+      if (entry.hadPrevious && fs.existsSync(entry.backup)) {
+        fs.renameSync(entry.backup, entry.target);
+      } else {
+        fs.rmSync(entry.backup, { recursive: true, force: true });
+      }
+    }
+  };
+  try {
+    for (const entry of backups) {
+      if (fs.existsSync(entry.target)) {
+        fs.renameSync(entry.target, entry.backup);
+        entry.hadPrevious = true;
+      }
+    }
+    stageAudioAssets(projectDir, authored.audioPlan, authored.intent.durationSec);
+    if (authored.environmentPlan) {
+      stageEnvironmentAssets(projectDir, authored.environmentPlan);
+    }
+  } catch (error) {
+    restoreMedia();
+    luna.rollback();
+    throw error;
+  }
+  let settled = false;
+  return {
+    commit() {
+      if (settled) return;
+      for (const entry of backups) {
+        fs.rmSync(entry.backup, { recursive: true, force: true });
+      }
+      luna.commit();
+      settled = true;
+    },
+    rollback() {
+      if (settled) return;
+      settled = true;
+      restoreMedia();
+      luna.rollback();
     },
   };
 }

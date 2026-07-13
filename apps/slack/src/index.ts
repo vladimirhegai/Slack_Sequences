@@ -177,7 +177,7 @@ function runJobInBackground(
 const STAGE_PHASES: Record<string, string> = {
   "luna-director": "Luna is directing and authoring the film…",
   "luna-direction": "Luna is choosing the film's direction and story…",
-  "luna-build": "Luna is authoring the executable film…",
+  "luna-build": "Sequences is authoring the executable film…",
   "luna-repair": "Luna is repairing one proven mechanical defect…",
   "luna-self-review": "Luna is reviewing the rendered motion…",
   "luna-revision": "Luna is revising its film…",

@@ -13,6 +13,7 @@ import {
   confirmLunaComposition,
   loadLunaSession,
   lunaDurationBounds,
+  lunaRepairRequirements,
   type LunaMotionIntentV1,
   normalizeLunaSourceMechanics,
   parseLunaMotionIntent,
@@ -101,8 +102,26 @@ const intent = {
   interactions: [],
   energyPeak: { startSec: 2.4, endSec: 3.4 },
   finalRestingHold: { startSec: 5, endSec: 6, primarySelector: "#solution-primary" },
+  audio: { version: 1, soundtrackId: "confident-commercial", cues: [] },
   geometryPolicy: { measuredPairs: [["#handoff-out", "#handoff-in"]] },
 };
+
+describe("Luna repair ownership", () => {
+  it("requires executable source changes for action-time interaction failures", () => {
+    expect(lunaRepairRequirements([
+      'interaction_target_miss: Declared interaction "luna-interaction-02" misses #next by 6px.',
+      'interaction_not_visible: Declared interaction "luna-interaction-03" is off frame.',
+    ])).toEqual({
+      version: 1,
+      requiredChangedDeliverables: ["deliverables/composition.html"],
+      actionTimeInteractionFinding: true,
+      evidenceTimingOnlyRepairAllowed: false,
+      reason: expect.stringContaining("Changing only before/after evidence sample times"),
+    });
+    expect(lunaRepairRequirements(["Math.random is not deterministic"]))
+      .toMatchObject({ actionTimeInteractionFinding: false });
+  });
+});
 
 function deliverable(relativePath: string, text: string) {
   const bytes = Buffer.from(text, "utf8");
@@ -787,6 +806,28 @@ describe("Luna direct route", () => {
         result: "#solution-primary",
       }],
     }), html, storyboard)).toThrow(/actorSelector matches no element/);
+  });
+
+  it("allows a before-result sample during pointer travel but still before action", () => {
+    const duringTravel = {
+      actorSelector: "#problem-primary",
+      targetSelector: "#handoff-out",
+      resultSelector: "#solution-primary",
+      startSec: 1,
+      actionSec: 1.5,
+      settleSec: 1.8,
+      beforeSampleSec: 1.35,
+      afterSampleSec: 2,
+      observableStateChange: "The handoff becomes the resolved subject.",
+    };
+    expect(parseLunaMotionIntent(JSON.stringify({
+      ...intent,
+      interactions: [duringTravel],
+    }), html, storyboard).interactions[0]?.beforeSampleSec).toBe(1.35);
+    expect(() => parseLunaMotionIntent(JSON.stringify({
+      ...intent,
+      interactions: [{ ...duringTravel, beforeSampleSec: 1.5 }],
+    }), html, storyboard)).toThrow(/before-sample before action/);
   });
 
   it("normalizes only the proved composition's dotted timeline binding", () => {

@@ -661,6 +661,24 @@ export function injectEnvironmentRuntimeTag(html: string): string {
   );
 }
 
+/** Bind the living-canvas runtime to the authored paused master timeline. */
+export function injectEnvironmentRuntimeCall(html: string): string {
+  if (/\bSequencesEnvironment\.compile\s*\(/.test(html)) return html;
+  const timelineName = html.match(
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*gsap\.timeline\s*\(/,
+  )?.[1];
+  if (!timelineName) return html;
+  const escaped = timelineName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const registration = new RegExp(
+    `((?:var\\s+__seqWarped\\s*=\\s*SequencesTime\\.wrap\\(${escaped}\\);\\s*)?` +
+      `window\\.__timelines\\s*\\[[^\\]]+\\]\\s*=\\s*(?:${escaped}|__seqWarped)\\s*;)`,
+  );
+  return html.replace(
+    registration,
+    `SequencesEnvironment.compile(${timelineName}, document.querySelector("[data-composition-id]"));\n$1`,
+  );
+}
+
 /**
  * Copy only the film's selected JPEG plus its license notice. Catalog lookup,
  * rather than serialized paths, is the path authority.

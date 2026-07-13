@@ -566,6 +566,11 @@ export interface DirectInteractionEvidence {
   cursorRect?: LayoutRect;
   targetRect?: LayoutRect;
   hotspot?: { x: number; y: number };
+  /** Action-time visibility proof for authored interactions and repair input. */
+  actorOpacity?: number;
+  actorVisibleFraction?: number;
+  targetOpacity?: number;
+  targetVisibleFraction?: number;
   normalized?: "cursor_near_miss";
 }
 
@@ -2478,6 +2483,10 @@ async function auditDeclaredInteractions(
       cursorRect: action.actorRect,
       targetRect: action.targetRect,
       hotspot: action.hotspot,
+      actorOpacity: action.actorOpacity,
+      actorVisibleFraction: action.actorVisibleFraction,
+      targetOpacity: action.targetOpacity,
+      targetVisibleFraction: action.targetVisibleFraction,
     });
     if (
       action.actorOpacity < 0.15 || action.actorVisibleFraction < 0.85 ||

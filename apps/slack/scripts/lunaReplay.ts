@@ -89,6 +89,18 @@ async function replay(): Promise<void> {
           declaredPrimarySelectors: Object.fromEntries(
             intent.acts.map((act) => [act.sceneId, act.primarySelector]),
           ),
+          declaredInteractions: intent.interactions.map((interaction, index) => ({
+            id: `luna-interaction-${String(index + 1).padStart(2, "0")}`,
+            actorSelector: interaction.actorSelector,
+            targetSelector: interaction.targetSelector,
+            resultSelector: interaction.resultSelector,
+            startSec: interaction.startSec,
+            actionSec: interaction.actionSec,
+            settleSec: interaction.settleSec,
+            beforeSampleSec: interaction.beforeSampleSec,
+            afterSampleSec: interaction.afterSampleSec,
+            observableStateChange: interaction.observableStateChange,
+          })),
         };
         const staticValidation = await validateDirectComposition(projectDir, draft);
         let browserValidation: {

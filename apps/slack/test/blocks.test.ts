@@ -217,6 +217,14 @@ describe("Slack blocks", () => {
     expect(text).toContain("Render video (high)");
   });
 
+  it("labels a rejected tool step as failed instead of unavailable", () => {
+    const text = JSON.stringify(thinkingStepsBlocks("Relay", [
+      { tool: "submit_composition", state: "failed", durationMs: 42 },
+    ]));
+    expect(text).toContain("failed");
+    expect(text).not.toContain("unavailable");
+  });
+
   it("appends the ETA countdown line to thinking steps when provided", () => {
     const withEta = JSON.stringify(thinkingStepsBlocks("Relay", [
       { tool: "submit_plan", state: "running" },

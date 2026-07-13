@@ -35,6 +35,11 @@ Relevant inputs are:
   evidence.
 - `inputs/ui-pack/**`: an optional Luna-authored, host-validated UI asset pack.
   Treat it as reusable visual vocabulary, not a mandatory layout or shot list.
+- `inputs/references/audio-catalog.json`: the three host-approved music beds and
+  the only available semantic SFX. Choose by story, not by beat analysis.
+- `inputs/references/background-catalog.json`: optional production-cleared
+  wallpapers for scenes where a complete app/window should float above a
+  background. Do not force one into every film.
 - `inputs/references/**`: motion principles only. Never copy their brand,
   palette, typography, copy, layouts, shot sequence, or signature devices. When
   `inputs/references/golden-demo/**` is present it is the complete source of a
@@ -51,7 +56,8 @@ Return exactly two deliverables through the worker-supplied artifact envelope:
 - `deliverables/director-treatment.md`: the specific visual thesis, spatial
   world, story argument, UI vocabulary, continuity logic, transition grammar,
   camera philosophy, interaction cause/effect, pacing, energy peak, and ending
-  rest. State how hero product surfaces fill the frame and whether the actual
+  rest. State the chosen soundtrack and its role, and whether a wallpaper world
+  helps any full-app scene. State how hero product surfaces fill the frame and whether the actual
   product action or its consequence carries the energy peak. Explain why the
   choices serve this product. Give the later build turn creative options where
   several mechanics could express the same idea.

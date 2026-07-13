@@ -44,6 +44,7 @@ describe("Luna probe and CI contracts", () => {
   it("requires the model-free Luna replay to pass both static and browser gates", () => {
     const source = fs.readFileSync(path.join(appDir, "scripts", "lunaReplay.ts"), "utf8");
     expect(source).toContain("inspectDirectComposition");
+    expect(source).toContain("declaredInteractions: intent.interactions.map");
     expect(source).toContain("staticValidation.ok && browserValidation?.ok === true");
     expect(source).toContain("browser: browserValidation");
     expect(source).toContain("modelCalls: 0");

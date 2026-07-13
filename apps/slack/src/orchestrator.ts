@@ -79,7 +79,7 @@ import {
 import { sentinelSkeletonEnabled, sentinelSlotsEnabled } from "./engine/sentinelFlags.ts";
 import { resolveFeatureFlag, slackSequencesEnvRawValue } from "./engine/featureFlags.ts";
 import {
-  activateLunaAssets,
+  activateLunaCompositionAssets,
   authorLunaComposition,
   confirmLunaComposition,
   lunaCreateFailureStage,
@@ -813,7 +813,7 @@ async function commitLunaCandidate(
   dir: string,
   authored: LunaAuthoredComposition,
 ): Promise<Awaited<ReturnType<typeof applyDirectMutation>>> {
-  const assets = activateLunaAssets(dir, authored.assetFiles);
+  const assets = activateLunaCompositionAssets(dir, authored);
   try {
     const mutation = await applyDirectMutation(
       dir,
@@ -1041,7 +1041,7 @@ async function createVideoWithLuna(
         filePath,
         bytes: fs.existsSync(filePath) ? fs.readFileSync(filePath) : undefined,
       }));
-      const reviewAssets = activateLunaAssets(dir, reviewed.assetFiles);
+      const reviewAssets = activateLunaCompositionAssets(dir, reviewed);
       let reviewCommitted = false;
       try {
         const reviewMutation = await applyDirectMutation(
@@ -1478,13 +1478,13 @@ export async function reviseVideo(options: ReviseVideoOptions): Promise<VideoRes
 
     let mutation: Awaited<ReturnType<typeof applyDirectMutation>> = { usedMcp: false };
     let mode = "luna-direct-noop";
-    let revisedAssets: ReturnType<typeof activateLunaAssets> | undefined;
+    let revisedAssets: ReturnType<typeof activateLunaCompositionAssets> | undefined;
     let revisionCommitted = false;
     if (
       authored.artifactFingerprint !==
       (previousSession.latestArtifactFingerprint ?? previousSession.latestRawSourceSha256)
     ) {
-      revisedAssets = activateLunaAssets(dir, authored.assetFiles);
+      revisedAssets = activateLunaCompositionAssets(dir, authored);
       try {
         mutation = await applyDirectMutation(
           dir,

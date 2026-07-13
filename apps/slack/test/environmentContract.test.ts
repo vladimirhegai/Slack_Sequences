@@ -13,6 +13,7 @@ import {
   environmentRuntimeSource,
   injectEnvironmentContract,
   injectEnvironmentKit,
+  injectEnvironmentRuntimeCall,
   injectEnvironmentRuntimeTag,
   parseEnvironmentPlan,
   primaryReadingWindowsByScene,
@@ -312,5 +313,17 @@ describe("environment kit and runtime IO", () => {
     expect(injectEnvironmentKit(withKit)).toBe(withKit);
     const tampered = withKit.replace("Sequences environment kit v1", "tampered environment kit");
     expect(injectEnvironmentKit(tampered)).toBe(withKit);
+
+    const authored = shell().replace(
+      "window.__ready=true",
+      'const master = gsap.timeline({ paused: true }); window.__timelines = {}; window.__timelines["env-film"] = master;',
+    );
+    const withRuntimeCall = injectEnvironmentRuntimeCall(authored);
+    expect(withRuntimeCall).toContain(
+      'SequencesEnvironment.compile(master, document.querySelector("[data-composition-id]"));',
+    );
+    expect(withRuntimeCall.indexOf("SequencesEnvironment.compile"))
+      .toBeLessThan(withRuntimeCall.indexOf('window.__timelines["env-film"]'));
+    expect(injectEnvironmentRuntimeCall(withRuntimeCall)).toBe(withRuntimeCall);
   });
 });

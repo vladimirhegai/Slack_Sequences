@@ -346,7 +346,7 @@ export function thinkingStepsBlocks(
         : step.state === "fallback"
           ? `local fallback${step.durationMs !== undefined ? ` - ${step.durationMs}ms` : ""}`
           : step.state === "failed"
-            ? "unavailable"
+            ? "failed"
             : step.durationMs !== undefined
               ? `${step.durationMs}ms`
               : "done";
@@ -450,7 +450,7 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
   const buildTrace = (view.toolCalls ?? [])
     .map((call) => {
       const mark =
-        call.status === "succeeded" ? "ok" : call.status === "fallback" ? "local fallback" : "unavailable";
+        call.status === "succeeded" ? "ok" : call.status === "fallback" ? "local fallback" : "failed";
       return `\`${call.tool}\` ${mark} ${call.durationMs}ms`;
     })
     .join("  -  ");

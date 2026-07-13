@@ -22,6 +22,7 @@ import {
   resolveSupersamplePlan,
   supersampleJobFields,
 } from "./render.ts";
+import { mixAudioIntoVideo } from "./audioContract.ts";
 import { inspectDirectComposition } from "./layoutInspector.ts";
 import { unresolvedHardBrowserFindings } from "./runner/browserQuality.ts";
 import { launchHeadlessBrowser } from "./browserLifecycle.ts";
@@ -1041,10 +1042,25 @@ export async function commitDirectComposition(
     (!browserQa.ok && (!browserQa.infraError || declaredIntentPresent)) ||
     (declaredIntentPresent && declaredHardFindings.length > 0)
   ) {
+    const failedInteractionIds = new Set(
+      (browserQa.issues ?? [])
+        .filter((issue) => issue.severity === "error" && issue.code.startsWith("interaction_"))
+        .flatMap((issue) => issue.interactionId ? [issue.interactionId] : []),
+    );
+    const interactionEvidence = (browserQa.interactions ?? [])
+      .filter((entry) => entry.phase === "press" && failedInteractionIds.has(entry.id));
     const findings = [
       ...declaredHardFindings,
       ...(browserQa.infraError ? [`browser_qa_infrastructure: ${browserQa.infraError}`] : []),
       ...browserQa.errors,
+      ...(interactionEvidence.length
+        ? [`evidence=${JSON.stringify({
+            version: 1,
+            kind: "declared-interaction-action-time",
+            frame: { width: validation.width, height: validation.height },
+            interactions: interactionEvidence,
+          })}`]
+        : []),
     ];
     throw new Error(
       `composition failed browser runtime validation:\n${
@@ -1830,6 +1846,12 @@ export async function renderDirectComposition(
   if (!rendered) {
     await producer.executeRenderJob(makeJob(), compositionDir(projectDir), outputPath, onProgress);
   }
+  mixAudioIntoVideo({
+    ffmpegPath,
+    compositionDir: compositionDir(projectDir),
+    videoPath: outputPath,
+    durationSec: current.manifest.durationSec,
+  });
   return {
     outputPath,
     durationSec: current.manifest.durationSec,

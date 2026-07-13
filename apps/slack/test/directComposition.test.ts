@@ -3624,6 +3624,63 @@ describe("S6.10 typed load-bearing containment", () => {
 });
 
 describe("direct HyperFrames composition", () => {
+  it("includes bounded action-time interaction geometry in a rejected Luna composition", async () => {
+    const dir = projectDir();
+    const value = draft();
+    value.declaredPrimarySelectors = { hook: "#hook-title", payoff: "#payoff-title" };
+    value.declaredInteractions = [{
+      id: "luna-interaction-01",
+      actorSelector: "#hook-title",
+      targetSelector: "#hook-title",
+      resultSelector: "#payoff-title",
+      startSec: 0.2,
+      actionSec: 0.5,
+      settleSec: 0.7,
+      beforeSampleSec: 0.1,
+      afterSampleSec: 4.5,
+      observableStateChange: "The payoff appears.",
+    }];
+    vi.mocked(inspectDirectComposition).mockResolvedValueOnce({
+      ok: false,
+      strictOk: false,
+      samples: [0.5],
+      issues: [{
+        code: "interaction_target_miss",
+        severity: "error",
+        time: 0.5,
+        interactionId: "luna-interaction-01",
+        selector: "#hook-title",
+        message: "Declared interaction misses by 21.2px.",
+        source: "sequences",
+      }],
+      interactions: [{
+        id: "luna-interaction-01",
+        phase: "press",
+        time: 0.5,
+        cursor: { x: 1965.9, y: 586.9 },
+        target: { x: 1969.1, y: 607.9 },
+        deltaPx: 21.2,
+        hit: false,
+        cursorRect: { left: 1965.9, top: 586.9, right: 2034.1, bottom: 676.8, width: 68.2, height: 89.9 },
+        targetRect: { left: 1959.7, top: 598.6, right: 2040.3, bottom: 665.2, width: 80.6, height: 66.6 },
+        hotspot: { x: 0, y: 0 },
+        actorOpacity: 1,
+        actorVisibleFraction: 0,
+        targetOpacity: 1,
+        targetVisibleFraction: 0,
+      }],
+      errors: ["interaction_target_miss #hook-title"],
+      warnings: [],
+    });
+    try {
+      await expect(commitDirectComposition(dir, "Relay", value)).rejects.toThrow(
+        /evidence=.*declared-interaction-action-time.*21\.2.*actorVisibleFraction/,
+      );
+    } finally {
+      vi.mocked(inspectDirectComposition).mockImplementation(defaultInspectImplementation);
+    }
+  });
+
   it("budgets one typed ghost word and injects its bounded host-owned moment idempotently", () => {
     const value = draft();
     const scenes = value.storyboard.map((scene, index): DirectScene => index === 0
