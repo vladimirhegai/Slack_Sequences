@@ -65,10 +65,26 @@ describe("Luna prompt and tool-less context budgets", () => {
       targetDurationSec: 20,
       provenance: { unsupportedClaimsAllowed: false },
     });
+    const goldenDir = path.resolve(promptsDir, "..", "demos", "slack-ad");
+    const goldenNames = [
+      "STORYBOARD.md",
+      "index.html",
+      "style.css",
+      "polish.css",
+      "config.js",
+      "timeline.js",
+    ];
     const files = [
       input("inputs/fact-envelope.json", facts),
       input("inputs/asset-brief.md", "No approved screenshots. Build synthetic local UI.\n"),
       input("inputs/references/slack-ad-motion-principles.md", prompt("luna-motion-reference.md")),
+      input("inputs/references/golden-demo/README.md", prompt("luna-golden-demo-reference.md")),
+      ...goldenNames.map((name) =>
+        input(
+          `inputs/references/golden-demo/${name}`,
+          fs.readFileSync(path.join(goldenDir, name), "utf8"),
+        )
+      ),
     ];
     for (const name of ["luna-asset-pack.md", "luna-direction.md", "luna-director.md"]) {
       const assembled = buildToollessArtifactPrompt(prompt(name), files);

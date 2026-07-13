@@ -33,6 +33,19 @@ const PROMPT_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../prompts",
 );
+const GOLDEN_DEMO_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../demos/slack-ad",
+);
+// Creative code only — no operational brief, render harness, or brand binaries.
+const GOLDEN_DEMO_REFERENCE_FILES: readonly string[] = [
+  "STORYBOARD.md",
+  "index.html",
+  "style.css",
+  "polish.css",
+  "config.js",
+  "timeline.js",
+];
 const MAX_REFERENCE_FILE_BYTES = 12 * 1024 * 1024;
 const MAX_REFERENCE_TOTAL_BYTES = 28 * 1024 * 1024;
 const MAX_DELIVERABLE_BYTES = 8 * 1024 * 1024;
@@ -392,6 +405,34 @@ function approvedUiPackInputs(
   };
 }
 
+// A complete, high-craft reference film embedded as technique-only evidence for
+// the direction and build turns. Gated by SLACK_SEQUENCES_LUNA_CRAFT_CAPSULE and
+// deliberately fault-tolerant: a missing or unreadable reference must never fail
+// a paid create, so any error yields no reference rather than throwing. The
+// appearance fence lives in the embedded README plus the turn prompts.
+function goldenDemoReferenceInputs(
+  env: SlackSequencesEnvSource = process.env,
+): LunaWorkerInputFile[] {
+  if (resolveFeatureFlag("SLACK_SEQUENCES_LUNA_CRAFT_CAPSULE", env).value !== "on") {
+    return [];
+  }
+  try {
+    const files: LunaWorkerInputFile[] = [
+      workerInputFile(
+        "inputs/references/golden-demo/README.md",
+        prompt("luna-golden-demo-reference.md"),
+      ),
+    ];
+    for (const name of GOLDEN_DEMO_REFERENCE_FILES) {
+      const bytes = fs.readFileSync(path.join(GOLDEN_DEMO_DIR, name));
+      files.push(workerInputFile(`inputs/references/golden-demo/${name}`, bytes));
+    }
+    return files;
+  } catch {
+    return [];
+  }
+}
+
 function initialWorkerFiles(
   facts: LunaFactEnvelope,
   referencePaths: readonly string[],
@@ -427,6 +468,7 @@ function initialWorkerFiles(
       "inputs/references/slack-ad-motion-principles.md",
       prompt("luna-motion-reference.md"),
     ),
+    ...goldenDemoReferenceInputs(),
     workerInputFile("inputs/ui-pack-status.json", JSON.stringify({
       version: 1,
       mode: preparedPack.validated ? "prepared" : "synthetic-required",

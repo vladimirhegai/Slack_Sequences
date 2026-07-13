@@ -34,6 +34,15 @@ typewriter device, camera shot, or logo behavior. Invent a treatment specific to
 the supplied product. Not every boundary needs shared-element motion and a
 motivated hard cut is valid.
 
+When present, `inputs/references/golden-demo/**` is the complete source of that
+same reference film — its storyboard, DOM, CSS, and paused seekable GSAP
+timeline. Read `inputs/references/golden-demo/README.md` first. Study it only to
+learn craft: multi-act scene tiling, dynamic range between bright and dark acts,
+frame-filling composition, one dominant energy peak, causal transitions, and a
+resolved payoff. The identical do-not-copy fence applies — never reuse its
+palette, copy, brand marks, wallpaper, shot order, act count, typewriter, camera,
+or logo behavior. Extract the principles; leave the pixels.
+
 ## Inputs and trust
 
 The worker embeds verified UTF-8 inputs after this prompt and attaches approved

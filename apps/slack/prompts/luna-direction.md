@@ -27,7 +27,11 @@ Relevant inputs are:
 - `inputs/ui-pack/**`: an optional Luna-authored, host-validated UI asset pack.
   Treat it as reusable visual vocabulary, not a mandatory layout or shot list.
 - `inputs/references/**`: motion principles only. Never copy their brand,
-  palette, typography, copy, layouts, shot sequence, or signature devices.
+  palette, typography, copy, layouts, shot sequence, or signature devices. When
+  `inputs/references/golden-demo/**` is present it is the complete source of a
+  strong reference film — study its multi-act structure, dynamic range, and
+  energy arc, but invent your own appearance, story, and shot sequence for this
+  product. Read `inputs/references/golden-demo/README.md` first.
 
 Return exactly two deliverables through the worker-supplied artifact envelope:
 

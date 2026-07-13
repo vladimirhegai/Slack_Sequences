@@ -178,6 +178,11 @@ export const FEATURE_FLAG_REGISTRY = {
     "Choose whether interaction-time findings are enforced or report-only.",
     "Set to audit for report-only interaction QA; there is currently no off path.",
   ),
+  SLACK_SEQUENCES_LUNA_CRAFT_CAPSULE: optOut(
+    "Luna director route",
+    "Embed the golden reference film (technique-only, appearance-fenced) in the Luna direction and build turns.",
+    "Set to 0 to withhold the reference film and restore the text-only motion principles.",
+  ),
   SLACK_SEQUENCES_PLUGINS: optOut(
     "plugin contract",
     "Lower and inject host-owned parameterized plugin generators.",
