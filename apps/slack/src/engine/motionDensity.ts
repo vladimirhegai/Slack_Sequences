@@ -33,9 +33,9 @@ export interface MotionDensityReport {
   maxQuietGapSec: number;
   sceneReports: MotionDensitySceneReport[];
   /**
-   * Blocking liveness findings (quiet gaps, slide-like scenes, front-loaded
-   * motion). These gate publication: a film that goes dead is a defect, not a
-   * style choice.
+   * Liveness findings (quiet gaps, slide-like scenes, front-loaded motion).
+   * The legacy route treats these as blocking; the declared-intent Luna route
+   * retains them as directing advisories in validateDirectComposition.
    */
   errors: string[];
   /** Advisory findings (over-animation, unplaceable tweens, empty holds). */

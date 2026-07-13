@@ -3,6 +3,7 @@ import {
   buildAssetBriefModal,
   buildCreateModal,
   buildingBlocks,
+  errorBlocks,
   resultBlocks,
   storyboardReadyBlocks,
   thinkingStepsBlocks,
@@ -149,6 +150,25 @@ describe("Slack blocks", () => {
     expect(text).toContain("Agent context");
     expect(text).toContain("`/product-launch-video`");
     expect(text).toContain("Reply in this thread to revise");
+    expect(text).toContain("job `job-1`");
+  });
+
+  it("includes the forensic job id in fallback and error messages", () => {
+    const fallback = JSON.stringify(resultBlocks({
+      jobId: "job-fallback-1",
+      title: "Relay",
+      outline: "1. proof",
+      lint: "lint: clean",
+      videoStage: "ready",
+      usedMcp: false,
+      provider: "Luna",
+      fallback: { stage: "luna-repair", reason: "timeline_contract: exact timeline absent" },
+    }));
+    expect(fallback).toContain("Safe fallback");
+    expect(fallback).toContain("job-fallback-1");
+    expect(fallback).toContain("timeline_contract: exact timeline absent");
+    expect(JSON.stringify(errorBlocks("Relay", "worker unreachable", "job-error-1")))
+      .toContain("job-error-1");
   });
 
   it("renders incremental thinking-step states", () => {

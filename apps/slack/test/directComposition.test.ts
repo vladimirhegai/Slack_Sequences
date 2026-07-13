@@ -83,7 +83,7 @@ import type { DirectScene } from "../src/engine/directComposition.ts";
 import { initializeProject } from "../src/engine/projectTemplates.ts";
 import { buildJobFrame } from "../src/engine/frameDesign.ts";
 import { injectCinemaKit } from "../src/engine/cinemaKit.ts";
-import { injectCameraRuntimeTag } from "../src/engine/cameraContract.ts";
+import { injectCameraRuntimeTag, resolveCameraPlan } from "../src/engine/cameraContract.ts";
 import { injectComponentKit } from "../src/engine/componentContract.ts";
 import { buildFallbackComposition } from "../src/engine/fallbackComposition.ts";
 import {
@@ -3707,6 +3707,52 @@ describe("direct HyperFrames composition", () => {
     );
     const validation = await validateDirectComposition(dir, value);
     expect(validation.errors).toEqual([]);
+  });
+
+  it("publishes a front-loaded Luna scene with the full liveness finding as an advisory", async () => {
+    const dir = projectDir();
+    const fallback = buildFallbackComposition({
+      product: "Relay",
+      whatShipped: "Incident routing",
+      audience: "operators",
+      lengthSec: 15,
+    });
+    fallback.storyboard = fallback.storyboard.map((scene) => {
+      const { moments: _moments, ...withoutMoments } = scene;
+      return withoutMoments;
+    });
+    fallback.html = fallback.html
+      .replace(
+        /(<script type="application\/json" id="sequences-camera">)[\s\S]*?(<\/script>)/,
+        `$1${JSON.stringify(resolveCameraPlan(fallback.storyboard))}$2`,
+      )
+      .replace(/^tl\.fromTo\("#close-rule".*\r?\n/m, "")
+      .replace(/^tl\.fromTo\("#fallback-close \.cta".*\r?\n/m, "")
+      .replace(/^tl\.fromTo\("#close-promise".*\r?\n/m, "");
+    fallback.declaredPrimarySelectors = {
+      "fallback-hook": '[data-part="release-headline"]',
+      "fallback-proof": '[data-part="release-proof"]',
+      "fallback-close": '[data-part="release-cta"]',
+    };
+
+    const luna = await validateDirectComposition(dir, fallback);
+    expect(luna.errors).toEqual([]);
+    expect(luna.motionErrors).toEqual([]);
+    expect(luna.warnings.join("\n")).toContain(
+      'motion/liveness: scene "fallback-close" front-loads its authored motion',
+    );
+    expect(luna.motionWarnings.join("\n")).toContain("front-loads its authored motion");
+    const published = await commitDirectComposition(dir, "Relay", fallback);
+    expect(published.validation.errors).toEqual([]);
+    expect(published.manifest.qa?.warningCount).toBeGreaterThan(0);
+    expect(fs.readFileSync(path.join(dir, "composition", "motion-plan.json"), "utf8"))
+      .toContain("front-loads its authored motion");
+
+    const legacy = await validateDirectComposition(dir, {
+      html: fallback.html,
+      storyboard: fallback.storyboard,
+    });
+    expect(legacy.errors.join("\n")).toContain("front-loads its authored motion");
   });
 
   it("uses data-scene as the storyboard binding when the stable DOM id differs", async () => {

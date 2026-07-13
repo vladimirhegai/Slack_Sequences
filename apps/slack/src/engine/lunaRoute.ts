@@ -158,6 +158,17 @@ export interface LunaAssetTransaction {
   rollback(): void;
 }
 
+/** A paid worker turn whose exact result exists but failed host acceptance. */
+export class LunaRejectedBundleError extends Error {
+  readonly worker: LunaWorkerResult;
+
+  constructor(worker: LunaWorkerResult, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "LunaRejectedBundleError";
+    this.worker = worker;
+  }
+}
+
 /**
  * The host-accepted duration window for a fresh create. The legacy brief
  * always treated the requested length as a pacing center, not an exact
@@ -327,6 +338,40 @@ function persistWorkerResult(projectDir: string, kind: string, result: LunaWorke
   runDir: string;
   files: Map<string, Buffer>;
 } {
+  // Persist the paid worker receipt and its exact encoded response before any
+  // host-side interpretation. A bad hash/path/schema is still evidence; the
+  // validator may reject it, but it must never make the paid bytes disappear.
+  const runDir = nextRunDir(projectDir, kind);
+  const receipt = {
+    version: 1,
+    jobId: result.jobId,
+    operationId: result.operationId,
+    runCount: result.runCount,
+    threadId: result.threadId,
+    status: result.status,
+    model: result.model,
+    reasoningEffort: result.reasoningEffort,
+    codexVersion: result.codexVersion,
+    rawEnvelopeSha256: result.rawEnvelopeSha256,
+    materializedFingerprint: result.materializedFingerprint,
+    rolloutSha256: result.rolloutSha256,
+    rolloutResponseItems: result.rolloutResponseItems,
+    usage: result.usage ?? null,
+    finalMessage: result.finalMessage,
+    deliverables: result.deliverables.map(({ path: filePath, sha256: hash, size }) => ({
+      path: filePath,
+      sha256: hash,
+      size,
+    })),
+  };
+  fs.writeFileSync(
+    path.join(runDir, "worker-receipt.json"),
+    JSON.stringify(receipt, null, 2) + "\n",
+  );
+  fs.writeFileSync(
+    path.join(runDir, "worker-response.json"),
+    JSON.stringify(result, null, 2) + "\n",
+  );
   const files = new Map<string, Buffer>();
   if (result.deliverables.length > MAX_DELIVERABLE_COUNT) {
     throw new Error("Luna worker returned too many deliverables");
@@ -352,7 +397,6 @@ function persistWorkerResult(projectDir: string, kind: string, result: LunaWorke
     throw new Error("Luna worker materialized fingerprint does not match its deliverables");
   }
 
-  const runDir = nextRunDir(projectDir, kind);
   for (const [relative, bytes] of files) {
     const withinDeliverables = relative.slice("deliverables/".length);
     const destination = path.resolve(runDir, "deliverables", withinDeliverables);
@@ -361,26 +405,6 @@ function persistWorkerResult(projectDir: string, kind: string, result: LunaWorke
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.writeFileSync(destination, bytes);
   }
-  fs.writeFileSync(path.join(runDir, "worker-receipt.json"), JSON.stringify({
-    version: 1,
-    jobId: result.jobId,
-    threadId: result.threadId,
-    status: result.status,
-    model: result.model,
-    reasoningEffort: result.reasoningEffort,
-    codexVersion: result.codexVersion,
-    rawEnvelopeSha256: result.rawEnvelopeSha256,
-    materializedFingerprint: result.materializedFingerprint,
-    rolloutSha256: result.rolloutSha256,
-    rolloutResponseItems: result.rolloutResponseItems,
-    usage: result.usage ?? null,
-    finalMessage: result.finalMessage,
-    deliverables: result.deliverables.map(({ path: filePath, sha256: hash, size }) => ({
-      path: filePath,
-      sha256: hash,
-      size,
-    })),
-  }, null, 2) + "\n");
   return { runDir, files };
 }
 
@@ -1031,7 +1055,7 @@ export function reconcileLunaSessionAfterUndo(projectDir: string): boolean {
   return true;
 }
 
-function materializeLunaResult(
+function materializeLunaResultUnchecked(
   projectDir: string,
   kind: string,
   result: LunaWorkerResult,
@@ -1091,6 +1115,111 @@ function materializeLunaResult(
     runDir: persisted.runDir,
     assetFiles,
   };
+}
+
+function materializeLunaResult(
+  projectDir: string,
+  kind: string,
+  result: LunaWorkerResult,
+  acceptedDuration: { minSec: number; maxSec: number },
+): LunaAuthoredComposition {
+  try {
+    return materializeLunaResultUnchecked(projectDir, kind, result, acceptedDuration);
+  } catch (error) {
+    if (error instanceof LunaRejectedBundleError) throw error;
+    throw new LunaRejectedBundleError(result, error);
+  }
+}
+
+function rejectedBundleInputs(
+  result: LunaWorkerResult,
+  hardFindings: readonly string[],
+): LunaWorkerInputFile[] {
+  if (!hardFindings.length) {
+    throw new Error("Luna repair requires at least one hard mechanical finding");
+  }
+  if (result.deliverables.length > MAX_DELIVERABLE_COUNT) {
+    throw new Error("Luna rejected bundle has too many deliverables to repair safely");
+  }
+  let totalBytes = 0;
+  const files: LunaWorkerInputFile[] = [];
+  for (const deliverable of result.deliverables) {
+    const normalized = normalizeWorkerPath(deliverable.path);
+    if (!normalized.startsWith("deliverables/")) {
+      throw new Error(`Luna rejected bundle contains out-of-envelope file ${normalized}`);
+    }
+    const bytes = Buffer.from(deliverable.contentBase64, "base64");
+    totalBytes += bytes.length;
+    if (bytes.length > MAX_DELIVERABLE_BYTES || totalBytes > MAX_DELIVERABLE_TOTAL_BYTES) {
+      throw new Error("Luna rejected bundle exceeds the bounded repair input size");
+    }
+    files.push(workerInputFile(
+      `inputs/rejected-bundle/${normalized.slice("deliverables/".length)}`,
+      bytes,
+    ));
+  }
+  files.push(workerInputFile("inputs/repair/hard-findings.json", JSON.stringify({
+    version: 1,
+    findings: hardFindings,
+    advisoryFindingsIncluded: false,
+  }, null, 2) + "\n"));
+  files.push(workerInputFile("inputs/repair/rejected-bundle-host.json", JSON.stringify({
+    version: 1,
+    hostDisposition: "rejected",
+    acceptedBundle: null,
+    rejectedBundleIsAuthoritativeForRepair: true,
+    workerJobId: result.jobId,
+    workerOperationId: result.operationId,
+    workerRunCount: result.runCount,
+    threadId: result.threadId,
+    rawEnvelopeSha256: result.rawEnvelopeSha256,
+    materializedFingerprint: result.materializedFingerprint,
+    rolloutSha256: result.rolloutSha256,
+    oneRepairTurnMaximum: true,
+  }, null, 2) + "\n"));
+  return files;
+}
+
+/** Resume the exact paid create thread once with mechanical evidence only. */
+export async function repairLunaComposition(input: {
+  projectDir: string;
+  facts: LunaFactEnvelope;
+  rejectedWorker: LunaWorkerResult;
+  hardFindings: readonly string[];
+}): Promise<LunaAuthoredComposition> {
+  const config = resolveLunaWorkerConfig();
+  const rejected = input.rejectedWorker;
+  const cursor = await inspectLunaWorkerCursor(config, rejected.jobId);
+  if (
+    cursor.jobId !== rejected.jobId ||
+    cursor.operationId !== rejected.operationId ||
+    cursor.runCount !== rejected.runCount ||
+    cursor.threadId !== rejected.threadId ||
+    cursor.status !== "completed"
+  ) {
+    throw new Error("Luna repair could not prove the exact rejected worker cursor");
+  }
+  const result = await resumeLunaWorkerJob(config, {
+    jobId: rejected.jobId,
+    expectedRunCount: rejected.runCount,
+    prompt: prompt("luna-repair.md"),
+    files: rejectedBundleInputs(rejected, input.hardFindings),
+  });
+  if (result.jobId !== rejected.jobId) {
+    throw new Error("Luna repair returned a different worker job ID");
+  }
+  if (result.threadId !== rejected.threadId) {
+    throw new Error("Luna repair resumed a different Codex thread");
+  }
+  if (result.runCount !== rejected.runCount + 1) {
+    throw new Error("Luna repair did not advance the exact director thread once");
+  }
+  return materializeLunaResult(
+    input.projectDir,
+    "repair",
+    result,
+    lunaDurationBounds(input.facts),
+  );
 }
 
 export async function authorLunaComposition(input: {

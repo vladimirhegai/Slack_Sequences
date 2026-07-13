@@ -22,6 +22,7 @@ export type TimedStep = string;
  */
 const SEED_MS: Record<string, number> = {
   "luna-director": 180_000,
+  "luna-repair": 120_000,
   "luna-self-review": 90_000,
   "luna-revision": 120_000,
   "frame-design": 10_000,

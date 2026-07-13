@@ -77,6 +77,7 @@ export function buildAuthoringFailureReport(input: AuthoringFailureInput): strin
   const lines: string[] = [];
 
   lines.push("SEQUENCES BUILD FAILED — no video or storyboard was published (fail-loud mode).");
+  lines.push(`Job ID: ${path.basename(projectDir)}`);
   lines.push(`Failed stage: ${stage}`);
   lines.push(`When: ${new Date().toISOString()}`);
   lines.push(`Full report on disk: ${path.join(projectDir, "FAILURE.md")}`);
@@ -130,6 +131,14 @@ export function buildAuthoringFailureReport(input: AuthoringFailureInput): strin
   if (attemptFiles.length) {
     lines.push("── PERSISTED ATTEMPTS (open for full documents + findings) ──");
     for (const file of attemptFiles) lines.push(`  ${path.join(attemptsDir, file)}`);
+    lines.push("");
+  }
+
+  const lunaRunsDir = path.join(projectDir, "planning", "luna", "runs");
+  const lunaRuns = safeList(lunaRunsDir);
+  if (lunaRuns.length) {
+    lines.push("── PERSISTED LUNA TURNS (exact bundles + worker receipts) ──");
+    for (const run of lunaRuns) lines.push(`  ${path.join(lunaRunsDir, run)}`);
     lines.push("");
   }
 

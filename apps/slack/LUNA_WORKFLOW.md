@@ -121,20 +121,33 @@ motion. Their rollback is removal after persisted Luna evidence shows the
 literal protocol field and canonical bracket binding are consistently emitted;
 the `data-scene` binding is the permanent runtime contract.
 
-The first taste-vs-mechanics pass ran 2026-07-13 against real Luna artifacts
-(PROBE_LOG): films authored under the declared-intent contract waive
-`layout_intent_missing` (the contract replaces the legacy data-layout
-declaration expectation), continuous-motion focal tracking binds to the
-declared per-act primary selector, and `contrast_aa` findings on the declared
-primary subject are flagged so triage separates load-bearing copy from
-supporting microcopy. Quiet windows, frame underfill, and static-frame
-findings remain visible advisories. Storyboard `cut` declarations normalize on
-this route exactly as on the legacy route (malformed declarations degrade to no
-cut). Keep factual, security, seeking, visibility, binding, browser, and
-encoding failures hard. Repair prompts are still later work: an authored hard
-defect should return to the same thread with exact mechanical evidence, while
-an engine defect is fixed model-free at its lowest owner. Never restore the
-old multi-model repair committee around Luna.
+The 2026-07-13 taste-vs-mechanics passes are keyed by the declared-intent
+contract (`draft.declaredPrimarySelectors`), never by a route-name string.
+Declared-intent films waive `layout_intent_missing`; continuous-motion focal
+tracking binds to Luna's declared per-act primary selector; quiet windows,
+front-loaded motion, beat/moment quotas, frame conformance, occupancy, fill,
+contrast, transition counts, and other composition-taste findings remain
+visible advisories. `pacingAudit.ts` belongs to legacy planning and is not
+consulted by Luna's direct-composition gate.
+
+Static timeline-registration source shapes are hints on this route. Chromium
+is authoritative: it must find `window.__timelines[compositionId]`, prove that
+exact timeline is paused and seekable, and show that repeated `window.__seek(t)`
+restores the same rendered state. Absence, a wrong ID, a running timeline,
+nondeterministic seek, runtime exceptions, blank output, binding/security/CSP
+failures, and encode failures stay hard. The only source adapter remains the
+existing proved dotted-composition-id to bracket-notation rewrite above.
+
+One hard mechanical rejection resumes the exact persisted worker job/thread
+once with `prompts/luna-repair.md`, the complete rejected bundle, and verbatim
+hard findings only. Generation and cursor checks require exactly one increment,
+and the replacement bundle traverses the complete materialization, static, and
+browser gates again. Taste advisories never enter this turn. If create or that
+single repair cannot produce an accepted film, the shared
+`SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK` switch publishes the existing
+honestly labeled model-free proof film; it never calls OpenRouter or disguises
+fallback as Luna. Paid worker receipt/response bytes are persisted before host
+interpretation, and surfaced Slack receipts include the job ID.
 
 ## Route and worker configuration
 

@@ -92,6 +92,7 @@ function deliverable(relativePath: string, text: string) {
 async function fakeWorker(options: {
   assetSvg?: string;
   compositionHtml?: string;
+  compositionHtmlByRunCount?: Readonly<Record<number, string>>;
   storyboardScenes?: unknown[];
   corruptRawEnvelopeHash?: boolean;
   corruptMaterializedFingerprint?: boolean;
@@ -113,9 +114,10 @@ async function fakeWorker(options: {
         response.end(JSON.stringify({ error: { code: "job_not_found", message: "missing" } }));
         return;
       }
-      const runHtml = options.invalidHtmlOnRunCount === latest.runCount
-        ? "<html><body>invalid</body></html>"
-        : responseHtml;
+      const runHtml = options.compositionHtmlByRunCount?.[latest.runCount] ??
+        (options.invalidHtmlOnRunCount === latest.runCount
+          ? "<html><body>invalid</body></html>"
+          : responseHtml);
       const { version: _motionIntentVersion, ...motionIntentWithoutVersion } = intent;
       const responseIntent = options.omitMotionIntentVersion ? motionIntentWithoutVersion : intent;
       const deliverables = [
@@ -270,7 +272,7 @@ describe("Luna direct route", () => {
     }
   }, 60_000);
 
-  it("rejects worker provenance hashes before persisting an evidence run", async () => {
+  it("persists the paid worker receipt before rejecting bad provenance hashes", async () => {
     for (const [option, message] of [
       ["corruptRawEnvelopeHash", /raw artifact-envelope hash/],
       ["corruptMaterializedFingerprint", /materialized fingerprint/],
@@ -296,7 +298,11 @@ describe("Luna direct route", () => {
             },
           },
         })).rejects.toThrow(message);
-        expect(fs.existsSync(path.join(root, "planning", "luna", "runs"))).toBe(false);
+        const runsRoot = path.join(root, "planning", "luna", "runs");
+        const runs = fs.readdirSync(runsRoot);
+        expect(runs).toHaveLength(1);
+        expect(fs.existsSync(path.join(runsRoot, runs[0]!, "worker-receipt.json"))).toBe(true);
+        expect(fs.existsSync(path.join(runsRoot, runs[0]!, "worker-response.json"))).toBe(true);
       } finally {
         await worker.close();
       }
@@ -645,6 +651,99 @@ describe("Luna direct route", () => {
       await worker.close();
     }
   });
+
+  it("round-trips one hard create failure through the exact fake-worker thread", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-repair-"));
+    roots.push(root);
+    const invalidHtml = html.replace(
+      "const master=gsap.timeline({paused:true});",
+      "const seed=Math.random();const master=gsap.timeline({paused:true});",
+    );
+    const worker = await fakeWorker({
+      compositionHtmlByRunCount: { 1: invalidHtml, 2: html, 3: html },
+    });
+    vi.stubEnv("SLACK_SEQUENCES_DATA_DIR", root);
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
+    vi.stubEnv(
+      "SLACK_SEQUENCES_LUNA_WORKER_TOKEN",
+      "test-worker-token-that-is-at-least-thirty-two-characters",
+    );
+    try {
+      const result = await createVideo({
+        jobId: "luna-one-repair-proof",
+        product: "Harborview",
+        brandName: "Harborview",
+        whatShipped: "Feedback routing",
+        lengthSec: 6,
+        render: false,
+        preferMcp: false,
+        allowDeterministicFallback: false,
+      });
+      expect(result.fallback).toBeUndefined();
+      expect(result.stages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ stage: "luna-repair", status: "succeeded", attempts: 1 }),
+      ]));
+      expect(worker.requests).toHaveLength(3);
+      expect(worker.requests[1]!.body.expectedRunCount).toBe(1);
+      expect(worker.requests[2]!.body.expectedRunCount).toBe(2);
+      const repairFiles = worker.requests[1]!.body.files as Array<{
+        path: string;
+        contentBase64: string;
+      }>;
+      const rejectedHtml = repairFiles.find(
+        (file) => file.path === "inputs/rejected-bundle/composition.html",
+      );
+      expect(Buffer.from(rejectedHtml!.contentBase64, "base64").toString("utf8"))
+        .toBe(invalidHtml);
+      const hardFindings = repairFiles.find(
+        (file) => file.path === "inputs/repair/hard-findings.json",
+      );
+      const findings = JSON.parse(
+        Buffer.from(hardFindings!.contentBase64, "base64").toString("utf8"),
+      ) as { findings: string[]; advisoryFindingsIncluded: boolean };
+      expect(findings.advisoryFindingsIncluded).toBe(false);
+      expect(findings.findings.join("\n")).toContain("Math.random is not deterministic");
+      expect(loadLunaSession(result.projectDir)).toMatchObject({
+        workerRunCount: 3,
+        workerCursorDisposition: "accepted",
+      });
+    } finally {
+      await worker.close();
+    }
+  }, 60_000);
+
+  it("publishes the labeled deterministic fallback when the Luna worker is unreachable", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-fallback-"));
+    roots.push(root);
+    const unavailable = http.createServer();
+    await new Promise<void>((resolve) => unavailable.listen(0, "127.0.0.1", resolve));
+    const address = unavailable.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    await new Promise<void>((resolve, reject) => unavailable.close((error) =>
+      error ? reject(error) : resolve()
+    ));
+    vi.stubEnv("SLACK_SEQUENCES_DATA_DIR", root);
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", `http://127.0.0.1:${port}`);
+    vi.stubEnv(
+      "SLACK_SEQUENCES_LUNA_WORKER_TOKEN",
+      "test-worker-token-that-is-at-least-thirty-two-characters",
+    );
+    const result = await createVideo({
+      jobId: "luna-worker-unreachable-fallback",
+      product: "Relay",
+      whatShipped: "Incident routing",
+      lengthSec: 6,
+      render: false,
+      preferMcp: false,
+      allowDeterministicFallback: true,
+    });
+    expect(result.authorRoute).toBe("luna-direct");
+    expect(result.fallback).toMatchObject({ stage: "luna-director" });
+    expect(result.outline).toContain("Relay shipped");
+    expect(result.thumbnailPaths.length).toBeGreaterThan(0);
+    expect(fs.readFileSync(path.join(result.projectDir, "FAILURE.md"), "utf8"))
+      .toContain("Job ID: luna-worker-unreachable-fallback");
+  }, 60_000);
 
   it("rolls Luna asset activation back transactionally", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-assets-"));

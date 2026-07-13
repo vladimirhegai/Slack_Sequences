@@ -4004,6 +4004,12 @@ export async function inspectDirectComposition(
       const match = rootTag.match(new RegExp(`\\b${name}\\s*=\\s*([\"'])(\\d+)\\1`, "i"));
       return Number(match?.[2]) || fallback;
     };
+    const compositionId = rootTag.match(
+      /\bdata-composition-id\s*=\s*(["'])(.*?)\1/i,
+    )?.[2] ?? "";
+    const lunaDeclaredIntentPresent = Boolean(
+      draft.declaredPrimarySelectors && Object.keys(draft.declaredPrimarySelectors).length,
+    );
     const width = readDimension("data-width", 1920);
     const height = readDimension("data-height", 1080);
     await page.setViewport({ width, height, deviceScaleFactor: 1 });
@@ -4036,10 +4042,99 @@ export async function inspectDirectComposition(
     // Browser contexts do not have that build helper, so provide its inert form.
     await page.addScriptTag({ content: "globalThis.__name ||= (target) => target;" });
     await page.waitForFunction(
-      () => Object.keys((window as unknown as { __timelines?: object }).__timelines ?? {}).length > 0,
+      () => Object.keys(
+        (window as unknown as { __timelines?: Record<string, unknown> }).__timelines ?? {},
+      ).length > 0,
       { timeout: 12_000 },
     );
     await page.evaluate(() => (document as Document & { fonts?: FontFaceSet }).fonts?.ready);
+
+    if (lunaDeclaredIntentPresent) {
+      const timelineContractError = await page.evaluate(async (expectedId: string) => {
+        type TimelineLike = {
+          paused?: () => boolean;
+          seek?: (time: number, suppressEvents?: boolean) => unknown;
+        };
+        const win = window as unknown as {
+          __timelines?: Record<string, TimelineLike>;
+          __seek?: (time: number) => unknown;
+        };
+        const timeline = win.__timelines?.[expectedId];
+        if (!timeline) return `timeline_contract: window.__timelines["${expectedId}"] is absent`;
+        if (typeof timeline.seek !== "function") {
+          return `timeline_contract: window.__timelines["${expectedId}"] is not seekable`;
+        }
+        if (typeof timeline.paused !== "function" || timeline.paused() !== true) {
+          return `timeline_contract: window.__timelines["${expectedId}"] is not paused`;
+        }
+        if (typeof win.__seek !== "function") {
+          return "timeline_contract: window.__seek(t) is absent";
+        }
+        const duration = Number(
+          document.querySelector<HTMLElement>(
+            `[data-composition-id="${CSS.escape(expectedId)}"]`,
+          )?.dataset.duration ?? 0,
+        );
+        if (!Number.isFinite(duration) || duration <= 0) {
+          return "timeline_contract: the declared composition duration is invalid in-browser";
+        }
+        const settle = () => new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        );
+        const snapshot = (): string => JSON.stringify(
+          Array.from(document.querySelectorAll<HTMLElement | SVGElement>("body *")).map((element) => {
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return {
+              tag: element.tagName,
+              attrs: Array.from(element.attributes)
+                .filter((attribute) =>
+                  attribute.name !== "style" && attribute.name !== "data-svg-origin"
+                )
+                .map((attribute) => [attribute.name, attribute.value] as const)
+                .sort((left, right) => left[0].localeCompare(right[0])),
+              text: element.childElementCount === 0 ? element.textContent : null,
+              style: [
+                style.display,
+                style.visibility,
+                style.opacity,
+                style.transform,
+                style.color,
+                style.backgroundColor,
+                style.clipPath,
+              ],
+              rect: [rect.x, rect.y, rect.width, rect.height].map((value) =>
+                Math.round(value * 1_000) / 1_000
+              ),
+            };
+          }),
+        );
+        const first = Math.min(duration - 0.2, Math.max(0.2, duration * 0.37));
+        const second = Math.min(duration - 0.1, Math.max(first + 0.2, duration * 0.73));
+        try {
+          await Promise.resolve(win.__seek(first));
+          await settle();
+          const before = snapshot();
+          await Promise.resolve(win.__seek(second));
+          await settle();
+          await Promise.resolve(win.__seek(first));
+          await settle();
+          const after = snapshot();
+          if (before !== after) {
+            return `timeline_contract: window.__seek(${first.toFixed(3)}) does not restore deterministic state`;
+          }
+          if (timeline.paused() !== true) {
+            return "timeline_contract: window.__seek(t) resumed the declared timeline";
+          }
+        } catch (error) {
+          return `timeline_contract: window.__seek(t) threw: ${
+            error instanceof Error ? error.message : String(error)
+          }`;
+        }
+        return "";
+      }, compositionId);
+      if (timelineContractError) throw new Error(timelineContractError);
+    }
 
     const duration = await page.evaluate(() => {
       const element = document.querySelector("[data-composition-id][data-duration]");

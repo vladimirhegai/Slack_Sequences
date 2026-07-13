@@ -48,50 +48,53 @@ host gate around Luna and preserves visibility into all QA findings while
 separating them into three decisions:
 
 1. **Hard:** parse/schema/contract failure, runtime exception, missing or
-   invalid timeline, blank/load-bearing content failure, state reset, missing
-   render, a load-bearing focal that remains out of frame, forbidden Luna tool
-   use, invalid artifact envelope, unsafe path/copy binding, or failed atomic
-   materialization. These block
-   publication. The current route fails visibly; a future repair turn
-   must resume the same Luna thread with exact evidence.
+   invalid exact timeline, nondeterministic seek, blank/load-bearing content
+   failure, state reset, missing render, a load-bearing focal that remains out
+   of frame, forbidden Luna tool use, invalid artifact envelope, unsafe
+   path/copy binding, or failed atomic materialization. These block the first
+   candidate. One bounded repair resumes the same Luna thread with exact
+   mechanical evidence; a second rejection enters labeled fallback.
 2. **Deterministic:** canonical markup/binding/script order and measured
    wrapper/station/camera containment. Legacy may repair once in the same source
    attempt, remeasure, and adopt only on strict improvement with no new hard
    finding. Luna host code must not rewrite creative bytes merely to clear it.
    Never change copy, story order, component choice, timing, palette,
    typography, or motion style.
-3. **Advisory:** washout/contrast preference, occupancy preference when the
-   focal is visible, camera-settle or reversal taste, supporting static
-   moments, parent/child surface overlap, density, and non-catastrophic pacing
-   or readability. Record these honestly, but do not feed them to storyboard
-   repair, source repair, rescue, or critic patch prompts.
+3. **Advisory:** static timeline-registration syntax once the exact browser
+   contract passes; washout/contrast preference, occupancy/fill preference when
+   the focal is visible, camera-settle or reversal taste, supporting static
+   moments, parent/child surface overlap, motion/moment/transition counts,
+   density, and non-catastrophic pacing or readability. Record these honestly,
+   but do not feed them to Luna repair or any legacy repair/rescue/critic prompt.
 
 When classification is ambiguous, default to advisory unless the rendered
 output is clearly broken. A runtime-valid film may therefore ship as `warn`
 and still satisfy the current hackathon acceptance contract.
 
-This is the target policy, not a claim that every historical gate is already
-route-aware. Audit taste-heavy direct-composition findings later from real Luna
-artifacts. Until then, do not launch another model turn merely to clear an
-advisory.
+The direct-composition static and browser gates implement this policy for films
+carrying declared primary selectors. The legacy route retains its historical
+blocking behavior. Do not launch another model turn merely to clear an advisory.
 
 ## Fallback and degradation
 
 A fallback replaces or materially degrades the authored film. Receipt-level MCP
 recovery and exact host normalization are resilience, not visual fallback.
 
-`SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK` governs only the explicit legacy
-provider route. Luna does not fall through to OpenRouter or a disguised creative
-result; a failed initial Luna turn/gate fails visibly. Its optional self-review
-may fail without discarding the already accepted first cut. A completed but
-host-rejected turn still advances the persisted worker-generation cursor; its
-rollout provenance is recorded separately, and later resumes receive the last
-accepted bundle as authoritative rather than adopting rejected bytes.
+`SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK` governs both author routes. Luna
+never falls through to OpenRouter or a disguised creative result: after one
+same-thread repair fails, is unavailable, or the worker is unreachable, it
+publishes the same explicitly labeled deterministic proof film. With the switch
+off, Luna fails visibly with the job ID and `FAILURE.md`. Its optional
+self-review may fail without discarding the already accepted first cut. A
+completed but host-rejected turn advances the persisted worker-generation
+cursor; its exact response/receipt is persisted before host interpretation and
+the repair receives the rejected bundle as authoritative input.
 
 Legacy degradation must appear in `planning/sentinel-run.json` and final status.
-Luna instead preserves per-turn worker receipts, raw-envelope and materialized
-fingerprints, exact deliverables, and session hashes under `planning/luna/`.
-Important legacy dispositions are:
+Luna preserves per-turn worker receipts, raw-envelope and materialized
+fingerprints, exact deliverables, and session hashes under `planning/luna/`;
+its fallback is also labeled in the final Slack result. Important dispositions
+are:
 
 - `published`: accepted source, no material degradation;
 - `published-degraded`: an authored film shipped with explicit degradations;
@@ -111,11 +114,12 @@ When a model turn burns an attempt:
 5. Fix the lowest shared owner and rerun the exact artifact first.
 6. Log the result in [PROBE_LOG.md](PROBE_LOG.md).
 
-Default Luna create has one director turn and one rendered self-review turn;
-self-review chooses zero or one polish. Revisions resume that same thread. There
-are no hedges, rescue models, critic patches, or OpenRouter retries. The bounded
-legacy ladders remain implementation details of the rollback route and must not
-be raised as a Luna quality strategy.
+Default Luna create has one director turn, at most one same-thread mechanical
+repair before acceptance, and one rendered self-review turn; self-review chooses
+zero or one polish. Revisions resume that same thread. There are no hedges,
+rescue models, critic patches, repair committees, or OpenRouter retries. The
+bounded legacy ladders remain implementation details of the rollback route and
+must not be raised as a Luna quality strategy.
 
 Railway's namespace restriction is not permission to run Codex unsandboxed.
 Luna turns are tool-less and schema-constrained; a tool attempt fails visibly

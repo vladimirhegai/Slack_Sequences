@@ -1140,6 +1140,26 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
 
   // ── L3 static — linkedom / regex / plan-stage audits; cheap findings-retry ──
   {
+    id: "runtime.timeline-source-shape",
+    group: "runtime",
+    layer: "static",
+    blocking: "blocking",
+    findingPrefixes: [
+      "missing_timeline_registry",
+      "timeline_registry_missing_init",
+      "timeline_id_mismatch",
+      "template_literal_selector",
+      "gsap_from_opacity_noop",
+    ],
+    promptCostChars: 0,
+    test: "test/lunaTimelineRegistration.browser.test.ts",
+    addedBecause:
+      "2026-07-13 Relay incident: HyperFrames source-shape findings remain " +
+      "blocking on the legacy route, but are advisory for declared-intent Luna " +
+      "because Chromium proves the exact timeline ID, paused state, deterministic " +
+      "window.__seek round-trip, runtime, and rendered visibility before commit.",
+  },
+  {
     id: "recipes.contract",
     group: "recipes",
     layer: "static",
@@ -1315,8 +1335,10 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
     addedBecause:
       "The moment contract: validatePlannedMoments enforces the duration-scaled " +
       "floor / spacing / no-dead-interval, and publication binds every declared " +
-      "moment to executable timeline evidence. The blocking prose remains under " +
-      "storyboard/moments; findingSignature persists an unbound one as " +
+      "moment to executable timeline evidence. Floors and spacing stay blocking " +
+      "on legacy but are advisory for declared-intent Luna; a declared primary " +
+      "with no executable evidence stays hard on both. The prose remains under " +
+      "storyboard/moments; findingSignature persists an unbound primary as " +
       "moment_unbound. topUpStoryboardMoments first fills paperwork the plan " +
       "already proves so it is never vetoed for a moment it demonstrably delivers.",
   },
@@ -1330,9 +1352,9 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
     test: "test/motionDensity.test.ts",
     addedBecause:
       "validateMotionDensity: quiet gaps, slide-like scenes, and front-loading are " +
-      "BLOCKING for 10s+/3+ shot films (motion/liveness); bursts/empty holds/pulses " +
-      "stay advisory (motion/pulse, motion/density). Liveness is the floor pacing " +
-      "is the ceiling against.",
+      "BLOCKING for legacy 10s+/3+ shot films (motion/liveness) and advisory for " +
+      "declared-intent Luna films; bursts/empty holds/pulses stay advisory " +
+      "(motion/pulse, motion/density). Liveness is the floor pacing is the ceiling against.",
   },
   {
     id: "markup-audit",
@@ -1360,8 +1382,9 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
     addedBecause:
       "validateCompositionAgainstFrame / validateTypography: the per-job frame.md " +
       "brand contract (frame/font, frame/accent, frame/palette, frame/type). " +
-      "frame-design failures ALWAYS fail loud regardless of the fallback flag — " +
-      "brand direction can't be faked. The S6.2 storyboard/basis gate also rejects " +
+      "Direct source conformance remains blocking on legacy and advisory for a " +
+      "declared-intent Luna film; Luna owns its art direction. Legacy frame-design " +
+      "failure still fails loud. The S6.2 storyboard/basis gate also rejects " +
       "a missing or contradictory production basis before authoring. Deterministic " +
       "tokens, no prompt prose.",
   },
@@ -1701,6 +1724,7 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
     blocking: "blocking",
     findingPrefixes: [
       "runtime_bind_exception",
+      "timeline_contract",
       "near_blank_film",
       "near_blank_scene",
       "browser_warning",
@@ -1713,7 +1737,8 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
     test: "test/directComposition.test.ts",
     addedBecause:
       "The hard runtime invariants: a loaded document that never registers its " +
-      "timeline is runtime_bind_exception (the author loop re-authors full-context, " +
+      "timeline is runtime_bind_exception; Luna's exact-id, paused, deterministic " +
+      "window.__seek round-trip is timeline_contract (the author loop re-authors full-context, " +
       "not a compact patch); a scene/film that renders empty is near_blank_scene / " +
       "near_blank_film; a console error/warning surfaces as browser_runtime / " +
       "browser_warning; a patch that breaks inline-script parse is " +

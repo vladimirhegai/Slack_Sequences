@@ -82,11 +82,14 @@ import {
   activateLunaAssets,
   authorLunaComposition,
   confirmLunaComposition,
+  LunaRejectedBundleError,
   loadLunaSession,
+  repairLunaComposition,
   reconcileLunaSessionAfterUndo,
   resolveAuthorRoute,
   reviseLunaComposition,
   selfReviewLunaComposition,
+  type LunaAuthoredComposition,
   type LunaFactEnvelope,
   type LunaMotionIntentV1,
 } from "./engine/lunaRoute.ts";
@@ -227,6 +230,7 @@ export type AuthoringStage =
   | "storyboard-plan"
   | "source-author"
   | "luna-director"
+  | "luna-repair"
   | "luna-self-review"
   | "luna-revision";
 
@@ -472,6 +476,9 @@ async function applyDirectMutation(
         title,
         html: draft.html,
         storyboard: draft.storyboard as unknown as Record<string, unknown>[],
+        ...(draft.declaredPrimarySelectors
+          ? { declaredPrimarySelectors: draft.declaredPrimarySelectors }
+          : {}),
       });
       const receipt: ToolCallReceipt = {
         tool,
@@ -792,6 +799,96 @@ async function captureLunaTemporalEvidence(
   });
 }
 
+async function commitLunaCandidate(
+  options: CreateVideoOptions,
+  dir: string,
+  authored: LunaAuthoredComposition,
+): Promise<Awaited<ReturnType<typeof applyDirectMutation>>> {
+  const assets = activateLunaAssets(dir, authored.assetFiles);
+  try {
+    const mutation = await applyDirectMutation(
+      dir,
+      options.product,
+      authored.draft,
+      options.preferMcp,
+      options.onProgress,
+    );
+    confirmLunaComposition(dir, authored);
+    assets.commit();
+    return mutation;
+  } catch (error) {
+    assets.rollback();
+    throw error;
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function publishLunaFallback(
+  options: CreateVideoOptions,
+  dir: string,
+  stages: StageReceipt[],
+  failedStage: AuthoringStage,
+  failure: unknown,
+): Promise<VideoResult> {
+  const reason = errorText(failure);
+  const report = buildAuthoringFailureReport({
+    projectDir: dir,
+    stage: failedStage,
+    reason,
+    stages,
+  });
+  const reportPath = writeFailureReport(dir, report);
+  const allowFallback =
+    options.allowDeterministicFallback ??
+    slackSequencesEnvRawValue("SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK") !== "0";
+  if (!allowFallback) {
+    throw new Error(`Job ID: ${options.jobId}\n${report}`);
+  }
+  process.stderr.write(
+    `[luna] job ${options.jobId} failed at "${failedStage}"; publishing the labeled ` +
+      `deterministic safe fallback — full diagnostic at ${
+        reportPath ?? `${dir}/FAILURE.md`
+      }\n`,
+  );
+  const draft = buildFallbackComposition({
+    product: options.product,
+    whatShipped: options.whatShipped,
+    audience: options.audience,
+    lengthSec: options.lengthSec ?? DEFAULT_TARGET_LENGTH_SEC,
+  });
+  const mutation = await applyDirectMutation(
+    dir,
+    options.product,
+    draft,
+    options.preferMcp,
+    options.onProgress,
+  );
+  const previews = await buildPreviews(dir, {
+    render: options.render ?? true,
+    preferMcp: options.preferMcp,
+    onProgress: options.onProgress,
+  });
+  const current = loadDirectComposition(dir);
+  return {
+    ...previews,
+    projectDir: dir,
+    outline: directOutline(current.manifest),
+    lint: await directLintText(dir),
+    usedMcp: mutation.usedMcp || previews.usedMcp,
+    mcpRequested: mcpEnabled(options.preferMcp),
+    toolCalls: [...(mutation.receipt ? [mutation.receipt] : []), ...previews.toolCalls],
+    skillsUsed: ["luna-single-director", "deterministic-safe-fallback"],
+    usedPreset: false,
+    provider: "codex-cli",
+    authorRoute: "luna-direct",
+    stages,
+    fallback: { stage: failedStage, reason: reason.slice(0, 300) },
+  };
+}
+
 async function createVideoWithLuna(
   options: CreateVideoOptions,
   dir: string,
@@ -821,7 +918,10 @@ async function createVideoWithLuna(
     },
   };
 
-  let authored;
+  let authored: LunaAuthoredComposition | undefined;
+  let failedStage: AuthoringStage = "luna-director";
+  let terminalFailure: unknown;
+  let rejectedWorker: LunaAuthoredComposition["worker"] | undefined;
   try {
     authored = await authorLunaComposition({
       projectDir: dir,
@@ -837,24 +937,55 @@ async function createVideoWithLuna(
     const durationMs = Math.round(performance.now() - directorStarted);
     stages.push({ stage: "luna-director", status: "failed", durationMs, attempts: 1 });
     pulseAuthorStage(options.onStageProgress, "luna-director", "completed", durationMs);
-    throw error;
+    terminalFailure = error;
+    if (error instanceof LunaRejectedBundleError) rejectedWorker = error.worker;
   }
 
-  const initialAssets = activateLunaAssets(dir, authored.assetFiles);
-  let initialMutation: Awaited<ReturnType<typeof applyDirectMutation>>;
-  try {
-    initialMutation = await applyDirectMutation(
+  let initialMutation: Awaited<ReturnType<typeof applyDirectMutation>> | undefined;
+  if (authored) {
+    try {
+      initialMutation = await commitLunaCandidate(options, dir, authored);
+    } catch (error) {
+      terminalFailure = error;
+      rejectedWorker = authored.worker;
+    }
+  }
+
+  // A paid create bundle is never discarded without one exact-thread repair.
+  // The repair sees only the verbatim hard failure; all static taste findings
+  // were already retained as warnings by the declared-intent validation path.
+  if (!initialMutation && rejectedWorker) {
+    const repairStarted = performance.now();
+    pulseAuthorStage(options.onStageProgress, "luna-repair", "started");
+    try {
+      const repaired = await repairLunaComposition({
+        projectDir: dir,
+        facts,
+        rejectedWorker,
+        hardFindings: [errorText(terminalFailure)],
+      });
+      initialMutation = await commitLunaCandidate(options, dir, repaired);
+      authored = repaired;
+      const durationMs = Math.round(performance.now() - repairStarted);
+      stages.push({ stage: "luna-repair", status: "succeeded", durationMs, attempts: 1 });
+      pulseAuthorStage(options.onStageProgress, "luna-repair", "completed", durationMs);
+    } catch (error) {
+      const durationMs = Math.round(performance.now() - repairStarted);
+      stages.push({ stage: "luna-repair", status: "failed", durationMs, attempts: 1 });
+      pulseAuthorStage(options.onStageProgress, "luna-repair", "completed", durationMs);
+      failedStage = "luna-repair";
+      terminalFailure = error;
+    }
+  }
+
+  if (!authored || !initialMutation) {
+    return publishLunaFallback(
+      options,
       dir,
-      options.product,
-      authored.draft,
-      options.preferMcp,
-      options.onProgress,
+      stages,
+      failedStage,
+      terminalFailure ?? "Luna create did not produce an accepted bundle",
     );
-    confirmLunaComposition(dir, authored);
-    initialAssets.commit();
-  } catch (error) {
-    initialAssets.rollback();
-    throw error;
   }
 
   let previews = await buildPreviews(dir, {

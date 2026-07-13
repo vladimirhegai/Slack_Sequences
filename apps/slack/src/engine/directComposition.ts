@@ -243,6 +243,12 @@ export interface DirectCompositionManifest {
   revision: number;
   createdAt: string;
   sourceHash: string;
+  /**
+   * Present only for films authored under Luna's declared-intent contract.
+   * Persisting this route-neutral evidence keeps later lint/replay passes on
+   * the same advisory policy as the original transactional commit.
+   */
+  declaredPrimarySelectors?: Record<string, string>;
   provenance: {
     source: "agent";
     operation: "create" | "revise";
@@ -502,12 +508,14 @@ export function hasPausedTimeline(html: string): boolean {
   return false;
 }
 
-function invariantErrors(
+function invariantFindings(
   html: string,
   durationSec: number | undefined,
   compositionId: string | undefined,
-): string[] {
+  browserTimelineAuthority: boolean,
+): { errors: string[]; warnings: string[] } {
   const errors: string[] = [];
+  const warnings: string[] = [];
   const forbidden: Array<[RegExp, string]> = [
     [
       /(?:\b(?:src|href)\s*=\s*(["'])(?:https?:)?\/\/.*?\1|url\(\s*(["']?)(?:https?:)?\/\/|@import\s+(?:url\()?\s*(["']?)(?:https?:)?\/\/)/i,
@@ -534,7 +542,12 @@ function invariantErrors(
     errors.push('load the host-provided GSAP exactly as <script src="gsap.min.js"></script>');
   }
   if (!hasPausedTimeline(html)) {
-    errors.push("create one synchronous gsap.timeline({ paused: true })");
+    const finding = "create one synchronous gsap.timeline({ paused: true })";
+    // Declared-intent films are about to prove the exact timeline's paused
+    // state in Chromium. A source-shape miss cannot outrank that behavioral
+    // result; legacy keeps the historical pre-browser contract.
+    if (browserTimelineAuthority) warnings.push(finding);
+    else errors.push(finding);
   }
   if (compositionId) {
     const escaped = compositionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -555,13 +568,38 @@ function invariantErrors(
       ).test(html)
     );
     if (!literalRegistration && !boundRegistration) {
-      errors.push(`register the paused timeline as window.__timelines["${compositionId}"]`);
+      const finding = `register the paused timeline as window.__timelines["${compositionId}"]`;
+      if (browserTimelineAuthority) warnings.push(finding);
+      else errors.push(finding);
     }
   }
   if (durationSec === undefined || durationSec < 6 || durationSec > 60) {
     errors.push("root data-duration must be a finite value from 6 to 60 seconds");
   }
-  return errors;
+  return { errors, warnings };
+}
+
+/**
+ * HyperFrames has a few source-shape rules whose premise the real browser can
+ * prove or disprove. Luna films carry a declared-intent contract and therefore
+ * always reach that browser proof. Keep these findings visible, but do not let
+ * a regex/parser preference discard a runtime-valid paid bundle.
+ */
+function isLunaBrowserProvableLintFinding(finding: HyperframeLintFinding): boolean {
+  return new Set([
+    "missing_timeline_registry",
+    "timeline_registry_missing_init",
+    "timeline_id_mismatch",
+    "template_literal_selector",
+    "gsap_from_opacity_noop",
+  ]).has(finding.code);
+}
+
+/** Publication moment quotas are pacing/taste. A promised primary moment with
+ * no executable evidence is instead a dangling declared binding and stays
+ * mechanical on every route. */
+function isLunaMomentAdvisory(error: string): boolean {
+  return !error.includes("has no executable timeline evidence");
 }
 
 /** Overlaps shorter than this are floating-point artifacts, not authoring bugs. */
@@ -628,6 +666,10 @@ export async function validateDirectComposition(
 ): Promise<DirectValidationResult> {
   const html = draft.html.trim();
   const errors: string[] = [];
+  const routeWarnings: string[] = [];
+  const declaredIntentPresent = Boolean(
+    draft.declaredPrimarySelectors && Object.keys(draft.declaredPrimarySelectors).length,
+  );
   if (!html) errors.push("index_html is empty");
   if (html.length > MAX_SOURCE_CHARS) errors.push(`index_html exceeds ${MAX_SOURCE_CHARS} characters`);
 
@@ -641,7 +683,14 @@ export async function validateDirectComposition(
   if (!width || !height || width < 320 || height < 320 || width > 4096 || height > 4096) {
     errors.push("root data-width/data-height must be finite canvas dimensions");
   }
-  errors.push(...invariantErrors(html, durationSec, compositionId));
+  const invariants = invariantFindings(
+    html,
+    durationSec,
+    compositionId,
+    declaredIntentPresent,
+  );
+  errors.push(...invariants.errors);
+  routeWarnings.push(...invariants.warnings);
 
   const normalized = normalizeStoryboard(draft.storyboard, html);
   errors.push(...normalized.errors);
@@ -704,16 +753,25 @@ export async function validateDirectComposition(
     normalized.scenes,
     durationSec,
   );
-  // Liveness is a publication contract: a film that goes dead or reads as a
-  // slide deck is rejected, not merely warned about.
-  errors.push(...motionValidation.errors);
+  // The legacy route retains its blocking density contract. Luna's declared
+  // intent makes density, quiet gaps, and front-loading directing evidence,
+  // not correctness; keep every finding visible without vetoing the film.
+  const blockingMotionErrors = declaredIntentPresent ? [] : motionValidation.errors;
+  const advisoryMotionErrors = declaredIntentPresent ? motionValidation.errors : [];
+  errors.push(...blockingMotionErrors);
   const momentContract = resolveMomentContract(
     html,
     normalized.scenes,
     durationSec,
     motionValidation.report,
   );
-  errors.push(...momentContract.errors);
+  const blockingMomentErrors = declaredIntentPresent
+    ? momentContract.errors.filter((error) => !isLunaMomentAdvisory(error))
+    : momentContract.errors;
+  const advisoryMomentErrors = declaredIntentPresent
+    ? momentContract.errors.filter(isLunaMomentAdvisory)
+    : [];
+  errors.push(...blockingMomentErrors);
 
   const rootDir = compositionDir(projectDir);
   for (const ref of referencedLocalPaths(html)) {
@@ -753,7 +811,10 @@ export async function validateDirectComposition(
         !isCssVarFontFamilyArtifact(finding),
     );
     errors.push(...findings
-      .filter((finding: HyperframeLintFinding) => finding.severity === "error")
+      .filter((finding: HyperframeLintFinding) =>
+        finding.severity === "error" &&
+        !(declaredIntentPresent && isLunaBrowserProvableLintFinding(finding))
+      )
       .map((finding: HyperframeLintFinding) => `${finding.code}: ${finding.message}`));
   } catch (error) {
     errors.push(`HyperFrames lint failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -762,26 +823,42 @@ export async function validateDirectComposition(
   const frameValidation = fs.existsSync(frameFile)
     ? validateCompositionAgainstFrame(html, fs.readFileSync(frameFile, "utf8"))
     : { errors: [], warnings: [] };
-  errors.push(...frameValidation.errors);
+  const blockingFrameErrors = declaredIntentPresent ? [] : frameValidation.errors;
+  const advisoryFrameErrors = declaredIntentPresent ? frameValidation.errors : [];
+  errors.push(...blockingFrameErrors);
 
   return {
     ok: errors.length === 0,
     errors: [...new Set(errors)],
     warnings: [...new Set([
       ...findings
-      .filter((finding) => finding.severity === "warning")
+      .filter((finding) =>
+        finding.severity === "warning" ||
+        (declaredIntentPresent &&
+          finding.severity === "error" &&
+          isLunaBrowserProvableLintFinding(finding))
+      )
       .map((finding) => `${finding.code}: ${finding.message}`),
+      ...routeWarnings,
+      ...advisoryFrameErrors,
       ...frameValidation.warnings,
       ...hostContractWarnings,
       ...recipeValidation.warnings,
       ...kitMarkupAudit.warnings,
+      ...advisoryMotionErrors,
       ...motionValidation.warnings,
+      ...advisoryMomentErrors,
       ...momentContract.warnings,
     ])],
-    frameErrors: frameValidation.errors,
-    frameWarnings: frameValidation.warnings,
-    motionErrors: [...new Set([...motionValidation.errors, ...momentContract.errors])],
-    motionWarnings: [...new Set([...motionValidation.warnings, ...momentContract.warnings])],
+    frameErrors: blockingFrameErrors,
+    frameWarnings: [...new Set([...advisoryFrameErrors, ...frameValidation.warnings])],
+    motionErrors: [...new Set([...blockingMotionErrors, ...blockingMomentErrors])],
+    motionWarnings: [...new Set([
+      ...advisoryMotionErrors,
+      ...motionValidation.warnings,
+      ...advisoryMomentErrors,
+      ...momentContract.warnings,
+    ])],
     ...(motionValidation.report ? { motionReport: motionValidation.report } : {}),
     moments: momentContract.moments,
     findings,
@@ -932,7 +1009,10 @@ export async function commitDirectComposition(
     throw new Error(`composition failed validation:\n${validation.errors.map((error) => `- ${error}`).join("\n")}`);
   }
   const browserQa = await inspectDirectComposition(dir, draft);
-  if (!browserQa.ok && !browserQa.infraError) {
+  const declaredIntentPresent = Boolean(
+    draft.declaredPrimarySelectors && Object.keys(draft.declaredPrimarySelectors).length,
+  );
+  if (!browserQa.ok && (!browserQa.infraError || declaredIntentPresent)) {
     throw new Error(
       `composition failed browser runtime validation:\n${
         browserQa.errors.map((error) => `- ${error}`).join("\n")
@@ -972,6 +1052,9 @@ export async function commitDirectComposition(
     revision,
     createdAt: new Date().toISOString(),
     sourceHash: createHash("sha256").update(draft.html).digest("hex"),
+    ...(draft.declaredPrimarySelectors
+      ? { declaredPrimarySelectors: draft.declaredPrimarySelectors }
+      : {}),
     provenance: {
       source: "agent",
       operation: previous ? "revise" : "create",
@@ -980,7 +1063,10 @@ export async function commitDirectComposition(
     qa: {
       browserValidated: !browserQa.infraError,
       layoutSamples: browserQa.samples.length,
-      warningCount: browserQa.warnings.length + (browserQa.infraError ? 1 : 0),
+      warningCount:
+        browserQa.warnings.length +
+        (browserQa.infraError ? 1 : 0) +
+        (declaredIntentPresent ? validation.warnings.length : 0),
       ...(interactionCount
         ? {
             interactionCount,
@@ -1088,7 +1174,7 @@ export async function commitDirectComposition(
               maxQuietGapSec: validation.motionReport.maxQuietGapSec,
               quietGaps: validation.motionReport.quietGaps,
               sceneReports: validation.motionReport.sceneReports,
-              warnings: validation.motionReport.warnings,
+              warnings: validation.motionWarnings,
             },
           }
         : {}),
@@ -1238,6 +1324,9 @@ export async function directLintText(projectDir: string): Promise<string> {
   const validation = await validateDirectComposition(projectDir, {
     html: current.html,
     storyboard: current.manifest.scenes,
+    ...(current.manifest.declaredPrimarySelectors
+      ? { declaredPrimarySelectors: current.manifest.declaredPrimarySelectors }
+      : {}),
   });
   if (!validation.ok) return `lint: ${validation.errors.length} error(s)`;
   const staticText = validation.warnings.length

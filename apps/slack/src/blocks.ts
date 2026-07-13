@@ -397,7 +397,7 @@ export interface ResultView {
    * named model stage failed. Only the stage name is shown — never model
    * output or error content.
    */
-  fallback?: { stage: string };
+  fallback?: { stage: string; reason?: string };
   provider: string;
   renderQuality?: "draft" | "high";
   /**
@@ -437,7 +437,8 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
   const fallbackNotice = view.fallback
     ? `:twisted_rightwards_arrows: *Safe fallback* - the \`${escapeMrkdwn(view.fallback.stage)}\` ` +
       "stage failed, so this is the deterministic proof film, not a model-authored cut. " +
-      "Run `/sequences` again or reply here to retry."
+      `Job ID: \`${escapeMrkdwn(view.jobId)}\`. Run \`/sequences\` again or reply here to retry.` +
+      (view.fallback.reason ? `\n*Mechanical failure*\n${codeBlock(view.fallback.reason)}` : "")
     : "";
   const buildTrace = (view.toolCalls ?? [])
     .map((call) => {
@@ -481,7 +482,10 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
     {
       type: "context",
       elements: [
-        { type: "mrkdwn", text: `${view.lint}  -  ${planned}` },
+        {
+          type: "mrkdwn",
+          text: `${view.lint}  -  ${planned}  -  job \`${escapeMrkdwn(view.jobId)}\``,
+        },
       ],
     },
     ...(buildTrace
@@ -644,13 +648,14 @@ export function buildShareModal(jobId: string): View {
   };
 }
 
-export function errorBlocks(title: string, message: string): KnownBlock[] {
+export function errorBlocks(title: string, message: string, jobId?: string): KnownBlock[] {
+  const receipt = jobId ? `\nJob ID: \`${escapeMrkdwn(jobId)}\`` : "";
   return [
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `:warning: *Couldn't build "${escapeMrkdwn(title)}"*\n${codeBlock(message)}`,
+        text: `:warning: *Couldn't build "${escapeMrkdwn(title)}"*${receipt}\n${codeBlock(message)}`,
       },
     },
     {

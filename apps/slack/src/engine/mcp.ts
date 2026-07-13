@@ -143,6 +143,12 @@ export function startMcpServer(projectDir: string): void {
           html: { type: "string", description: "Complete standalone HyperFrames index.html" },
           // Matches the planner's 3-10 shot ceiling (plus the 2-scene revision floor).
           storyboard: { type: "array", items: { type: "object" }, minItems: 2, maxItems: 10 },
+          declaredPrimarySelectors: {
+            type: "object",
+            description:
+              "Optional author-declared primary selector by scene id; presence selects the Luna declared-intent validation policy.",
+            additionalProperties: { type: "string" },
+          },
         },
         required: ["title", "html", "storyboard"],
         additionalProperties: false,
@@ -155,6 +161,14 @@ export function startMcpServer(projectDir: string): void {
           const result = await commitDirectComposition(projectDir, args.title, {
             html: args.html,
             storyboard: args.storyboard as DirectCompositionDraft["storyboard"],
+            ...(args.declaredPrimarySelectors &&
+                typeof args.declaredPrimarySelectors === "object" &&
+                !Array.isArray(args.declaredPrimarySelectors)
+              ? {
+                  declaredPrimarySelectors:
+                    args.declaredPrimarySelectors as DirectCompositionDraft["declaredPrimarySelectors"],
+                }
+              : {}),
           });
           return [
             `direct composition revision ${result.manifest.revision} applied.`,

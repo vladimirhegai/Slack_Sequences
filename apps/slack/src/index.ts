@@ -155,6 +155,7 @@ function runJobInBackground(
 /** Honest phase copy for each named model stage while it runs. */
 const STAGE_PHASES: Record<string, string> = {
   "luna-director": "Luna is directing and authoring the film…",
+  "luna-repair": "Luna is repairing one proven mechanical defect…",
   "luna-self-review": "Luna is reviewing the rendered motion…",
   "luna-revision": "Luna is revising its film…",
   "frame-design": "Choosing a visual direction…",
@@ -333,7 +334,9 @@ function stageBlocks(
     slackMcpTools: result.slackMcpTools,
     slackMcpNote: result.slackMcpNote,
     usedPreset: result.usedPreset,
-    fallback: result.fallback ? { stage: result.fallback.stage } : undefined,
+    fallback: result.fallback
+      ? { stage: result.fallback.stage, reason: result.fallback.reason }
+      : undefined,
     provider: result.authorRoute === "luna-direct"
       ? "Luna 5.6 · high (Codex CLI)"
       : result.provider,
@@ -489,7 +492,8 @@ async function deliverVideo(
     await postMessageWithAutoJoin(client, {
       channel: args.channel,
       thread_ts: args.threadTs ?? args.messageTs,
-      text: `:warning: The video rendered, but Slack could not upload it. ${userFacingSlackError(error)}`,
+      text: `:warning: The video rendered, but Slack could not upload it. ` +
+        `Job ID: \`${args.jobId}\`. ${userFacingSlackError(error)}`,
     }).catch((postError) => logBackgroundError("video warning failed", postError));
   }
 }
@@ -656,7 +660,11 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     await safeUpdate(client, {
       channel: args.channel,
       ts: messageTs,
-      blocks: errorBlocks(args.product, error instanceof Error ? error.message : String(error)),
+      blocks: errorBlocks(
+        args.product,
+        error instanceof Error ? error.message : String(error),
+        jobId,
+      ),
       text: `Couldn’t build “${args.product}”`,
     });
     return;
@@ -749,7 +757,11 @@ async function runRevise(client: WebClient, jobId: string, instruction: string):
     await safeUpdate(client, {
       channel: job.channel,
       ts: messageTs,
-      blocks: errorBlocks(job.title, error instanceof Error ? error.message : String(error)),
+      blocks: errorBlocks(
+        job.title,
+        error instanceof Error ? error.message : String(error),
+        jobId,
+      ),
       text: `Couldn’t revise “${job.title}”`,
     });
     return;
@@ -822,7 +834,11 @@ async function runUndo(client: WebClient, jobId: string): Promise<void> {
     await safeUpdate(client, {
       channel: job.channel,
       ts: messageTs,
-      blocks: errorBlocks(job.title, error instanceof Error ? error.message : String(error)),
+      blocks: errorBlocks(
+        job.title,
+        error instanceof Error ? error.message : String(error),
+        jobId,
+      ),
       text: `Couldn’t undo “${job.title}”`,
     });
     return;
@@ -895,7 +911,11 @@ async function runHdRender(client: WebClient, jobId: string): Promise<void> {
     await safeUpdate(client, {
       channel: job.channel,
       ts: messageTs,
-      blocks: errorBlocks(job.title, "The HD render was unavailable. The existing draft is still safe to share."),
+      blocks: errorBlocks(
+        job.title,
+        "The HD render was unavailable. The existing draft is still safe to share.",
+        jobId,
+      ),
       text: `Couldn’t render “${job.title}” in HD`,
     });
     return;
@@ -919,7 +939,8 @@ async function runHdRender(client: WebClient, jobId: string): Promise<void> {
     await postMessageWithAutoJoin(client, {
       channel: job.channel,
       thread_ts: threadTs ?? messageTs,
-      text: `:warning: The HD video rendered, but Slack could not upload it. ${userFacingSlackError(error)}`,
+      text: `:warning: The HD video rendered, but Slack could not upload it. ` +
+        `Job ID: \`${jobId}\`. ${userFacingSlackError(error)}`,
     }).catch((postError) => logBackgroundError("HD warning failed", postError));
   }
 }
@@ -933,7 +954,8 @@ async function runShare(client: WebClient, jobId: string, targetChannel: string)
     await postMessageWithAutoJoin(client, {
       channel: job.channel,
       thread_ts: job.threadTs ?? job.messageTs,
-      text: ":warning: Nothing current to share yet — wait for the active render to finish.",
+      text: `:warning: Nothing current to share yet — wait for the active render to finish. ` +
+        `Job ID: \`${jobId}\`.`,
     }).catch((error) => logBackgroundError("share-before-ready notice failed", error));
     return;
   }
@@ -954,7 +976,8 @@ async function runShare(client: WebClient, jobId: string, targetChannel: string)
     await postMessageWithAutoJoin(client, {
       channel: job.channel,
       thread_ts: job.threadTs ?? job.messageTs,
-      text: `:warning: Couldn’t share the reel. ${userFacingSlackError(error)}`,
+      text: `:warning: Couldn’t share the reel. Job ID: \`${jobId}\`. ` +
+        userFacingSlackError(error),
     }).catch((postError) => logBackgroundError("share warning failed", postError));
   }
 }
@@ -1348,6 +1371,7 @@ async function recoverInterruptedJobs(client: WebClient): Promise<void> {
         job.title,
         "This job stopped because the bot restarted (a deploy or crash) while it was building. " +
           "Nothing was lost on your end — just run the command again.",
+        job.id,
       ),
       text: `“${job.title}” was interrupted by a restart — please re-run`,
     });

@@ -86,6 +86,40 @@ and `continuousMotion.test.ts`:
 No probe rerun is performed here; the next authorized create should prove the
 end-to-end path including the rendered self-review leg.
 
+### Relay — paid create lost to static registration and front-load taste gates
+
+An owner-run Railway create for Relay reached host validation and was rejected
+before browser proof. The two findings were the source-shape demand to register
+`window.__timelines["relay-luna-launch"]` in one of two regex-recognized forms
+and `motion/liveness` guidance asking scene `root-cause-hold` for a back-half
+beat after 17.5s. Neither finding reached a repair or fallback. The exact paid
+bundle remains on the Railway worker volume and was not retrieved locally, so
+this change does **not** claim an exact-byte Relay replay. Minimized fixtures
+reproduce both classes: a `Reflect.set` registration passes the exact browser
+timeline/seek contract, and a front-loaded declared-intent film commits with the
+finding preserved in `motion-plan.json` as an advisory.
+
+#### Direct-composition gate classification — 2026-07-13
+
+| Gate / finding family | Luna declared-intent disposition | Owner / proof |
+| --- | --- | --- |
+| Empty/oversize/incomplete HTML; missing root, dimensions, scene windows, storyboard correspondence, or duration outside the accepted envelope | **MECHANICAL — hard** | Direct schema and normalized storyboard |
+| Network/CSP/navigation primitives, timers, wall clock, randomness, infinite/running motion, unsafe asset paths, absent local files, invalid artifact hash/path/schema | **MECHANICAL — hard** | Security, envelope, and filesystem contracts |
+| Declared interaction/cut/camera/time/component/fx/asset/environment/continuity bindings; recipe/plugin islands; kit markup; dead GSAP targets | **MECHANICAL — hard** | Host lifecycle and DOM-binding audits |
+| Exact declared timeline absent/wrong ID/not paused/not seekable; `__seek` absent, throws, resumes, or does not restore identical browser state | **MECHANICAL — hard** | Chromium `inspectDirectComposition` |
+| Runtime exceptions, load failure, systematically blank/load-bearing invisible film, or encode/render failure | **MECHANICAL — hard** | Browser pixels/runtime and encoder |
+| Static timeline registry spelling/initialization/ID regexes, paused-constructor source shape, template-literal selector parsing, and the linter's statically inferred opacity no-op | **TASTE/SOURCE HEURISTIC — advisory** once the exact browser contract passes | Chromium supersedes parser syntax; legacy remains hard where historically hard |
+| Quiet gaps, front-loaded motion, back-half beat requests, minimum authored beat count, dense bursts, pulses, and empty holds | **TASTE/HEURISTIC — advisory** | `motionDensity.ts`; all findings retained |
+| Minimum moment/scene/beat counts, spacing, development grid, repeated visual-state prose, and back-half/payoff guidance | **TASTE/HEURISTIC — advisory** | `storyboardMoments.ts`; a declared primary moment with no executable evidence remains a hard dangling binding |
+| Font/accent/palette/type conformance, occupancy, composition fill, contrast/washout, overlap, static-frame, transition/morph counts, camera settle/reversal, and other non-catastrophic readability/pacing findings | **TASTE/HEURISTIC — advisory** | Static frame and measured browser QA; all remain visible |
+| `pacingAudit.ts` planning findings | **Not consulted by Luna direct validation** | Legacy storyboard/source ladder only; legacy behavior unchanged |
+
+The lowest-owner changes preserve every paid worker response/receipt before
+host interpretation, resume the exact worker job/thread once with only verbatim
+hard findings, and then publish the existing labeled deterministic fallback if
+repair cannot produce an accepted film. The live Railway fallback switch was
+verified as `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=1` on 2026-07-13.
+
 ## 2026-07-13 Post-freeze motion-design audit probe (Harborview)
 
 ### Harborview — `motion-audit-harborview-20260713` (fail-loud; no repair attempted)
