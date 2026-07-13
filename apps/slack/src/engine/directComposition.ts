@@ -384,10 +384,12 @@ function normalizeStoryboard(
   const tags = sceneTags(html);
   const byId = new Map(storyboard.map((scene) => [scene.id, scene]));
   const scenes = tags.map((tag, index): DirectScene => {
-    const id = attr(tag, "id") ?? "";
+    const elementId = attr(tag, "id")?.trim() ?? "";
+    const id = attr(tag, "data-scene")?.trim() ?? "";
     const startSec = finiteNumber(attr(tag, "data-start"));
     const durationSec = finiteNumber(attr(tag, "data-duration"));
-    if (!id) errors.push(`scene ${index + 1} is missing a stable id`);
+    if (!elementId) errors.push(`scene ${index + 1} is missing a stable id`);
+    if (!id) errors.push(`scene ${index + 1} is missing a data-scene binding`);
     if (startSec === undefined || startSec < 0) errors.push(`scene "${id || index + 1}" has invalid data-start`);
     if (durationSec === undefined || durationSec <= 0) errors.push(`scene "${id || index + 1}" has invalid data-duration`);
     const proposed = byId.get(id);

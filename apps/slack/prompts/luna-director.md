@@ -134,6 +134,7 @@ express your intent; you may author mechanics directly in seekable GSAP instead.
 
 Construct version 1 with:
 
+- the literal protocol field `"version": 1`;
 - `compositionId`, `durationSec`, and `creativeOwner`;
 - `acts[]`: `sceneId`, `startSec`, `endSec`, one unique
   `primarySelector`, and optional `persistentEntityIds[]`;

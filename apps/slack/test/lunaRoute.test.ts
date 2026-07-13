@@ -11,6 +11,7 @@ import {
   authorLunaComposition,
   confirmLunaComposition,
   loadLunaSession,
+  normalizeLunaSourceMechanics,
   parseLunaMotionIntent,
   reconcileLunaSessionAfterUndo,
   reviseLunaComposition,
@@ -93,6 +94,7 @@ async function fakeWorker(options: {
   corruptRawEnvelopeHash?: boolean;
   corruptMaterializedFingerprint?: boolean;
   invalidHtmlOnRunCount?: number;
+  omitMotionIntentVersion?: boolean;
 } = {}): Promise<{
   url: string;
   requests: Array<{ authorization?: string; body: Record<string, unknown> }>;
@@ -112,10 +114,12 @@ async function fakeWorker(options: {
       const runHtml = options.invalidHtmlOnRunCount === latest.runCount
         ? "<html><body>invalid</body></html>"
         : responseHtml;
+      const { version: _motionIntentVersion, ...motionIntentWithoutVersion } = intent;
+      const responseIntent = options.omitMotionIntentVersion ? motionIntentWithoutVersion : intent;
       const deliverables = [
         deliverable("composition.html", runHtml),
         deliverable("storyboard.json", JSON.stringify({ storyboard }, null, 2) + "\n"),
-        deliverable("motion-intent.json", JSON.stringify(intent, null, 2) + "\n"),
+        deliverable("motion-intent.json", JSON.stringify(responseIntent, null, 2) + "\n"),
         deliverable("director-treatment.md", "# Treatment\nOne state becomes the next.\n"),
         deliverable("assets-manifest.json", JSON.stringify([{
           path: "assets/luna/mark.svg",
@@ -310,6 +314,44 @@ describe("Luna direct route", () => {
     )).toThrow(/matches no element/);
   });
 
+  it("supplies omitted v1 protocol metadata but rejects explicit unknown motion-intent versions", () => {
+    const { version: _version, ...withoutVersion } = intent;
+    expect(parseLunaMotionIntent(JSON.stringify(withoutVersion), html, storyboard))
+      .toMatchObject({ version: 1, compositionId: "route-proof" });
+    expect(() => parseLunaMotionIntent(
+      JSON.stringify({
+        ...withoutVersion,
+        acts: [
+          { ...intent.acts[0], primarySelector: ".missing" },
+          intent.acts[1],
+        ],
+      }),
+      html,
+      storyboard,
+    )).toThrow(/matches no element/);
+    for (const version of [2, "1", null]) {
+      expect(() => parseLunaMotionIntent(
+        JSON.stringify({ ...intent, version }),
+        html,
+        storyboard,
+      )).toThrow(/must use version 1/);
+    }
+  });
+
+  it("normalizes only the proved composition's dotted timeline binding", () => {
+    const invalid = html.replace(
+      "window.__timelines[compositionId]=master",
+      "window.__timelines.route-proof=master",
+    );
+    const normalized = normalizeLunaSourceMechanics(invalid, "route-proof");
+    expect(normalized).toContain('window.__timelines["route-proof"]=master');
+    expect(normalizeLunaSourceMechanics(normalized, "route-proof")).toBe(normalized);
+    expect(normalizeLunaSourceMechanics(
+      "window.__timelines.somewhereElse=master",
+      "route-proof",
+    )).toBe("window.__timelines.somewhereElse=master");
+  });
+
   it("preserves exact raw source bytes, hashes approved assets, and persists the exact thread", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-route-"));
     roots.push(root);
@@ -317,7 +359,7 @@ describe("Luna direct route", () => {
     fs.mkdirSync(projectDir, { recursive: true });
     const reference = path.join(root, "brand.png");
     fs.writeFileSync(reference, Buffer.from("approved-brand-bytes"));
-    const worker = await fakeWorker();
+    const worker = await fakeWorker({ omitMotionIntentVersion: true });
     vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
     vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_TOKEN", "test-worker-token-that-is-at-least-thirty-two-characters");
     try {
@@ -343,6 +385,12 @@ describe("Luna direct route", () => {
         path.join(authored.runDir, "deliverables", "composition.html"),
         "utf8",
       )).toBe(html);
+      const { version: _version, ...motionIntentWithoutVersion } = intent;
+      expect(fs.readFileSync(
+        path.join(authored.runDir, "deliverables", "motion-intent.json"),
+        "utf8",
+      )).toBe(JSON.stringify(motionIntentWithoutVersion, null, 2) + "\n");
+      expect(authored.intent.version).toBe(1);
       expect(authored.rawSourceSha256).toBe(sha256(Buffer.from(html)));
       expect(authored.assetFiles).toEqual([
         { relativePath: "mark.svg", bytes: Buffer.from(assetSvg) },

@@ -429,6 +429,19 @@ function validateLunaHtmlSecurity(html: string): void {
   }
 }
 
+/**
+ * Normalize only host-owned source bindings whose intended value is already
+ * proved by the accepted Luna contract. This deliberately does not run the
+ * legacy creative-repair stack or choose motion on Luna's behalf.
+ */
+export function normalizeLunaSourceMechanics(html: string, compositionId: string): string {
+  const escaped = compositionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return html.replace(
+    new RegExp(`window\\.__timelines\\.${escaped}(?=\\s*=)`, "g"),
+    `window.__timelines[${JSON.stringify(compositionId)}]`,
+  );
+}
+
 function validateAssetBytes(relativePath: string, mediaType: string, bytes: Buffer): void {
   const extension = path.posix.extname(relativePath).toLowerCase();
   const allowedMediaTypes = LUNA_ASSET_MEDIA_TYPES[extension];
@@ -594,9 +607,17 @@ export function parseLunaMotionIntent(
   }
   if (!value || typeof value !== "object") throw new Error("Luna motion intent must be an object");
   const intent = value as Partial<LunaMotionIntentV1>;
-  if (intent.version !== 1 || typeof intent.compositionId !== "string" || !intent.compositionId) {
-    throw new Error("Luna motion intent must declare version 1 and compositionId");
+  if (intent.version !== undefined && intent.version !== 1) {
+    throw new Error("Luna motion intent must use version 1");
   }
+  if (typeof intent.compositionId !== "string" || !intent.compositionId) {
+    throw new Error("Luna motion intent must declare compositionId");
+  }
+  // `version` is host-owned protocol metadata, not creative intent. The v1
+  // parser can safely supply it when Luna omits only that redundant literal;
+  // explicit unknown versions remain hard failures, and the raw artifact bytes
+  // stay preserved in the run receipt for exact replay.
+  intent.version = 1;
   if (typeof intent.creativeOwner !== "string" || !intent.creativeOwner.trim()) {
     throw new Error("Luna motion intent must declare its creative owner");
   }
@@ -975,6 +996,7 @@ function materializeLunaResult(
   requiredText(persisted.files, "director-treatment.md");
   const assetManifest = requiredText(persisted.files, "assets-manifest.json");
   const rawSourceSha256 = sha256(Buffer.from(html, "utf8"));
+  const executableHtml = normalizeLunaSourceMechanics(html, intent.compositionId);
   const assetFiles = [...persisted.files.entries()]
     .filter(([name]) => name.startsWith("deliverables/assets/luna/"))
     .map(([name, bytes]) => ({
@@ -990,7 +1012,7 @@ function materializeLunaResult(
       .sort(),
   ].join("\n"));
   return {
-    draft: { html, storyboard },
+    draft: { html: executableHtml, storyboard },
     intent,
     worker: result,
     rawSourceSha256,

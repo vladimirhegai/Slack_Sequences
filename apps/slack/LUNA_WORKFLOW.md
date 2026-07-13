@@ -94,6 +94,25 @@ The immediate Luna-friendly change is orchestration: bypass the legacy creative
 committee and preserve Luna's raw source separately from the committed
 trim/newline derivative.
 
+The Luna materialization seam has three deliberately narrow compatibility
+rules for host-owned mechanics:
+
+- the v1 parser supplies a missing numeric `version: 1` in memory, while an
+  explicit unknown/string/null version remains a hard failure; the persisted
+  motion-intent bytes are never rewritten;
+- `data-scene` is the storyboard/runtime binding key, while the element `id`
+  only needs to be stable and unique for authored selectors;
+- when the declared composition ID was used as dotted
+  `window.__timelines.<composition-id>` assignment syntax, the executable
+  derivative rewrites that exact proved ID to bracket notation. The adapter is
+  idempotent, does not repair a different key, and leaves the accepted raw HTML
+  and its hash untouched.
+
+These adapters choose no copy, story, layout, timing, camera, transition, or
+motion. Their rollback is removal after persisted Luna evidence shows the
+literal protocol field and canonical bracket binding are consistently emitted;
+the `data-scene` binding is the permanent runtime contract.
+
 Some existing direct-composition findings still encode taste as correctness
 (for example quiet-gap/beat density and the minimum scene count). Audit those
 later using real Luna artifacts. Move only proven taste rules to advisory for

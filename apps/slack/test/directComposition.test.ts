@@ -3709,6 +3709,16 @@ describe("direct HyperFrames composition", () => {
     expect(validation.errors).toEqual([]);
   });
 
+  it("uses data-scene as the storyboard binding when the stable DOM id differs", async () => {
+    const dir = projectDir();
+    const value = draft();
+    value.html = value.html
+      .replace('id="hook"', 'id="scene-hook"')
+      .replace('id="payoff"', 'id="scene-payoff"');
+    const validation = await validateDirectComposition(dir, value);
+    expect(validation.errors).toEqual([]);
+  });
+
   it("rejects one-hop dead GSAP query dataflow in L3 before browser QA", async () => {
     const dir = projectDir();
     const value = draft();
