@@ -73,7 +73,7 @@ function rawSlackReadLocations(): string[] {
 describe("central SLACK_SEQUENCES feature-flag registry", () => {
   it("classifies every source-read variable and carries no stale registrations", () => {
     expect(sourceReadFlagNames()).toEqual([...REGISTERED_SLACK_SEQUENCES_ENV_NAMES]);
-    expect(sourceReadFlagNames()).toHaveLength(53);
+    expect(sourceReadFlagNames()).toHaveLength(55);
   });
 
   it("forbids raw Slack env reads outside the centralized flags module", () => {

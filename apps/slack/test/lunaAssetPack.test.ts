@@ -264,6 +264,80 @@ describe("Luna UI asset-pack contract", () => {
     expect(isAllowedLunaAssetPackPreviewUrl(root, "data:text/html,unsafe")).toBe(false);
   });
 
+  function invokablePack(): Record<string, unknown> {
+    const pack = defaultPack();
+    const card = (pack.components as Array<Record<string, unknown>>)[0]!;
+    card.stateAttribute = "data-state";
+    card.slots = [
+      { id: "deploy-name", selector: "#relay-card .deploy-name", kind: "text" },
+      { id: "bad-kind", selector: "#relay-card .title", kind: "spinner" },
+      { id: "dangling", selector: "#relay-card .missing", kind: "text" },
+    ];
+    card.variants = [
+      { id: "density", values: ["compact", "comfortable"] },
+      { id: "empty", values: [] },
+    ];
+    card.morphTargets = [
+      { component: "relay-palette", sharedParts: ["title", "status", "ghost"] },
+      { component: "relay-card" },
+      { component: "does-not-exist" },
+    ];
+    (pack.components as Array<Record<string, unknown>>).push({
+      id: "relay-palette",
+      purpose: "Command palette the card expands into.",
+      rootSelector: "#relay-palette",
+      states: [{ id: "closed", description: "Collapsed." }],
+      parts: [{ id: "input", selector: "#relay-palette .cmd-input", purpose: "Query field.", morphAnchor: true }],
+    });
+    return pack;
+  }
+
+  function invokableHtml(): string {
+    return defaultHtml(
+      '<span class="deploy-name">acme-api</span>' +
+      '<div id="relay-palette"><input class="cmd-input" readonly value="deploy"></div>',
+    );
+  }
+
+  it("normalizes an invokable, morph-ready component surface and drops malformed extras", () => {
+    const validated = validateLunaAssetPack(files({ pack: invokablePack(), html: invokableHtml() }), {});
+    const card = validated.pack.components[0]!;
+
+    expect(card.stateAttribute).toBe("data-state");
+    // Only the well-formed slot survives; bad kind and dangling selector drop.
+    expect(card.slots).toEqual([
+      { id: "deploy-name", selector: "#relay-card .deploy-name", kind: "text" },
+    ]);
+    // Only the variant with usable values survives.
+    expect(card.variants).toEqual([{ id: "density", values: ["compact", "comfortable"] }]);
+    // Unknown and self targets drop; sharedParts keep only real morph anchors.
+    expect(card.morphTargets).toEqual([
+      { component: "relay-palette", sharedParts: ["title"] },
+    ]);
+  });
+
+  it("ignores the invokable surface entirely when the flag is disabled", () => {
+    const validated = validateLunaAssetPack(
+      files({ pack: invokablePack(), html: invokableHtml() }),
+      { SLACK_SEQUENCES_LUNA_ASSET_INVOKABLES: "0" },
+    );
+    const card = validated.pack.components[0]!;
+    expect(card.stateAttribute).toBeUndefined();
+    expect(card.slots).toBeUndefined();
+    expect(card.variants).toBeUndefined();
+    expect(card.morphTargets).toBeUndefined();
+  });
+
+  it("keeps the invokable surface strictly additive to the accepted fingerprint", () => {
+    const plain = files();
+    const withInvokables = files({ pack: invokablePack(), html: invokableHtml() });
+    // The invokable fields are optional: a pack that omits them still validates.
+    expect(validateLunaAssetPack(plain, {}).pack.components[0]!.slots).toBeUndefined();
+    // Raw bytes drive the fingerprint, so enriched packs remain reuse-stable.
+    expect(validateLunaAssetPack(withInvokables, {}).fingerprint)
+      .toBe(validateLunaAssetPack(new Map(withInvokables), {}).fingerprint);
+  });
+
   it("rejects asset paths, hashes, coverage, and active SVG content that do not agree", () => {
     const icon = Buffer.from(
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M2 8h12"/></svg>',

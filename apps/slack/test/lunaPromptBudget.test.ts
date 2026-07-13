@@ -85,6 +85,14 @@ describe("Luna prompt and tool-less context budgets", () => {
           fs.readFileSync(path.join(goldenDir, name), "utf8"),
         )
       ),
+      input("inputs/art-direction.json", JSON.stringify({
+        version: 1,
+        mode: "synthetic",
+        authority: "Optional host art direction. You may honor, adapt, or decline any of it.",
+        note: "No brand assets were supplied, so you are inventing this product's look.",
+        principles: new Array(5).fill("Use dynamic range and land a committed payoff beat."),
+        paletteGuidance: "Commit to a vivid, product-specific palette with a clear accent.",
+      })),
     ];
     for (const name of ["luna-asset-pack.md", "luna-direction.md", "luna-director.md"]) {
       const assembled = buildToollessArtifactPrompt(prompt(name), files);

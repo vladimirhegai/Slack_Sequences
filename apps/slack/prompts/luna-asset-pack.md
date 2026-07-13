@@ -49,5 +49,32 @@ Return these deliverables through the worker-supplied artifact envelope:
   PNG, JPEG, WebP, WOFF/WOFF2, TTF, or OTF and must obey the local-only worker
   boundary.
 
+## Make each component invokable and morph-ready
+
+A component is a reusable unit the future director *invokes*, not a one-off
+drawing. Design each so a film can instantiate it, drive it between states, fill
+it with product copy, and hand it off to another component. These fields are
+optional but strongly encouraged; declare only what your preview actually
+realizes (malformed optional entries are dropped, not rejected):
+
+- **Invokable states.** Add `stateAttribute` (a `data-*` attribute name, default
+  `data-state`) to a component. Every `states[].id` is a valid value of that
+  attribute, and your CSS keys the visual difference off
+  `[data-state="..."]` on the root, so switching state is a pure attribute
+  change with both end states expressible without script. Show the default state
+  in the preview.
+- **Slots** — `slots[]`, each `{ "id", "selector", "kind" }` with `kind` one of
+  `text`, `number`, or `image`. These are the component's fill points ("props"):
+  the named preview elements a film replaces with real product copy. Each
+  selector matches exactly one preview element.
+- **Variants** — `variants[]`, each `{ "id", "values": [...] }` of bounded
+  URL-safe enum values (size, density, tone). Realize them as attributes or
+  classes so they compose with states.
+- **Morph pairs** — `morphTargets[]`, each `{ "component", "sharedParts"? }`.
+  Name another component this one can morph or transition into, and which of THIS
+  component's `morphAnchor` parts carry across the handoff (e.g. a search field
+  that expands into a command palette, sharing its input and icon). Only list
+  parts you flagged with `"morphAnchor": true`.
+
 Use system fonts unless an approved local font is adopted by exact hash-bound
 copy. Return no Markdown fence or prose outside the JSON envelope.

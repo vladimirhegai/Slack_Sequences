@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseHTML } from "linkedom";
 import { findBrowserExecutable } from "./render.ts";
+import { resolveFeatureFlag, type SlackSequencesEnvSource } from "./featureFlags.ts";
 
 export const LUNA_ASSET_PACK_CONTRACT = Object.freeze({
   id: "sequences-luna-ui-pack-v1",
@@ -43,12 +44,36 @@ export interface LunaAssetPackStateV1 {
   description: string;
 }
 
+/** A named fill point ("prop") the film supplies when it instantiates the component. */
+export interface LunaAssetPackSlotV1 {
+  id: string;
+  selector: string;
+  kind: "text" | "number" | "image";
+}
+
+/** A bounded enumerated parameter the film selects when it invokes the component. */
+export interface LunaAssetPackVariantV1 {
+  id: string;
+  values: string[];
+}
+
+/** A first-class morph pair: this component can hand off to `component`, carrying `sharedParts`. */
+export interface LunaAssetPackMorphTargetV1 {
+  component: string;
+  sharedParts?: string[];
+}
+
 export interface LunaAssetPackComponentV1 {
   id: string;
   purpose: string;
   rootSelector: string;
+  /** Attribute on the root whose value selects the current state (default `data-state`). */
+  stateAttribute?: string;
   states: LunaAssetPackStateV1[];
   parts: LunaAssetPackPartV1[];
+  slots?: LunaAssetPackSlotV1[];
+  variants?: LunaAssetPackVariantV1[];
+  morphTargets?: LunaAssetPackMorphTargetV1[];
   interactions?: Array<Record<string, unknown>>;
 }
 
@@ -97,6 +122,35 @@ function selector(document: Document, value: unknown, label: string): string {
     throw new Error(`Luna UI pack ${label} must match exactly one preview element`);
   }
   return candidate;
+}
+
+const SAFE_DATA_ATTR = /^data-[a-z][a-z0-9-]{0,40}$/;
+const SLOT_KINDS = new Set(["text", "number", "image"]);
+
+/**
+ * Lenient bounded parse of an optional enrichment array. Absent/non-array
+ * yields `[]`; each entry runs through `parse`, and any entry that returns null
+ * or throws is silently dropped. Invokable/morph declarations are additive, so a
+ * malformed optional entry must never hard-fail an otherwise-valid pack.
+ */
+function optionalList<T>(
+  value: unknown,
+  max: number,
+  parse: (entry: Record<string, unknown>) => T | null,
+): T[] {
+  if (!Array.isArray(value)) return [];
+  const out: T[] = [];
+  for (const raw of value) {
+    if (out.length >= max) break;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    try {
+      const parsed = parse(raw as Record<string, unknown>);
+      if (parsed) out.push(parsed);
+    } catch {
+      // Drop a malformed optional entry rather than rejecting the whole pack.
+    }
+  }
+  return out;
 }
 
 function validatePreviewSecurity(html: string): Document {
@@ -221,7 +275,10 @@ function validateAssets(
 
 export function validateLunaAssetPack(
   files: ReadonlyMap<string, Buffer>,
+  env: SlackSequencesEnvSource = process.env,
 ): ValidatedLunaAssetPack {
+  const invokables =
+    resolveFeatureFlag("SLACK_SEQUENCES_LUNA_ASSET_INVOKABLES", env).value === "on";
   const rawPack = required(files, "asset-pack.json").toString("utf8");
   const html = required(files, "ui-kit.html").toString("utf8");
   const assetManifest = required(files, "assets-manifest.json").toString("utf8");
@@ -302,17 +359,81 @@ export function validateLunaAssetPack(
     ) {
       throw new Error(`Luna UI pack component ${id} interactions are invalid`);
     }
+    // Invokable surface (additive + lenient). States are invoked by setting the
+    // declared attribute on the root; slots are fill points; variants are
+    // bounded enum parameters. Morph pairs are resolved in a second pass below.
+    const declaredStateAttribute = typeof component.stateAttribute === "string"
+      ? component.stateAttribute.trim().toLowerCase()
+      : "";
+    const stateAttribute = SAFE_DATA_ATTR.test(declaredStateAttribute) ? declaredStateAttribute : "";
+    const slotIds = new Set<string>();
+    const slots = invokables
+      ? optionalList<LunaAssetPackSlotV1>(component.slots, 16, (slot) => {
+        const slotId = text(slot.id, `component ${id} slot id`, 64);
+        if (!SAFE_ID.test(slotId) || slotIds.has(slotId) || !SLOT_KINDS.has(String(slot.kind))) {
+          return null;
+        }
+        const slotSelector = selector(document, slot.selector, `component ${id} slot ${slotId} selector`);
+        slotIds.add(slotId);
+        return { id: slotId, selector: slotSelector, kind: slot.kind as LunaAssetPackSlotV1["kind"] };
+      })
+      : [];
+    const variantIds = new Set<string>();
+    const variants = invokables
+      ? optionalList<LunaAssetPackVariantV1>(component.variants, 8, (variant) => {
+        const variantId = text(variant.id, `component ${id} variant id`, 64);
+        if (!SAFE_ID.test(variantId) || variantIds.has(variantId) || !Array.isArray(variant.values)) {
+          return null;
+        }
+        const seen = new Set<string>();
+        const values = variant.values
+          .filter((value): value is string => typeof value === "string")
+          .map((value) => value.trim())
+          .filter((value) => SAFE_ID.test(value) && !seen.has(value) && (seen.add(value), true))
+          .slice(0, 8);
+        if (!values.length) return null;
+        variantIds.add(variantId);
+        return { id: variantId, values };
+      })
+      : [];
     return {
       id,
       purpose: text(component.purpose, `component ${id} purpose`),
       rootSelector,
+      ...(invokables && stateAttribute ? { stateAttribute } : {}),
       states,
       parts,
+      ...(slots.length ? { slots } : {}),
+      ...(variants.length ? { variants } : {}),
       ...(Array.isArray(component.interactions)
         ? { interactions: component.interactions as Array<Record<string, unknown>> }
         : {}),
     };
   });
+  // Second pass: morph pairs can reference any component, so resolve them once
+  // every id and its declared anchor parts are known. Lenient: an entry naming
+  // an unknown/self target drops; anchor refs are filtered to real morph parts.
+  if (invokables) {
+    const anchorsByComponent = new Map(normalizedComponents.map((component) =>
+      [component.id, new Set(component.parts.filter((part) => part.morphAnchor).map((part) => part.id))]
+    ));
+    normalizedComponents.forEach((component, index) => {
+      const raw = components[index] as Record<string, unknown>;
+      const anchors = anchorsByComponent.get(component.id) ?? new Set<string>();
+      const morphTargets = optionalList<LunaAssetPackMorphTargetV1>(raw.morphTargets, 8, (target) => {
+        const targetComponent = text(target.component, `component ${component.id} morph target`, 64);
+        if (!componentIds.has(targetComponent) || targetComponent === component.id) return null;
+        const sharedParts = Array.isArray(target.sharedParts)
+          ? [...new Set(target.sharedParts
+              .filter((part): part is string => typeof part === "string")
+              .map((part) => part.trim())
+              .filter((part) => anchors.has(part)))]
+          : [];
+        return { component: targetComponent, ...(sharedParts.length ? { sharedParts } : {}) };
+      });
+      if (morphTargets.length) component.morphTargets = morphTargets;
+    });
+  }
   validateAssets(files, assetManifest, html);
   const tokens = value.tokens;
   if (

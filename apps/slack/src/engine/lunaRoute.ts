@@ -91,6 +91,53 @@ export interface LunaFactEnvelope {
   };
 }
 
+/**
+ * Host-derived, per-job art direction. Appearance-neutral craft nudges the
+ * director may honor, adapt, or decline — data, never planner fields or a shot
+ * list. Conditioned mainly on whether brand assets were supplied: a no-asset
+ * brief is the case that previously defaulted to a flat monochrome single
+ * register, so the synthetic seed pushes for a committed palette and payoff.
+ */
+export interface LunaArtDirectionSeedV1 {
+  version: 1;
+  mode: "assets-prepared" | "synthetic";
+  authority: string;
+  note: string;
+  principles: string[];
+  paletteGuidance: string;
+}
+
+export function lunaArtDirectionSeed(
+  facts: LunaFactEnvelope,
+  hasBrandAssets: boolean,
+): LunaArtDirectionSeedV1 {
+  const mode = hasBrandAssets ? "assets-prepared" : "synthetic";
+  return {
+    version: 1,
+    mode,
+    authority:
+      "Optional host art direction. You may honor, adapt, or decline any of it. " +
+      "It is direction for your judgment, not a template, shot list, required palette, or claim source.",
+    note: hasBrandAssets
+      ? "Approved brand assets were supplied; carry their identity and palette through the whole film."
+      : "No brand assets were supplied, so you are inventing this product's look. Do not default to a " +
+        "flat dark dashboard in one register; commit to a deliberate art direction.",
+    principles: [
+      "Treat this as a launch ad: earn attention through contrast between acts, not one accreting tableau.",
+      "Use dynamic range — vary brightness, scale, and density between beats instead of holding one register.",
+      "Fill the frame on hero beats; reach display scale where the type carries the message.",
+      "Build to one dominant energy peak, then land a genuine resting hold.",
+      "Resolve on a committed payoff — a brand or product lockup, or a decisive closing statement — " +
+        "not a diagram left mid-thought.",
+    ],
+    paletteGuidance: hasBrandAssets
+      ? "Carry the approved brand palette and marks through the film and resolve on an on-brand payoff beat."
+      : "Commit to a vivid, product-specific palette with a clear accent and at least one bright or " +
+        "saturated beat, and land a brand or color payoff. Monochrome is a deliberate choice only when the " +
+        "product truly demands it, never a default.",
+  };
+}
+
 export interface LunaMotionIntentV1 {
   version: 1;
   compositionId: string;
@@ -433,6 +480,23 @@ function goldenDemoReferenceInputs(
   }
 }
 
+// Per-job art-direction seed embedded for the direction and build turns. Gated
+// by SLACK_SEQUENCES_LUNA_ART_DIRECTION; the director may honor, adapt, or
+// decline it, so this is data, never planner fields.
+function artDirectionSeedInput(
+  facts: LunaFactEnvelope,
+  hasBrandAssets: boolean,
+  env: SlackSequencesEnvSource = process.env,
+): LunaWorkerInputFile[] {
+  if (resolveFeatureFlag("SLACK_SEQUENCES_LUNA_ART_DIRECTION", env).value !== "on") {
+    return [];
+  }
+  return [workerInputFile(
+    "inputs/art-direction.json",
+    JSON.stringify(lunaArtDirectionSeed(facts, hasBrandAssets), null, 2) + "\n",
+  )];
+}
+
 function initialWorkerFiles(
   facts: LunaFactEnvelope,
   referencePaths: readonly string[],
@@ -469,6 +533,7 @@ function initialWorkerFiles(
       prompt("luna-motion-reference.md"),
     ),
     ...goldenDemoReferenceInputs(),
+    ...artDirectionSeedInput(facts, assets.manifest.length > 0 || preparedPack.validated != null),
     workerInputFile("inputs/ui-pack-status.json", JSON.stringify({
       version: 1,
       mode: preparedPack.validated ? "prepared" : "synthetic-required",

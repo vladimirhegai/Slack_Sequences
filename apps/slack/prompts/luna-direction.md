@@ -32,6 +32,10 @@ Relevant inputs are:
   strong reference film — study its multi-act structure, dynamic range, and
   energy arc, but invent your own appearance, story, and shot sequence for this
   product. Read `inputs/references/golden-demo/README.md` first.
+- `inputs/art-direction.json`: optional host art direction (dynamic range,
+  frame-filling, one energy peak, a committed payoff, and palette guidance). It
+  is data for your judgment — honor, adapt, or decline it. It is never a
+  template, shot list, required palette, or claim source.
 
 Return exactly two deliverables through the worker-supplied artifact envelope:
 

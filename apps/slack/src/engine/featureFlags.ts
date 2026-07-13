@@ -178,6 +178,16 @@ export const FEATURE_FLAG_REGISTRY = {
     "Choose whether interaction-time findings are enforced or report-only.",
     "Set to audit for report-only interaction QA; there is currently no off path.",
   ),
+  SLACK_SEQUENCES_LUNA_ART_DIRECTION: optOut(
+    "Luna director route",
+    "Embed a per-job, appearance-neutral art-direction seed (dynamic range, frame-fill, payoff, palette) in the Luna direction and build turns.",
+    "Set to 0 to withhold the art-direction seed; the director then works from the fact envelope and references alone.",
+  ),
+  SLACK_SEQUENCES_LUNA_ASSET_INVOKABLES: optOut(
+    "Luna asset pack",
+    "Validate and normalize invokable component surface (state attribute, slots, variants, morph pairs) in Luna UI packs.",
+    "Set to 0 to ignore the invokable/morph fields and normalize packs as descriptive vocabulary only.",
+  ),
   SLACK_SEQUENCES_LUNA_CRAFT_CAPSULE: optOut(
     "Luna director route",
     "Embed the golden reference film (technique-only, appearance-fenced) in the Luna direction and build turns.",
