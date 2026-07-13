@@ -28,6 +28,64 @@ The context bot is independent: `src/slackMcpContext.ts` still uses the OpenAI
 Responses API and the invoking user's Slack OAuth token. Keep its
 `OPENAI_API_KEY`; it is not the video author.
 
+## Studio coupling status (verified 2026-07-13)
+
+Luna is correctly connected to the **channel asset intake**, but not yet to
+the complete typed Studio catalog. These are two different paths:
+
+| Surface | Luna direct today | What is actually passed | Status |
+| --- | --- | --- | --- |
+| `/sequences assets` screenshots | Yes | Hashed approved files under `inputs/brand-assets/**`, palette/notes in `inputs/asset-brief.md` | Live |
+| Luna UI pack | Yes | Host-validated `asset-pack.json`, `ui-kit.html`, `assets-manifest.json` under `inputs/ui-pack/**` | Live and fingerprint-bound |
+| No-assets create | Yes | Synthetic UI-pack contract; Luna creates product-specific code-native UI | Live |
+| Studio `COMPONENT_CATALOG` | No | Not sent as a planner inventory; Luna authors its own DOM/SVG and semantic hooks | Intentional gap |
+| Studio built-in `ASSET_LIBRARY` / asset plugins | No | The legacy `plugins` offer is omitted from `lunaContext`; Luna may use the prepared UI pack instead | Intentional gap |
+| Studio recipes | No | `recipes[]` and legacy recipe retrieval are explicitly forbidden in `luna-director.md` | Intentional gap |
+| Studio looks / camera patterns | No | The direct route receives motion principles, not the legacy catalog or pattern inventory | Intentional gap |
+
+The important distinction is that a UI-pack component (`rootSelector`, states,
+parts, and optional morph anchors) is a **Luna-authored, host-validated visual
+vocabulary**. It is not the same thing as a typed engine component or a Studio
+recipe. The direct route's host contracts still validate runtime, cuts, camera,
+interaction, and time when those declarations are present, but the host does
+not silently lower Studio declarations into Luna's HTML.
+
+The current seam is visible in code: `index.ts` passes `assetBriefContext` and
+the prepared pack into `createVideo`, `lunaRoute.ts` serializes the pack and
+approved screenshots as worker inputs, while `assetBriefPlanningOffer()` is
+only appended to the legacy `enrichedContext`. `luna-director.md` explicitly
+prohibits `components`, `beats`, `recipes`, `plugins`, and legacy spatial/layout
+fields. Do not claim that a Studio catalog entry was used by a Luna film unless
+the accepted evidence contains a future capability receipt for that entry.
+
+## Next Luna improvement: a bounded capability capsule
+
+The next high-value change is not to inject the entire Studio catalog or force
+Luna into the old planner. Add a derived, per-job **Luna capability capsule**
+from the same typed sources, with a small selected set of component kinds,
+asset/plugin kinds, camera affordances, and recipe-like motion fragments. Each
+entry should contain a stable ID, purpose, constraints, a tiny usage example,
+and whether it is host-lowered or merely inspirational.
+
+The safe sequence is:
+
+1. Host selects a bounded capsule from the brief, approved UI pack, and visual
+   direction; Luna may choose, decline, or combine entries creatively.
+2. Direction may return optional capability requests by stable ID, never raw
+   executable code or unconstrained planner fields.
+3. The host resolves requested IDs through the existing typed contracts and
+   lowers only accepted requests into ordinary components/beats/assets. Luna's
+   own HTML remains authoritative for everything else.
+4. Persist a capability receipt (`requested`, `accepted`, `declined`, engine
+   fences, and hashes) beside the accepted bundle, then prove the lowered result
+   with the same browser/temporal gates.
+5. Add negative tests for unknown IDs, stale engine fences, duplicate ownership,
+   and a Luna film that intentionally declines every suggestion.
+
+This preserves Luna's creative authority while making Studio work reusable and
+measurable. It also prevents the two bad extremes: a blind raw-HTML author with
+no knowledge of the catalog, or a legacy planner disguised as a Luna prompt.
+
 ## Exact-thread creative sequence
 
 1. **Verified intake.** The Slack host writes a fact envelope containing the

@@ -80,8 +80,48 @@ Worker run counts must increase monotonically but may contain gaps when a failed
 protocol turn was preserved under `worker-failures` instead of materialized.
 
 Historical S6.9-S6.13 OpenRouter probe evidence remains in `REFACTOR_PLAN.md`,
-`REFACTOR_HANDOFF.md`, and the dirty operator-owned `PROBE_LOG.md`. It is not the
+`REFACTOR_HANDOFF.md`, and the operator-owned `PROBE_LOG.md`. It is not the
 current runbook.
+
+## Luna production probe findings (2026-07-13)
+
+The production route was exercised with job `luna-prod-probe-6808f5d-01` using
+`gpt-5.6-luna` at high reasoning and no prepared assets. It completed as
+direction → synthetic UI pack → build rejection → one same-thread repair →
+rendered self-review → accepted revision 2 → MP4. `fallback=null`; browser
+runtime validation passed; ten temporal thumbnails and a real 16-second
+1920×1080 H.264 MP4 were produced. The no-assets film was coherent but sparser
+than an asset-prepared film, which is expected.
+
+The downloaded evidence replays model-free with four persisted runs and a green
+terminal static/browser validation. The first `sequence-check.json` said
+`fail` because the reporting script revalidated the accepted Luna source
+without its persisted `declaredPrimarySelectors`; the browser gate had already
+accepted the exact timeline. The probe harness now carries those selectors into
+post-run validation. This was a reporting defect, not a production film
+failure.
+
+The probe simulated the pipeline after Slack field collection; it did not
+impersonate Slack or upload a file into a real channel. Socket Mode, worker
+health, render, and delivery code are deployed and tested, but a human live
+`/sequences` command remains the final Slack-native delivery check.
+
+### What a future session must not infer
+
+- A green Studio catalog page does not prove Luna selected a component, asset,
+  plugin, recipe, look, or camera pattern.
+- A validated Luna UI pack proves reusable visual vocabulary, not typed Studio
+  lowering. Its component IDs and morph anchors are model-authored pack data.
+- A runtime-valid `warn` is not a hard failure. Inspect the MP4/temporal strip
+  and preserve taste residue as evidence; do not buy another paid turn merely
+  to clear advisory motion findings.
+
+The next implementation target is a bounded, hashed Luna capability capsule
+derived from the typed Studio catalogs. Keep it optional, allow Luna to decline
+entries, lower accepted IDs through existing host contracts, and persist
+requested/accepted/declined IDs plus engine fences. See the coupling audit in
+`LUNA_WORKFLOW.md` and `studio/INTEGRATION.md` before changing prompts or
+contracts.
 
 ## Required Railway variables
 
@@ -119,8 +159,12 @@ all model-visible filesystem/network access, and the worker scans the exact
 persisted rollout to catch tool calls omitted from exec JSONL. Readiness also fails when the exact
 Luna/high identity, artifact schema digest, or free-space reserve is wrong.
 
-Do not set `OPENROUTER_API_KEY` or `SLACK_SEQUENCES_PROVIDER` in ordinary
-production. Keep `OPENAI_API_KEY`; it belongs to context retrieval, not Luna.
+Do not route ordinary authoring through `SLACK_SEQUENCES_PROVIDER`; Luna is
+selected by `SLACK_SEQUENCES_AUTHOR_ROUTE=luna-direct`. `OPENROUTER_API_KEY`
+may remain provisioned only when the owner intentionally keeps an emergency
+rollback credential, but it must not be presented as an automatic fallback and
+the route must remain Luna. Keep `OPENAI_API_KEY`; it belongs to context
+retrieval, not Luna.
 
 Emergency rollback is explicit and variables-only:
 
@@ -150,8 +194,10 @@ Only with explicit owner authorization:
    `/healthz`.
 9. Run `/sequences assets` and one ordinary `/sequences` flow through thumbnail,
    self-review, render, and Slack upload.
-10. Remove `OPENROUTER_API_KEY` and the old provider variable only after the Luna
-    route has passed.
+10. After Luna passes, either remove the legacy credential/provider variables,
+    or retain them as an owner-controlled emergency rollback while keeping the
+    author route explicitly `luna-direct`. Never treat their presence as a
+    fallback policy.
 
 Private-monorepo release commands (service IDs/names are already linked locally):
 
@@ -173,6 +219,21 @@ railway logs --service sequences-slack --environment production --lines 100
 $baseUrl = "https://sequences-slack-production.up.railway.app"
 Invoke-WebRequest "$baseUrl/healthz" | Select-Object StatusCode, Content
 ```
+
+### Railway CLI hazards learned during the Luna probe
+
+- Deploy the worker from the exact `.publish/apps/slack/codex-worker` root with
+  `--path-as-root`; deploy Slack from `.publish`. A worker upload from the
+  public root can archive the wrong process and interrupt the real worker.
+- Deploy the worker first, wait for `SUCCESS` and its `gpt-5.6-luna`/high log,
+  then deploy Slack. Do not use `railway down` as a pending-deploy cancel; it
+  can remove the active healthy deployment instead.
+- Railway's SSH argument parser strips ordinary shell quoting. For a probe,
+  use a hyphenated no-space brief or pass structured input through a file; do
+  not spend paid calls debugging a command that never reached the worker.
+- A local SSH client timeout does not necessarily terminate the remote Luna
+  process. Verify the persisted job directory, then clean up the temporary SSH
+  key in Railway and on the operator machine.
 
 Set the shared bearer token through stdin or a non-echoing shell variable; never
 print it in command output, logs, docs, or receipts. Railway private networking

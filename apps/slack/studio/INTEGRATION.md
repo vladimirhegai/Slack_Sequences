@@ -18,6 +18,39 @@ exported recipe library contains seven recipes; `last-word-roulette` is
 currently revision 13. Historical revision notes below record the revision
 proven at that moment and should not be read as the current library version.
 
+### Luna coupling audit
+
+The Studio viewer and the Luna author are related through shared source
+contracts, but they are not currently one selection/runtime path. The Studio
+server imports the live catalogs for `/api/state`, `/api/assets`,
+`/api/plugins`, `/api/looks`, `/api/camera`, and recipe operations. That proves
+the cockpit is not forked. It does **not** prove that Luna receives or selects
+those entries.
+
+The Luna direct route currently receives only:
+
+- approved screenshot bytes and deterministic palette/notes from
+  `/sequences assets`;
+- a host-validated, fingerprint-bound Luna UI pack containing tokens,
+  code-native component states/parts, and optional inert local assets; and
+- the motion-principles reference distilled from the golden film.
+
+It deliberately does not receive `COMPONENT_CATALOG`, the built-in
+`ASSET_LIBRARY`/asset-plugin inventory, exported recipes, `DESIGN_DIALECTS`, or
+`CAMERA_PATTERNS`. `luna-director.md` forbids legacy `components`, `beats`,
+`recipes`, `plugins`, and spatial/layout planner fields. Those catalogs remain
+fully wired to the legacy-provider retrieval/lowering/injection path and to
+Studio's deterministic previews. Do not mark a catalog item “used by Luna”
+from Studio visibility alone; require a future persisted capability receipt.
+
+The recommended bridge is a bounded Luna capability capsule derived from these
+same catalogs. It should expose stable IDs and concise purposes/examples, let
+Luna accept or decline them, and lower accepted requests through the existing
+typed contracts. It must not inject the entire catalog, copy Studio markup into
+every film, or revive the legacy planner committee. Record the capsule hash,
+engine fences, requested IDs, accepted IDs, and declined IDs beside the Luna
+bundle, then replay/browser-test both acceptance and intentional decline.
+
 **2026-07-10 pivot:** recipes are now **agent-authored source files** —
 `recipes/<id>.recipe.html` (one file per recipe, committed; format +
 authoring guide in [../recipes/README.md](../recipes/README.md)). The
