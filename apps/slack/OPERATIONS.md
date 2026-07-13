@@ -100,10 +100,14 @@ CODEX_HOME=/root/.codex
 
 Mount its persistent volume at `/root/.codex`. `auth.json` is plaintext and must
 be treated as a password. Startup runs `codex login status` and refuses readiness
-when login/config is unavailable. The worker's permission profile must prove a
-model-authored shell command cannot read `/root/.codex/auth.json` before the
-production route is accepted. Readiness also fails when the exact Luna/high
-identity is wrong or the volume falls below its free-space reserve.
+when login/config is unavailable. Railway denies the Linux namespace operation
+used by Codex's command sandbox; never bypass it or expose the auth volume with a
+dangerous sandbox mode. Production uses the tool-less artifact protocol: inputs
+are embedded/attached, every tool event fails the turn, and the worker validates
+the schema and atomically materializes files. The Codex permission profile denies
+all model-visible filesystem/network access, and the worker scans the exact
+persisted rollout to catch tool calls omitted from exec JSONL. Readiness also fails when the exact
+Luna/high identity, artifact schema digest, or free-space reserve is wrong.
 
 Do not set `OPENROUTER_API_KEY` or `SLACK_SEQUENCES_PROVIDER` in ordinary
 production. Keep `OPENAI_API_KEY`; it belongs to context retrieval, not Luna.
@@ -128,7 +132,9 @@ Only with explicit owner authorization:
 3. Set worker variables (including manual `PORT=3000`) with `--skip-deploys`.
 4. Set Slack worker URL/token/route with `--skip-deploys`.
 5. Deploy and verify `codex-worker` first.
-6. Run a bounded authenticated worker job and the credential-denial proof.
+6. Run a bounded authenticated worker job and prove it has zero tool events,
+   a clean persisted-rollout hash, valid raw-envelope/materialized fingerprints,
+   and an exact-thread generation-bound resume.
 7. Deploy `sequences-slack` from the same clean snapshot.
 8. Confirm its startup log contains `[luna] worker ready`, then check public
    `/healthz`.
@@ -193,6 +199,11 @@ validation, rendering, upload, or film quality; the end-to-end rehearsal does.
 - Worker `401`: rotate/set the same token on both services without printing it.
 - Codex auth expired: reauthenticate on the worker's mounted `CODEX_HOME`; the
   CLI refreshes `auth.json` in place, so serialize auth/session activity.
+- Worker returns `tool_use_forbidden`: preserve the raw JSONL event log and fail
+  visibly. Do not add a sandbox bypass, materialize the final response, or cross
+  into the legacy route.
+- Worker rejects the artifact envelope: preserve the raw envelope and replay its
+  schema/path/hash validation model-free before changing prompts or contracts.
 - Authored source fails a hard gate: preserve the raw run directory and replay
   model-free. Fix an engine defect at its lowest deterministic owner. A future
   same-thread hard-defect repair prompt may address authored defects; do not send

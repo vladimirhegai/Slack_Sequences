@@ -8,10 +8,12 @@ import type { DirectCompositionDraft, DirectScene } from "./directComposition.ts
 import { resolveFeatureFlag, type SlackSequencesEnvSource } from "./featureFlags.ts";
 import {
   resolveLunaWorkerConfig,
+  inspectLunaWorkerCursor,
   resumeLunaWorkerJob,
   startLunaWorkerJob,
   workerInputFile,
   type LunaWorkerDeliverable,
+  type LunaWorkerCursor,
   type LunaWorkerInputFile,
   type LunaWorkerResult,
 } from "./lunaWorkerClient.ts";
@@ -22,8 +24,8 @@ const PROMPT_DIR = path.resolve(
 );
 const MAX_REFERENCE_FILE_BYTES = 12 * 1024 * 1024;
 const MAX_REFERENCE_TOTAL_BYTES = 28 * 1024 * 1024;
-const MAX_DELIVERABLE_BYTES = 32 * 1024 * 1024;
-const MAX_DELIVERABLE_TOTAL_BYTES = 64 * 1024 * 1024;
+const MAX_DELIVERABLE_BYTES = 8 * 1024 * 1024;
+const MAX_DELIVERABLE_TOTAL_BYTES = 16 * 1024 * 1024;
 const MAX_DELIVERABLE_COUNT = 128;
 const MAX_LUNA_ASSET_COUNT = 48;
 const MAX_LUNA_ASSET_BYTES = 28 * 1024 * 1024;
@@ -116,6 +118,13 @@ export interface LunaSessionReceiptV1 {
   latestCommittedSourceSha256: string;
   latestRawSourceSha256: string;
   latestArtifactFingerprint: string;
+  latestMaterializedFingerprint: string;
+  /** Persisted-rollout provenance for the latest host-accepted artifact bundle. */
+  latestRolloutSha256: string;
+  /** Persisted-rollout provenance for the latest worker generation, accepted or not. */
+  workerCursorRolloutSha256?: string;
+  workerCursorDisposition: "accepted" | "unaccepted";
+  workerCursorError?: string;
   latestRunDir: string;
   createdAt: string;
   updatedAt: string;
@@ -283,12 +292,15 @@ function persistWorkerResult(projectDir: string, kind: string, result: LunaWorke
   runDir: string;
   files: Map<string, Buffer>;
 } {
-  const runDir = nextRunDir(projectDir, kind);
   const files = new Map<string, Buffer>();
   if (result.deliverables.length > MAX_DELIVERABLE_COUNT) {
     throw new Error("Luna worker returned too many deliverables");
   }
+  if (sha256(Buffer.from(result.finalMessage, "utf8")) !== result.rawEnvelopeSha256) {
+    throw new Error("Luna worker raw artifact-envelope hash does not match its final message");
+  }
   let totalBytes = 0;
+  const fingerprintEntries: string[] = [];
   for (const deliverable of result.deliverables) {
     const relative = normalizeWorkerPath(deliverable.path);
     if (files.has(relative)) throw new Error(`Luna worker returned duplicate deliverable ${relative}`);
@@ -297,13 +309,22 @@ function persistWorkerResult(projectDir: string, kind: string, result: LunaWorke
     if (totalBytes > MAX_DELIVERABLE_TOTAL_BYTES) {
       throw new Error("Luna worker deliverables exceeded the host total-size limit");
     }
+    fingerprintEntries.push(`${relative}:${deliverable.sha256.toLowerCase()}`);
+    files.set(relative, bytes);
+  }
+  const materializedFingerprint = sha256(Buffer.from(fingerprintEntries.sort().join("\n"), "utf8"));
+  if (materializedFingerprint !== result.materializedFingerprint) {
+    throw new Error("Luna worker materialized fingerprint does not match its deliverables");
+  }
+
+  const runDir = nextRunDir(projectDir, kind);
+  for (const [relative, bytes] of files) {
     const withinDeliverables = relative.slice("deliverables/".length);
     const destination = path.resolve(runDir, "deliverables", withinDeliverables);
     const root = path.resolve(runDir, "deliverables") + path.sep;
     if (!destination.startsWith(root)) throw new Error("Luna deliverable escaped its evidence directory");
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.writeFileSync(destination, bytes);
-    files.set(relative, bytes);
   }
   fs.writeFileSync(path.join(runDir, "worker-receipt.json"), JSON.stringify({
     version: 1,
@@ -313,8 +334,12 @@ function persistWorkerResult(projectDir: string, kind: string, result: LunaWorke
     model: result.model,
     reasoningEffort: result.reasoningEffort,
     codexVersion: result.codexVersion,
+    rawEnvelopeSha256: result.rawEnvelopeSha256,
+    materializedFingerprint: result.materializedFingerprint,
+    rolloutSha256: result.rolloutSha256,
+    rolloutResponseItems: result.rolloutResponseItems,
     usage: result.usage ?? null,
-    finalMessage: result.finalMessage ?? "",
+    finalMessage: result.finalMessage,
     deliverables: result.deliverables.map(({ path: filePath, sha256: hash, size }) => ({
       path: filePath,
       sha256: hash,
@@ -780,6 +805,10 @@ function saveSession(
     latestCommittedSourceSha256: committed.sourceSha256,
     latestRawSourceSha256: authored.rawSourceSha256,
     latestArtifactFingerprint: authored.artifactFingerprint,
+    latestMaterializedFingerprint: authored.worker.materializedFingerprint,
+    latestRolloutSha256: authored.worker.rolloutSha256,
+    workerCursorRolloutSha256: authored.worker.rolloutSha256,
+    workerCursorDisposition: "accepted",
     latestRunDir: path.relative(projectDir, authored.runDir).replace(/\\/g, "/"),
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
@@ -803,12 +832,65 @@ export function loadLunaSession(projectDir: string): LunaSessionReceiptV1 | unde
     return parsed.version === 1 && parsed.workerJobId && parsed.threadId &&
         Number.isFinite(parsed.durationSec) && parsed.durationSec > 0 &&
         Number.isSafeInteger(parsed.committedRevision) && parsed.committedRevision > 0 &&
-        /^[a-f0-9]{64}$/.test(parsed.latestCommittedSourceSha256)
+        /^[a-f0-9]{64}$/.test(parsed.latestCommittedSourceSha256) &&
+        /^[a-f0-9]{64}$/.test(parsed.latestMaterializedFingerprint) &&
+        /^[a-f0-9]{64}$/.test(parsed.latestRolloutSha256) &&
+        (parsed.workerCursorRolloutSha256 === undefined ||
+          /^[a-f0-9]{64}$/.test(parsed.workerCursorRolloutSha256)) &&
+        (parsed.workerCursorDisposition === "accepted" || parsed.workerCursorDisposition === "unaccepted")
       ? parsed
       : undefined;
   } catch {
     return undefined;
   }
+}
+
+function persistUnacceptedWorkerCursor(
+  projectDir: string,
+  session: LunaSessionReceiptV1,
+  cursor: LunaWorkerCursor,
+  error?: unknown,
+): LunaSessionReceiptV1 {
+  if (cursor.jobId !== session.workerJobId) {
+    throw new Error("Luna worker cursor belongs to a different job");
+  }
+  if (!cursor.threadId || cursor.threadId !== session.threadId) {
+    throw new Error("Luna worker cursor belongs to a different Codex thread");
+  }
+  if (cursor.runCount < session.workerRunCount) {
+    throw new Error("Luna worker cursor moved backwards");
+  }
+  if (cursor.runCount === session.workerRunCount) {
+    if (cursor.operationId !== session.workerOperationId) {
+      throw new Error("Luna worker changed operation without advancing its run count");
+    }
+    return session;
+  }
+  const updated: LunaSessionReceiptV1 = {
+    ...session,
+    workerOperationId: cursor.operationId,
+    workerRunCount: cursor.runCount,
+    ...(cursor.rolloutSha256 ? { workerCursorRolloutSha256: cursor.rolloutSha256 } : {}),
+    workerCursorDisposition: "unaccepted",
+    workerCursorError: String(error ?? `worker turn ended as ${cursor.status}`)
+      .replace(/\s+/g, " ")
+      .slice(0, 500),
+    updatedAt: new Date().toISOString(),
+  };
+  writeJsonAtomic(sessionPath(projectDir), updated);
+  return updated;
+}
+
+async function refreshLunaWorkerCursor(
+  projectDir: string,
+  session: LunaSessionReceiptV1,
+  error?: unknown,
+): Promise<LunaSessionReceiptV1> {
+  const cursor = await inspectLunaWorkerCursor(resolveLunaWorkerConfig(), session.workerJobId);
+  if (cursor.status === "queued" || cursor.status === "running") {
+    throw new Error(`Luna worker job is still ${cursor.status}`);
+  }
+  return persistUnacceptedWorkerCursor(projectDir, session, cursor, error);
 }
 
 function assertLunaSessionMatchesComposition(
@@ -837,7 +919,28 @@ export function reconcileLunaSessionAfterUndo(projectDir: string): boolean {
   if (!fs.existsSync(accepted)) return false;
   const receipt = JSON.parse(fs.readFileSync(accepted, "utf8")) as LunaSessionReceiptV1;
   if (receipt.latestCommittedSourceSha256 !== committed.sourceSha256) return false;
-  writeJsonAtomic(sessionPath(projectDir), receipt);
+  const current = loadLunaSession(projectDir);
+  const restored = current && current.workerJobId === receipt.workerJobId &&
+      current.threadId === receipt.threadId && current.workerRunCount >= receipt.workerRunCount
+    ? {
+        ...receipt,
+        workerOperationId: current.workerOperationId,
+        workerRunCount: current.workerRunCount,
+        ...(current.workerCursorRolloutSha256
+          ? { workerCursorRolloutSha256: current.workerCursorRolloutSha256 }
+          : {}),
+        workerCursorDisposition: current.workerRunCount > receipt.workerRunCount
+          ? "unaccepted" as const
+          : current.workerCursorDisposition,
+        ...(current.workerRunCount > receipt.workerRunCount
+          ? { workerCursorError: "active composition restored to an earlier accepted cut" }
+          : current.workerCursorError
+            ? { workerCursorError: current.workerCursorError }
+            : {}),
+        updatedAt: new Date().toISOString(),
+      }
+    : receipt;
+  writeJsonAtomic(sessionPath(projectDir), restored);
 
   const activeAssets = path.join(projectDir, "assets", "luna");
   const committedAssets = path.join(projectDir, "composition", "assets", "luna");
@@ -918,11 +1021,85 @@ export async function authorLunaComposition(input: {
   return materializeLunaResult(input.projectDir, "create", result, input.facts.targetDurationSec);
 }
 
+function acceptedBundleFiles(
+  projectDir: string,
+  session: LunaSessionReceiptV1,
+): LunaWorkerInputFile[] {
+  const isStrictChild = (root: string, candidate: string): boolean => {
+    const relative = path.relative(root, candidate);
+    return relative !== "" && relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  };
+  const runsRoot = path.resolve(projectDir, "planning", "luna", "runs");
+  const runsInfo = fs.lstatSync(runsRoot);
+  if (runsInfo.isSymbolicLink() || !runsInfo.isDirectory()) {
+    throw new Error("Accepted Luna runs root must be a regular directory");
+  }
+  const runsReal = fs.realpathSync(runsRoot);
+  const acceptedRunPath = path.resolve(projectDir, session.latestRunDir);
+  const acceptedRunInfo = fs.lstatSync(acceptedRunPath);
+  if (acceptedRunInfo.isSymbolicLink() || !acceptedRunInfo.isDirectory()) {
+    throw new Error("Accepted Luna run must be a regular directory");
+  }
+  const acceptedRun = fs.realpathSync(acceptedRunPath);
+  if (!isStrictChild(runsReal, acceptedRun)) {
+    throw new Error("Accepted Luna run escaped the project run directory");
+  }
+  const deliverablesRoot = path.join(acceptedRun, "deliverables");
+  const deliverablesInfo = fs.lstatSync(deliverablesRoot);
+  if (deliverablesInfo.isSymbolicLink() || !deliverablesInfo.isDirectory()) {
+    throw new Error("Accepted Luna deliverable bundle is missing");
+  }
+  const deliverablesReal = fs.realpathSync(deliverablesRoot);
+  if (!isStrictChild(acceptedRun, deliverablesReal)) {
+    throw new Error("Accepted Luna deliverable bundle escaped its accepted run");
+  }
+  const files: LunaWorkerInputFile[] = [];
+  const fingerprintEntries: string[] = [];
+  const walk = (directory: string): void => {
+    const entries = fs.readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) throw new Error("Accepted Luna bundle cannot contain symbolic links");
+      if (entry.isDirectory()) {
+        walk(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const relativePath = path.relative(deliverablesReal, absolutePath).replace(/\\/g, "/");
+      const bytes = fs.readFileSync(absolutePath);
+      const digest = sha256(bytes);
+      fingerprintEntries.push(`deliverables/${relativePath}:${digest}`);
+      files.push(workerInputFile(`inputs/accepted-bundle/${relativePath}`, bytes));
+    }
+  };
+  walk(deliverablesReal);
+  const materializedFingerprint = sha256(Buffer.from(fingerprintEntries.sort().join("\n"), "utf8"));
+  if (materializedFingerprint !== session.latestMaterializedFingerprint) {
+    throw new Error("Accepted Luna bundle no longer matches its accepted materialized fingerprint");
+  }
+  files.push(workerInputFile("inputs/accepted-bundle-host.json", JSON.stringify({
+    version: 1,
+    artifactFingerprint: session.latestArtifactFingerprint,
+    materializedFingerprint: session.latestMaterializedFingerprint,
+    acceptedRolloutSha256: session.latestRolloutSha256,
+    workerCursorRolloutSha256: session.workerCursorRolloutSha256,
+    workerCursorDisposition: session.workerCursorDisposition,
+    acceptedBundleIsAuthoritative: true,
+    committedSourceSha256: session.latestCommittedSourceSha256,
+    rawSourceSha256: session.latestRawSourceSha256,
+    sourceRun: session.latestRunDir,
+  }, null, 2) + "\n"));
+  return files;
+}
+
 function evidenceFiles(
   projectDir: string,
   thumbnailPaths: readonly string[],
+  session: LunaSessionReceiptV1,
 ): LunaWorkerInputFile[] {
-  const files: LunaWorkerInputFile[] = [];
+  const files: LunaWorkerInputFile[] = acceptedBundleFiles(projectDir, session);
   const evidenceList: string[] = [];
   for (const [index, source] of thumbnailPaths.entries()) {
     if (!fs.existsSync(source) || !fs.statSync(source).isFile()) continue;
@@ -968,14 +1145,22 @@ export async function selfReviewLunaComposition(input: {
   projectDir: string;
   thumbnailPaths: readonly string[];
 }): Promise<LunaAuthoredComposition> {
-  const session = loadLunaSession(input.projectDir);
+  let session = loadLunaSession(input.projectDir);
   if (!session) throw new Error("Luna session receipt is missing; cannot self-review exact thread");
   assertLunaSessionMatchesComposition(input.projectDir, session);
-  const result = await resumeLunaWorkerJob(resolveLunaWorkerConfig(), {
-    jobId: session.workerJobId,
-    prompt: prompt("luna-self-review.md"),
-    files: evidenceFiles(input.projectDir, input.thumbnailPaths),
-  });
+  session = await refreshLunaWorkerCursor(input.projectDir, session);
+  let result: LunaWorkerResult;
+  try {
+    result = await resumeLunaWorkerJob(resolveLunaWorkerConfig(), {
+      jobId: session.workerJobId,
+      expectedRunCount: session.workerRunCount,
+      prompt: prompt("luna-self-review.md"),
+      files: evidenceFiles(input.projectDir, input.thumbnailPaths, session),
+    });
+  } catch (error) {
+    await refreshLunaWorkerCursor(input.projectDir, session, error).catch(() => undefined);
+    throw error;
+  }
   if (result.threadId !== session.threadId) {
     throw new Error("Luna worker resumed a different Codex thread");
   }
@@ -985,6 +1170,14 @@ export async function selfReviewLunaComposition(input: {
   if (result.runCount <= session.workerRunCount) {
     throw new Error("Luna worker did not advance the exact director thread");
   }
+  persistUnacceptedWorkerCursor(input.projectDir, session, {
+    jobId: result.jobId,
+    operationId: result.operationId,
+    runCount: result.runCount,
+    threadId: result.threadId,
+    status: "completed",
+    rolloutSha256: result.rolloutSha256,
+  }, "worker turn completed; host acceptance pending");
   return materializeLunaResult(input.projectDir, "self-review", result, session.durationSec);
 }
 
@@ -992,15 +1185,17 @@ export async function reviseLunaComposition(input: {
   projectDir: string;
   instruction: string;
 }): Promise<LunaAuthoredComposition> {
-  const session = loadLunaSession(input.projectDir);
+  let session = loadLunaSession(input.projectDir);
   if (!session) throw new Error("Luna session receipt is missing; use the explicit legacy route for legacy films");
   assertLunaSessionMatchesComposition(input.projectDir, session);
+  session = await refreshLunaWorkerCursor(input.projectDir, session);
   const currentFiles: LunaWorkerInputFile[] = [
     workerInputFile("inputs/revision.json", JSON.stringify({
       version: 1,
       instruction: input.instruction,
     }, null, 2) + "\n"),
   ];
+  currentFiles.push(...acceptedBundleFiles(input.projectDir, session));
   for (const [source, relative] of [
     [path.join(input.projectDir, "composition", "index.html"), "inputs/current/composition.html"],
     [path.join(input.projectDir, "composition", "manifest.json"), "inputs/current/manifest.json"],
@@ -1023,11 +1218,18 @@ export async function reviseLunaComposition(input: {
     }
   };
   if (fs.existsSync(currentAssetsRoot)) appendCurrentAssets(currentAssetsRoot);
-  const result = await resumeLunaWorkerJob(resolveLunaWorkerConfig(), {
-    jobId: session.workerJobId,
-    prompt: prompt("luna-revision.md"),
-    files: currentFiles,
-  });
+  let result: LunaWorkerResult;
+  try {
+    result = await resumeLunaWorkerJob(resolveLunaWorkerConfig(), {
+      jobId: session.workerJobId,
+      expectedRunCount: session.workerRunCount,
+      prompt: prompt("luna-revision.md"),
+      files: currentFiles,
+    });
+  } catch (error) {
+    await refreshLunaWorkerCursor(input.projectDir, session, error).catch(() => undefined);
+    throw error;
+  }
   if (result.threadId !== session.threadId) {
     throw new Error("Luna worker resumed a different Codex thread");
   }
@@ -1037,6 +1239,14 @@ export async function reviseLunaComposition(input: {
   if (result.runCount <= session.workerRunCount) {
     throw new Error("Luna worker did not advance the exact director thread");
   }
+  persistUnacceptedWorkerCursor(input.projectDir, session, {
+    jobId: result.jobId,
+    operationId: result.operationId,
+    runCount: result.runCount,
+    threadId: result.threadId,
+    status: "completed",
+    rolloutSha256: result.rolloutSha256,
+  }, "worker turn completed; host acceptance pending");
   return materializeLunaResult(input.projectDir, "revision", result, session.durationSec);
 }
 

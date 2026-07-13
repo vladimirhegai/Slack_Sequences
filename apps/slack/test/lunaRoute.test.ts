@@ -13,7 +13,9 @@ import {
   loadLunaSession,
   parseLunaMotionIntent,
   reconcileLunaSessionAfterUndo,
+  reviseLunaComposition,
   resolveAuthorRoute,
+  selfReviewLunaComposition,
 } from "../src/engine/lunaRoute.ts";
 import { lunaWorkerHealthIsExact } from "../src/engine/lunaWorkerClient.ts";
 
@@ -85,7 +87,13 @@ function deliverable(relativePath: string, text: string) {
   };
 }
 
-async function fakeWorker(options: { assetSvg?: string; compositionHtml?: string } = {}): Promise<{
+async function fakeWorker(options: {
+  assetSvg?: string;
+  compositionHtml?: string;
+  corruptRawEnvelopeHash?: boolean;
+  corruptMaterializedFingerprint?: boolean;
+  invalidHtmlOnRunCount?: number;
+} = {}): Promise<{
   url: string;
   requests: Array<{ authorization?: string; body: Record<string, unknown> }>;
   close(): Promise<void>;
@@ -101,6 +109,24 @@ async function fakeWorker(options: { assetSvg?: string; compositionHtml?: string
         response.end(JSON.stringify({ error: { code: "job_not_found", message: "missing" } }));
         return;
       }
+      const runHtml = options.invalidHtmlOnRunCount === latest.runCount
+        ? "<html><body>invalid</body></html>"
+        : responseHtml;
+      const deliverables = [
+        deliverable("composition.html", runHtml),
+        deliverable("storyboard.json", JSON.stringify({ storyboard }, null, 2) + "\n"),
+        deliverable("motion-intent.json", JSON.stringify(intent, null, 2) + "\n"),
+        deliverable("director-treatment.md", "# Treatment\nOne state becomes the next.\n"),
+        deliverable("assets-manifest.json", JSON.stringify([{
+          path: "assets/luna/mark.svg",
+          purpose: "Persistent handoff mark",
+          provenance: "agent-created",
+          mediaType: "image/svg+xml",
+          sha256: sha256(Buffer.from(responseAssetSvg)),
+        }], null, 2) + "\n"),
+        deliverable("assets/luna/mark.svg", responseAssetSvg),
+      ];
+      const finalMessage = '{"decision":"replace","files":[]}';
       const payload = {
         jobId: latest.jobId,
         operationId: latest.operationId,
@@ -110,21 +136,19 @@ async function fakeWorker(options: { assetSvg?: string; compositionHtml?: string
         model: "gpt-5.6-luna",
         reasoningEffort: "high",
         codexVersion: "0.144.1",
-        finalMessage: "Deliverables complete.",
-        deliverables: [
-          deliverable("composition.html", responseHtml),
-          deliverable("storyboard.json", JSON.stringify({ storyboard }, null, 2) + "\n"),
-          deliverable("motion-intent.json", JSON.stringify(intent, null, 2) + "\n"),
-          deliverable("director-treatment.md", "# Treatment\nOne state becomes the next.\n"),
-          deliverable("assets-manifest.json", JSON.stringify([{
-            path: "assets/luna/mark.svg",
-            purpose: "Persistent handoff mark",
-            provenance: "agent-created",
-            mediaType: "image/svg+xml",
-            sha256: sha256(Buffer.from(responseAssetSvg)),
-          }], null, 2) + "\n"),
-          deliverable("assets/luna/mark.svg", responseAssetSvg),
-        ],
+        rawEnvelopeSha256: options.corruptRawEnvelopeHash
+          ? "1".repeat(64)
+          : sha256(Buffer.from(finalMessage)),
+        materializedFingerprint: options.corruptMaterializedFingerprint
+          ? "2".repeat(64)
+          : sha256(Buffer.from(deliverables
+            .map((file) => `${file.path}:${file.sha256}`)
+            .sort()
+            .join("\n"))),
+        rolloutSha256: String(latest.runCount).repeat(64),
+        rolloutResponseItems: 4,
+        finalMessage,
+        deliverables,
       };
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(payload));
@@ -170,6 +194,9 @@ describe("Luna direct route", () => {
       version: "0.144.1",
       model: "gpt-5.6-luna",
       reasoningEffort: "high",
+      artifactProtocol: "luna-tool-less-artifact-v1",
+      artifactSchemaSha256: "ac487766f625ecd680541cbf3b7a6e0018a3570e1037e65c9c629d8af52569cb",
+      permissionProfileSha256: "0c8565ee79930bddb66469f4672e5eb57b0ba87e8919fe5389556f8b28695e42",
       authenticated: true,
     })).toBe(true);
     expect(lunaWorkerHealthIsExact({
@@ -233,6 +260,39 @@ describe("Luna direct route", () => {
       await worker.close();
     }
   }, 60_000);
+
+  it("rejects worker provenance hashes before persisting an evidence run", async () => {
+    for (const [option, message] of [
+      ["corruptRawEnvelopeHash", /raw artifact-envelope hash/],
+      ["corruptMaterializedFingerprint", /materialized fingerprint/],
+    ] as const) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-provenance-"));
+      roots.push(root);
+      const worker = await fakeWorker({ [option]: true });
+      vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
+      vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_TOKEN", "test-worker-token-that-is-at-least-thirty-two-characters");
+      try {
+        await expect(authorLunaComposition({
+          projectDir: root,
+          jobId: `luna-${option}`,
+          facts: {
+            version: 1,
+            product: "Harborview",
+            brandName: "Harborview",
+            whatShipped: "Feedback routing",
+            targetDurationSec: 6,
+            provenance: {
+              source: "slack-user-and-authorized-workspace-context",
+              unsupportedClaimsAllowed: false,
+            },
+          },
+        })).rejects.toThrow(message);
+        expect(fs.existsSync(path.join(root, "planning", "luna", "runs"))).toBe(false);
+      } finally {
+        await worker.close();
+      }
+    }
+  });
 
   it("validates the director's semantic subjects and declared timing without choosing motion", () => {
     expect(parseLunaMotionIntent(JSON.stringify(intent), html, storyboard).compositionId)
@@ -337,6 +397,116 @@ describe("Luna direct route", () => {
       );
       expect(reconcileLunaSessionAfterUndo(projectDir)).toBe(true);
       expect(loadLunaSession(projectDir)?.committedRevision).toBe(1);
+    } finally {
+      await worker.close();
+    }
+  });
+
+  it("refuses to resume when the accepted canonical bundle was changed on disk", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-accepted-bundle-"));
+    roots.push(root);
+    const projectDir = path.join(root, "project");
+    fs.mkdirSync(projectDir, { recursive: true });
+    const worker = await fakeWorker();
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_TOKEN", "test-worker-token-that-is-at-least-thirty-two-characters");
+    try {
+      const authored = await authorLunaComposition({
+        projectDir,
+        jobId: "luna-accepted-bundle-proof",
+        facts: {
+          version: 1,
+          product: "Harborview",
+          brandName: "Harborview",
+          whatShipped: "Feedback routing",
+          targetDurationSec: 6,
+          provenance: {
+            source: "slack-user-and-authorized-workspace-context",
+            unsupportedClaimsAllowed: false,
+          },
+        },
+      });
+      fs.mkdirSync(path.join(projectDir, "composition"), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, "composition", "index.html"), html);
+      fs.writeFileSync(path.join(projectDir, "composition", "manifest.json"), '{"revision":1}\n');
+      confirmLunaComposition(projectDir, authored);
+      fs.writeFileSync(
+        path.join(authored.runDir, "deliverables", "director-treatment.md"),
+        "# Tampered\n",
+      );
+      await expect(selfReviewLunaComposition({ projectDir, thumbnailPaths: [] }))
+        .rejects.toThrow(/accepted materialized fingerprint/i);
+      expect(worker.requests).toHaveLength(1);
+    } finally {
+      await worker.close();
+    }
+  });
+
+  it("advances the exact worker cursor after rejecting a review and resumes from the accepted cut", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-rejected-review-"));
+    roots.push(root);
+    const projectDir = path.join(root, "project");
+    fs.mkdirSync(projectDir, { recursive: true });
+    const worker = await fakeWorker({ invalidHtmlOnRunCount: 2 });
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_TOKEN", "test-worker-token-that-is-at-least-thirty-two-characters");
+    try {
+      const authored = await authorLunaComposition({
+        projectDir,
+        jobId: "luna-rejected-review-proof",
+        facts: {
+          version: 1,
+          product: "Harborview",
+          brandName: "Harborview",
+          whatShipped: "Feedback routing",
+          targetDurationSec: 6,
+          provenance: {
+            source: "slack-user-and-authorized-workspace-context",
+            unsupportedClaimsAllowed: false,
+          },
+        },
+      });
+      fs.mkdirSync(path.join(projectDir, "composition"), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, "composition", "index.html"), html);
+      fs.writeFileSync(path.join(projectDir, "composition", "manifest.json"), '{"revision":1}\n');
+      confirmLunaComposition(projectDir, authored);
+
+      await expect(selfReviewLunaComposition({ projectDir, thumbnailPaths: [] }))
+        .rejects.toThrow(/content security policy|composition root/i);
+      expect(loadLunaSession(projectDir)).toMatchObject({
+        workerRunCount: 2,
+        workerCursorDisposition: "unaccepted",
+        latestRolloutSha256: "1".repeat(64),
+        workerCursorRolloutSha256: "2".repeat(64),
+        latestRunDir: path.relative(projectDir, authored.runDir).replace(/\\/g, "/"),
+        latestMaterializedFingerprint: authored.worker.materializedFingerprint,
+      });
+
+      const revised = await reviseLunaComposition({
+        projectDir,
+        instruction: "Make the resolution more concise.",
+      });
+      expect(revised.worker.runCount).toBe(3);
+      expect(worker.requests[2]!.body.expectedRunCount).toBe(2);
+      expect(revised.draft.html).toBe(html);
+      expect(loadLunaSession(projectDir)).toMatchObject({
+        workerRunCount: 3,
+        workerCursorDisposition: "unaccepted",
+        latestRolloutSha256: "1".repeat(64),
+        workerCursorRolloutSha256: "3".repeat(64),
+        latestRunDir: path.relative(projectDir, authored.runDir).replace(/\\/g, "/"),
+      });
+
+      fs.writeFileSync(path.join(projectDir, "composition", "index.html"), revised.draft.html);
+      fs.writeFileSync(path.join(projectDir, "composition", "manifest.json"), '{"revision":2}\n');
+      confirmLunaComposition(projectDir, revised);
+      expect(loadLunaSession(projectDir)).toMatchObject({
+        workerRunCount: 3,
+        workerCursorDisposition: "accepted",
+        latestRolloutSha256: "3".repeat(64),
+        workerCursorRolloutSha256: "3".repeat(64),
+        latestRunDir: path.relative(projectDir, revised.runDir).replace(/\\/g, "/"),
+      });
     } finally {
       await worker.close();
     }

@@ -1,19 +1,31 @@
 # Luna rendered self-review
 
-Continue as the same director. The host has placed deterministic rendered
-evidence beneath `inputs/evidence/` and the mechanically accepted current source
-beneath `inputs/evidence/current/`. Inspect the images and the motion code between
-representative frames. Read `inputs/evidence/README.md` for the exact evidence list.
+Continue as the same director. The worker embeds the exact accepted canonical
+bundle beneath `inputs/accepted-bundle/`, deterministic rendered evidence beneath
+`inputs/evidence/`, and the mechanically accepted current source beneath
+`inputs/evidence/current/`. Evidence images are attached to this same CLI turn;
+verified UTF-8 inputs are inline. Inspect those supplied images and reason through
+the motion code between representative frames. Use
+`inputs/evidence/README.md` for the exact evidence list.
 The `temporal/` folder contains the temporal strip, declared-boundary
 before/at/after sheets, camera start/arrival/settle/hold sheets, and measured
 target visibility JSON when those intents exist.
 
+The accepted bundle remains the authoritative film when
+`inputs/accepted-bundle-host.json` says the latest worker cursor is unaccepted.
+That means a prior turn was consumed but its bytes failed or were not committed
+by the trusted host; do not treat those unaccepted bytes as film state.
+
 `inputs/evidence/current/composition.html` is the host's mechanically injected
-derivative. Use it to understand execution, but edit the canonical
-`deliverables/composition.html` already in this workspace. Do not copy
+derivative. Use it to understand execution, but use the exact canonical
+`inputs/accepted-bundle/composition.html` as the source of authored truth. Do not copy
 `sequences-*.js`, host JSON islands, or any sourced script other than
-`gsap.min.js` back into the authored deliverable; the host re-injects chosen
+`gsap.min.js` into the authored deliverable; the host re-injects chosen
 contracts after acceptance.
+
+Do not call the shell, filesystem, network, MCP, connector, browser, todo-list,
+sub-agent, or any other tool. The embedded values and attached images are the
+complete read-only evidence for this turn.
 
 Decide whether the film reads as one directed spatial story or as separate
 slides. Check continuity and causality at the declared boundaries, camera
@@ -22,13 +34,20 @@ and the ending rest. These are questions for your judgment, not quotas.
 
 Choose exactly one outcome:
 
-1. Keep the film. Write `deliverables/self-review.md` explaining briefly why no
-   change is warranted and leave every other deliverable byte unchanged.
-2. Make one coherent polish pass. Update the affected deliverables in place and
-   write `deliverables/self-review.md` explaining the visual problem and the
+1. Keep the film. Return every accepted deliverable byte unchanged and add
+   `deliverables/self-review.md` explaining briefly why no change is warranted.
+2. Make one coherent polish pass. Return the complete replacement bundle and
+   add `deliverables/self-review.md` explaining the visual problem and the
    single directing idea behind the changes.
 
 Do not revise merely to create more motion, copy the reference film, satisfy an
 advisory score, or decorate a transition. Preserve verified facts, exact local
 execution, runtime, selectors, and deterministic seeking. Do not make a second
 polish pass.
+
+Return exactly one complete `decision: "replace"` artifact envelope matching the
+worker-supplied output schema, with no Markdown fence or surrounding prose. Even
+when keeping the film, re-emit the complete accepted bundle rather than referring
+to worker state. Preserve binary assets only through exact hash-bound copy
+mappings from the supplied accepted bundle. The trusted worker validates and
+atomically materializes the result; you do not write files yourself.

@@ -20,7 +20,10 @@ The table describes the full engine and the explicit legacy-provider route.
 The default Luna route currently uses L0, L3, L4, transactional commit, and
 render/encoding mechanics; it bypasses the legacy L1 scaffold, creative L2
 rewrites, critic/rescue ladder, and L5 repair committee. Luna declares creative
-intent itself. A later authored-hard-defect repair may resume the same exact
+intent itself. Its L0 boundary disables optional tools, denies model-visible
+filesystem/network access, rejects tool events in both exec JSONL and the exact
+persisted rollout, and independently validates the complete artifact envelope before the worker atomically
+materializes it. A later authored-hard-defect repair may resume the same exact
 thread, but must not silently restore the committee.
 
 Decision rule: if the host can know the answer, the host owns it. A normalizer
@@ -46,7 +49,9 @@ separating them into three decisions:
 
 1. **Hard:** parse/schema/contract failure, runtime exception, missing or
    invalid timeline, blank/load-bearing content failure, state reset, missing
-   render, or a load-bearing focal that remains out of frame. These block
+   render, a load-bearing focal that remains out of frame, forbidden Luna tool
+   use, invalid artifact envelope, unsafe path/copy binding, or failed atomic
+   materialization. These block
    publication. The current route fails visibly; a future repair turn
    must resume the same Luna thread with exact evidence.
 2. **Deterministic:** canonical markup/binding/script order and measured
@@ -78,11 +83,15 @@ recovery and exact host normalization are resilience, not visual fallback.
 `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK` governs only the explicit legacy
 provider route. Luna does not fall through to OpenRouter or a disguised creative
 result; a failed initial Luna turn/gate fails visibly. Its optional self-review
-may fail without discarding the already accepted first cut.
+may fail without discarding the already accepted first cut. A completed but
+host-rejected turn still advances the persisted worker-generation cursor; its
+rollout provenance is recorded separately, and later resumes receive the last
+accepted bundle as authoritative rather than adopting rejected bytes.
 
 Legacy degradation must appear in `planning/sentinel-run.json` and final status.
-Luna instead preserves per-turn worker receipts, raw deliverables, and session
-hashes under `planning/luna/`. Important legacy dispositions are:
+Luna instead preserves per-turn worker receipts, raw-envelope and materialized
+fingerprints, exact deliverables, and session hashes under `planning/luna/`.
+Important legacy dispositions are:
 
 - `published`: accepted source, no material degradation;
 - `published-degraded`: an authored film shipped with explicit degradations;
@@ -107,6 +116,11 @@ self-review chooses zero or one polish. Revisions resume that same thread. There
 are no hedges, rescue models, critic patches, or OpenRouter retries. The bounded
 legacy ladders remain implementation details of the rollback route and must not
 be raised as a Luna quality strategy.
+
+Railway's namespace restriction is not permission to run Codex unsandboxed.
+Luna turns are tool-less and schema-constrained; a tool attempt fails visibly
+even if a valid-looking final envelope follows. Replay envelope/path/hash
+failures model-free and never cross automatically into the legacy route.
 
 ## Executable registries
 

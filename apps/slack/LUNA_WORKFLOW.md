@@ -15,9 +15,10 @@ committee remains intact behind the explicit `legacy-provider` rollback mode.
 Slack command / shortcut
   -> sequences-slack (facts, approved assets, host validation, render, upload)
   -> private HTTP + bearer token
-  -> codex-worker (one serialized Codex CLI turn, persisted exact thread)
+  -> codex-worker (embed verified inputs, attach images, persisted exact thread)
   -> gpt-5.6-luna / high
-  -> authored deliverables
+  -> schema-constrained tool-less artifact envelope
+  -> worker validation + atomic deliverable materialization
   -> sequences-slack static + real-browser gate
   -> thumbnails -> same Luna thread self-review -> optional one polish
   -> MP4 -> Slack
@@ -45,16 +46,24 @@ Responses API and the invoking user's Slack OAuth token. Keep its
    meaningful camera arrival/settle/hold windows, the peak, and final rest.
    These are Luna's choices. The host only validates their existence/timing.
 5. **Full source.** The same thread authors the storyboard, DOM/CSS/SVG assets,
-   paused seekable GSAP timeline, camera, transitions, and interactions.
-6. **Mechanical gate.** The host preserves exact raw bytes, verifies hashes and
+   paused seekable GSAP timeline, camera, transitions, and interactions. Railway
+   does not permit the Codex Linux namespace sandbox, so Luna calls no tools; it
+   returns one complete schema-constrained artifact envelope instead.
+6. **Mechanical gate.** The trusted worker validates that envelope again,
+   re-hashes every file, and atomically replaces its deliverables directory.
+   The host preserves both the raw-envelope and materialized fingerprints, verifies hashes and
    local files, validates scene windows and selectors, runs the existing static
    and real-browser gates, and transactionally commits accepted source.
 7. **Rendered self-review.** The host returns thumbnails, a temporal strip,
    declared-boundary before/at/after sheets, camera
    start/arrival/settle/hold sheets with target visibility measurements, and
-   spatial/mechanical sidecars to the exact thread. Luna chooses to keep the
-   film or make one coherent polish pass. A failed optional polish rolls source,
-   assets, thumbnails, and temporal evidence back to the first accepted cut.
+   spatial/mechanical sidecars plus the exact accepted canonical bundle to the
+   exact thread. Luna chooses to keep the film or make one coherent polish pass,
+   returning the complete bundle either way. A failed optional polish rolls source,
+   assets, thumbnails, and temporal evidence back to the first accepted cut. The
+   consumed worker generation is still recorded separately from that accepted
+   cut, so a later revision resumes the exact next generation while receiving
+   the last accepted bundle as its authoritative source.
 8. **Final render and revision.** The host renders/uploads the MP4. A user
    revision resumes the persisted exact thread ID; it never uses `--last`.
 
@@ -133,14 +142,29 @@ OPENROUTER_API_KEY=...                        # only while rollback is active
   time.
 - ChatGPT login lives in plaintext `/root/.codex/auth.json` on its dedicated
   Railway volume. Treat the volume as a password.
-- Model-authored commands run under the dedicated permission profile: only the
-  job workspace is writable/readable as work context; root/auth, temp aliases,
-  `.env` files, and network are denied.
+- Railway denies the Linux namespace operation required by the Codex command
+  sandbox. The worker does not bypass or weaken that boundary. Luna is given all
+  verified UTF-8 evidence inline and approved images as CLI attachments, and any
+  shell, filesystem, network, MCP, browser, todo-list, sub-agent, or other tool
+  event is a hard job failure.
+- Defense is layered: the dedicated permission profile denies all model-visible
+  filesystem/network scopes, optional tool features are disabled, and the worker
+  scans the exact persisted Codex rollout after each turn. Only ordinary
+  messages, reasoning, and compaction records are allowed; hidden function/tool
+  calls fail before any bundle is materialized.
+- `--output-schema` constrains the final response, but it is not the trust
+  boundary: the worker independently validates schema, paths, Unicode, sizes,
+  required files, and hash-bound inert asset copies before atomic materialization.
+- Health and operation IDs bind the exact artifact-schema and deny-all
+  permission-profile hashes. Startup also executes `codex --version` and refuses
+  to open the port unless the actual binary, installed profile, and protocol
+  version all match exactly.
 - The child receives an allowlisted environment without Slack, OpenAI,
   OpenRouter, Railway, OAuth, or worker-token secrets.
 - Inputs and deliverables are bounded regular files with contained paths and
   SHA-256 verification; symlinks are rejected.
-- Turns submit asynchronously with content-bound idempotency keys, then poll;
+- Turns submit asynchronously with prompt/input/protocol/schema-bound idempotency
+  keys and an expected prior run generation on resume, then poll;
   host timeouts cancel paid work best-effort and one worker restart may requeue
   the same operation without using `--last`.
 - Every job has a workspace-size ceiling and new jobs stop before the auth

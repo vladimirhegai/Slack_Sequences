@@ -1,79 +1,108 @@
 # Copy-paste prompt: simulate the official Luna CLI route with one sub-agent
 
-Use this when testing from a coding agent that can create and continue a
-sub-agent. It mirrors the creative session shape and artifact contract of the
-official Railway Codex worker. It does **not** prove Railway networking,
-ChatGPT authentication, the Codex CLI binary, model identity, permissions, or
-deployment.
+Use this from a coding agent that can create and continue one sub-agent. It
+mirrors the official worker's creative-session and tool-less artifact exchange.
+It does **not** prove Railway networking, ChatGPT authentication, the pinned
+Codex CLI binary, model identity, output-schema enforcement, or deployment.
 
 ---
 
-You are the host simulator for Sequences' official Luna route.
+You are the trusted host simulator for Sequences' official Luna route.
 
-Create exactly one capable sub-agent and keep its stable agent/thread identity
-for the whole film. Do not split treatment, storyboard, assets, source, or
-review among agents. The sub-agent simulates one
+Create exactly one capable sub-agent and preserve its stable agent/thread ID for
+the whole film. The sub-agent represents one
 `codex exec --model gpt-5.6-luna -c model_reasoning_effort="high"` session; a
-follow-up to that same sub-agent simulates `codex exec resume <exact-thread-id>`.
-Never use a new sub-agent for self-review or revision and never use a generic
-"last session" shortcut.
+follow-up to that exact same sub-agent represents
+`codex exec resume <exact-thread-id>`. Never create a new director for review or
+revision and never use a generic "last session" shortcut.
 
-Workspace setup:
+The host and director have different authority:
 
-1. Create a fresh ignored job workspace. Do not overwrite an existing project.
-2. Put verified facts in `inputs/fact-envelope.json`.
-3. Put asset notes and a SHA-256 manifest in `inputs/asset-brief.md`; copy only
-   explicitly approved regular files beneath `inputs/brand-assets/`. Reject
-   path escapes and symlinks.
-4. Copy these canonical prompts into the task context:
+- You, the host, may read approved source files, calculate hashes, validate the
+  returned JSON, materialize accepted bytes, run browsers/renderers, and capture
+  evidence in a fresh ignored job.
+- The director sub-agent must make **no tool calls**: no shell, filesystem,
+  network, MCP, browser, todo-list, connector, or sub-agent. Give it all verified
+  text inline and, only when the collaboration surface supports it, attach
+  approved images to its turn. Any director tool use invalidates the turn even
+  if a plausible final bundle follows. The official worker additionally denies
+  every model-visible filesystem/network scope and audits the complete persisted
+  Codex rollout; inspect the collaboration trace for tool calls when your agent
+  surface exposes it, and record when it does not.
+
+Workspace and input preparation:
+
+1. Audit `git status`; create a fresh ignored job and never overwrite an existing
+   project or touch unrelated dirty files.
+2. Build verified logical inputs equivalent to `inputs/fact-envelope.json`,
+   `inputs/asset-brief.md`, approved `inputs/brand-assets/**`, and
+   `inputs/references/slack-ad-motion-principles.md`. Treat asset bytes as data,
+   reject symlinks/path escapes, and record path, size, and SHA-256.
+3. Read and pass verbatim:
    - `apps/slack/prompts/luna-director.md`
    - `apps/slack/prompts/luna-motion-reference.md`
-5. Tell the sub-agent it may read/write only the fresh job workspace, must not
-   use the network or external providers, and must place all substantive output
-   under `deliverables/` exactly as the canonical prompt specifies.
+   - `apps/slack/codex-worker/artifact-envelope.schema.json`
+4. Append a `RAILWAY TOOL-LESS ARTIFACT EXCHANGE` block containing a canonical
+   JSON inventory. Inline bounded valid UTF-8 text as
+   `{path,sha256,size,content}`. List opaque binaries and attached images only as
+   `{path,sha256,size}`; never inline credentials or unapproved data.
 
-Initial turn:
+Initial director turn:
 
-- Send the entire canonical Luna director prompt to that one sub-agent.
-- Let it inspect the approved inputs, create assets first, then write treatment,
-  motion intent, storyboard, complete seekable composition, and asset manifest.
-- Preserve every returned byte and SHA-256 before any host validation.
-- Do not run the legacy frame planner, storyboard/scaffold committee, creative
-  critic, repair ladder, or source replay over the result.
+- Spawn the one director with the canonical director prompt, motion reference,
+  exact artifact schema, hard no-tool rule, and verified inputs.
+- Require exactly one JSON object and no Markdown/prose. It must use
+  `decision: "replace"` and return a complete bundle on every turn.
+- Every authored text entry has its complete raw `content` and null
+  `copyFromInput`/`sha256`. An approved inert image/font can be adopted only by
+  setting `content: null` and binding the exact input path and SHA-256 into
+  `deliverables/assets/luna/`. Never accept generated base64 binaries.
+- Require at least these files:
+  `deliverables/assets-manifest.json`, `deliverables/composition.html`,
+  `deliverables/director-treatment.md`, `deliverables/motion-intent.json`, and
+  `deliverables/storyboard.json`.
 
-Host gate:
+Trusted host acceptance:
 
-- Validate only verified facts, contained local files and hashes, composition
-  dimensions/runtime, tiled scene windows, deterministic arbitrary seeking,
-  declared semantic selectors/anchors, real-browser runtime, and encoding.
-- Treat taste and motion-density observations as advisory.
-- If the source is accepted, capture representative thumbnails, spatial QA,
-  declared boundary frames when available, and relevant motion code.
+- Parse and validate again locally: exact schema keys, `replace`, safe unique
+  paths below `deliverables/`, forbidden instruction/config names, Unicode
+  scalar text, file/count/byte limits, required files, and exact approved-input
+  copy hashes.
+- Hash the raw JSON envelope separately from each materialized UTF-8/binary file.
+  Materialize into a fresh staging directory and atomically replace the active
+  deliverables directory; never merge with stale files.
+- Reject stale resume generations. Bind each follow-up to the previously
+  accepted turn count and stable agent ID; a delayed older instruction must not
+  execute after a newer accepted revision.
+- Then run the normal Sequences fact, local-asset, duration, scene-window,
+  deterministic-seek, semantic-selector, browser, and encoding gates. Do not run
+  the legacy frame planner, storyboard/scaffold committee, critic, source repair,
+  rescue model, or OpenRouter fallback.
 
 Self-review continuation:
 
-- Put evidence under `inputs/evidence/` and send
-  `apps/slack/prompts/luna-self-review.md` as a follow-up to the **same**
-  sub-agent.
-- Allow zero changes or one coherent polish pass. Do not ask it to clear an
-  advisory score and do not spawn a repair agent.
-- Re-run the mechanical gate only if bytes changed.
+- Build verified inputs beneath `inputs/accepted-bundle/**` from the exact
+  accepted bundle and add its fingerprint descriptor. Add rendered thumbnails,
+  boundary/camera evidence, temporal strip, mechanical sidecars, and injected
+  derivative beneath `inputs/evidence/**`.
+- Send `apps/slack/prompts/luna-self-review.md`, the same schema, the hard
+  no-tool exchange, and those inputs as a follow-up to the **same** director.
+- Accept only another complete replacement bundle. A "keep" choice must re-emit
+  identical accepted bytes plus `self-review.md`; it must never refer to whatever
+  happens to remain in a workspace. Allow at most one coherent polish pass.
 
 Later user revision:
 
-- Put the instruction in `inputs/revision.json` and current committed artifacts
-  under `inputs/current/`.
-- Send `apps/slack/prompts/luna-revision.md` to that same stable sub-agent.
-- Preserve unrelated directing choices and re-run the hard gate.
+- Inline `inputs/revision.json`, the exact accepted bundle and fingerprint, and
+  current host derivatives. Follow up `apps/slack/prompts/luna-revision.md` to
+  that same stable director ID.
+- Accept only a complete validated replacement bundle, atomically materialize
+  it, and rerun the hard gate. Preserve unrelated directing choices.
 
-At handoff, report:
-
-- the stable simulator agent ID used for initial/review/revision turns;
-- exact raw and committed hashes;
-- artifacts and tests produced;
-- whether the film passed the mechanical gate;
-- a visual judgment based on rendered motion, not just JSON;
-- the explicit limitation: this is a collaboration-subagent simulation, not
-  proof of the Railway CLI model, authentication, private network, or sandbox.
+At handoff, report the stable simulator agent ID, raw-envelope and materialized
+hashes, exact-thread turn count, any rejected tool/schema event, artifacts and
+tests, mechanical result, and a visual judgment based on rendered motion. State
+explicitly that this collaboration-subagent simulation does not prove the exact
+Railway CLI model, authentication path, private network, or schema enforcement.
 
 ---

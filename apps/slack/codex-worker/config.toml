@@ -9,12 +9,12 @@ extends = ":workspace"
 
 [permissions.luna-worker.filesystem]
 ":root" = "deny"
-":minimal" = "read"
+":minimal" = "deny"
 ":tmpdir" = "deny"
 ":slash_tmp" = "deny"
 
 [permissions.luna-worker.filesystem.":workspace_roots"]
-"." = "write"
+"." = "deny"
 "**/*.env" = "deny"
 ".codex" = "deny"
 "**/.codex" = "deny"

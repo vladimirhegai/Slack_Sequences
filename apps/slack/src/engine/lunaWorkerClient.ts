@@ -4,6 +4,7 @@ import { slackSequencesEnvRawValue } from "./featureFlags.ts";
 const DEFAULT_WORKER_URL = "http://codex-worker.railway.internal:3000";
 const DEFAULT_TIMEOUT_MS = 20 * 60 * 1_000;
 const MAX_RESPONSE_BYTES = 96 * 1024 * 1024;
+const REQUIRED_CODEX_CLI_VERSION = "0.144.1";
 
 export interface LunaWorkerInputFile {
   path: string;
@@ -26,8 +27,12 @@ export interface LunaWorkerResult {
   status: "completed";
   model: "gpt-5.6-luna";
   reasoningEffort: "high";
-  codexVersion: string;
-  finalMessage?: string;
+  codexVersion: "0.144.1";
+  rawEnvelopeSha256: string;
+  materializedFingerprint: string;
+  rolloutSha256: string;
+  rolloutResponseItems: number;
+  finalMessage: string;
   usage?: Record<string, unknown>;
   deliverables: LunaWorkerDeliverable[];
 }
@@ -44,13 +49,28 @@ export interface LunaWorkerHealth {
   version?: string;
   model?: string;
   reasoningEffort?: string;
+  artifactProtocol?: string;
+  artifactSchemaSha256?: string;
+  permissionProfileSha256?: string;
   authenticated?: boolean;
+}
+
+export interface LunaWorkerCursor {
+  jobId: string;
+  operationId: string;
+  runCount: number;
+  threadId?: string;
+  status: "queued" | "running" | "completed" | "failed" | "timed_out" | "cancelled" | "interrupted";
+  rolloutSha256?: string;
 }
 
 export function lunaWorkerHealthIsExact(health: LunaWorkerHealth): boolean {
   return health.ok === true && health.authenticated === true &&
     health.model === "gpt-5.6-luna" && health.reasoningEffort === "high" &&
-    typeof health.version === "string" && health.version.length > 0;
+    health.artifactProtocol === "luna-tool-less-artifact-v1" &&
+    health.artifactSchemaSha256 === "ac487766f625ecd680541cbf3b7a6e0018a3570e1037e65c9c629d8af52569cb" &&
+    health.permissionProfileSha256 === "0c8565ee79930bddb66469f4672e5eb57b0ba87e8919fe5389556f8b28695e42" &&
+    health.version === REQUIRED_CODEX_CLI_VERSION;
 }
 
 interface LunaWorkerJobState {
@@ -109,8 +129,17 @@ function assertWorkerResult(value: unknown): LunaWorkerResult {
     candidate.status !== "completed" ||
     candidate.model !== "gpt-5.6-luna" ||
     candidate.reasoningEffort !== "high" ||
-    typeof candidate.codexVersion !== "string" ||
-    !candidate.codexVersion ||
+    candidate.codexVersion !== REQUIRED_CODEX_CLI_VERSION ||
+    typeof candidate.rawEnvelopeSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(candidate.rawEnvelopeSha256) ||
+    typeof candidate.materializedFingerprint !== "string" ||
+    !/^[a-f0-9]{64}$/.test(candidate.materializedFingerprint) ||
+    typeof candidate.rolloutSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(candidate.rolloutSha256) ||
+    typeof candidate.rolloutResponseItems !== "number" ||
+    !Number.isSafeInteger(candidate.rolloutResponseItems) ||
+    candidate.rolloutResponseItems < 1 ||
+    typeof candidate.finalMessage !== "string" ||
     !Array.isArray(candidate.deliverables)
   ) {
     throw new Error("Luna worker response has an invalid job, thread, model, status, or deliverables envelope");
@@ -196,15 +225,25 @@ async function bestEffortCancel(config: LunaWorkerConfig, jobId: string): Promis
   }
 }
 
-function operationIdFor(prompt: string, files: readonly LunaWorkerInputFile[]): string {
+function operationIdFor(
+  prompt: string,
+  files: readonly LunaWorkerInputFile[],
+  expectedRunCount: number | null,
+): string {
   const canonical = JSON.stringify({
+    protocol: "luna-tool-less-artifact-v1",
+    schemaSha256: "ac487766f625ecd680541cbf3b7a6e0018a3570e1037e65c9c629d8af52569cb",
+    permissionProfileSha256: "0c8565ee79930bddb66469f4672e5eb57b0ba87e8919fe5389556f8b28695e42",
+    expectedRunCount,
     promptSha256: createHash("sha256").update(prompt, "utf8").digest("hex"),
-    files: files.map((file) => ({
-      path: file.path,
-      sha256: file.sha256 ?? createHash("sha256")
-        .update(Buffer.from(file.contentBase64, "base64"))
-        .digest("hex"),
-    })),
+    files: [...files]
+      .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
+      .map((file) => ({
+        path: file.path,
+        sha256: file.sha256 ?? createHash("sha256")
+          .update(Buffer.from(file.contentBase64, "base64"))
+          .digest("hex"),
+      })),
   });
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
@@ -222,6 +261,26 @@ function assertJobState(value: unknown): LunaWorkerJobState {
     throw new Error("Luna worker returned an invalid job state");
   }
   return candidate as LunaWorkerJobState;
+}
+
+function assertWorkerCursor(value: unknown): LunaWorkerCursor {
+  if (!value || typeof value !== "object") throw new Error("Luna worker returned an invalid cursor");
+  const candidate = value as Partial<LunaWorkerCursor>;
+  if (
+    typeof candidate.jobId !== "string" ||
+    typeof candidate.operationId !== "string" ||
+    !/^[a-f0-9]{64}$/.test(candidate.operationId) ||
+    typeof candidate.runCount !== "number" ||
+    !Number.isSafeInteger(candidate.runCount) ||
+    candidate.runCount < 1 ||
+    (candidate.threadId !== undefined && typeof candidate.threadId !== "string") ||
+    !new Set(["queued", "running", "completed", "failed", "timed_out", "cancelled", "interrupted"])
+      .has(candidate.status ?? "") ||
+    (candidate.rolloutSha256 !== undefined && !/^[a-f0-9]{64}$/.test(candidate.rolloutSha256))
+  ) {
+    throw new Error("Luna worker returned an invalid cursor");
+  }
+  return candidate as LunaWorkerCursor;
 }
 
 async function pollLunaWorkerJob(
@@ -287,12 +346,19 @@ async function submitAndPoll(
   jobId: string,
   prompt: string,
   files: LunaWorkerInputFile[],
+  expectedRunCount: number | null,
 ): Promise<LunaWorkerResult> {
-  const operationId = operationIdFor(prompt, files);
+  const operationId = operationIdFor(prompt, files, expectedRunCount);
   const startedAt = Date.now();
   for (let restartAttempt = 0; restartAttempt < 2; restartAttempt += 1) {
     try {
-      await requestJson(config, pathname, "POST", { jobId, operationId, prompt, files }, 15_000);
+      await requestJson(config, pathname, "POST", {
+        jobId,
+        operationId,
+        prompt,
+        files,
+        ...(expectedRunCount === null ? {} : { expectedRunCount }),
+      }, 15_000);
     } catch (submissionError) {
       try {
         return await pollLunaWorkerJob(config, jobId, operationId, startedAt);
@@ -324,12 +390,17 @@ export async function startLunaWorkerJob(
   config: LunaWorkerConfig,
   input: { jobId: string; prompt: string; files: LunaWorkerInputFile[] },
 ): Promise<LunaWorkerResult> {
-  return submitAndPoll(config, "/v1/jobs", input.jobId, input.prompt, input.files);
+  return submitAndPoll(config, "/v1/jobs", input.jobId, input.prompt, input.files, null);
 }
 
 export async function resumeLunaWorkerJob(
   config: LunaWorkerConfig,
-  input: { jobId: string; prompt: string; files?: LunaWorkerInputFile[] },
+  input: {
+    jobId: string;
+    expectedRunCount: number;
+    prompt: string;
+    files?: LunaWorkerInputFile[];
+  },
 ): Promise<LunaWorkerResult> {
   return submitAndPoll(
     config,
@@ -337,6 +408,7 @@ export async function resumeLunaWorkerJob(
     input.jobId,
     input.prompt,
     input.files ?? [],
+    input.expectedRunCount,
   );
 }
 
@@ -346,4 +418,17 @@ export async function inspectLunaWorkerHealth(
   const value = await requestJson(config, "/healthz", "GET", undefined, 8_000);
   if (!value || typeof value !== "object") throw new Error("Luna worker health is invalid");
   return value as LunaWorkerHealth;
+}
+
+export async function inspectLunaWorkerCursor(
+  config: LunaWorkerConfig,
+  jobId: string,
+): Promise<LunaWorkerCursor> {
+  return assertWorkerCursor(await requestJson(
+    config,
+    `/v1/jobs/${encodeURIComponent(jobId)}`,
+    "GET",
+    undefined,
+    15_000,
+  ));
 }

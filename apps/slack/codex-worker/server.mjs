@@ -6,16 +6,25 @@ import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import {
+  ARTIFACT_PROTOCOL_VERSION,
+  ARTIFACT_SCHEMA_SHA256,
   DEFAULT_LIMITS,
   HttpError,
+  PERMISSION_PROFILE_SHA256,
+  auditCodexSessionRollout,
   authenticateBearerHeader,
   buildChildEnv,
   buildCodexArgs,
+  buildToollessArtifactPrompt,
   collectDeliverables,
+  materializeArtifactEnvelope,
+  parseArtifactEnvelope,
   parseCodexEvent,
   parseJobRequest,
   removeForbiddenWorkspaceEntries,
+  sha256Bytes,
   validateJobId,
   workspaceSizeBytes,
   writeInputFiles,
@@ -24,10 +33,17 @@ import {
 const CODEX_HOME = path.resolve(process.env.CODEX_HOME || "/root/.codex");
 const HOME = path.resolve(process.env.HOME || "/root");
 const JOBS_ROOT = path.join(CODEX_HOME, "sequences-jobs");
+const OUTPUT_SCHEMA_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "artifact-envelope.schema.json",
+);
+const BUNDLED_CONFIG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "config.toml");
+const INSTALLED_CONFIG_PATH = path.join(CODEX_HOME, "config.toml");
 const TOKEN = process.env.LUNA_WORKER_TOKEN || "";
 const MODEL = process.env.LUNA_MODEL || "gpt-5.6-luna";
 const REASONING_EFFORT = process.env.LUNA_REASONING_EFFORT || "high";
-const CODEX_VERSION = process.env.CODEX_CLI_VERSION || "0.144.1";
+const CODEX_VERSION = "0.144.1";
+const EXPECTED_CODEX_VERSION_OUTPUT = `codex-cli ${CODEX_VERSION}`;
 const CODEX_COMMAND = process.env.NODE_ENV === "test" && process.env.LUNA_TEST_CODEX_BIN
   ? process.env.LUNA_TEST_CODEX_BIN
   : "codex";
@@ -65,6 +81,24 @@ if (REASONING_EFFORT !== "high") {
   console.error("[luna-worker] LUNA_REASONING_EFFORT must be high");
   process.exit(1);
 }
+if (sha256Bytes(await readFile(OUTPUT_SCHEMA_PATH)) !== ARTIFACT_SCHEMA_SHA256) {
+  console.error("[luna-worker] bundled artifact schema hash does not match the protocol");
+  process.exit(1);
+}
+if (
+  sha256Bytes(await readFile(BUNDLED_CONFIG_PATH)) !== PERMISSION_PROFILE_SHA256 ||
+  sha256Bytes(await readFile(INSTALLED_CONFIG_PATH)) !== PERMISSION_PROFILE_SHA256
+) {
+  console.error("[luna-worker] installed permission profile hash does not match the protocol");
+  process.exit(1);
+}
+const installedCodexVersion = await readInstalledCodexVersion();
+if (installedCodexVersion !== EXPECTED_CODEX_VERSION_OUTPUT) {
+  console.error(
+    `[luna-worker] installed Codex CLI version must be exactly ${EXPECTED_CODEX_VERSION_OUTPUT}; received ${installedCodexVersion || "no output"}`,
+  );
+  process.exit(1);
+}
 
 await mkdir(JOBS_ROOT, { recursive: true, mode: 0o700 });
 await reconcileInterruptedJobs();
@@ -84,6 +118,40 @@ function parseIntegerEnv(name, fallback, { min, max }) {
     throw new Error(`${name} must be an integer between ${min} and ${max}`);
   }
   return value;
+}
+
+function readInstalledCodexVersion() {
+  return new Promise((resolve, reject) => {
+    const child = spawn(CODEX_COMMAND, [...CODEX_PREFIX_ARGS, "--version"], {
+      cwd: path.dirname(fileURLToPath(import.meta.url)),
+      env: {
+        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+        HOME,
+        CODEX_HOME,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout = `${stdout}${chunk}`.slice(0, 512);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr = `${stderr}${chunk}`.slice(0, 512);
+    });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0 && !signal) {
+        resolve(stdout.trim());
+        return;
+      }
+      reject(new Error(
+        `Codex version probe failed (${signal ?? code ?? "unknown"}): ${stderr.replace(/\s+/g, " ").trim() || "no stderr"}`,
+      ));
+    });
+  });
 }
 
 async function availableVolumeBytes() {
@@ -177,10 +245,20 @@ async function writeMetadata(paths, metadata) {
   }
 }
 
-function enqueueRun(jobId, operation) {
+function reserveRun(jobId) {
   if (scheduledJobs.has(jobId)) throw new HttpError(409, "job_busy", "job is already queued or running");
+  if (queuedRuns >= MAX_QUEUE_DEPTH) throw new HttpError(429, "queue_full", "Luna worker queue is full");
   scheduledJobs.add(jobId);
   queuedRuns += 1;
+}
+
+function releaseRunReservation(jobId) {
+  if (!scheduledJobs.delete(jobId)) return;
+  queuedRuns = Math.max(0, queuedRuns - 1);
+}
+
+function enqueueReservedRun(jobId, operation) {
+  if (!scheduledJobs.has(jobId)) throw new Error(`job ${jobId} was not reserved before enqueue`);
   const execute = async () => {
     queuedRuns -= 1;
     activeJobId = jobId;
@@ -236,6 +314,7 @@ async function runCodex({ jobId, paths, mode, prompt, threadId, files, state }) 
   const tmpDirectory = path.join(paths.workspace, ".tmp");
   await mkdir(tmpDirectory, { recursive: true, mode: 0o700 });
   const imagePaths = writtenFiles.filter((file) => file.attachAsImage).map((file) => file.absolutePath);
+  const adaptedPrompt = buildToollessArtifactPrompt(prompt, writtenFiles, { mode });
   const args = buildCodexArgs({
     mode,
     workspace: paths.workspace,
@@ -243,6 +322,7 @@ async function runCodex({ jobId, paths, mode, prompt, threadId, files, state }) 
     model: MODEL,
     reasoningEffort: REASONING_EFFORT,
     imagePaths,
+    outputSchemaPath: OUTPUT_SCHEMA_PATH,
   });
   const runId = `${Date.now()}-${mode}-${randomUUID()}`;
   const eventPath = path.join(paths.root, `events-${runId}.jsonl`);
@@ -269,7 +349,7 @@ async function runCodex({ jobId, paths, mode, prompt, threadId, files, state }) 
     detached: process.platform !== "win32",
   });
   activeChildren.set(jobId, child);
-  child.stdin.end(prompt, "utf8");
+  child.stdin.end(adaptedPrompt, "utf8");
 
   const timeout = setTimeout(() => {
     timedOut = true;
@@ -304,6 +384,7 @@ async function runCodex({ jobId, paths, mode, prompt, threadId, files, state }) 
     eventLines.push(`${line}\n`);
     try {
       parseCodexEvent(line, state);
+      if (state.toolViolation || state.codexItemError || state.unknownItemType) terminateChild(child);
     } catch (error) {
       parseFailure = error;
       terminateChild(child);
@@ -352,6 +433,15 @@ async function runCodex({ jobId, paths, mode, prompt, threadId, files, state }) 
   }
   if (outputOverflow) throw new HttpError(502, "codex_output_too_large", "Codex event output exceeded the configured limit");
   if (parseFailure) throw new HttpError(502, "invalid_codex_output", parseFailure.message);
+  if (state.toolViolation) {
+    throw new HttpError(422, "tool_use_forbidden", `Codex attempted forbidden item type: ${state.toolViolation}`);
+  }
+  if (state.codexItemError) {
+    throw new HttpError(502, "codex_error_item", state.codexItemError);
+  }
+  if (state.unknownItemType) {
+    throw new HttpError(502, "unknown_codex_item", `Codex emitted unknown item type: ${state.unknownItemType}`);
+  }
   if (code !== 0) {
     throw new HttpError(502, "codex_failed", `Codex exited with code ${code ?? "null"} (${signal ?? "no signal"})`);
   }
@@ -363,6 +453,26 @@ async function runCodex({ jobId, paths, mode, prompt, threadId, files, state }) 
   if (threadId && state.threadId !== threadId) {
     throw new HttpError(502, "thread_id_mismatch", "Codex resumed a different thread than requested");
   }
+  const rolloutAudit = await auditCodexSessionRollout(CODEX_HOME, state.threadId);
+  if (rolloutAudit.forbiddenItems.length > 0) {
+    throw new HttpError(
+      422,
+      "tool_use_forbidden",
+      `Codex persisted forbidden tool/function items: ${rolloutAudit.forbiddenItems.join(", ")}`,
+    );
+  }
+  const envelope = parseArtifactEnvelope(state.finalMessage, { inputFiles: writtenFiles });
+  await materializeArtifactEnvelope(paths.workspace, envelope);
+  state.rawEnvelopeSha256 = sha256Bytes(Buffer.from(state.finalMessage, "utf8"));
+  state.materializedFingerprint = sha256Bytes(Buffer.from(
+    envelope.files
+      .map((file) => `${file.path}:${file.sha256}`)
+      .sort()
+      .join("\n"),
+    "utf8",
+  ));
+  state.rolloutSha256 = rolloutAudit.sha256;
+  state.rolloutResponseItems = rolloutAudit.responseItems;
   return state;
 }
 
@@ -376,6 +486,10 @@ async function completedResponse(metadata, paths) {
     model: metadata.model,
     reasoningEffort: metadata.reasoningEffort,
     codexVersion: CODEX_VERSION,
+    rawEnvelopeSha256: metadata.rawEnvelopeSha256,
+    materializedFingerprint: metadata.materializedFingerprint,
+    rolloutSha256: metadata.rolloutSha256,
+    rolloutResponseItems: metadata.rolloutResponseItems,
     finalMessage: metadata.finalMessage || "",
     ...(metadata.usage ? { usage: metadata.usage } : {}),
     deliverables: await collectDeliverables(paths.workspace),
@@ -411,6 +525,10 @@ async function executeJob({ jobId, paths, mode, request, existing }) {
       status: "completed",
       threadId: state.threadId,
       finalMessage: state.finalMessage,
+      rawEnvelopeSha256: state.rawEnvelopeSha256,
+      materializedFingerprint: state.materializedFingerprint,
+      rolloutSha256: state.rolloutSha256,
+      rolloutResponseItems: state.rolloutResponseItems,
       usage: state.usage,
       updatedAt: new Date().toISOString(),
     };
@@ -468,8 +586,14 @@ async function handleCreate(request, response) {
         queuedAt: requeuedAt,
         updatedAt: requeuedAt,
       };
-      await writeMetadata(paths, requeued);
-      void enqueueRun(parsed.jobId, () =>
+      reserveRun(parsed.jobId);
+      try {
+        await writeMetadata(paths, requeued);
+      } catch (error) {
+        releaseRunReservation(parsed.jobId);
+        throw error;
+      }
+      void enqueueReservedRun(parsed.jobId, () =>
         executeJob({ jobId: parsed.jobId, paths, mode: "new", request: parsed, existing: requeued }),
       ).catch((runError) => {
         console.error(`[luna-worker] requeued create ${parsed.jobId} failed: ${runError?.code || runError?.message || runError}`);
@@ -494,8 +618,14 @@ async function handleCreate(request, response) {
     updatedAt: queuedAt,
     runCount: 0,
   };
-  await writeMetadata(paths, queued);
-  void enqueueRun(parsed.jobId, () =>
+  reserveRun(parsed.jobId);
+  try {
+    await writeMetadata(paths, queued);
+  } catch (error) {
+    releaseRunReservation(parsed.jobId);
+    throw error;
+  }
+  void enqueueReservedRun(parsed.jobId, () =>
     executeJob({ jobId: parsed.jobId, paths, mode: "new", request: parsed, existing: queued }),
   ).catch((error) => {
     console.error(`[luna-worker] create ${parsed.jobId} failed: ${error?.code || error?.message || error}`);
@@ -514,6 +644,7 @@ async function handleResume(jobId, request, response) {
   const parsed = parseJobRequest(await readJsonBody(request), {
     requireJobId: false,
     requireOperationId: true,
+    requireExpectedRunCount: true,
   });
   const paths = jobPaths(jobId);
   const existing = await readMetadata(paths);
@@ -528,6 +659,13 @@ async function handleResume(jobId, request, response) {
     });
     return;
   }
+  if (existing.operationId !== parsed.operationId && existing.runCount !== parsed.expectedRunCount) {
+    throw new HttpError(
+      409,
+      "stale_job_generation",
+      `expected completed run ${parsed.expectedRunCount}, current run is ${existing.runCount}`,
+    );
+  }
   if (existing.status === "running" || existing.status === "queued") {
     throw new HttpError(409, "job_busy", "job is already queued or running");
   }
@@ -539,8 +677,14 @@ async function handleResume(jobId, request, response) {
     queuedAt,
     updatedAt: queuedAt,
   };
-  await writeMetadata(paths, queued);
-  void enqueueRun(jobId, () =>
+  reserveRun(jobId);
+  try {
+    await writeMetadata(paths, queued);
+  } catch (error) {
+    releaseRunReservation(jobId);
+    throw error;
+  }
+  void enqueueReservedRun(jobId, () =>
     executeJob({ jobId, paths, mode: "resume", request: parsed, existing: queued }),
   ).catch((error) => {
     console.error(`[luna-worker] resume ${jobId} failed: ${error?.code || error?.message || error}`);
@@ -598,6 +742,9 @@ const server = createServer(async (request, response) => {
         version: CODEX_VERSION,
         model: MODEL,
         reasoningEffort: REASONING_EFFORT,
+        artifactProtocol: ARTIFACT_PROTOCOL_VERSION,
+        artifactSchemaSha256: ARTIFACT_SCHEMA_SHA256,
+        permissionProfileSha256: PERMISSION_PROFILE_SHA256,
         authenticated: authConfigured,
         authConfigured,
         freeBytes,

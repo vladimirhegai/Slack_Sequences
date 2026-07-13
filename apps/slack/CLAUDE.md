@@ -47,7 +47,9 @@ There are two different bots and one deterministic engine:
    `codex-worker`, where one persistent Codex CLI thread runs
    `gpt-5.6-luna` with high reasoning. That thread owns treatment, assets,
    motion intent, storyboard, source, rendered self-review, and structural
-   revisions. `src/engine/runner/` is frozen behind the explicit
+   revisions through a tool-less schema-constrained artifact exchange. The
+   trusted worker, not Luna, validates and atomically materializes bytes.
+   `src/engine/runner/` is frozen behind the explicit
    `legacy-provider` rollback route; it is never an automatic fallback.
 3. The internal Sequences MCP owns deterministic mutation, preview, render,
    and undo for accepted compositions.
@@ -63,11 +65,17 @@ The default Luna pipeline is staged and transactional:
 1. Collect the brief and permission-scoped Slack evidence.
 2. Copy/hash approved `/sequences assets` files into an isolated worker job.
 3. The same Luna thread chooses treatment and assets, declares motion intent,
-   and authors storyboard plus complete seekable source.
-4. Preserve exact raw bytes, validate declared selectors and local assets, then
+   and returns storyboard plus complete seekable source in a complete artifact
+   envelope. Railway Luna turns call no tools; verified text is embedded and
+   approved images are CLI attachments.
+4. Reject any tool event; independently validate the output schema, copy
+   bindings, paths, and sizes; atomically materialize files; preserve the raw
+   envelope, materialized, and persisted-rollout hashes; then validate declared selectors and local
+   assets and
    run the existing static and real-browser direct-composition gate.
 5. Checkpoint accepted source and return thumbnails/evidence to the exact Luna
-   thread for zero or one self-directed polish pass.
+   thread with the exact accepted canonical bundle for zero or one self-directed
+   polish pass. Every turn returns a complete replacement bundle.
 6. Revalidate changed bytes, render the MP4, and preserve hashes/evidence.
 7. Resume the exact thread ID for structural revisions; never use `--last`.
 
