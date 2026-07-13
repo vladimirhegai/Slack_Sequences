@@ -8,9 +8,11 @@ import {
   ARTIFACT_PROTOCOL_VERSION,
   ARTIFACT_SCHEMA_SHA256,
   DEFAULT_LIMITS,
+  DEFAULT_ARTIFACT_CONTRACT,
   HttpError,
   PERMISSION_PROFILE_SHA256,
   auditCodexSessionRollout,
+  artifactContractSha256,
   authenticateBearerHeader,
   buildChildEnv,
   buildCodexArgs,
@@ -18,11 +20,14 @@ import {
   collectDeliverables,
   decodeInputFile,
   materializeArtifactEnvelope,
+  materializedFingerprintFor,
   operationIdForRequest,
   parseArtifactEnvelope,
   parseCodexEvent,
   parseJobRequest,
   removeForbiddenWorkspaceEntries,
+  safeFailureReceipt,
+  validateArtifactContract,
   validateJobId,
   validateOperationId,
   validateRelativeDeliverablePath,
@@ -33,7 +38,7 @@ import {
 const token = "a-secure-worker-token-that-is-longer-than-thirty-two-characters";
 
 function textArtifact(artifactPath, content) {
-  return { path: artifactPath, content, copyFromInput: null, sha256: null };
+  return { path: artifactPath, action: "replace", content, copyFromInput: null, sha256: null };
 }
 
 function requiredTextArtifacts() {
@@ -57,7 +62,7 @@ function assertLinuxGlobExpansionIsBounded(config) {
 test("tool-less artifact protocol binds the exact bundled output schema", async () => {
   const schema = await readFile(new URL("../artifact-envelope.schema.json", import.meta.url));
   const config = await readFile(new URL("../config.toml", import.meta.url), "utf8");
-  assert.equal(ARTIFACT_PROTOCOL_VERSION, "luna-tool-less-artifact-v1");
+  assert.equal(ARTIFACT_PROTOCOL_VERSION, "luna-tool-less-artifact-v2");
   assert.equal(createHash("sha256").update(schema).digest("hex"), ARTIFACT_SCHEMA_SHA256);
   assert.equal(createHash("sha256").update(config).digest("hex"), PERMISSION_PROFILE_SHA256);
   assert.match(config, /":root" = "deny"/);
@@ -98,8 +103,20 @@ test("operation IDs are exact lowercase SHA-256 digests", () => {
     { path: "inputs/z.txt", sha256: "1".repeat(64) },
     { path: "inputs/a.txt", sha256: "2".repeat(64) },
   ];
-  assert.equal(operationIdForRequest("prompt", files, 2), operationIdForRequest("prompt", [...files].reverse(), 2));
-  assert.notEqual(operationIdForRequest("prompt", files, 1), operationIdForRequest("prompt", files, 2));
+  assert.equal(
+    operationIdForRequest("prompt", files, { expectedRunCount: 2 }),
+    operationIdForRequest("prompt", [...files].reverse(), { expectedRunCount: 2 }),
+  );
+  assert.notEqual(
+    operationIdForRequest("prompt", files, { expectedRunCount: 1 }),
+    operationIdForRequest("prompt", files, { expectedRunCount: 2 }),
+  );
+  assert.notEqual(
+    operationIdForRequest("prompt", files),
+    operationIdForRequest("prompt", files, {
+      artifactContract: { id: "direction-v1", requiredPaths: ["deliverables/direction.json"] },
+    }),
+  );
 });
 
 test("input paths are normalized POSIX paths below inputs", () => {
@@ -163,7 +180,8 @@ test("tool-less prompt embeds verified UTF-8 inputs and describes attached image
   assert.match(adapted, /Harborview/);
   assert.match(adapted, /inputs\/brand\/mark\.png/);
   assert.doesNotMatch(adapted, /AAECAw==/);
-  assert.match(adapted, /Set "decision" to "replace"/);
+  assert.match(adapted, /decision=replace/);
+  assert.match(adapted, /"artifactContract"/);
 });
 
 test("artifact envelopes are strict, bounded, and atomically materialized", async (context) => {
@@ -174,6 +192,7 @@ test("artifact envelopes are strict, bounded, and atomically materialized", asyn
 
   const replacement = parseArtifactEnvelope(JSON.stringify({
     decision: "replace",
+    baseFingerprint: null,
     files: [
       ...requiredTextArtifacts(),
       textArtifact("deliverables/source/timeline.js", "export const ready = true;"),
@@ -192,30 +211,136 @@ test("artifact envelopes are strict, bounded, and atomically materialized", asyn
   await assert.rejects(readFile(path.join(workspace, "deliverables", "old.txt")), /ENOENT/);
 
   assert.throws(
-    () => parseArtifactEnvelope('{"decision":"keep","files":[]}', { mode: "resume" }),
+    () => parseArtifactEnvelope('{"decision":"keep","baseFingerprint":null,"files":[]}', { mode: "resume" }),
     (error) => error.code === "invalid_artifact_envelope",
   );
   assert.throws(
-    () => parseArtifactEnvelope('{"decision":"replace","files":[{"path":"deliverables/../auth.json","content":"x","copyFromInput":null,"sha256":null}]}'),
+    () => parseArtifactEnvelope('{"decision":"replace","baseFingerprint":null,"files":[{"path":"deliverables/../auth.json","action":"replace","content":"x","copyFromInput":null,"sha256":null}]}'),
     (error) => error.code === "invalid_deliverable_path",
   );
   assert.throws(
-    () => parseArtifactEnvelope('{"decision":"replace","files":[{"path":"deliverables/a.txt","content":"1","copyFromInput":null,"sha256":null},{"path":"deliverables/a.txt","content":"2","copyFromInput":null,"sha256":null}]}'),
+    () => parseArtifactEnvelope('{"decision":"replace","baseFingerprint":null,"files":[{"path":"deliverables/a.txt","action":"replace","content":"1","copyFromInput":null,"sha256":null},{"path":"deliverables/a.txt","action":"replace","content":"2","copyFromInput":null,"sha256":null}]}'),
     (error) => error.code === "duplicate_deliverable_path",
   );
   assert.throws(
-    () => parseArtifactEnvelope('{"decision":"replace","files":[{"path":"deliverables/a.txt","content":"\\ud800","copyFromInput":null,"sha256":null}]}'),
+    () => parseArtifactEnvelope('{"decision":"replace","baseFingerprint":null,"files":[{"path":"deliverables/a.txt","action":"replace","content":"\\ud800","copyFromInput":null,"sha256":null}]}'),
     (error) => error.code === "invalid_artifact_envelope",
   );
   assert.throws(
     () => parseArtifactEnvelope(JSON.stringify({
       decision: "replace",
+      baseFingerprint: null,
       files: requiredTextArtifacts(),
     }), {
       limits: { ...DEFAULT_LIMITS, maxDeliverableTextBytes: 4 },
     }),
     (error) => error.code === "authored_text_too_large",
   );
+});
+
+test("artifact protocol v2 keeps or inherits only an exact hash-bound base", () => {
+  const baseFingerprint = "a".repeat(64);
+  const baseFiles = requiredTextArtifacts().map((file) => {
+    const bytes = Buffer.from(file.content, "utf8");
+    return {
+      path: file.path,
+      bytes,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+  });
+  const kept = parseArtifactEnvelope(JSON.stringify({
+    decision: "keep",
+    baseFingerprint,
+    files: [],
+  }), {
+    mode: "resume",
+    expectedBaseFingerprint: baseFingerprint,
+    baseFiles,
+  });
+  assert.equal(kept.decision, "keep");
+  assert.equal(kept.files.length, baseFiles.length);
+
+  const replacement = parseArtifactEnvelope(JSON.stringify({
+    decision: "replace",
+    baseFingerprint,
+    files: baseFiles.map((file) => file.path === "deliverables/director-treatment.md"
+      ? textArtifact(file.path, "A sharper treatment")
+      : {
+          path: file.path,
+          action: "inherit",
+          content: null,
+          copyFromInput: null,
+          sha256: file.sha256,
+        }),
+  }), {
+    mode: "resume",
+    expectedBaseFingerprint: baseFingerprint,
+    baseFiles,
+  });
+  assert.equal(
+    replacement.files.find((file) => file.path === "deliverables/director-treatment.md").bytes.toString("utf8"),
+    "A sharper treatment",
+  );
+  assert.throws(
+    () => parseArtifactEnvelope(JSON.stringify({
+      decision: "replace",
+      baseFingerprint,
+      files: baseFiles.map((file) => ({
+        path: file.path,
+        action: "inherit",
+        content: null,
+        copyFromInput: null,
+        sha256: file.path === "deliverables/composition.html" ? "0".repeat(64) : file.sha256,
+      })),
+    }), {
+      mode: "resume",
+      expectedBaseFingerprint: baseFingerprint,
+      baseFiles,
+    }),
+    (error) => error.code === "inherit_hash_mismatch",
+  );
+});
+
+test("host-declared contracts bind operation and final materialized fingerprints", () => {
+  const direction = validateArtifactContract({
+    id: "direction-v1",
+    requiredPaths: ["deliverables/direction.json"],
+  });
+  const parsed = parseArtifactEnvelope(JSON.stringify({
+    decision: "replace",
+    baseFingerprint: null,
+    files: [textArtifact("deliverables/direction.json", "{}")],
+  }), { artifactContract: direction });
+  const defaultHash = artifactContractSha256(DEFAULT_ARTIFACT_CONTRACT);
+  const directionHash = artifactContractSha256(direction);
+  assert.notEqual(defaultHash, directionHash);
+  assert.notEqual(
+    materializedFingerprintFor(defaultHash, parsed.files),
+    materializedFingerprintFor(directionHash, parsed.files),
+  );
+});
+
+test("failed receipts expose only bounded hashes and keep security failures terminal", () => {
+  const state = {
+    threadId: "019f5a36-c85c-7541-94d7-c474a8e26d33",
+    rawEnvelopeSha256: "1".repeat(64),
+    responseBytes: 321,
+    rolloutSha256: "2".repeat(64),
+    rolloutResponseItems: 4,
+  };
+  const recoverable = safeFailureReceipt(
+    new HttpError(422, "invalid_artifact_envelope", "untrusted response text"),
+    state,
+  );
+  assert.deepEqual(recoverable.envelopeFindings, [{ code: "invalid_artifact_envelope" }]);
+  assert.equal(recoverable.recoverable, true);
+  assert.equal(JSON.stringify(recoverable).includes("untrusted response text"), false);
+  const terminal = safeFailureReceipt(
+    new HttpError(422, "tool_use_forbidden", "command_execution"),
+    state,
+  );
+  assert.equal(terminal.category, "security");
+  assert.equal(terminal.recoverable, false);
 });
 
 test("artifact envelopes copy only hash-bound approved inert inputs into the Luna asset root", () => {
@@ -229,10 +354,12 @@ test("artifact envelopes copy only hash-bound approved inert inputs into the Lun
   }];
   const copied = parseArtifactEnvelope(JSON.stringify({
     decision: "replace",
+    baseFingerprint: null,
     files: [
       ...requiredTextArtifacts(),
       {
         path: "deliverables/assets/luna/mark.png",
+        action: "replace",
         content: null,
         copyFromInput: "inputs/brand-assets/mark.png",
         sha256,
@@ -243,8 +370,10 @@ test("artifact envelopes copy only hash-bound approved inert inputs into the Lun
   assert.throws(
     () => parseArtifactEnvelope(JSON.stringify({
       decision: "replace",
+      baseFingerprint: null,
       files: [{
         path: "deliverables/assets/luna/mark.png",
+        action: "replace",
         content: null,
         copyFromInput: "inputs/brand-assets/mark.png",
         sha256: "0".repeat(64),
@@ -255,8 +384,10 @@ test("artifact envelopes copy only hash-bound approved inert inputs into the Lun
   assert.throws(
     () => parseArtifactEnvelope(JSON.stringify({
       decision: "replace",
+      baseFingerprint: null,
       files: [{
         path: "deliverables/composition.png",
+        action: "replace",
         content: null,
         copyFromInput: "inputs/brand-assets/mark.png",
         sha256,
@@ -369,6 +500,7 @@ test("request parsing requires a prompt, unique files, and job ID only on create
       jobId: "job-1",
       operationId,
       prompt,
+      artifactContract: DEFAULT_ARTIFACT_CONTRACT,
       files: [{ path: "inputs/brief.md", contentBase64: fileBytes.toString("base64") }],
     },
     { requireJobId: true },
@@ -379,16 +511,23 @@ test("request parsing requires a prompt, unique files, and job ID only on create
   const resumeOperationId = operationIdForRequest(prompt, [{
     path: "inputs/brief.md",
     sha256: createHash("sha256").update(fileBytes).digest("hex"),
-  }], 3);
+  }], { expectedRunCount: 3, expectedBaseFingerprint: null });
   const resume = parseJobRequest({
     operationId: resumeOperationId,
     expectedRunCount: 3,
+    expectedBaseFingerprint: null,
     prompt,
+    artifactContract: DEFAULT_ARTIFACT_CONTRACT,
     files: [{ path: "inputs/brief.md", contentBase64: fileBytes.toString("base64") }],
   }, { requireJobId: false, requireExpectedRunCount: true });
   assert.equal(resume.expectedRunCount, 3);
   assert.throws(
-    () => parseJobRequest({ operationId: resumeOperationId, prompt, files: [] }, {
+    () => parseJobRequest({
+      operationId: resumeOperationId,
+      prompt,
+      files: [],
+      artifactContract: DEFAULT_ARTIFACT_CONTRACT,
+    }, {
       requireJobId: false,
       requireExpectedRunCount: true,
     }),
@@ -404,6 +543,7 @@ test("request parsing requires a prompt, unique files, and job ID only on create
             { path: "inputs/brief.md", sha256: createHash("sha256").update(Buffer.alloc(0)).digest("hex") },
           ]),
           prompt: "Author.",
+          artifactContract: DEFAULT_ARTIFACT_CONTRACT,
           files: [
             { path: "inputs/brief.md", contentBase64: "" },
             { path: "inputs/brief.md", contentBase64: "" },
@@ -413,7 +553,12 @@ test("request parsing requires a prompt, unique files, and job ID only on create
       ),
     (error) => error.code === "duplicate_file_path",
   );
-  assert.throws(() => parseJobRequest({ jobId: "job-1", operationId: "a".repeat(64), prompt: "  " }, { requireJobId: true }), HttpError);
+  assert.throws(() => parseJobRequest({
+    jobId: "job-1",
+    operationId: "a".repeat(64),
+    prompt: "  ",
+    artifactContract: DEFAULT_ARTIFACT_CONTRACT,
+  }, { requireJobId: true }), HttpError);
 });
 
 test("Codex arguments use Luna high reasoning and exact thread resume", () => {

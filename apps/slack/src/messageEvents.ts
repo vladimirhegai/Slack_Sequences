@@ -8,6 +8,8 @@ export interface ThreadReply {
   channel: string;
   threadTs: string;
   eventId: string;
+  /** Human actor whose Slack permissions may be used for this action. */
+  userId: string;
   instruction: string;
 }
 
@@ -36,6 +38,7 @@ export function parseThreadReply(
     // `ts` is shared by message.channels and app_mention deliveries for the
     // same Slack message, so it also prevents cross-subscription double work.
     eventId: `${event.channel}:${event.ts}`,
+    userId: event.user,
     instruction,
   };
 }

@@ -1,9 +1,9 @@
 /**
  * Fail-loud diagnostics for a create that could not author a real film.
  *
- * When the deterministic safe fallback is disabled
- * (`SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0`), the orchestrator surfaces
- * this consolidated report instead of a generic video: which stage broke, the
+ * The deterministic proof-film escape hatch is disabled by default. Ordinary
+ * runs therefore surface this consolidated report instead of a generic video:
+ * which stage broke, the
  * terminal reason, the per-attempt finding signatures the author/storyboard
  * loops already persisted, and the on-disk artifact paths that carry the raw
  * documents. The same report is written to `<projectDir>/FAILURE.md` (and logged

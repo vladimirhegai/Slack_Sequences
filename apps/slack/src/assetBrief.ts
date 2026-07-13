@@ -3,21 +3,21 @@
  * step 2). A user runs `/sequences assets`, uploads UI screenshots in the
  * modal's file input (Slack slash commands themselves cannot carry files —
  * the modal `file_input` block is the native path), and adds optional notes.
- * The host then extracts brand truth DETERMINISTICALLY (chromium canvas
- * pixel-sampling — no model), stores one brief per channel, and every
- * subsequent `/sequences` create in that channel folds the brief into its
- * context so frame design + the asset library retheme to the user's product.
+ * The host extracts palette evidence deterministically, stores one brief per
+ * channel, and gives the approved screenshots to a dedicated Luna turn that
+ * authors a reusable, host-validated code-native UI pack. Every subsequent
+ * `/sequences` create receives both the brief and that exact accepted pack.
  *
  * Deliberate boundaries:
  * - one brief per channel, replaced on re-run, removed by `/sequences assets
  *   clear` — nothing else from the channel is ever stored;
- * - extraction is the tweak-prebuilt philosophy applied to intake: screenshots
- *   become PARAMETERS (accent, canvas tone), never generated markup;
- * - everything is best-effort: no browser → palette skipped with a note; the
- *   create flow works identically with or without a brief.
+ * - screenshots remain visual evidence, never executable instructions;
+ * - palette and UI-pack authoring are best-effort enrichments: an ordinary
+ *   create can synthesize its own local UI system when either is unavailable.
  */
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { dataDir } from "./engine/projectTemplates.ts";
 import { findBrowserExecutable } from "./engine/render.ts";
 import { luminance, saturation } from "./engine/brandTokens.ts";
@@ -41,7 +41,36 @@ export interface ChannelAssetBrief {
   /** Stored reference screenshots (operator diagnostics; never re-shared). */
   refs: string[];
   imageCount: number;
+  /** Latest host-validated, versioned Luna UI pack for this channel. */
+  assetPack?: ChannelLunaAssetPackReceiptV1;
   createdAt: string;
+}
+
+export interface ChannelLunaAssetPackReceiptV1 {
+  version: 1;
+  id: string;
+  /** Relative to assetPacksRoot(); never an arbitrary host path. */
+  storageKey: string;
+  /** Relative evidence run holding the accepted deliverables. */
+  latestRunDir: string;
+  fingerprint: string;
+  materializedFingerprint: string;
+  workerJobId: string;
+  workerRunCount: number;
+  threadId: string;
+  createdAt: string;
+}
+
+export interface ReservedLunaAssetPack {
+  id: string;
+  storageKey: string;
+  projectDir: string;
+}
+
+export interface PreparedLunaAssetPack {
+  deliverablesDir: string;
+  approvedRoot: string;
+  receipt: ChannelLunaAssetPackReceiptV1;
 }
 
 /* ----------------------------------------------------------------- store */
@@ -54,9 +83,52 @@ function refsDir(channel: string): string {
   return path.join(assetBriefReferencesRoot(), channel.replace(/[^\w-]/g, "_"));
 }
 
+function safeChannel(channel: string): string {
+  return channel.replace(/[^\w-]/g, "_") || "channel";
+}
+
 /** The only host filesystem root whose regular files may enter a Luna job. */
 export function assetBriefReferencesRoot(): string {
   return path.join(dataDir(), "asset-briefs");
+}
+
+/** Separate allowlisted root for model-authored, host-validated UI packs. */
+export function assetPacksRoot(): string {
+  return path.join(dataDir(), "asset-packs");
+}
+
+export function reserveLunaAssetPack(channel: string): ReservedLunaAssetPack {
+  const id = randomUUID();
+  const storageKey = `${safeChannel(channel)}/${id}`;
+  const projectDir = path.join(assetPacksRoot(), ...storageKey.split("/"));
+  fs.mkdirSync(projectDir, { recursive: true });
+  return { id, storageKey, projectDir };
+}
+
+function strictChild(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative !== "" && relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+/** Resolve a stored pack only through its host-issued relative receipt. */
+export function preparedLunaAssetPack(
+  brief: ChannelAssetBrief,
+): PreparedLunaAssetPack | undefined {
+  const receipt = brief.assetPack;
+  if (!receipt || receipt.version !== 1) return undefined;
+  const root = path.resolve(assetPacksRoot());
+  const projectDir = path.resolve(root, ...receipt.storageKey.split("/"));
+  if (!strictChild(root, projectDir) || !fs.existsSync(projectDir)) return undefined;
+  const projectInfo = fs.lstatSync(projectDir);
+  if (!projectInfo.isDirectory() || projectInfo.isSymbolicLink()) return undefined;
+  const runDir = path.resolve(projectDir, ...receipt.latestRunDir.replace(/\\/g, "/").split("/"));
+  if (!strictChild(projectDir, runDir) || !fs.existsSync(runDir)) return undefined;
+  const deliverablesDir = path.join(runDir, "deliverables");
+  if (!fs.existsSync(deliverablesDir)) return undefined;
+  const deliverablesInfo = fs.lstatSync(deliverablesDir);
+  if (!deliverablesInfo.isDirectory() || deliverablesInfo.isSymbolicLink()) return undefined;
+  return { deliverablesDir, approvedRoot: root, receipt };
 }
 
 function readAll(): Record<string, ChannelAssetBrief> {
@@ -91,6 +163,7 @@ export function clearAssetBrief(channel: string): boolean {
   delete briefs[channel];
   writeAll(briefs);
   fs.rmSync(refsDir(channel), { recursive: true, force: true });
+  fs.rmSync(path.join(assetPacksRoot(), safeChannel(channel)), { recursive: true, force: true });
   return true;
 }
 
@@ -235,7 +308,10 @@ export function assetBriefContext(brief: ChannelAssetBrief): string {
       "honor these over inferred defaults:",
   ];
   if (brief.palette.accent) {
-    lines.push(`- Accent color: ${brief.palette.accent}. Use it as THE single accent.`);
+    lines.push(
+      `- Observed accent color: ${brief.palette.accent}. Treat it as evidence, not a quota; ` +
+        "use supporting colors when the captured UI or story needs them.",
+    );
   }
   if (brief.palette.background) {
     const tone = luminance(brief.palette.background) < 0.5 ? "dark" : "light";
@@ -247,6 +323,12 @@ export function assetBriefContext(brief: ChannelAssetBrief): string {
     lines.push(`- Supporting palette seen in the product: ${brief.palette.colors.slice(0, 6).join(", ")}.`);
   }
   if (brief.notes) lines.push(`- The user's own notes about their product/UI: ${brief.notes}`);
+  if (brief.assetPack) {
+    lines.push(
+      `- A validated Luna UI pack (${brief.assetPack.id}) is attached separately with reusable ` +
+        "component states and stable motion hooks.",
+    );
+  }
   return lines.join("\n");
 }
 

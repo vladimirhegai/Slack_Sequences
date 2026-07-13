@@ -2,11 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["decision", "files"],
+  "required": ["decision", "baseFingerprint", "files"],
   "properties": {
     "decision": {
       "type": "string",
-      "enum": ["replace"]
+      "enum": ["keep", "replace"]
+    },
+    "baseFingerprint": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$"
     },
     "files": {
       "type": "array",
@@ -14,13 +18,17 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["path", "content", "copyFromInput", "sha256"],
+        "required": ["path", "action", "content", "copyFromInput", "sha256"],
         "properties": {
           "path": {
             "type": "string",
             "minLength": 1,
             "maxLength": 240,
             "pattern": "^deliverables/[A-Za-z0-9._/-]+$"
+          },
+          "action": {
+            "type": "string",
+            "enum": ["inherit", "replace"]
           },
           "content": {
             "type": ["string", "null"]

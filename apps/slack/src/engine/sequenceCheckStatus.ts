@@ -28,10 +28,14 @@ export function summarizeSequenceCheckStatus(
   if (report.options.render && (!report.artifacts.mp4?.exists || report.artifacts.mp4.bytes <= 0)) {
     return "fail";
   }
-  if (report.result.authoringMode === "deterministic-fallback") return "warn";
-  if (report.result.fallback) return "warn";
+  // A proof film is useful degraded evidence for Slack delivery, but it is not
+  // a successful authoring probe. Treating it as a warning let paid Luna
+  // smokes exit zero while no model-authored film existed.
+  if (report.result.authoringMode === "deterministic-fallback") return "fail";
+  if (report.result.fallback) return "fail";
   const ledger = report.ledger ?? report.result.ledgerStatus;
   if (ledger) {
+    if (ledger.proofFilm || ledger.disposition === "fallback") return "fail";
     // Runtime-invalid authored output is already caught as a hard validation
     // failure above when the defect is provable. A false axis here means the
     // browser proof was unavailable, so keep the artifact but report honestly.

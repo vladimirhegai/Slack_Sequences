@@ -83,8 +83,8 @@ recovery and exact host normalization are resilience, not visual fallback.
 `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK` governs both author routes. Luna
 never falls through to OpenRouter or a disguised creative result: after one
 same-thread repair fails, is unavailable, or the worker is unreachable, it
-publishes the same explicitly labeled deterministic proof film. With the switch
-off, Luna fails visibly with the job ID and `FAILURE.md`. Its optional
+fails visibly with the job ID and `FAILURE.md` by default. Only an explicit
+`=1` operator drill publishes the labeled deterministic proof film. Its optional
 self-review may fail without discarding the already accepted first cut. A
 completed but host-rejected turn advances the persisted worker-generation
 cursor; its exact response/receipt is persisted before host interpretation and

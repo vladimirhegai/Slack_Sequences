@@ -22,6 +22,8 @@ export type TimedStep = string;
  */
 const SEED_MS: Record<string, number> = {
   "luna-director": 180_000,
+  "luna-direction": 150_000,
+  "luna-build": 240_000,
   "luna-repair": 120_000,
   "luna-self-review": 90_000,
   "luna-revision": 120_000,
@@ -155,7 +157,8 @@ export function formatEtaMs(ms: number): string {
 
 /** The steps a live `/sequences` create walks through (tier 1, pre-render). */
 export const LUNA_CREATE_STEPS: TimedStep[] = [
-  "luna-director",
+  "luna-direction",
+  "luna-build",
   "submit_composition",
   "render_preview",
   "luna-self-review",

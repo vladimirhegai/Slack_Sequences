@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "compositionId": "relay-luna-launch",
+  "durationSec": 20,
+  "creativeOwner": "Luna",
+  "acts": [
+    {"sceneId":"signals","startSec":0,"endSec":4.2,"primarySelector":"#alert-card","persistentEntityIds":["amber-thread"]},
+    {"sceneId":"map","startSec":4.2,"endSec":9.2,"primarySelector":"#service-map","persistentEntityIds":["amber-thread","api-node"]},
+    {"sceneId":"timeline","startSec":9.2,"endSec":15.4,"primarySelector":"#incident-timeline","persistentEntityIds":["release-marker","amber-thread"]},
+    {"sceneId":"close","startSec":15.4,"endSec":20,"primarySelector":"#closing-line","persistentEntityIds":[]}
+  ],
+  "boundaries": [
+    {"id":"signals-to-map","atSec":4.2,"fromScene":"signals","toScene":"map","strategy":"hard","mechanicalOwner":"cut","cause":"The alert has become the focal subject; a clean editorial reset reveals the organized diagnostic surface.","evidenceSampleTimes":[4.1,4.2,4.6]},
+    {"id":"map-to-timeline","atSec":9.2,"fromScene":"map","toScene":"timeline","strategy":"match","mechanicalOwner":"continuity","cause":"The highlighted release marker leaves the service map and lands on its matching incident-timeline anchor.","outgoingAnchorSelector":"#release-badge","incomingAnchorSelector":"#timeline-release-anchor","focalPartOut":"release","focalPartIn":"release","exitSec":0.45,"entrySec":0.65,"evidenceSampleTimes":[8.9,9.35,10.1]},
+    {"id":"timeline-to-close","atSec":15.4,"fromScene":"timeline","toScene":"close","strategy":"hard","mechanicalOwner":"cut","cause":"The connected evidence is complete, so the film changes register to a resting product statement.","evidenceSampleTimes":[15.3,15.4,16.1]}
+  ],
+  "cameraMoves": [
+    {"sceneId":"timeline","worldSelector":"#timeline-scene","targetSelector":"#timeline-release-anchor","startSec":10.05,"arrivalSec":10.95,"settleEndSec":11.45,"holdEndSec":12.55,"motivation":"The exact linked release becomes the semantic focal subject and earns the film's one lens move."}
+  ],
+  "interactions": [
+    {"actorSelector":"#cursor","targetSelector":"#api-node","resultSelector":"#route-path","startSec":5.25,"actionSec":5.65,"settleSec":6.15,"beforeSampleSec":5.1,"afterSampleSec":6.35,"observableStateChange":"Selecting api-gateway changes the service map from neutral nodes to a highlighted dependency route and exposes the correlated deployment marker."},
+    {"actorSelector":"#release-badge","targetSelector":"#timeline-release-anchor","resultSelector":"#release-event","startSec":9.35,"actionSec":10.15,"settleSec":10.8,"beforeSampleSec":9.3,"afterSampleSec":11.1,"observableStateChange":"The release marker carries from the map handoff into the timeline and the deployment event becomes the highlighted cause candidate."}
+  ],
+  "energyPeak":{"startSec":10.8,"endSec":12.6,"reason":"Camera arrival, route ignition, and release docking converge in one readable causal gesture."},
+  "finalRestingHold":{"startSec":17.35,"endSec":20,"selector":"#closing-line"},
+  "geometryPolicy":[
+    {"pair":"#release-badge -> #timeline-release-anchor","purpose":"Measured match handoff between map release and timeline deployment anchor."},
+    {"pair":"#cursor -> #api-node","purpose":"Measured cursor landing on the service-map interaction target."},
+    {"pair":"#release-badge -> #timeline-release-anchor","purpose":"Measured placement of the causal release marker at the timeline anchor."}
+  ]
+}

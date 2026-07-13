@@ -56,19 +56,28 @@ monorepo root:
 ```powershell
 npm run typecheck
 npm run typecheck --workspace @sequences/slack
+npm run test:luna --workspace @sequences/slack
 npm run test:unit --workspace @sequences/slack
 npm run test:browser --workspace @sequences/slack
+npm run luna:replay --workspace @sequences/slack -- <job-or-report-path>
 npm run replay:all --workspace @sequences/slack
 npm run mcp:demo --workspace @sequences/slack
 npm run sequence:check --workspace @sequences/slack -- --demo --no-mcp --format both
 npm test --prefix apps/slack/codex-worker
 ```
 
-The demo, undo, render, debug, asset intake, and `mcp-test` paths are model-free.
+The demo, undo, render, debug, `assets clear`, and `mcp-test` paths are model-free.
+`/sequences assets` includes one Luna UI-pack turn after deterministic intake.
 An authorized Luna probe is one ordinary `/sequences` job or one direct worker
 job with a new job ID. Preserve worker receipts, exact raw source, motion intent,
 browser QA, thumbnails, revisions, MP4, and hashes. Do not call OpenRouter and do
 not rerun merely to clear taste advisories.
+
+`luna:replay` is contract-aware: direction, synthetic-direction, film, and
+asset-pack bundles all receive generic receipt/raw/materialized integrity
+checks, while only film bundles enter static and browser composition gates.
+Worker run counts must increase monotonically but may contain gaps when a failed
+protocol turn was preserved under `worker-failures` instead of materialized.
 
 Historical S6.9-S6.13 OpenRouter probe evidence remains in `REFACTOR_PLAN.md`,
 `REFACTOR_HANDOFF.md`, and the dirty operator-owned `PROBE_LOG.md`. It is not the
@@ -91,7 +100,7 @@ PORT=3000
 LUNA_WORKER_TOKEN=<same independent 32+ character secret>
 LUNA_MODEL=gpt-5.6-luna
 LUNA_REASONING_EFFORT=high
-LUNA_JOB_TIMEOUT_MS=1200000
+LUNA_JOB_TIMEOUT_MS=1800000
 LUNA_MAX_QUEUE_DEPTH=4
 LUNA_MAX_WORKSPACE_BYTES=134217728
 LUNA_MIN_FREE_BYTES=536870912
@@ -102,9 +111,10 @@ Mount its persistent volume at `/root/.codex`. `auth.json` is plaintext and must
 be treated as a password. Startup runs `codex login status` and refuses readiness
 when login/config is unavailable. Railway denies the Linux namespace operation
 used by Codex's command sandbox; never bypass it or expose the auth volume with a
-dangerous sandbox mode. Production uses the tool-less artifact protocol: inputs
-are embedded/attached, every tool event fails the turn, and the worker validates
-the schema and atomically materializes files. The Codex permission profile denies
+dangerous sandbox mode. Production uses tool-less artifact protocol v2: inputs
+are embedded/attached, every tool event fails the turn, and the worker binds
+each operation to a host-declared artifact contract and exact base fingerprint
+before transactional keep/inherit/replace materialization. The Codex permission profile denies
 all model-visible filesystem/network access, and the worker scans the exact
 persisted rollout to catch tool calls omitted from exec JSONL. Readiness also fails when the exact
 Luna/high identity, artifact schema digest, or free-space reserve is wrong.
@@ -206,12 +216,15 @@ validation, rendering, upload, or film quality; the end-to-end rehearsal does.
   failed job, verify the bundled profile still caps Linux `**` expansion, and
   redeploy the hash-bound profile. Do not retry the same failed job ID or remove
   deny globs to silence the error.
-- Worker rejects the artifact envelope: preserve the raw envelope and replay its
-  schema/path/hash validation model-free before changing prompts or contracts.
+- Worker rejects the artifact envelope: use the safe failure receipt. Only an
+  audited artifact-protocol failure may advance the exact thread once;
+  security, tool, rollout-integrity, path, and hash failures stay terminal.
+  Replay schema/path/hash validation model-free before changing prompts or contracts.
 - Authored source fails a hard gate: preserve the raw run directory and replay
-  model-free. Fix an engine defect at its lowest deterministic owner. A future
-  same-thread hard-defect repair prompt may address authored defects; do not send
-  the film through the legacy committee.
+  with `luna:replay`. Fix an engine defect at its lowest deterministic owner.
+  The same-thread repair receives every blocking line plus bounded
+  selector/property before/after browser evidence in one batch; do not send the
+  film through the legacy committee.
 - `200 ready` but commands fail: run `/sequences mcp-test`, inspect Slack logs,
   and verify per-user OAuth plus `OPENAI_API_KEY`.
 - Wrong code: compare public repo commit, `.publish` commit, and Railway

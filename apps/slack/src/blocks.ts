@@ -394,10 +394,12 @@ export interface ResultView {
   usedPreset?: boolean;
   /**
    * Present when this result is the deterministic safe fallback because a
-   * named model stage failed. Only the stage name is shown — never model
-   * output or error content.
-   */
+   * named model stage failed. This stays visibly distinct from an authored
+   * cut; thread replies still revise the published proof film.
+  */
   fallback?: { stage: string; reason?: string };
+  /** The host persisted a validated original brief for a fresh create. */
+  canRetryCreate?: boolean;
   provider: string;
   renderQuality?: "draft" | "high";
   /**
@@ -437,7 +439,12 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
   const fallbackNotice = view.fallback
     ? `:twisted_rightwards_arrows: *Safe fallback* - the \`${escapeMrkdwn(view.fallback.stage)}\` ` +
       "stage failed, so this is the deterministic proof film, not a model-authored cut. " +
-      `Job ID: \`${escapeMrkdwn(view.jobId)}\`. Run \`/sequences\` again or reply here to retry.` +
+      `Job ID: \`${escapeMrkdwn(view.jobId)}\`. ` +
+      (view.canRetryCreate
+        ? "Choose *Retry Luna create* for a fresh model-authored attempt. "
+        : "Run `/sequences` for a fresh model-authored attempt. ") +
+      "Replies in this thread revise the published proof film; " +
+      "they do not retry authoring." +
       (view.fallback.reason ? `\n*Mechanical failure*\n${codeBlock(view.fallback.reason)}` : "")
     : "";
   const buildTrace = (view.toolCalls ?? [])
@@ -558,6 +565,14 @@ export function resultBlocks(view: ResultView): KnownBlock[] {
           text: plain("Undo"),
           value: view.jobId,
         },
+        ...(view.fallback && view.canRetryCreate
+          ? [{
+              type: "button" as const,
+              action_id: "retry_create",
+              text: plain("Retry Luna create"),
+              value: view.jobId,
+            }]
+          : []),
         // Sharing a not-yet-rendered reel would be a lie; offer it only when ready.
         ...(view.videoStage === "ready"
           ? [
@@ -648,7 +663,12 @@ export function buildShareModal(jobId: string): View {
   };
 }
 
-export function errorBlocks(title: string, message: string, jobId?: string): KnownBlock[] {
+export function errorBlocks(
+  title: string,
+  message: string,
+  jobId?: string,
+  options: { retryCreate?: boolean } = {},
+): KnownBlock[] {
   const receipt = jobId ? `\nJob ID: \`${escapeMrkdwn(jobId)}\`` : "";
   return [
     {
@@ -663,9 +683,23 @@ export function errorBlocks(title: string, message: string, jobId?: string): Kno
       elements: [
         {
           type: "mrkdwn",
-          text: ":arrows_counterclockwise: Nothing was changed. Fix the issue above and run `/sequences` again, or `/sequences mcp-test` to check services.",
+          text: options.retryCreate
+            ? ":arrows_counterclockwise: Nothing was published. Reply in this thread or choose *Retry create* to start a fresh Luna build from the saved brief. `/sequences mcp-test` checks services."
+            : ":arrows_counterclockwise: Nothing was changed. Fix the issue above and run `/sequences` again, or `/sequences mcp-test` to check services.",
         },
       ],
     },
+    ...(options.retryCreate && jobId
+      ? [{
+          type: "actions" as const,
+          elements: [{
+            type: "button" as const,
+            action_id: "retry_create",
+            style: "primary" as const,
+            text: plain("Retry create"),
+            value: jobId,
+          }],
+        }]
+      : []),
   ];
 }

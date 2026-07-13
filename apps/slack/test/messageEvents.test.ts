@@ -26,6 +26,7 @@ describe("parseThreadReply", () => {
       channel: "C123",
       threadTs: "1709999999.000001",
       eventId: "C123:1710000000.000001",
+      userId: "U_HUMAN",
       instruction: "make it punchier",
     });
   });

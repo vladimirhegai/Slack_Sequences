@@ -9,6 +9,9 @@ export default defineConfig({
   root: repositoryRoot,
   test: {
     watch: false,
+    // Keep real-browser validation below the host saturation point so timeout
+    // contracts measure the authored film instead of cross-file CPU contention.
+    maxWorkers: 4,
     server: {
       deps: {
         // @hyperframes/core's ESM dist uses extensionless relative imports,

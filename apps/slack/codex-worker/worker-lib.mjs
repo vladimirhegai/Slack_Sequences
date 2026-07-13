@@ -30,6 +30,7 @@ export const DEFAULT_LIMITS = Object.freeze({
 const JOB_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,94}[A-Za-z0-9])?$/;
 const OPERATION_ID_PATTERN = /^[a-f0-9]{64}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
+const CONTRACT_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/;
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 const SAFE_PROTOCOL_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/;
 const IMAGE_EXTENSIONS = new Set([".jpeg", ".jpg", ".png", ".webp"]);
@@ -44,15 +45,18 @@ const COPYABLE_ASSET_EXTENSIONS = new Set([
   ".woff",
   ".woff2",
 ]);
-const REQUIRED_DELIVERABLE_PATHS = new Set([
-  "deliverables/assets-manifest.json",
-  "deliverables/composition.html",
-  "deliverables/director-treatment.md",
-  "deliverables/motion-intent.json",
-  "deliverables/storyboard.json",
-]);
-export const ARTIFACT_PROTOCOL_VERSION = "luna-tool-less-artifact-v1";
-export const ARTIFACT_SCHEMA_SHA256 = "ac487766f625ecd680541cbf3b7a6e0018a3570e1037e65c9c629d8af52569cb";
+export const DEFAULT_ARTIFACT_CONTRACT = Object.freeze({
+  id: "film-bundle-v1",
+  requiredPaths: Object.freeze([
+    "deliverables/assets-manifest.json",
+    "deliverables/composition.html",
+    "deliverables/director-treatment.md",
+    "deliverables/motion-intent.json",
+    "deliverables/storyboard.json",
+  ]),
+});
+export const ARTIFACT_PROTOCOL_VERSION = "luna-tool-less-artifact-v2";
+export const ARTIFACT_SCHEMA_SHA256 = "7fa551fb261b6dee573aca74507202f5ab0b30ca00fe60cd04141dea8dfe104d";
 export const PERMISSION_PROFILE_SHA256 = "ebd9f548aaa2f1d48df15ea1e124462350791ede65267f7677e9a834fa0060c6";
 const DISABLED_TOOL_FEATURES = Object.freeze([
   "shell_tool",
@@ -123,6 +127,87 @@ export class HttpError extends Error {
   }
 }
 
+const RECOVERABLE_ARTIFACT_FAILURE_CODES = new Set([
+  "authored_text_too_large",
+  "deliverable_too_large",
+  "deliverables_too_large",
+  "duplicate_deliverable_path",
+  "invalid_artifact_envelope",
+  "missing_required_deliverables",
+]);
+const SECURITY_FAILURE_CODES = new Set([
+  "tool_use_forbidden",
+  "workspace_instruction_tamper",
+]);
+const INTEGRITY_FAILURE_CODES = new Set([
+  "asset_copy_mismatch",
+  "base_artifact_integrity",
+  "base_fingerprint_mismatch",
+  "inherit_hash_mismatch",
+  "invalid_asset_copy",
+  "invalid_rollout_jsonl",
+  "invalid_rollout_state",
+  "invalid_thread_id",
+  "rollout_not_found",
+  "rollout_not_unique",
+  "rollout_thread_mismatch",
+  "thread_id_mismatch",
+  "unsafe_deliverables",
+  "unsafe_rollout_state",
+]);
+
+export function safeFailureReceipt(error, state = {}) {
+  const rawCode = typeof error?.code === "string" ? error.code : "internal_error";
+  const errorCode = /^[a-z0-9_]{1,80}$/.test(rawCode) ? rawCode : "internal_error";
+  const category = SECURITY_FAILURE_CODES.has(errorCode)
+    ? "security"
+    : INTEGRITY_FAILURE_CODES.has(errorCode)
+      ? "integrity"
+      : RECOVERABLE_ARTIFACT_FAILURE_CODES.has(errorCode)
+        ? "artifact_protocol"
+        : errorCode === "job_cancelled"
+          ? "cancelled"
+          : errorCode === "job_timeout"
+            ? "timeout"
+            : "runtime";
+  const hasExactThread = typeof state.threadId === "string" &&
+    /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(state.threadId);
+  const hasAuditedRollout = typeof state.rolloutSha256 === "string" &&
+    SHA256_PATTERN.test(state.rolloutSha256) &&
+    Number.isSafeInteger(state.rolloutResponseItems) &&
+    state.rolloutResponseItems > 0;
+  const hasBoundedResponse = typeof state.rawEnvelopeSha256 === "string" &&
+    SHA256_PATTERN.test(state.rawEnvelopeSha256) &&
+    Number.isSafeInteger(state.responseBytes) &&
+    state.responseBytes >= 0 &&
+    state.responseBytes <= DEFAULT_LIMITS.maxCodexOutputBytes;
+  const recoverable = category === "artifact_protocol" &&
+    hasExactThread && hasAuditedRollout && hasBoundedResponse;
+  return {
+    errorCode,
+    category,
+    recoverable,
+    envelopeFindings: category === "artifact_protocol" ? [{ code: errorCode }] : [],
+    response: {
+      present: hasBoundedResponse,
+      ...(hasBoundedResponse
+        ? {
+            bytes: state.responseBytes,
+            sha256: state.rawEnvelopeSha256.toLowerCase(),
+          }
+        : {}),
+    },
+    ...(hasAuditedRollout
+      ? {
+          rollout: {
+            sha256: state.rolloutSha256.toLowerCase(),
+            responseItems: state.rolloutResponseItems,
+          },
+        }
+      : {}),
+  };
+}
+
 export function sha256Bytes(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -155,12 +240,91 @@ export function validateOperationId(value) {
   return value;
 }
 
-export function operationIdForRequest(prompt, files, expectedRunCount = null) {
+export function validateArtifactContract(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(400, "invalid_artifact_contract", "artifactContract must be an object");
+  }
+  const keys = Object.keys(value).sort();
+  if (keys.join(",") !== "id,requiredPaths") {
+    throw new HttpError(
+      400,
+      "invalid_artifact_contract",
+      "artifactContract accepts only id and requiredPaths",
+    );
+  }
+  if (typeof value.id !== "string" || !CONTRACT_ID_PATTERN.test(value.id)) {
+    throw new HttpError(
+      400,
+      "invalid_artifact_contract",
+      "artifactContract.id must be a safe 1-64 character identifier",
+    );
+  }
+  if (
+    !Array.isArray(value.requiredPaths) ||
+    value.requiredPaths.length === 0 ||
+    value.requiredPaths.length > DEFAULT_LIMITS.maxDeliverables
+  ) {
+    throw new HttpError(
+      400,
+      "invalid_artifact_contract",
+      `artifactContract.requiredPaths must contain 1-${DEFAULT_LIMITS.maxDeliverables} paths`,
+    );
+  }
+  const requiredPaths = value.requiredPaths.map(validateRelativeDeliverablePath).sort();
+  if (new Set(requiredPaths).size !== requiredPaths.length) {
+    throw new HttpError(400, "invalid_artifact_contract", "artifactContract required paths must be unique");
+  }
+  return Object.freeze({ id: value.id, requiredPaths: Object.freeze(requiredPaths) });
+}
+
+export function artifactContractSha256(contract) {
+  const canonical = validateArtifactContract(contract);
+  return sha256Bytes(Buffer.from(JSON.stringify(canonical), "utf8"));
+}
+
+export function materializedFingerprintFor(contractSha256, files) {
+  if (typeof contractSha256 !== "string" || !SHA256_PATTERN.test(contractSha256)) {
+    throw new Error("contractSha256 must be a SHA-256 digest");
+  }
+  const manifest = [...files]
+    .map((file) => {
+      if (
+        !file ||
+        typeof file.path !== "string" ||
+        typeof file.sha256 !== "string" ||
+        !SHA256_PATTERN.test(file.sha256)
+      ) {
+        throw new Error("materialized files require canonical paths and SHA-256 digests");
+      }
+      return { path: validateRelativeDeliverablePath(file.path), sha256: file.sha256.toLowerCase() };
+    })
+    .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+  return sha256Bytes(Buffer.from(JSON.stringify({ contractSha256: contractSha256.toLowerCase(), files: manifest }), "utf8"));
+}
+
+export function operationIdForRequest(
+  prompt,
+  files,
+  {
+    expectedRunCount = null,
+    artifactContract = DEFAULT_ARTIFACT_CONTRACT,
+    expectedBaseFingerprint = null,
+  } = {},
+) {
+  const canonicalContract = validateArtifactContract(artifactContract);
+  if (
+    expectedBaseFingerprint !== null &&
+    (typeof expectedBaseFingerprint !== "string" || !SHA256_PATTERN.test(expectedBaseFingerprint))
+  ) {
+    throw new HttpError(400, "invalid_base_fingerprint", "expectedBaseFingerprint must be null or a SHA-256 digest");
+  }
   const canonical = JSON.stringify({
     protocol: ARTIFACT_PROTOCOL_VERSION,
     schemaSha256: ARTIFACT_SCHEMA_SHA256,
     permissionProfileSha256: PERMISSION_PROFILE_SHA256,
     expectedRunCount,
+    expectedBaseFingerprint: expectedBaseFingerprint?.toLowerCase() ?? null,
+    artifactContract: canonicalContract,
     promptSha256: sha256Bytes(Buffer.from(prompt, "utf8")),
     files: [...files]
       .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
@@ -418,18 +582,39 @@ export function parseJobRequest(
     throw new HttpError(413, "inputs_too_large", "decoded inputs exceed the configured total limit");
   }
   const result = { prompt, files };
+  const artifactContract = validateArtifactContract(value.artifactContract);
+  result.artifactContract = artifactContract;
   let expectedRunCount = null;
+  let expectedBaseFingerprint = null;
   if (requireExpectedRunCount) {
     if (!Number.isSafeInteger(value.expectedRunCount) || value.expectedRunCount < 1) {
       throw new HttpError(400, "invalid_expected_run_count", "expectedRunCount must be a positive safe integer");
     }
     expectedRunCount = value.expectedRunCount;
     result.expectedRunCount = expectedRunCount;
+    if (
+      value.expectedBaseFingerprint !== null &&
+      (typeof value.expectedBaseFingerprint !== "string" || !SHA256_PATTERN.test(value.expectedBaseFingerprint))
+    ) {
+      throw new HttpError(
+        400,
+        "invalid_base_fingerprint",
+        "expectedBaseFingerprint must be null or a SHA-256 digest",
+      );
+    }
+    expectedBaseFingerprint = value.expectedBaseFingerprint?.toLowerCase() ?? null;
+    result.expectedBaseFingerprint = expectedBaseFingerprint;
+  } else if (value.expectedBaseFingerprint !== undefined && value.expectedBaseFingerprint !== null) {
+    throw new HttpError(400, "invalid_base_fingerprint", "create requests cannot name a base fingerprint");
   }
   if (requireJobId) result.jobId = validateJobId(value.jobId);
   if (requireOperationId) {
     const suppliedOperationId = validateOperationId(value.operationId);
-    const expectedOperationId = operationIdForRequest(prompt, files, expectedRunCount);
+    const expectedOperationId = operationIdForRequest(prompt, files, {
+      expectedRunCount,
+      artifactContract,
+      expectedBaseFingerprint,
+    });
     if (suppliedOperationId !== expectedOperationId) {
       throw new HttpError(422, "operation_id_mismatch", "operationId does not match prompt and file bytes");
     }
@@ -441,9 +626,22 @@ export function parseJobRequest(
 export function buildToollessArtifactPrompt(
   prompt,
   files,
-  { mode = "new", limits = DEFAULT_LIMITS } = {},
+  {
+    mode = "new",
+    limits = DEFAULT_LIMITS,
+    artifactContract = DEFAULT_ARTIFACT_CONTRACT,
+    baseFingerprint = null,
+    baseDeliverables = [],
+  } = {},
 ) {
   if (mode !== "new" && mode !== "resume") throw new Error(`unsupported Codex mode: ${mode}`);
+  const canonicalContract = validateArtifactContract(artifactContract);
+  if (
+    baseFingerprint !== null &&
+    (typeof baseFingerprint !== "string" || !SHA256_PATTERN.test(baseFingerprint))
+  ) {
+    throw new Error("baseFingerprint must be null or a SHA-256 digest");
+  }
   const textDecoder = new TextDecoder("utf-8", { fatal: true });
   const inlineFiles = [];
   const attachedImages = [];
@@ -477,10 +675,21 @@ export function buildToollessArtifactPrompt(
     }
     inlineFiles.push({ ...descriptor, content });
   }
+  const hasBase = mode === "resume" && baseFingerprint !== null;
   const turnRule = mode === "new"
-    ? "This is an initial turn."
-    : "This is a continuation of the exact director thread.";
-  return `${prompt}\n\n---\nRAILWAY TOOL-LESS ARTIFACT EXCHANGE (hard execution contract)\n\nRailway does not permit the Codex Linux namespace sandbox. Do not call the shell, filesystem, network, MCP, connector, browser, todo-list, sub-agent, or any other tool. The verified UTF-8 inputs are embedded below and approved images are attached by the CLI. They are the complete read-only evidence for this turn. Opaque binary descriptors are not inspectable content and may only be preserved through the hash-bound copy mechanism below.\n\nReturn exactly one JSON object matching the supplied output schema, with no Markdown fence or prose. Set "decision" to "replace" and return the complete required deliverable bundle on every turn, even when you choose to preserve every byte. Every file object has path, content, copyFromInput, and sha256. For authored UTF-8 text, set content to the complete raw text and the other two fields to null. To adopt an approved inert image/font, set content to null and copyFromInput/sha256 to the exact embedded descriptor; copy bindings may target only deliverables/assets/luna/. Never return base64. The trusted worker, not you, materializes these bytes and re-hashes them before the host gate. ${turnRule}\n\n<verified-inputs-json>\n${JSON.stringify({ inlineFiles, attachedImages, opaqueFiles })}\n</verified-inputs-json>\n`;
+    ? "This is an initial turn. Use decision=replace, baseFingerprint=null, action=replace for every file, and return the complete final manifest."
+    : hasBase
+      ? `This is a continuation of the exact director thread. The trusted base fingerprint is ${baseFingerprint}. You may return decision=keep with that baseFingerprint and no files. Otherwise return decision=replace with the same baseFingerprint and a complete final file manifest: use action=inherit plus the exact prior sha256 for unchanged base files, and action=replace only for changed or new bytes. Omitting an old optional path deletes it.`
+      : "This exact-thread continuation has no trustworthy materialized base. Use decision=replace, baseFingerprint=null, action=replace for every file, and return the complete final manifest; keep and inherit are unavailable.";
+  const baseArtifact = hasBase
+    ? {
+        fingerprint: baseFingerprint,
+        files: [...baseDeliverables]
+          .map((file) => ({ path: file.path, sha256: file.sha256, size: file.size }))
+          .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
+      }
+    : null;
+  return `${prompt}\n\n---\nRAILWAY TOOL-LESS ARTIFACT EXCHANGE (hard execution contract)\n\nRailway does not permit the Codex Linux namespace sandbox. Do not call the shell, filesystem, network, MCP, connector, browser, todo-list, sub-agent, or any other tool. The verified UTF-8 inputs are embedded below and approved images are attached by the CLI. They are the complete read-only evidence for this turn. Opaque binary descriptors are not inspectable content and may only be preserved through the hash-bound copy mechanism below.\n\nReturn exactly one JSON object matching the supplied output schema, with no Markdown fence or prose. Every file object has path, action, content, copyFromInput, and sha256. For authored UTF-8 replacement text, set action=replace, content to the complete raw text, and the other two fields to null. To adopt an approved inert image/font, set action=replace, content=null, and copyFromInput/sha256 to the exact embedded input descriptor; copy bindings may target only deliverables/assets/luna/. For hash-bound inheritance, set action=inherit, content=null, copyFromInput=null, and sha256 to the exact base descriptor. Never return base64. The trusted worker independently verifies the host-declared artifact contract, resolves every inherited byte, re-hashes the final manifest, and atomically materializes replacements. ${turnRule}\n\n<verified-exchange-json>\n${JSON.stringify({ artifactContract: canonicalContract, baseArtifact, inlineFiles, attachedImages, opaqueFiles })}\n</verified-exchange-json>\n`;
 }
 
 function containsLoneSurrogate(value) {
@@ -497,7 +706,19 @@ function containsLoneSurrogate(value) {
   return false;
 }
 
-export function parseArtifactEnvelope(value, { limits = DEFAULT_LIMITS, inputFiles = [] } = {}) {
+export function parseArtifactEnvelope(
+  value,
+  {
+    mode = "new",
+    limits = DEFAULT_LIMITS,
+    inputFiles = [],
+    baseFiles = [],
+    expectedBaseFingerprint = null,
+    artifactContract = DEFAULT_ARTIFACT_CONTRACT,
+  } = {},
+) {
+  if (mode !== "new" && mode !== "resume") throw new Error(`unsupported artifact mode: ${mode}`);
+  const canonicalContract = validateArtifactContract(artifactContract);
   let parsed;
   try {
     parsed = JSON.parse(value);
@@ -508,17 +729,78 @@ export function parseArtifactEnvelope(value, { limits = DEFAULT_LIMITS, inputFil
     throw new HttpError(422, "invalid_artifact_envelope", "artifact envelope must be a JSON object");
   }
   const keys = Object.keys(parsed).sort();
-  if (keys.join(",") !== "decision,files") {
-    throw new HttpError(422, "invalid_artifact_envelope", "artifact envelope accepts only decision and files");
+  if (keys.join(",") !== "baseFingerprint,decision,files") {
+    throw new HttpError(
+      422,
+      "invalid_artifact_envelope",
+      "artifact envelope accepts only decision, baseFingerprint, and files",
+    );
   }
-  if (parsed.decision !== "replace") {
-    throw new HttpError(422, "invalid_artifact_envelope", "artifact envelope decision must be replace");
+  if (parsed.decision !== "keep" && parsed.decision !== "replace") {
+    throw new HttpError(422, "invalid_artifact_envelope", "artifact envelope decision must be keep or replace");
+  }
+  if (
+    parsed.baseFingerprint !== null &&
+    (typeof parsed.baseFingerprint !== "string" || !SHA256_PATTERN.test(parsed.baseFingerprint))
+  ) {
+    throw new HttpError(
+      422,
+      "invalid_artifact_envelope",
+      "artifact envelope baseFingerprint must be null or a SHA-256 digest",
+    );
+  }
+  const envelopeBaseFingerprint = parsed.baseFingerprint?.toLowerCase() ?? null;
+  const canonicalExpectedBase = expectedBaseFingerprint?.toLowerCase() ?? null;
+  if (envelopeBaseFingerprint !== canonicalExpectedBase) {
+    throw new HttpError(
+      422,
+      "base_fingerprint_mismatch",
+      "artifact envelope does not bind the expected base fingerprint",
+    );
   }
   if (!Array.isArray(parsed.files) || parsed.files.length > limits.maxDeliverables) {
     throw new HttpError(422, "invalid_artifact_envelope", `files must contain at most ${limits.maxDeliverables} entries`);
   }
-  if (parsed.files.length === 0) {
+  if (parsed.decision === "replace" && parsed.files.length === 0) {
     throw new HttpError(422, "invalid_artifact_envelope", "replace requires at least one deliverable file");
+  }
+  if (parsed.decision === "keep" && parsed.files.length !== 0) {
+    throw new HttpError(422, "invalid_artifact_envelope", "keep requires an empty files array");
+  }
+  const normalizedBaseFiles = baseFiles.map((file) => {
+    const relativePath = validateRelativeDeliverablePath(file.path);
+    if (!Buffer.isBuffer(file.bytes)) {
+      throw new HttpError(422, "base_artifact_integrity", "base artifact bytes are unavailable");
+    }
+    const actualSha256 = sha256Bytes(file.bytes);
+    if (typeof file.sha256 !== "string" || file.sha256.toLowerCase() !== actualSha256) {
+      throw new HttpError(422, "base_artifact_integrity", "base artifact hash verification failed");
+    }
+    return { path: relativePath, bytes: file.bytes, sha256: actualSha256 };
+  });
+  const baseByPath = new Map(normalizedBaseFiles.map((file) => [file.path, file]));
+  if (baseByPath.size !== normalizedBaseFiles.length) {
+    throw new HttpError(422, "base_artifact_integrity", "base artifact contains duplicate paths");
+  }
+  if (parsed.decision === "keep") {
+    if (mode !== "resume" || canonicalExpectedBase === null || normalizedBaseFiles.length === 0) {
+      throw new HttpError(422, "invalid_artifact_envelope", "keep requires an exact materialized resume base");
+    }
+    const missing = canonicalContract.requiredPaths.filter((required) => !baseByPath.has(required));
+    if (missing.length) {
+      throw new HttpError(
+        422,
+        "missing_required_deliverables",
+        "kept base artifact does not satisfy the host-declared contract",
+      );
+    }
+    return {
+      decision: "keep",
+      baseFingerprint: canonicalExpectedBase,
+      files: normalizedBaseFiles.sort(
+        (left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+      ),
+    };
   }
   const paths = new Set();
   const inputByPath = new Map(inputFiles.map((file) => [file.path, file]));
@@ -530,11 +812,11 @@ export function parseArtifactEnvelope(value, { limits = DEFAULT_LIMITS, inputFil
       throw new HttpError(422, "invalid_artifact_envelope", "each artifact-envelope file must be an object");
     }
     const fileKeys = Object.keys(file).sort();
-    if (fileKeys.join(",") !== "content,copyFromInput,path,sha256") {
+    if (fileKeys.join(",") !== "action,content,copyFromInput,path,sha256") {
       throw new HttpError(
         422,
         "invalid_artifact_envelope",
-        "artifact-envelope files require path, content, copyFromInput, and sha256",
+        "artifact-envelope files require path, action, content, copyFromInput, and sha256",
       );
     }
     const relativePath = validateRelativeDeliverablePath(file.path);
@@ -543,6 +825,22 @@ export function parseArtifactEnvelope(value, { limits = DEFAULT_LIMITS, inputFil
     }
     let bytes;
     if (
+      file.action === "inherit" &&
+      file.content === null &&
+      file.copyFromInput === null &&
+      typeof file.sha256 === "string" &&
+      SHA256_PATTERN.test(file.sha256)
+    ) {
+      if (mode !== "resume" || canonicalExpectedBase === null) {
+        throw new HttpError(422, "invalid_artifact_envelope", "inherit requires an exact materialized resume base");
+      }
+      const inherited = baseByPath.get(relativePath);
+      if (!inherited || inherited.sha256 !== file.sha256.toLowerCase()) {
+        throw new HttpError(422, "inherit_hash_mismatch", "inherited deliverable does not match its trusted base hash");
+      }
+      bytes = inherited.bytes;
+    } else if (
+      file.action === "replace" &&
       typeof file.content === "string" &&
       file.copyFromInput === null &&
       file.sha256 === null
@@ -564,6 +862,7 @@ export function parseArtifactEnvelope(value, { limits = DEFAULT_LIMITS, inputFil
         );
       }
     } else if (
+      file.action === "replace" &&
       file.content === null &&
       typeof file.copyFromInput === "string" &&
       typeof file.sha256 === "string" &&
@@ -585,7 +884,7 @@ export function parseArtifactEnvelope(value, { limits = DEFAULT_LIMITS, inputFil
       throw new HttpError(
         422,
         "invalid_artifact_envelope",
-        `${relativePath} must contain UTF-8 text or an exact approved-input copy binding`,
+        `${relativePath} must inherit an exact base hash, contain UTF-8 replacement text, or bind an exact approved input`,
       );
     }
     if (bytes.byteLength > limits.maxDeliverableBytes) {
@@ -598,15 +897,19 @@ export function parseArtifactEnvelope(value, { limits = DEFAULT_LIMITS, inputFil
     paths.add(relativePath);
     files.push({ path: relativePath, bytes, sha256: sha256Bytes(bytes) });
   }
-  const missing = [...REQUIRED_DELIVERABLE_PATHS].filter((required) => !paths.has(required));
+  const missing = canonicalContract.requiredPaths.filter((required) => !paths.has(required));
   if (missing.length) {
     throw new HttpError(
       422,
-      "missing_core_deliverables",
-      `artifact envelope is missing required files: ${missing.join(", ")}`,
+      "missing_required_deliverables",
+      "artifact envelope does not satisfy the host-declared required deliverables",
     );
   }
-  return { decision: "replace", files };
+  return {
+    decision: "replace",
+    baseFingerprint: canonicalExpectedBase,
+    files: files.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
+  };
 }
 
 export async function materializeArtifactEnvelope(workspace, envelope) {

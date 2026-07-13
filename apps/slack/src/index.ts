@@ -34,7 +34,18 @@ import {
   type VideoResult,
 } from "./orchestrator.ts";
 import { DEMO_BRIEF, buildDemoPlan } from "./demo.ts";
-import { createJob, findJobByThread, getJob, listJobs, updateJob } from "./jobStore.ts";
+import {
+  conversationalJobAction,
+  createJob,
+  findJobByThread,
+  getJob,
+  listJobs,
+  normalizeStoredCreateRequest,
+  retryCreateRequest,
+  retryCreateRequestForActor,
+  updateJob,
+  type Job,
+} from "./jobStore.ts";
 import { EventDeduper, parseThreadReply, type ThreadReply } from "./messageEvents.ts";
 import {
   postMessageWithAutoJoin,
@@ -57,7 +68,8 @@ import {
   recordStepDuration,
   visibleEtaMs,
 } from "./engine/stageTimings.ts";
-import { resolveAuthorRoute } from "./engine/lunaRoute.ts";
+import { authorLunaAssetPack, resolveAuthorRoute } from "./engine/lunaRoute.ts";
+import { renderLunaAssetPackPreview } from "./engine/lunaAssetPack.ts";
 import { loadJobFrame, publicFrameMd } from "./engine/frameDesign.ts";
 import {
   assetBriefContext,
@@ -66,7 +78,9 @@ import {
   clearAssetBrief,
   extractPaletteFromImages,
   loadAssetBrief,
+  preparedLunaAssetPack,
   renderAssetBriefPreview,
+  reserveLunaAssetPack,
   saveAssetBrief,
   storeReferenceImages,
   type ChannelAssetBrief,
@@ -155,6 +169,8 @@ function runJobInBackground(
 /** Honest phase copy for each named model stage while it runs. */
 const STAGE_PHASES: Record<string, string> = {
   "luna-director": "Luna is directing and authoring the film…",
+  "luna-direction": "Luna is choosing the film's direction and story…",
+  "luna-build": "Luna is authoring the executable film…",
   "luna-repair": "Luna is repairing one proven mechanical defect…",
   "luna-self-review": "Luna is reviewing the rendered motion…",
   "luna-revision": "Luna is revising its film…",
@@ -322,6 +338,7 @@ function stageBlocks(
   stage: VideoStage,
   renderQuality: "draft" | "high" = "draft",
 ) {
+  const job = getJob(jobId);
   return resultBlocks({
     jobId,
     title,
@@ -337,6 +354,9 @@ function stageBlocks(
     fallback: result.fallback
       ? { stage: result.fallback.stage, reason: result.fallback.reason }
       : undefined,
+    canRetryCreate: result.fallback
+      ? Boolean(job && retryCreateRequest(job))
+      : false,
     provider: result.authorRoute === "luna-direct"
       ? "Luna 5.6 · high (Codex CLI)"
       : result.provider,
@@ -460,11 +480,33 @@ async function deliverVideo(
     onProgress?: ProgressCallback;
   },
 ): Promise<void> {
-  const rendered = await renderVideo(args.result.projectDir, {
-    preferMcp: args.result.mcpRequested,
-    quality: "draft",
-    onProgress: args.onProgress,
-  });
+  let rendered: Awaited<ReturnType<typeof renderVideo>>;
+  try {
+    rendered = await renderVideo(args.result.projectDir, {
+      preferMcp: args.result.mcpRequested,
+      quality: "draft",
+      onProgress: args.onProgress,
+    });
+  } catch (error) {
+    // Authoring already committed a valid, revisable composition. A renderer
+    // outage must settle that accepted job instead of freezing it in building
+    // or misclassifying it as a fresh-author retry.
+    updateJob(args.jobId, { status: "ready", mp4Path: undefined });
+    await safeUpdate(client, {
+      channel: args.channel,
+      ts: args.messageTs,
+      blocks: stageBlocks(args.jobId, args.title, args.result, "unavailable"),
+      text: `“${args.title}” storyboard ready; MP4 render failed`,
+    });
+    await safeNotify(args.notifyFailure, error);
+    await postMessageWithAutoJoin(client, {
+      channel: args.channel,
+      thread_ts: args.threadTs ?? args.messageTs,
+      text: `:warning: The Luna-authored storyboard is saved and can be revised, but the MP4 render failed. ` +
+        `Job ID: \`${args.jobId}\`. ${userFacingSlackError(error)}`,
+    }).catch((postError) => logBackgroundError("render warning failed", postError));
+    return;
+  }
   // Teach the countdown: fold the real render duration into the persisted EMA.
   for (const call of rendered.toolCalls) {
     if (call.status === "succeeded") recordStepDuration(call.tool, call.durationMs);
@@ -573,6 +615,11 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     messageTs,
     status: "building",
     title: args.product,
+    // Persist only the original user-authored brief and permission handles.
+    // Never persist the callback, OAuth token, retrieved MCP context, or a
+    // deterministic demo function. A failed ordinary create can then restart
+    // as a fresh Luna job without pretending an empty project is revisable.
+    createRequest: args.presetPlan ? undefined : normalizeStoredCreateRequest(args),
   });
 
   // Context plane: search Slack through Slack's hosted MCP server with the
@@ -580,6 +627,9 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
   let enrichedContext = args.context;
   let lunaContext = args.context;
   let assetReferencePaths: string[] | undefined;
+  let preparedAssetPackDir: string | undefined;
+  let preparedAssetPackRoot: string | undefined;
+  let preparedAssetPackFingerprint: string | undefined;
   let slackMcpTools: string[] | undefined;
   let slackMcpNote: string | undefined;
   if (userToken) {
@@ -612,22 +662,34 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
   // from the user's own screenshots outranks anything inferred, so it is
   // appended AFTER workspace context. The deterministic demo skips it.
   if (!args.presetPlan) {
-    const assetBrief = loadAssetBrief(args.channel);
-    if (assetBrief) {
-      // The planning offer names 3-4 fitting pre-built asset kinds with the
-      // brief's accent prefilled (declare-by-default, droppable). It is empty
-      // unless the asset library rides the plugin rails (assetsEnabled()).
-      enrichedContext = [
-        enrichedContext,
-        assetBriefContext(assetBrief),
-        assetBriefPlanningOffer(assetBrief),
-      ]
-        .filter(Boolean)
-        .join("\n\n");
-      lunaContext = [lunaContext, assetBriefContext(assetBrief)]
-        .filter(Boolean)
-        .join("\n\n");
-      assetReferencePaths = assetBrief.refs;
+    try {
+      const assetBrief = loadAssetBrief(args.channel);
+      if (assetBrief) {
+        // The planning offer names 3-4 fitting pre-built asset kinds with the
+        // brief's accent prefilled (declare-by-default, droppable). It is empty
+        // unless the asset library rides the plugin rails (assetsEnabled()).
+        enrichedContext = [
+          enrichedContext,
+          assetBriefContext(assetBrief),
+          assetBriefPlanningOffer(assetBrief),
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        lunaContext = [lunaContext, assetBriefContext(assetBrief)]
+          .filter(Boolean)
+          .join("\n\n");
+        assetReferencePaths = assetBrief.refs;
+        const preparedPack = preparedLunaAssetPack(assetBrief);
+        preparedAssetPackDir = preparedPack?.deliverablesDir;
+        preparedAssetPackRoot = preparedPack?.approvedRoot;
+        preparedAssetPackFingerprint = preparedPack?.receipt.fingerprint;
+      }
+    } catch (error) {
+      logBackgroundError("prepared Luna UI pack resolution failed; building without it", error);
+      slackMcpNote = [
+        slackMcpNote,
+        "The saved UI pack could not be verified, so Luna built from the launch brief without it.",
+      ].filter(Boolean).join(" ");
     }
   }
 
@@ -647,6 +709,9 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
       lunaContext,
       assetReferencePaths,
       assetReferenceRoot: assetReferencePaths?.length ? assetBriefReferencesRoot() : undefined,
+      preparedAssetPackDir,
+      preparedAssetPackRoot,
+      preparedAssetPackFingerprint,
       presetPlan: args.presetPlan,
       render: false,
       onProgress,
@@ -656,7 +721,7 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     result.slackMcpNote = slackMcpNote;
   } catch (error) {
     view.stop();
-    updateJob(jobId, { status: "error" });
+    const failedJob = updateJob(jobId, { status: "error" });
     await safeUpdate(client, {
       channel: args.channel,
       ts: messageTs,
@@ -664,6 +729,7 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
         args.product,
         error instanceof Error ? error.message : String(error),
         jobId,
+        { retryCreate: Boolean(failedJob && retryCreateRequest(failedJob)) },
       ),
       text: `Couldn’t build “${args.product}”`,
     });
@@ -672,7 +738,11 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
   // Authoring finished (success) — the storyboard update replaces the live view.
   view.stop();
 
-  updateJob(jobId, { status: "building", projectDir: result.projectDir });
+  updateJob(jobId, {
+    status: "building",
+    projectDir: result.projectDir,
+    publishedFallback: Boolean(result.fallback),
+  });
   await safeUpdate(client, {
     channel: args.channel,
     ts: messageTs,
@@ -982,6 +1052,53 @@ async function runShare(client: WebClient, jobId: string, targetChannel: string)
   }
 }
 
+/**
+ * Start a brand-new ordinary create from the allowlisted persisted brief.
+ * A rejected create has no accepted film to revise, and worker continuation is
+ * not assumed here; runCreate assigns a fresh job ID and rebuilds Slack context
+ * through the invoking user's stored permission handle.
+ */
+async function runStoredCreateRetry(
+  client: WebClient,
+  job: Job,
+  actorUserId: string,
+  threadTs = job.threadTs ?? job.messageTs,
+): Promise<void> {
+  const request = retryCreateRequestForActor(job, actorUserId);
+  const retryAllowed = job.status === "error" || job.publishedFallback === true;
+  if (!request || !retryAllowed) {
+    await postMessageWithAutoJoin(client, {
+      channel: job.channel,
+      thread_ts: threadTs,
+      text: request
+        ? ":information_source: This job already has an authored film. Reply here to revise it."
+        : ":warning: This older job has no saved create brief, so it cannot be retried safely. Run `/sequences` to start a new build.",
+    });
+    return;
+  }
+
+  await runCreate(client, {
+    channel: job.channel,
+    threadTs,
+    teamId: request.teamId,
+    userId: request.userId,
+    product: request.product,
+    brandName: request.brandName,
+    whatShipped: request.whatShipped,
+    audience: request.audience,
+    tone: request.tone,
+    lengthSec: request.lengthSec,
+    context: request.context,
+    notifyFailure: async (message) => {
+      await postMessageWithAutoJoin(client, {
+        channel: job.channel,
+        thread_ts: threadTs,
+        text: `:warning: Couldn't start the fresh create retry. ${message}`,
+      });
+    },
+  });
+}
+
 async function handleConversationalReply(
   client: WebClient,
   reply: ThreadReply,
@@ -989,12 +1106,32 @@ async function handleConversationalReply(
   const job = findJobByThread(reply.channel, reply.threadTs);
   if (!job) return false;
   if (!eventDeduper.claim(reply.eventId)) return true;
+  const action = conversationalJobAction(job);
 
-  if (job.status === "building") {
+  if (action === "busy") {
     await postMessageWithAutoJoin(client, {
       channel: job.channel,
       thread_ts: reply.threadTs,
       text: ":hourglass_flowing_sand: This reel is still building. Send that revision again once the draft is ready.",
+    });
+    return true;
+  }
+
+  if (action === "retry-create") {
+    runJobInBackground(
+      "in-thread create retry",
+      client,
+      job.id,
+      () => runStoredCreateRetry(client, job, reply.userId, reply.threadTs),
+    );
+    return true;
+  }
+
+  if (action === "unavailable") {
+    await postMessageWithAutoJoin(client, {
+      channel: job.channel,
+      thread_ts: reply.threadTs,
+      text: ":warning: This job has no accepted film to revise. Run `/sequences` to start a new build.",
     });
     return true;
   }
@@ -1233,6 +1370,8 @@ app.view("asset_brief", async ({ ack, view, client }) => {
           imageCount: images.length,
           createdAt: new Date().toISOString(),
         };
+        // Keep the approved screenshots even if the paid UI-pack turn fails.
+        // A film can then synthesize a product-specific kit in its own thread.
         saveAssetBrief(brief);
         const paletteText = palette
           ? [
@@ -1243,20 +1382,73 @@ app.view("asset_brief", async ({ ack, view, client }) => {
         await postMessageWithAutoJoin(client, {
           channel,
           text:
-            `:art: Captured your brand from ${images.length} screenshot${images.length === 1 ? "" : "s"}` +
+            `:art: Captured ${images.length} UI screenshot${images.length === 1 ? "" : "s"}` +
             (paletteText ? ` — ${paletteText}.` : ".") +
-            " Every `/sequences` video in this channel now uses it. `/sequences assets clear` to forget.",
+            " Luna is recreating the reusable component states and motion hooks now…",
         });
-        if (palette) {
-          const preview = await renderAssetBriefPreview(brief);
+        const reservation = reserveLunaAssetPack(channel);
+        try {
+          const authoredPack = await authorLunaAssetPack({
+            projectDir: reservation.projectDir,
+            jobId: `asset-${reservation.id}`,
+            channel,
+            notes,
+            palette: palette ?? { colors: [] },
+            assetReferencePaths: refs,
+            assetReferenceRoot: assetBriefReferencesRoot(),
+          });
+          brief.assetPack = {
+            version: 1,
+            id: reservation.id,
+            storageKey: reservation.storageKey,
+            latestRunDir: path.relative(reservation.projectDir, authoredPack.runDir).replace(/\\/g, "/"),
+            fingerprint: authoredPack.validated.fingerprint,
+            materializedFingerprint: authoredPack.worker.materializedFingerprint,
+            workerJobId: authoredPack.worker.jobId,
+            workerRunCount: authoredPack.worker.runCount,
+            threadId: authoredPack.worker.threadId,
+            createdAt: new Date().toISOString(),
+          };
+          saveAssetBrief(brief);
+          await postMessageWithAutoJoin(client, {
+            channel,
+            text:
+              `:white_check_mark: Luna built a versioned UI kit with ` +
+              `${authoredPack.validated.pack.components.length} reusable component` +
+              `${authoredPack.validated.pack.components.length === 1 ? "" : "s"}. ` +
+              "Future `/sequences` films in this channel can animate its real states and parts. " +
+              "`/sequences assets clear` to forget.",
+          });
+          const preview = await renderLunaAssetPackPreview(
+            path.join(authoredPack.runDir, "deliverables"),
+            path.join(reservation.projectDir, "asset-preview.png"),
+          );
           if (preview) {
             await client.files.uploadV2({
               channel_id: channel,
               file: preview,
-              filename: "asset-preview.png",
-              initial_comment: "The asset kit in your brand :point_down:",
+              filename: "luna-ui-kit.png",
+              initial_comment: "The code-native UI kit Luna will hand to future film threads :point_down:",
             });
           }
+        } catch (packError) {
+          logBackgroundError("Luna asset pack authoring failed; raw references retained", packError);
+          const deterministicPreview = palette ? await renderAssetBriefPreview(brief) : null;
+          if (deterministicPreview) {
+            await client.files.uploadV2({
+              channel_id: channel,
+              file: deterministicPreview,
+              filename: "asset-evidence-preview.png",
+              initial_comment: "Screenshot palette captured; Luna's reusable UI-pack turn needs a retry.",
+            });
+          }
+          await postMessageWithAutoJoin(client, {
+            channel,
+            text:
+              ":warning: The screenshots are stored, but Luna couldn't finish the reusable UI kit. " +
+              "Run `/sequences assets` again to retry it; an ordinary `/sequences` run can still " +
+              "synthesize product UI inside its own director thread.",
+          });
         }
       } catch (error) {
         logBackgroundError("asset brief failed", error);
@@ -1271,6 +1463,20 @@ app.view("asset_brief", async ({ ack, view, client }) => {
       }
     })(),
   );
+});
+
+app.action("retry_create", async ({ ack, body, client }) => {
+  await ack();
+  const jobId = actionValue(body as BlockAction);
+  const job = getJob(jobId);
+  if (job) {
+    runJobInBackground(
+      "create retry",
+      client,
+      jobId,
+      () => runStoredCreateRetry(client, job, (body as BlockAction).user.id),
+    );
+  }
 });
 
 app.action("revise_open", async ({ ack, body, client }) => {
@@ -1339,11 +1545,12 @@ app.message(async ({ message, client }) => {
 app.event("app_mention", async ({ event, client, say }) => {
   if (event.thread_ts) {
     const instruction = event.text.replace(botUserId ? new RegExp(`<@${botUserId}>`, "g") : /<@[^>]+>/g, "").trim();
-    if (instruction) {
+    if (instruction && event.user) {
       const handled = await handleConversationalReply(client, {
         channel: event.channel,
         threadTs: event.thread_ts,
         eventId: `${event.channel}:${event.ts}`,
+        userId: event.user,
         instruction,
       });
       if (handled) return;
@@ -1370,10 +1577,11 @@ async function recoverInterruptedJobs(client: WebClient): Promise<void> {
       blocks: errorBlocks(
         job.title,
         "This job stopped because the bot restarted (a deploy or crash) while it was building. " +
-          "Nothing was lost on your end — just run the command again.",
+          "The partial run was preserved for diagnostics; start a fresh create from the saved brief.",
         job.id,
+        { retryCreate: Boolean(retryCreateRequest(job)) },
       ),
-      text: `“${job.title}” was interrupted by a restart — please re-run`,
+      text: `“${job.title}” was interrupted by a restart — retry the saved create`,
     });
   }
   if (orphaned.length > 0) {

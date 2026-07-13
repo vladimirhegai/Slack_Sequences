@@ -14,16 +14,19 @@ import {
   HttpError,
   PERMISSION_PROFILE_SHA256,
   auditCodexSessionRollout,
+  artifactContractSha256,
   authenticateBearerHeader,
   buildChildEnv,
   buildCodexArgs,
   buildToollessArtifactPrompt,
   collectDeliverables,
   materializeArtifactEnvelope,
+  materializedFingerprintFor,
   parseArtifactEnvelope,
   parseCodexEvent,
   parseJobRequest,
   removeForbiddenWorkspaceEntries,
+  safeFailureReceipt,
   sha256Bytes,
   validateJobId,
   workspaceSizeBytes,
@@ -296,7 +299,40 @@ function terminateChild(child) {
   forceTimer.unref();
 }
 
-async function runCodex({ jobId, paths, mode, prompt, threadId, files, state }) {
+function legacyMaterializedFingerprint(files) {
+  return sha256Bytes(Buffer.from(
+    files
+      .map((file) => `${file.path}:${file.sha256}`)
+      .sort()
+      .join("\n"),
+    "utf8",
+  ));
+}
+
+async function loadBaseArtifact(paths, existing, expectedBaseFingerprint) {
+  if (expectedBaseFingerprint === null) return { fingerprint: null, files: [] };
+  if (!existing || existing.materializedFingerprint !== expectedBaseFingerprint) {
+    throw new HttpError(409, "stale_base_fingerprint", "expected base does not match the current worker artifact");
+  }
+  const collected = await collectDeliverables(paths.workspace);
+  const verifiedFingerprint = typeof existing.artifactContractSha256 === "string"
+    ? materializedFingerprintFor(existing.artifactContractSha256, collected)
+    : legacyMaterializedFingerprint(collected);
+  if (verifiedFingerprint !== expectedBaseFingerprint) {
+    throw new HttpError(422, "base_artifact_integrity", "persisted base artifact no longer matches its fingerprint");
+  }
+  return {
+    fingerprint: expectedBaseFingerprint,
+    files: collected.map((file) => ({
+      path: file.path,
+      bytes: Buffer.from(file.contentBase64, "base64"),
+      sha256: file.sha256,
+      size: file.size,
+    })),
+  };
+}
+
+async function runCodex({ jobId, paths, mode, prompt, threadId, files, state, artifactContract, baseArtifact }) {
   const preexistingForbidden = await removeForbiddenWorkspaceEntries(paths.workspace);
   if (preexistingForbidden.length) {
     await writeFile(
@@ -314,7 +350,12 @@ async function runCodex({ jobId, paths, mode, prompt, threadId, files, state }) 
   const tmpDirectory = path.join(paths.workspace, ".tmp");
   await mkdir(tmpDirectory, { recursive: true, mode: 0o700 });
   const imagePaths = writtenFiles.filter((file) => file.attachAsImage).map((file) => file.absolutePath);
-  const adaptedPrompt = buildToollessArtifactPrompt(prompt, writtenFiles, { mode });
+  const adaptedPrompt = buildToollessArtifactPrompt(prompt, writtenFiles, {
+    mode,
+    artifactContract,
+    baseFingerprint: baseArtifact.fingerprint,
+    baseDeliverables: baseArtifact.files,
+  });
   const args = buildCodexArgs({
     mode,
     workspace: paths.workspace,
@@ -336,6 +377,12 @@ async function runCodex({ jobId, paths, mode, prompt, threadId, files, state }) 
     finalMessage: "",
     usage: undefined,
     codexError: undefined,
+    rawEnvelopeSha256: undefined,
+    responseBytes: undefined,
+    materializedFingerprint: undefined,
+    artifactContractSha256: undefined,
+    rolloutSha256: undefined,
+    rolloutResponseItems: undefined,
   });
   let stdoutBytes = 0;
   let stderrBytes = 0;
@@ -461,18 +508,25 @@ async function runCodex({ jobId, paths, mode, prompt, threadId, files, state }) 
       `Codex persisted forbidden tool/function items: ${rolloutAudit.forbiddenItems.join(", ")}`,
     );
   }
-  const envelope = parseArtifactEnvelope(state.finalMessage, { inputFiles: writtenFiles });
-  await materializeArtifactEnvelope(paths.workspace, envelope);
   state.rawEnvelopeSha256 = sha256Bytes(Buffer.from(state.finalMessage, "utf8"));
-  state.materializedFingerprint = sha256Bytes(Buffer.from(
-    envelope.files
-      .map((file) => `${file.path}:${file.sha256}`)
-      .sort()
-      .join("\n"),
-    "utf8",
-  ));
+  state.responseBytes = Buffer.byteLength(state.finalMessage, "utf8");
   state.rolloutSha256 = rolloutAudit.sha256;
   state.rolloutResponseItems = rolloutAudit.responseItems;
+  state.artifactContractSha256 = artifactContractSha256(artifactContract);
+  const envelope = parseArtifactEnvelope(state.finalMessage, {
+    mode,
+    inputFiles: writtenFiles,
+    baseFiles: baseArtifact.files,
+    expectedBaseFingerprint: baseArtifact.fingerprint,
+    artifactContract,
+  });
+  if (envelope.decision === "replace") {
+    await materializeArtifactEnvelope(paths.workspace, envelope);
+  }
+  state.materializedFingerprint = materializedFingerprintFor(
+    state.artifactContractSha256,
+    envelope.files,
+  );
   return state;
 }
 
@@ -486,6 +540,7 @@ async function completedResponse(metadata, paths) {
     model: metadata.model,
     reasoningEffort: metadata.reasoningEffort,
     codexVersion: CODEX_VERSION,
+    artifactContractSha256: metadata.artifactContractSha256,
     rawEnvelopeSha256: metadata.rawEnvelopeSha256,
     materializedFingerprint: metadata.materializedFingerprint,
     rolloutSha256: metadata.rolloutSha256,
@@ -507,10 +562,22 @@ async function executeJob({ jobId, paths, mode, request, existing }) {
     startedAt,
     updatedAt: startedAt,
     runCount: (existing?.runCount || 0) + 1,
+    errorCode: undefined,
+    failure: undefined,
+    finalMessage: undefined,
+    rawEnvelopeSha256: undefined,
+    rolloutSha256: undefined,
+    rolloutResponseItems: undefined,
+    usage: undefined,
   };
   await writeMetadata(paths, running);
   const state = {};
   try {
+    const baseArtifact = await loadBaseArtifact(
+      paths,
+      existing,
+      mode === "resume" ? request.expectedBaseFingerprint : null,
+    );
     await runCodex({
       jobId,
       paths,
@@ -519,28 +586,44 @@ async function executeJob({ jobId, paths, mode, request, existing }) {
       threadId: existing?.threadId,
       files: request.files,
       state,
+      artifactContract: request.artifactContract,
+      baseArtifact,
     });
     const completed = {
       ...running,
       status: "completed",
       threadId: state.threadId,
       finalMessage: state.finalMessage,
+      artifactContractSha256: state.artifactContractSha256,
       rawEnvelopeSha256: state.rawEnvelopeSha256,
       materializedFingerprint: state.materializedFingerprint,
       rolloutSha256: state.rolloutSha256,
       rolloutResponseItems: state.rolloutResponseItems,
       usage: state.usage,
+      errorCode: undefined,
+      failure: undefined,
       updatedAt: new Date().toISOString(),
     };
     const response = await completedResponse(completed, paths);
     await writeMetadata(paths, completed);
     return response;
   } catch (error) {
+    const failure = safeFailureReceipt(error, state);
     const failed = {
       ...running,
       ...(state?.threadId ? { threadId: state.threadId } : {}),
       status: error?.code === "job_cancelled" ? "cancelled" : error?.code === "job_timeout" ? "timed_out" : "failed",
       errorCode: error?.code || "internal_error",
+      failure: {
+        ...failure,
+        ...(mode === "resume" && request.expectedBaseFingerprint
+          ? { baseFingerprint: request.expectedBaseFingerprint }
+          : {}),
+      },
+      ...(state.rawEnvelopeSha256 ? { rawEnvelopeSha256: state.rawEnvelopeSha256 } : {}),
+      ...(state.rolloutSha256 ? { rolloutSha256: state.rolloutSha256 } : {}),
+      ...(state.rolloutResponseItems ? { rolloutResponseItems: state.rolloutResponseItems } : {}),
+      ...(state.usage ? { usage: state.usage } : {}),
       updatedAt: new Date().toISOString(),
     };
     await writeMetadata(paths, failed).catch(() => undefined);
@@ -659,6 +742,19 @@ async function handleResume(jobId, request, response) {
     });
     return;
   }
+  if (existing.status === "running" || existing.status === "queued") {
+    throw new HttpError(409, "job_busy", "job is already queued or running");
+  }
+  const resumableStatus = existing.status === "completed" ||
+    existing.status === "interrupted" ||
+    (existing.status === "failed" && existing.failure?.recoverable === true);
+  if (!resumableStatus) {
+    throw new HttpError(
+      409,
+      "job_not_resumable",
+      "only completed, interrupted, or recoverable artifact-protocol turns may continue",
+    );
+  }
   if (existing.operationId !== parsed.operationId && existing.runCount !== parsed.expectedRunCount) {
     throw new HttpError(
       409,
@@ -666,8 +762,15 @@ async function handleResume(jobId, request, response) {
       `expected completed run ${parsed.expectedRunCount}, current run is ${existing.runCount}`,
     );
   }
-  if (existing.status === "running" || existing.status === "queued") {
-    throw new HttpError(409, "job_busy", "job is already queued or running");
+  const currentBaseFingerprint = typeof existing.materializedFingerprint === "string"
+    ? existing.materializedFingerprint
+    : null;
+  if (parsed.expectedBaseFingerprint !== currentBaseFingerprint) {
+    throw new HttpError(
+      409,
+      "stale_base_fingerprint",
+      "expectedBaseFingerprint does not match the current trustworthy worker artifact",
+    );
   }
   const queuedAt = new Date().toISOString();
   const queued = {
@@ -707,6 +810,12 @@ async function handleGet(jobId, response) {
     threadId: metadata.threadId,
     status: scheduledStatus || metadata.status,
     ...(metadata.errorCode ? { errorCode: metadata.errorCode } : {}),
+    ...(metadata.failure ? { failure: metadata.failure } : {}),
+    ...(metadata.rawEnvelopeSha256 ? { rawEnvelopeSha256: metadata.rawEnvelopeSha256 } : {}),
+    ...(metadata.rolloutSha256 ? { rolloutSha256: metadata.rolloutSha256 } : {}),
+    ...(metadata.rolloutResponseItems
+      ? { rolloutResponseItems: metadata.rolloutResponseItems }
+      : {}),
   });
 }
 

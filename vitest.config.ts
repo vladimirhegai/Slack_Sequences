@@ -8,6 +8,9 @@ export default defineConfig({
       "packages/platform/test/architecture.test.ts",
     ],
     watch: false,
+    // Browser-heavy Slack QA must not saturate shared CI runners and turn
+    // fixed per-test deadlines into scheduler-dependent failures.
+    maxWorkers: 4,
     server: {
       deps: {
         inline: [/@hyperframes[\\/]core/],

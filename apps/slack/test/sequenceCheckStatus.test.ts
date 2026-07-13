@@ -24,11 +24,10 @@ describe("sequence-check status honesty", () => {
     expect(summarizeSequenceCheckStatus(clean())).toBe("pass");
   });
 
-  it("warns for Sentinel degradation, fallback, retries, or browser warnings", () => {
+  it("warns for Sentinel degradation, retries, or browser warnings", () => {
     for (const mutate of [
       (value: ReturnType<typeof clean>) => { value.result.sentinelDisposition = "published-degraded"; },
       (value: ReturnType<typeof clean>) => { value.result.sentinelDegradations = ["cut-degraded"]; },
-      (value: ReturnType<typeof clean>) => { value.result.fallback = { stage: "source-author" }; },
       (value: ReturnType<typeof clean>) => { value.result.stages = [{ attempts: 2 }]; },
       (value: ReturnType<typeof clean>) => { value.checks = { qaWarningCount: 1 }; },
     ]) {
@@ -36,6 +35,30 @@ describe("sequence-check status honesty", () => {
       mutate(value);
       expect(summarizeSequenceCheckStatus(value)).toBe("warn");
     }
+  });
+
+  it("fails when a paid authoring run publishes the deterministic proof film", () => {
+    const reported = clean();
+    reported.result.fallback = { stage: "luna-repair" };
+    expect(summarizeSequenceCheckStatus(reported)).toBe("fail");
+
+    const inferred = clean();
+    inferred.result.authoringMode = "deterministic-fallback";
+    expect(summarizeSequenceCheckStatus(inferred)).toBe("fail");
+
+    const ledgerOnly = clean();
+    ledgerOnly.result.ledgerStatus = {
+      runtimeValid: true,
+      qualityResidue: 0,
+      degradedAxes: [],
+      repeatedQaClasses: [],
+      modelRepair: false,
+      proofFilm: true,
+      materialDegradation: true,
+      oneAttemptSuccess: false,
+      disposition: "fallback",
+    };
+    expect(summarizeSequenceCheckStatus(ledgerOnly)).toBe("fail");
   });
 
   it("fails missing requested render output before reporting warnings", () => {

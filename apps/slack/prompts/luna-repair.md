@@ -7,6 +7,10 @@ mechanical boundary. The exact rejected canonical bytes are embedded beneath
 `inputs/repair/rejected-bundle-host.json`; it states that no bundle has been
 accepted for this create. The verbatim blocking evidence is the `findings[]`
 array in `inputs/repair/hard-findings.json`.
+`inputs/repair/complete-host-diagnostic.json` repeats every blocking line and
+extracts bounded structured timeline evidence when present. Treat the whole
+file as one repair batch: fix all proven defects together instead of stopping
+after the first bullet.
 
 Those findings contain mechanical evidence only: schema/source completeness,
 security, deterministic seeking, declared bindings/selectors, browser runtime,
@@ -20,11 +24,11 @@ sub-agent, or any other tool. The embedded values are the complete read-only
 evidence for this turn. Do not invoke the legacy planner, scaffold, critic,
 repair committee, rescue model, or a second repair pass.
 
-Return one complete replacement bundle under `deliverables/` through exactly
-one `decision: "replace"` artifact envelope matching the worker-supplied output
-schema. Re-emit every required file and every used asset, including unchanged
-bytes. Preserve binary assets only through exact hash-bound copy mappings from
-the supplied rejected bundle. Do not return a patch, explanation outside the
-schema, or a reference to prior thread state. The trusted worker will validate,
-rehash, and atomically materialize the replacement; you do not write files
-yourself.
+Return one `decision: "replace"` artifact envelope matching the worker-supplied
+schema and its exact `baseFingerprint`. Declare the complete final manifest:
+use `action: "inherit"` with the base file's exact SHA-256 for every unchanged
+file, and `action: "replace"` only for bytes you changed. Never retype or
+base64-synthesize an unchanged binary. Do not return a patch, explanation
+outside the schema, or a reference to unbound thread state. The trusted worker
+will hash-check the base, validate every action, and atomically materialize the
+complete replacement; you do not write files yourself.

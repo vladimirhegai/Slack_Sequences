@@ -163,12 +163,45 @@ describe("Slack blocks", () => {
       usedMcp: false,
       provider: "Luna",
       fallback: { stage: "luna-repair", reason: "timeline_contract: exact timeline absent" },
+      canRetryCreate: true,
     }));
     expect(fallback).toContain("Safe fallback");
     expect(fallback).toContain("job-fallback-1");
     expect(fallback).toContain("timeline_contract: exact timeline absent");
+    expect(fallback).toContain("Retry Luna create");
+    expect(fallback).toContain("retry_create");
+    expect(fallback).toContain("revise the published proof film");
+    expect(fallback).not.toContain("reply here to retry");
+    const fallbackWithoutSavedBrief = JSON.stringify(resultBlocks({
+      jobId: "job-old-fallback",
+      title: "Relay",
+      outline: "1. proof",
+      lint: "lint: clean",
+      videoStage: "ready",
+      usedMcp: false,
+      provider: "Luna",
+      fallback: { stage: "luna-repair" },
+    }));
+    expect(fallbackWithoutSavedBrief).toContain("Run `/sequences` for a fresh model-authored attempt");
+    expect(fallbackWithoutSavedBrief).not.toContain("retry_create");
     expect(JSON.stringify(errorBlocks("Relay", "worker unreachable", "job-error-1")))
       .toContain("job-error-1");
+  });
+
+  it("offers a fresh-create retry only when a failed job saved its brief", () => {
+    const retryable = JSON.stringify(errorBlocks(
+      "Relay",
+      "worker unreachable",
+      "job-error-1",
+      { retryCreate: true },
+    ));
+    const oldJob = JSON.stringify(errorBlocks("Relay", "worker unreachable", "job-old-1"));
+
+    expect(retryable).toContain("Nothing was published");
+    expect(retryable).toContain("fresh Luna build from the saved brief");
+    expect(retryable).toContain('"action_id":"retry_create"');
+    expect(oldJob).not.toContain("retry_create");
+    expect(oldJob).toContain("run `/sequences` again");
   });
 
   it("renders incremental thinking-step states", () => {

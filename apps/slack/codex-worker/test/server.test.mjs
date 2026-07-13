@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { operationIdForRequest } from "../worker-lib.mjs";
+import { DEFAULT_ARTIFACT_CONTRACT, operationIdForRequest } from "../worker-lib.mjs";
 
 const workerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const token = "integration-worker-token-that-is-longer-than-thirty-two-characters";
@@ -45,7 +45,8 @@ if (args.includes("--version")) {
 }
 const emitToolEvent = args.includes("--emit-tool-event");
 const persistHiddenTool = args.includes("--persist-hidden-tool");
-const codexArgs = args.filter((arg) => arg !== "--emit-tool-event" && arg !== "--persist-hidden-tool");
+const invalidEnvelopeFirst = args.includes("--invalid-envelope-first");
+const codexArgs = args.filter((arg) => !["--emit-tool-event", "--persist-hidden-tool", "--invalid-envelope-first"].includes(arg));
 const resume = codexArgs[0] === "exec" && codexArgs[1] === "resume";
 const threadId = resume ? codexArgs[2] : "019f5a36-c85c-7541-94d7-c474a8e26d33";
 let prompt = "";
@@ -53,8 +54,15 @@ for await (const chunk of process.stdin) prompt += chunk;
 const countFile = path.join(process.cwd(), ".fake-count");
 const count = fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8")) + 1 : 1;
 fs.writeFileSync(countFile, String(count));
-const artifactEnvelope = {
+const exchangeMatch = prompt.match(/<verified-exchange-json>\\n([\\s\\S]*?)\\n<\\/verified-exchange-json>/);
+const exchange = exchangeMatch ? JSON.parse(exchangeMatch[1]) : { baseArtifact: null };
+const artifactEnvelope = invalidEnvelopeFirst && count === 1 ? {
   decision: "replace",
+  baseFingerprint: null,
+  files: [],
+} : {
+  decision: "replace",
+  baseFingerprint: exchange.baseArtifact?.fingerprint ?? null,
   files: [
     ["deliverables/assets-manifest.json", "[]"],
     ["deliverables/composition.html", "<!doctype html>"],
@@ -64,6 +72,7 @@ const artifactEnvelope = {
     ["deliverables/result.txt", "run=" + count + " toolLess=" + prompt.includes("RAILWAY TOOL-LESS ARTIFACT EXCHANGE")],
   ].map(([artifactPath, content]) => ({
     path: artifactPath,
+    action: "replace",
     content,
     copyFromInput: null,
     sha256: null,
@@ -102,6 +111,7 @@ process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { input_tok
         fakeCodexPath,
         ...(options.fakeToolEvent ? ["--emit-tool-event"] : []),
         ...(options.fakeHiddenTool ? ["--persist-hidden-tool"] : []),
+        ...(options.invalidEnvelopeFirst ? ["--invalid-envelope-first"] : []),
       ]),
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -176,8 +186,8 @@ test("HTTP boundary exposes private readiness and protects every v1 route", asyn
     version: "0.144.1",
     model: "gpt-5.6-luna",
     reasoningEffort: "high",
-    artifactProtocol: "luna-tool-less-artifact-v1",
-    artifactSchemaSha256: "ac487766f625ecd680541cbf3b7a6e0018a3570e1037e65c9c629d8af52569cb",
+    artifactProtocol: "luna-tool-less-artifact-v2",
+    artifactSchemaSha256: "7fa551fb261b6dee573aca74507202f5ab0b30ca00fe60cd04141dea8dfe104d",
     permissionProfileSha256: "ebd9f548aaa2f1d48df15ea1e124462350791ede65267f7677e9a834fa0060c6",
     authenticated: true,
     authConfigured: true,
@@ -200,7 +210,11 @@ test("HTTP boundary exposes private readiness and protects every v1 route", asyn
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({ jobId: "../escape", prompt: "Do not run." }),
+    body: JSON.stringify({
+      jobId: "../escape",
+      prompt: "Do not run.",
+      artifactContract: DEFAULT_ARTIFACT_CONTRACT,
+    }),
   });
   assert.equal(invalid.status, 400);
   assert.equal((await invalid.json()).error.code, "invalid_job_id");
@@ -229,6 +243,7 @@ test("async create polling and exact-thread resume complete through the worker b
       operationId: createOperationId,
       prompt: createPrompt,
       files: [],
+      artifactContract: DEFAULT_ARTIFACT_CONTRACT,
     }),
   });
   assert.equal(created.status, 202);
@@ -236,9 +251,13 @@ test("async create polling and exact-thread resume complete through the worker b
   assert.equal(first.threadId, "019f5a36-c85c-7541-94d7-c474a8e26d33");
   assert.equal(first.runCount, 1);
   assert.equal(first.operationId, createOperationId);
+  assert.match(first.artifactContractSha256, /^[a-f0-9]{64}$/);
 
   const revisionPrompt = "Revise the same deliverable.";
-  const revisionOperationId = operationIdForRequest(revisionPrompt, [], first.runCount);
+  const revisionOperationId = operationIdForRequest(revisionPrompt, [], {
+    expectedRunCount: first.runCount,
+    expectedBaseFingerprint: first.materializedFingerprint,
+  });
   const resumed = await fetch(`${baseUrl}/v1/jobs/${jobId}/resume`, {
     method: "POST",
     headers: {
@@ -248,8 +267,10 @@ test("async create polling and exact-thread resume complete through the worker b
     body: JSON.stringify({
       operationId: revisionOperationId,
       expectedRunCount: first.runCount,
+      expectedBaseFingerprint: first.materializedFingerprint,
       prompt: revisionPrompt,
       files: [],
+      artifactContract: DEFAULT_ARTIFACT_CONTRACT,
     }),
   });
   assert.equal(resumed.status, 202);
@@ -268,14 +289,75 @@ test("async create polling and exact-thread resume complete through the worker b
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      operationId: operationIdForRequest(stalePrompt, [], first.runCount),
+      operationId: operationIdForRequest(stalePrompt, [], {
+        expectedRunCount: first.runCount,
+        expectedBaseFingerprint: first.materializedFingerprint,
+      }),
       expectedRunCount: first.runCount,
+      expectedBaseFingerprint: first.materializedFingerprint,
       prompt: stalePrompt,
       files: [],
+      artifactContract: DEFAULT_ARTIFACT_CONTRACT,
     }),
   });
   assert.equal(stale.status, 409);
   assert.equal((await stale.json()).error.code, "stale_job_generation");
+});
+
+test("recoverable envelope rejection exposes a safe receipt and resumes the exact thread", async (t) => {
+  const baseUrl = await startWorker(t, { invalidEnvelopeFirst: true });
+  const jobId = "worker-recoverable-envelope";
+  const createPrompt = "Return a complete artifact.";
+  const createOperationId = operationIdForRequest(createPrompt, []);
+  const created = await fetch(`${baseUrl}/v1/jobs`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      jobId,
+      operationId: createOperationId,
+      prompt: createPrompt,
+      files: [],
+      artifactContract: DEFAULT_ARTIFACT_CONTRACT,
+    }),
+  });
+  assert.equal(created.status, 202);
+  const failed = await waitForFailed(baseUrl, jobId);
+  assert.equal(failed.runCount, 1);
+  assert.equal(failed.threadId, "019f5a36-c85c-7541-94d7-c474a8e26d33");
+  assert.deepEqual(failed.failure.envelopeFindings, [{ code: "invalid_artifact_envelope" }]);
+  assert.equal(failed.failure.category, "artifact_protocol");
+  assert.equal(failed.failure.recoverable, true);
+  assert.equal(failed.failure.baseFingerprint, undefined);
+  assert.equal(failed.failure.response.sha256, failed.rawEnvelopeSha256);
+  assert.equal(failed.failure.rollout.sha256, failed.rolloutSha256);
+
+  const repairPrompt = "Return the complete corrected artifact.";
+  const repairOperationId = operationIdForRequest(repairPrompt, [], {
+    expectedRunCount: failed.runCount,
+    expectedBaseFingerprint: null,
+  });
+  const resumed = await fetch(`${baseUrl}/v1/jobs/${jobId}/resume`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      operationId: repairOperationId,
+      expectedRunCount: failed.runCount,
+      expectedBaseFingerprint: null,
+      prompt: repairPrompt,
+      files: [],
+      artifactContract: DEFAULT_ARTIFACT_CONTRACT,
+    }),
+  });
+  assert.equal(resumed.status, 202);
+  const completed = await waitForCompleted(baseUrl, jobId);
+  assert.equal(completed.runCount, 2);
+  assert.equal(completed.threadId, failed.threadId);
 });
 
 test("a tool event fails the job even when Codex also emits a valid artifact envelope", async (t) => {
@@ -293,11 +375,35 @@ test("a tool event fails the job even when Codex also emits a valid artifact env
       operationId,
       prompt,
       files: [],
+      artifactContract: DEFAULT_ARTIFACT_CONTRACT,
     }),
   });
   assert.equal(response.status, 202);
   const failed = await waitForFailed(baseUrl, "worker-tool-violation");
   assert.equal(failed.errorCode, "tool_use_forbidden");
+  assert.equal(failed.failure.category, "security");
+  assert.equal(failed.failure.recoverable, false);
+  const resumePrompt = "Try to continue a compromised thread.";
+  const resume = await fetch(`${baseUrl}/v1/jobs/worker-tool-violation/resume`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      operationId: operationIdForRequest(resumePrompt, [], {
+        expectedRunCount: failed.runCount,
+        expectedBaseFingerprint: null,
+      }),
+      expectedRunCount: failed.runCount,
+      expectedBaseFingerprint: null,
+      prompt: resumePrompt,
+      files: [],
+      artifactContract: DEFAULT_ARTIFACT_CONTRACT,
+    }),
+  });
+  assert.equal(resume.status, 409);
+  assert.equal((await resume.json()).error.code, "job_not_resumable");
 });
 
 test("persisted rollout inspection catches a tool item omitted from exec JSONL", async (t) => {
@@ -315,9 +421,12 @@ test("persisted rollout inspection catches a tool item omitted from exec JSONL",
       operationId,
       prompt,
       files: [],
+      artifactContract: DEFAULT_ARTIFACT_CONTRACT,
     }),
   });
   assert.equal(response.status, 202);
   const failed = await waitForFailed(baseUrl, "worker-hidden-tool-violation");
   assert.equal(failed.errorCode, "tool_use_forbidden");
+  assert.equal(failed.failure.category, "security");
+  assert.equal(failed.failure.recoverable, false);
 });

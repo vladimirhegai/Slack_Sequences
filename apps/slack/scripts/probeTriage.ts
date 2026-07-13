@@ -9,6 +9,10 @@ import {
   type AttemptLedgerEvent,
   type LedgerStatus,
 } from "../src/engine/runner/attemptLedger.ts";
+import {
+  buildLunaTriageReport,
+  renderLunaTriageMarkdown,
+} from "./lunaTriage.ts";
 
 type JsonObject = Record<string, unknown>;
 
@@ -68,7 +72,9 @@ interface TriageReport {
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const projectsDir = path.join(appDir, ".data", "projects");
-const sourceArg = process.argv[2];
+const cliArgs = process.argv.slice(2);
+const forceLegacy = cliArgs.includes("--legacy");
+const sourceArg = cliArgs.find((arg) => !arg.startsWith("-"));
 
 function asObject(value: unknown): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -480,14 +486,31 @@ if (!sourceArg || sourceArg.startsWith("-")) {
   process.exitCode = 2;
 } else {
   try {
-    const project = resolveProject(sourceArg);
-    const report = collectTriage(project.jobId, project.projectDir);
-    const reportPath = path.join(project.projectDir, "planning", "triage.md");
-    const jsonPath = path.join(project.projectDir, "planning", "triage.json");
-    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-    fs.writeFileSync(reportPath, markdown(report), "utf8");
-    fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2) + "\n", "utf8");
-    process.stdout.write(markdown(report));
+    let lunaReport: ReturnType<typeof buildLunaTriageReport> | undefined;
+    if (!forceLegacy) {
+      try {
+        lunaReport = buildLunaTriageReport(sourceArg);
+      } catch (error) {
+        if (!(error instanceof Error) || !error.message.startsWith("no Luna worker runs found")) {
+          throw error;
+        }
+      }
+    }
+    if (lunaReport) {
+      // Luna evidence is already immutable and hash-bound. Do not translate it
+      // into legacy planner/author stages or write derived files beside the
+      // paid receipt; print the route-native report directly.
+      process.stdout.write(renderLunaTriageMarkdown(lunaReport));
+    } else {
+      const project = resolveProject(sourceArg);
+      const report = collectTriage(project.jobId, project.projectDir);
+      const reportPath = path.join(project.projectDir, "planning", "triage.md");
+      const jsonPath = path.join(project.projectDir, "planning", "triage.json");
+      fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+      fs.writeFileSync(reportPath, markdown(report), "utf8");
+      fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2) + "\n", "utf8");
+      process.stdout.write(markdown(report));
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

@@ -77,11 +77,12 @@ import {
   type LedgerStatus,
 } from "./engine/runner/attemptLedger.ts";
 import { sentinelSkeletonEnabled, sentinelSlotsEnabled } from "./engine/sentinelFlags.ts";
-import { slackSequencesEnvRawValue } from "./engine/featureFlags.ts";
+import { resolveFeatureFlag, slackSequencesEnvRawValue } from "./engine/featureFlags.ts";
 import {
   activateLunaAssets,
   authorLunaComposition,
   confirmLunaComposition,
+  lunaCreateFailureStage,
   LunaRejectedBundleError,
   loadLunaSession,
   repairLunaComposition,
@@ -230,6 +231,8 @@ export type AuthoringStage =
   | "storyboard-plan"
   | "source-author"
   | "luna-director"
+  | "luna-direction"
+  | "luna-build"
   | "luna-repair"
   | "luna-self-review"
   | "luna-revision";
@@ -741,15 +744,18 @@ export interface CreateVideoOptions extends BriefFields {
   assetReferencePaths?: readonly string[];
   /** Containment root for those host-owned references. Required when files exist. */
   assetReferenceRoot?: string;
+  /** Host-validated `/sequences assets` UI-pack deliverables directory. */
+  preparedAssetPackDir?: string;
+  /** Containment root for the versioned UI pack. */
+  preparedAssetPackRoot?: string;
+  /** Host-accepted byte fingerprint for that exact versioned UI pack. */
+  preparedAssetPackFingerprint?: string;
   /** Context without legacy planner/asset offers; preserves Luna's creative ownership. */
   lunaContext?: string;
   /**
-   * Model-free proof film when creative authoring is exhausted. ON by default:
-   * the result is explicitly labeled (`VideoResult.fallback` + the Slack
-   * fallback banner and debug receipts keep it honest), and a labeled proof
-   * film beats a raw error in front of a demo audience. Operators who prefer
-   * visible failures opt out per call or with
-   * SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0.
+   * Model-free proof film when creative authoring is exhausted. This is an
+   * explicit operator/demo escape hatch; ordinary Luna runs fail loudly so a
+   * deterministic proof can never masquerade as a successful creative run.
    */
   allowDeterministicFallback?: boolean;
   /**
@@ -841,9 +847,8 @@ async function publishLunaFallback(
     stages,
   });
   const reportPath = writeFailureReport(dir, report);
-  const allowFallback =
-    options.allowDeterministicFallback ??
-    slackSequencesEnvRawValue("SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK") !== "0";
+  const allowFallback = options.allowDeterministicFallback ??
+    resolveFeatureFlag("SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK").value === "on";
   if (!allowFallback) {
     throw new Error(`Job ID: ${options.jobId}\n${report}`);
   }
@@ -894,8 +899,6 @@ async function createVideoWithLuna(
   dir: string,
 ): Promise<VideoResult> {
   const stages: StageReceipt[] = [];
-  const directorStarted = performance.now();
-  pulseAuthorStage(options.onStageProgress, "luna-director", "started");
   const targetDurationSec = options.lengthSec ?? DEFAULT_TARGET_LENGTH_SEC;
   const facts: LunaFactEnvelope = {
     version: 1,
@@ -929,14 +932,26 @@ async function createVideoWithLuna(
       facts,
       assetReferencePaths: options.assetReferencePaths,
       assetReferenceRoot: options.assetReferenceRoot,
+      preparedAssetPackDir: options.preparedAssetPackDir,
+      preparedAssetPackRoot: options.preparedAssetPackRoot,
+      preparedAssetPackFingerprint: options.preparedAssetPackFingerprint,
+      onWorkflowStage: (stage, phase, durationMs, attempts) => {
+        pulseAuthorStage(options.onStageProgress, stage, phase, durationMs);
+        if (phase === "completed") {
+          stages.push({
+            stage,
+            status: "succeeded",
+            durationMs: durationMs ?? 0,
+            attempts: attempts ?? 1,
+          });
+        }
+      },
     });
-    const durationMs = Math.round(performance.now() - directorStarted);
-    stages.push({ stage: "luna-director", status: "succeeded", durationMs, attempts: 1 });
-    pulseAuthorStage(options.onStageProgress, "luna-director", "completed", durationMs);
   } catch (error) {
-    const durationMs = Math.round(performance.now() - directorStarted);
-    stages.push({ stage: "luna-director", status: "failed", durationMs, attempts: 1 });
-    pulseAuthorStage(options.onStageProgress, "luna-director", "completed", durationMs);
+    failedStage = lunaCreateFailureStage(error) ?? "luna-director";
+    const receipt = [...stages].reverse().find((entry) => entry.stage === failedStage);
+    if (receipt) receipt.status = "failed";
+    else stages.push({ stage: failedStage, status: "failed", durationMs: 0, attempts: 1 });
     terminalFailure = error;
     if (error instanceof LunaRejectedBundleError) rejectedWorker = error.worker;
   }
@@ -948,6 +963,9 @@ async function createVideoWithLuna(
     } catch (error) {
       terminalFailure = error;
       rejectedWorker = authored.worker;
+      failedStage = "luna-build";
+      const buildReceipt = [...stages].reverse().find((entry) => entry.stage === "luna-build");
+      if (buildReceipt) buildReceipt.status = "failed";
     }
   }
 
@@ -955,6 +973,7 @@ async function createVideoWithLuna(
   // The repair sees only the verbatim hard failure; all static taste findings
   // were already retained as warnings by the declared-intent validation path.
   if (!initialMutation && rejectedWorker) {
+    const repairBaseRunCount = rejectedWorker.runCount;
     const repairStarted = performance.now();
     pulseAuthorStage(options.onStageProgress, "luna-repair", "started");
     try {
@@ -967,7 +986,12 @@ async function createVideoWithLuna(
       initialMutation = await commitLunaCandidate(options, dir, repaired);
       authored = repaired;
       const durationMs = Math.round(performance.now() - repairStarted);
-      stages.push({ stage: "luna-repair", status: "succeeded", durationMs, attempts: 1 });
+      stages.push({
+        stage: "luna-repair",
+        status: "succeeded",
+        durationMs,
+        attempts: Math.max(1, repaired.worker.runCount - repairBaseRunCount),
+      });
       pulseAuthorStage(options.onStageProgress, "luna-repair", "completed", durationMs);
     } catch (error) {
       const durationMs = Math.round(performance.now() - repairStarted);
@@ -1245,9 +1269,8 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       const failError = planned.error ?? authoredError;
       const reason = stageReason(failError);
       const fullReason = failError instanceof Error ? failError.message : String(failError);
-      const allowFallback =
-        options.allowDeterministicFallback ??
-        slackSequencesEnvRawValue("SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK") !== "0";
+      const allowFallback = options.allowDeterministicFallback ??
+        resolveFeatureFlag("SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK").value === "on";
       // Always assemble + persist the full diagnostic — whether we fail loud or
       // ship the labeled safe film, the operator can retrieve the complete log
       // (stage, per-attempt findings, artifact paths) from FAILURE.md / Railway.

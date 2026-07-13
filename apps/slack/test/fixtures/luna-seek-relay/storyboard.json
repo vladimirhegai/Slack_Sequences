@@ -1,0 +1,8 @@
+{
+  "storyboard": [
+    {"id":"signals","title":"Signal field","purpose":"Establish a noisy synthetic production alert and isolate one thread of attention.","startSec":0,"durationSec":4.2},
+    {"id":"map","title":"Connected surface","purpose":"Turn the alert into a clear service map and show an interaction revealing its route and deployment.","startSec":4.2,"durationSec":5},
+    {"id":"timeline","title":"Release to timeline","purpose":"Carry the linked release into one incident timeline containing the relevant evidence types.","startSec":9.2,"durationSec":6.2},
+    {"id":"close","title":"Rest","purpose":"Resolve the visual argument into Relay and the required closing line.","startSec":15.4,"durationSec":4.6}
+  ]
+}

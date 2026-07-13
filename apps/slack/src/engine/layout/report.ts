@@ -231,6 +231,23 @@ export interface DirectBrowserQaResult {
   visionCriticEvidence?: VisionCriticEvidenceV1;
   /** Browser proof that WS-B2 follow-through exists and decays to rest. */
   settleBlooms?: ComponentSettleBloomEvidenceV1[];
+  /** Bounded, machine-readable proof for a hard canonical-seek failure. */
+  timelineContract?: TimelineContractEvidence;
+}
+
+export interface TimelineContractDifference {
+  selector: string;
+  property: string;
+  before: string | number | null;
+  after: string | number | null;
+}
+
+export interface TimelineContractEvidence {
+  compositionId: string;
+  seekSequence: number[];
+  changeCount: number;
+  /** First differences in DOM order; deliberately bounded before leaving Chromium. */
+  differences: TimelineContractDifference[];
 }
 
 export interface ComponentSettleBloomEvidenceV1 {
@@ -985,16 +1002,24 @@ async function collectTweenBoundaries(page: import("puppeteer-core").Page): Prom
   });
 }
 
-async function seekTo(page: import("puppeteer-core").Page, time: number): Promise<void> {
-  await page.evaluate((at: number) => {
+async function seekTo(
+  page: import("puppeteer-core").Page,
+  time: number,
+  compositionId?: string,
+): Promise<void> {
+  await page.evaluate((payload: { at: number; compositionId?: string }) => {
     const timelines = (window as unknown as {
       __timelines?: Record<string, { pause?: () => void; seek?: (time: number, suppressEvents?: boolean) => void }>;
     }).__timelines ?? {};
-    for (const timeline of Object.values(timelines)) {
+    const exact = payload.compositionId ? timelines[payload.compositionId] : undefined;
+    const selected = payload.compositionId
+      ? exact ? [exact] : []
+      : Object.values(timelines);
+    for (const timeline of selected) {
       timeline.pause?.();
-      timeline.seek?.(at, false);
+      timeline.seek?.(payload.at, false);
     }
-  }, time);
+  }, { at: time, ...(compositionId ? { compositionId } : {}) });
   await page.evaluate(() => new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   ));
@@ -3978,6 +4003,7 @@ export async function inspectDirectComposition(
 
   const scratch = prepareScratch(projectDir, draft);
   const runtime: RuntimeMessage[] = [];
+  let timelineContractEvidence: TimelineContractEvidence | undefined;
   let server: Awaited<ReturnType<typeof serveDir>> | undefined;
   let browser: import("puppeteer-core").Browser | undefined;
   let documentLoaded = false;
@@ -4050,25 +4076,43 @@ export async function inspectDirectComposition(
     await page.evaluate(() => (document as Document & { fonts?: FontFaceSet }).fonts?.ready);
 
     if (lunaDeclaredIntentPresent) {
-      const timelineContractError = await page.evaluate(async (expectedId: string) => {
+      const firstScene = draft.storyboard[0];
+      const timelineContract = await page.evaluate(async (payload: {
+        expectedId: string;
+        probeTimes: number[];
+      }) => {
+        const expectedId = payload.expectedId;
         type TimelineLike = {
           paused?: () => boolean;
+          pause?: () => unknown;
           seek?: (time: number, suppressEvents?: boolean) => unknown;
         };
+        type SnapshotNode = {
+          path: string;
+          selector: string;
+          tag: string;
+          attrs: Record<string, string>;
+          text: string | null;
+          style: Record<string, string>;
+          rect: Record<"x" | "y" | "width" | "height", number>;
+        };
+        type Difference = TimelineContractDifference;
         const win = window as unknown as {
           __timelines?: Record<string, TimelineLike>;
           __seek?: (time: number) => unknown;
         };
         const timeline = win.__timelines?.[expectedId];
-        if (!timeline) return `timeline_contract: window.__timelines["${expectedId}"] is absent`;
+        if (!timeline) {
+          return { error: `timeline_contract: window.__timelines["${expectedId}"] is absent` };
+        }
         if (typeof timeline.seek !== "function") {
-          return `timeline_contract: window.__timelines["${expectedId}"] is not seekable`;
+          return { error: `timeline_contract: window.__timelines["${expectedId}"] is not seekable` };
         }
         if (typeof timeline.paused !== "function" || timeline.paused() !== true) {
-          return `timeline_contract: window.__timelines["${expectedId}"] is not paused`;
+          return { error: `timeline_contract: window.__timelines["${expectedId}"] is not paused` };
         }
         if (typeof win.__seek !== "function") {
-          return "timeline_contract: window.__seek(t) is absent";
+          return { error: "timeline_contract: window.__seek(t) is absent" };
         }
         const duration = Number(
           document.querySelector<HTMLElement>(
@@ -4076,64 +4120,195 @@ export async function inspectDirectComposition(
           )?.dataset.duration ?? 0,
         );
         if (!Number.isFinite(duration) || duration <= 0) {
-          return "timeline_contract: the declared composition duration is invalid in-browser";
+          return { error: "timeline_contract: the declared composition duration is invalid in-browser" };
         }
         const settle = () => new Promise<void>((resolve) =>
           requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
         );
-        const snapshot = (): string => JSON.stringify(
+        const domPath = (element: Element): string => {
+          const parts: string[] = [];
+          let current: Element | null = element;
+          while (current && current !== document.body) {
+            const tag = current.tagName.toLowerCase();
+            const siblings = current.parentElement
+              ? Array.from(current.parentElement.children).filter((candidate) => candidate.tagName === current!.tagName)
+              : [];
+            const position = siblings.indexOf(current) + 1;
+            parts.unshift(`${tag}:nth-of-type(${Math.max(1, position)})`);
+            current = current.parentElement;
+          }
+          return `body>${parts.join(">")}`;
+        };
+        const diagnosticSelector = (element: Element, fallback: string): string => {
+          const id = element.getAttribute("id") ?? "";
+          if (id && document.querySelectorAll(`#${CSS.escape(id)}`).length === 1) {
+            return `#${CSS.escape(id)}`;
+          }
+          const sceneId = element.getAttribute("data-scene") ?? "";
+          if (sceneId) return `[data-scene=${JSON.stringify(sceneId)}]`;
+          return fallback;
+        };
+        const snapshot = (): SnapshotNode[] =>
           Array.from(document.querySelectorAll<HTMLElement | SVGElement>("body *")).map((element) => {
             const style = getComputedStyle(element);
             const rect = element.getBoundingClientRect();
+            const path = domPath(element);
             return {
-              tag: element.tagName,
-              attrs: Array.from(element.attributes)
-                .filter((attribute) =>
-                  attribute.name !== "style" && attribute.name !== "data-svg-origin"
-                )
+              path,
+              selector: diagnosticSelector(element, path),
+              tag: element.tagName.toLowerCase(),
+              attrs: Object.fromEntries(Array.from(element.attributes)
+                .filter((attribute) => attribute.name !== "style" && attribute.name !== "data-svg-origin")
                 .map((attribute) => [attribute.name, attribute.value] as const)
-                .sort((left, right) => left[0].localeCompare(right[0])),
+                .sort((left, right) => left[0].localeCompare(right[0]))),
               text: element.childElementCount === 0 ? element.textContent : null,
-              style: [
-                style.display,
-                style.visibility,
-                style.opacity,
-                style.transform,
-                style.color,
-                style.backgroundColor,
-                style.clipPath,
-              ],
-              rect: [rect.x, rect.y, rect.width, rect.height].map((value) =>
-                Math.round(value * 1_000) / 1_000
-              ),
+              style: {
+                display: style.display,
+                visibility: style.visibility,
+                opacity: style.opacity,
+                transform: style.transform,
+                color: style.color,
+                backgroundColor: style.backgroundColor,
+                clipPath: style.clipPath,
+              },
+              rect: Object.fromEntries(["x", "y", "width", "height"].map((name) => [
+                name,
+                Math.round(rect[name as "x" | "y" | "width" | "height"] * 1_000) / 1_000,
+              ])) as SnapshotNode["rect"],
             };
-          }),
-        );
-        const first = Math.min(duration - 0.2, Math.max(0.2, duration * 0.37));
-        const second = Math.min(duration - 0.1, Math.max(first + 0.2, duration * 0.73));
+          });
+        const compare = (before: SnapshotNode[], after: SnapshotNode[]) => {
+          const differences: Difference[] = [];
+          let changeCount = 0;
+          const equivalentStyle = (name: string, value: string): string => {
+            if (name !== "transform" || value === "none") return value;
+            const match = /^matrix(3d)?\(([^)]+)\)$/.exec(value);
+            if (!match) return value;
+            const values = match[2]!.split(",").map((entry) => Number(entry.trim()));
+            const identity = match[1]
+              ? [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+              : [1, 0, 0, 1, 0, 0];
+            return values.length === identity.length &&
+                values.every((entry, index) => Number.isFinite(entry) && Math.abs(entry - identity[index]!) <= 1e-6)
+              ? "none"
+              : value;
+          };
+          const bounded = (value: string | number | null | undefined): string | number | null =>
+            value == null
+              ? null
+              : typeof value === "number"
+                ? value
+                : value.replace(/\s+/g, " ").slice(0, 160);
+          const add = (
+            selector: string,
+            property: string,
+            beforeValue: string | number | null | undefined,
+            afterValue: string | number | null | undefined,
+          ) => {
+            changeCount += 1;
+            if (differences.length < 8) {
+              differences.push({
+                selector: selector.slice(0, 240),
+                property: property.slice(0, 80),
+                before: bounded(beforeValue),
+                after: bounded(afterValue),
+              });
+            }
+          };
+          const beforeByPath = new Map(before.map((entry) => [entry.path, entry]));
+          const afterByPath = new Map(after.map((entry) => [entry.path, entry]));
+          for (const path of new Set([...beforeByPath.keys(), ...afterByPath.keys()])) {
+            const left = beforeByPath.get(path);
+            const right = afterByPath.get(path);
+            const selector = left?.selector ?? right?.selector ?? path;
+            if (!left || !right) {
+              add(selector, "node", left?.tag, right?.tag);
+              continue;
+            }
+            for (const name of new Set([...Object.keys(left.attrs), ...Object.keys(right.attrs)])) {
+              if (left.attrs[name] !== right.attrs[name]) {
+                add(selector, `attribute.${name}`, left.attrs[name], right.attrs[name]);
+              }
+            }
+            if (left.text !== right.text) add(selector, "text", left.text, right.text);
+            for (const name of Object.keys(left.style)) {
+              if (equivalentStyle(name, left.style[name] ?? "") !== equivalentStyle(name, right.style[name] ?? "")) {
+                add(selector, `style.${name}`, left.style[name], right.style[name]);
+              }
+            }
+            for (const name of Object.keys(left.rect) as Array<keyof SnapshotNode["rect"]>) {
+              if (Math.abs(left.rect[name] - right.rect[name]) > 0.1) {
+                add(selector, `rect.${name}`, left.rect[name], right.rect[name]);
+              }
+            }
+          }
+          return { changeCount, differences };
+        };
+        const seek = async (time: number) => {
+          timeline.pause?.();
+          timeline.seek!(time, false);
+          await settle();
+        };
         try {
-          await Promise.resolve(win.__seek(first));
-          await settle();
-          const before = snapshot();
-          await Promise.resolve(win.__seek(second));
-          await settle();
-          await Promise.resolve(win.__seek(first));
-          await settle();
-          const after = snapshot();
-          if (before !== after) {
-            return `timeline_contract: window.__seek(${first.toFixed(3)}) does not restore deterministic state`;
+          const probeTimes = [...new Set(payload.probeTimes
+            .filter((time) => Number.isFinite(time) && time >= 0.2 && time <= duration - 0.2)
+            .map((time) => Math.round(time * 1_000) / 1_000))]
+            .sort((left, right) => left - right);
+          for (let index = 0; index < probeTimes.length; index += 1) {
+            const first = probeTimes[index]!;
+            const requestedSecond = probeTimes[index + 1] ?? duration * 0.73;
+            const second = Math.min(duration - 0.1, Math.max(first + 0.2, requestedSecond));
+            // Production render workers and evidence capture can reset to frame zero
+            // between arbitrary frames. Include that real path: the Relay incident
+            // restored 1.89s after a direct late seek, but lost its opening scene
+            // after the equally valid late -> zero -> 1.89s sequence.
+            const seekSequence = [first, second, 0, first]
+              .map((time) => Math.round(time * 1_000) / 1_000);
+            await seek(first);
+            const before = snapshot();
+            await seek(second);
+            await seek(0);
+            await seek(first);
+            const after = snapshot();
+            const comparison = compare(before, after);
+            if (comparison.changeCount > 0) {
+              const evidence: TimelineContractEvidence = {
+                compositionId: expectedId,
+                seekSequence,
+                ...comparison,
+              };
+              return {
+                error:
+                  `timeline_contract: canonical seek(${first.toFixed(3)}) does not restore deterministic state; ` +
+                  `evidence=${JSON.stringify(evidence)}`,
+                evidence,
+              };
+            }
           }
           if (timeline.paused() !== true) {
-            return "timeline_contract: window.__seek(t) resumed the declared timeline";
+            return { error: "timeline_contract: canonical seek(t) resumed the declared timeline" };
           }
         } catch (error) {
-          return `timeline_contract: window.__seek(t) threw: ${
-            error instanceof Error ? error.message : String(error)
-          }`;
+          return {
+            error: `timeline_contract: canonical seek(t) threw: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          };
         }
-        return "";
-      }, compositionId);
-      if (timelineContractError) throw new Error(timelineContractError);
+        return { error: "" };
+      }, {
+        expectedId: compositionId,
+        probeTimes: [
+          firstScene
+            ? firstScene.startSec + firstScene.durationSec * 0.45
+            : 0.2,
+          Number(
+            rootTag.match(/\bdata-duration\s*=\s*(["'])(.*?)\1/i)?.[2] ?? 0,
+          ) * 0.37,
+        ],
+      });
+      timelineContractEvidence = timelineContract.evidence;
+      if (timelineContract.error) throw new Error(timelineContract.error);
     }
 
     const duration = await page.evaluate(() => {
@@ -4188,7 +4363,8 @@ export async function inspectDirectComposition(
     // converts through warpInverse here and nowhere else.
     const conversion = timeConversionService(parseTimeRampPlan(draft.html).plan);
     const toOutputTime = (value: number): number => conversion.toViewer(sourceTime(value));
-    const seekContent = (time: number): Promise<void> => seekTo(page, toOutputTime(time));
+    const seekContent = (time: number): Promise<void> =>
+      seekTo(page, toOutputTime(time), lunaDeclaredIntentPresent ? compositionId : undefined);
     await page.addScriptTag({ content: loadBrowserAudit("layout-audit.browser.js") });
 
     const rawIssues: DirectLayoutIssue[] = [];
@@ -5991,6 +6167,7 @@ export async function inspectDirectComposition(
       ...(cameraBlockingEvidence ? { cameraBlockingEvidence } : {}),
       ...(settleBlooms.length ? { settleBlooms } : {}),
       ...(visionCriticEvidence ? { visionCriticEvidence } : {}),
+      ...(timelineContractEvidence ? { timelineContract: timelineContractEvidence } : {}),
       errors: [...new Set(errors)],
       warnings: [...new Set(warnings)],
       ...(guidePngBase64 ? { guidePngBase64 } : {}),
@@ -6013,7 +6190,9 @@ export async function inspectDirectComposition(
             ? ` — ${runtimeErrors.slice(0, 3).map((entry) => entry.text).join(" | ")}`
             : ` (no console error was captured; the compile likely hung)`
         }`
-      : `browser validate/layout inspect failed: ${rawMessage}`;
+      : rawMessage.startsWith("timeline_contract:")
+        ? rawMessage
+        : `browser validate/layout inspect failed: ${rawMessage}`;
     const infrastructureFault =
       !documentLoaded ||
       (!bindException &&
@@ -6036,6 +6215,7 @@ export async function inspectDirectComposition(
           : `${message}${runtimeDetail ? ` | ${runtimeDetail}` : ""}`,
       ],
       warnings: [],
+      ...(timelineContractEvidence ? { timelineContract: timelineContractEvidence } : {}),
     };
   } finally {
     await browser?.close().catch(() => {});

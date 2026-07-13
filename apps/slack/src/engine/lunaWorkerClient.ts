@@ -2,9 +2,28 @@ import { createHash } from "node:crypto";
 import { slackSequencesEnvRawValue } from "./featureFlags.ts";
 
 const DEFAULT_WORKER_URL = "http://codex-worker.railway.internal:3000";
-const DEFAULT_TIMEOUT_MS = 20 * 60 * 1_000;
+const DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000;
 const MAX_RESPONSE_BYTES = 96 * 1024 * 1024;
 const REQUIRED_CODEX_CLI_VERSION = "0.144.1";
+const ARTIFACT_PROTOCOL = "luna-tool-less-artifact-v2";
+const ARTIFACT_SCHEMA_SHA256 = "7fa551fb261b6dee573aca74507202f5ab0b30ca00fe60cd04141dea8dfe104d";
+const PERMISSION_PROFILE_SHA256 = "ebd9f548aaa2f1d48df15ea1e124462350791ede65267f7677e9a834fa0060c6";
+
+export interface LunaArtifactContract {
+  id: string;
+  requiredPaths: readonly string[];
+}
+
+export const LUNA_FILM_ARTIFACT_CONTRACT: Readonly<LunaArtifactContract> = Object.freeze({
+  id: "film-bundle-v1",
+  requiredPaths: Object.freeze([
+    "deliverables/assets-manifest.json",
+    "deliverables/composition.html",
+    "deliverables/director-treatment.md",
+    "deliverables/motion-intent.json",
+    "deliverables/storyboard.json",
+  ]),
+});
 
 export interface LunaWorkerInputFile {
   path: string;
@@ -28,6 +47,7 @@ export interface LunaWorkerResult {
   model: "gpt-5.6-luna";
   reasoningEffort: "high";
   codexVersion: "0.144.1";
+  artifactContractSha256: string;
   rawEnvelopeSha256: string;
   materializedFingerprint: string;
   rolloutSha256: string;
@@ -61,23 +81,65 @@ export interface LunaWorkerCursor {
   runCount: number;
   threadId?: string;
   status: "queued" | "running" | "completed" | "failed" | "timed_out" | "cancelled" | "interrupted";
+  errorCode?: string;
+  failure?: LunaWorkerFailureReceipt;
+  rawEnvelopeSha256?: string;
   rolloutSha256?: string;
+  rolloutResponseItems?: number;
+  materializedFingerprint?: string;
+  artifactContractSha256?: string;
+}
+
+export interface LunaWorkerFailureReceipt {
+  errorCode: string;
+  category: "artifact_protocol" | "security" | "integrity" | "runtime" | "cancelled" | "timeout";
+  recoverable: boolean;
+  envelopeFindings: Array<{ code: string }>;
+  response: {
+    present: boolean;
+    bytes?: number;
+    sha256?: string;
+  };
+  rollout?: {
+    sha256: string;
+    responseItems: number;
+  };
+  baseFingerprint?: string;
+}
+
+export class LunaWorkerJobError extends Error {
+  readonly cursor: LunaWorkerCursor;
+
+  constructor(cursor: LunaWorkerCursor) {
+    const code = cursor.failure?.errorCode ?? cursor.errorCode ?? "unknown_worker_failure";
+    super(`Luna worker job ${cursor.status}: ${code}`);
+    this.name = "LunaWorkerJobError";
+    this.cursor = cursor;
+  }
 }
 
 export function lunaWorkerHealthIsExact(health: LunaWorkerHealth): boolean {
   return health.ok === true && health.authenticated === true &&
     health.model === "gpt-5.6-luna" && health.reasoningEffort === "high" &&
-    health.artifactProtocol === "luna-tool-less-artifact-v1" &&
-    health.artifactSchemaSha256 === "ac487766f625ecd680541cbf3b7a6e0018a3570e1037e65c9c629d8af52569cb" &&
-    health.permissionProfileSha256 === "ebd9f548aaa2f1d48df15ea1e124462350791ede65267f7677e9a834fa0060c6" &&
+    health.artifactProtocol === ARTIFACT_PROTOCOL &&
+    health.artifactSchemaSha256 === ARTIFACT_SCHEMA_SHA256 &&
+    health.permissionProfileSha256 === PERMISSION_PROFILE_SHA256 &&
     health.version === REQUIRED_CODEX_CLI_VERSION;
 }
 
 interface LunaWorkerJobState {
   jobId: string;
   operationId: string;
+  runCount: number;
+  threadId?: string;
   status: "queued" | "running" | "failed" | "timed_out" | "cancelled" | "interrupted";
   errorCode?: string;
+  failure?: LunaWorkerFailureReceipt;
+  rawEnvelopeSha256?: string;
+  rolloutSha256?: string;
+  rolloutResponseItems?: number;
+  materializedFingerprint?: string;
+  artifactContractSha256?: string;
 }
 
 export function resolveLunaWorkerConfig(): LunaWorkerConfig {
@@ -115,6 +177,42 @@ function boundedErrorBody(body: string): string {
   return body.replace(/\s+/g, " ").trim().slice(0, 600) || "empty response";
 }
 
+function canonicalArtifactContract(contract: LunaArtifactContract): LunaArtifactContract {
+  if (!contract || typeof contract !== "object") {
+    throw new Error("Luna artifact contract must be an object");
+  }
+  if (
+    typeof contract.id !== "string" ||
+    !/^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/.test(contract.id)
+  ) {
+    throw new Error("Luna artifact contract has an invalid id");
+  }
+  if (
+    !Array.isArray(contract.requiredPaths) ||
+    contract.requiredPaths.length < 1 ||
+    contract.requiredPaths.length > 128
+  ) {
+    throw new Error("Luna artifact contract must declare 1-128 required paths");
+  }
+  const requiredPaths = [...contract.requiredPaths].map((candidate) => {
+    if (
+      typeof candidate !== "string" ||
+      candidate.length < 1 ||
+      candidate.length > 240 ||
+      !/^deliverables\/[A-Za-z0-9._/-]+$/.test(candidate) ||
+      candidate.includes("\\") ||
+      candidate.split("/").some((segment) => !segment || segment === "." || segment === "..")
+    ) {
+      throw new Error("Luna artifact contract contains an invalid deliverable path");
+    }
+    return candidate;
+  }).sort();
+  if (new Set(requiredPaths).size !== requiredPaths.length) {
+    throw new Error("Luna artifact contract required paths must be unique");
+  }
+  return { id: contract.id, requiredPaths };
+}
+
 function assertWorkerResult(value: unknown): LunaWorkerResult {
   if (!value || typeof value !== "object") throw new Error("Luna worker returned invalid JSON");
   const candidate = value as Partial<LunaWorkerResult>;
@@ -130,6 +228,8 @@ function assertWorkerResult(value: unknown): LunaWorkerResult {
     candidate.model !== "gpt-5.6-luna" ||
     candidate.reasoningEffort !== "high" ||
     candidate.codexVersion !== REQUIRED_CODEX_CLI_VERSION ||
+    typeof candidate.artifactContractSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(candidate.artifactContractSha256) ||
     typeof candidate.rawEnvelopeSha256 !== "string" ||
     !/^[a-f0-9]{64}$/.test(candidate.rawEnvelopeSha256) ||
     typeof candidate.materializedFingerprint !== "string" ||
@@ -156,6 +256,64 @@ function assertWorkerResult(value: unknown): LunaWorkerResult {
     }
   }
   return candidate as LunaWorkerResult;
+}
+
+function assertFailureReceipt(value: unknown): LunaWorkerFailureReceipt {
+  if (!value || typeof value !== "object") {
+    throw new Error("Luna worker returned an invalid failure receipt");
+  }
+  const candidate = value as Partial<LunaWorkerFailureReceipt>;
+  if (
+    typeof candidate.errorCode !== "string" ||
+    !/^[a-z0-9_]{1,80}$/.test(candidate.errorCode) ||
+    !new Set(["artifact_protocol", "security", "integrity", "runtime", "cancelled", "timeout"])
+      .has(candidate.category ?? "") ||
+    typeof candidate.recoverable !== "boolean" ||
+    !Array.isArray(candidate.envelopeFindings) ||
+    candidate.envelopeFindings.length > 16 ||
+    !candidate.envelopeFindings.every((finding) =>
+      finding && typeof finding === "object" &&
+      typeof finding.code === "string" && /^[a-z0-9_]{1,80}$/.test(finding.code)
+    ) ||
+    !candidate.response ||
+    typeof candidate.response.present !== "boolean"
+  ) {
+    throw new Error("Luna worker returned an invalid failure receipt");
+  }
+  if (candidate.response.present) {
+    if (
+      !Number.isSafeInteger(candidate.response.bytes) ||
+      (candidate.response.bytes ?? -1) < 0 ||
+      (candidate.response.bytes ?? Infinity) > 24 * 1024 * 1024 ||
+      typeof candidate.response.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(candidate.response.sha256)
+    ) {
+      throw new Error("Luna worker returned invalid bounded response metadata");
+    }
+  }
+  if (candidate.rollout !== undefined) {
+    if (
+      typeof candidate.rollout.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(candidate.rollout.sha256) ||
+      !Number.isSafeInteger(candidate.rollout.responseItems) ||
+      candidate.rollout.responseItems < 1
+    ) {
+      throw new Error("Luna worker returned invalid rollout failure metadata");
+    }
+  }
+  if (
+    candidate.baseFingerprint !== undefined &&
+    !/^[a-f0-9]{64}$/.test(candidate.baseFingerprint)
+  ) {
+    throw new Error("Luna worker returned an invalid failure base fingerprint");
+  }
+  if (
+    candidate.recoverable &&
+    (candidate.category !== "artifact_protocol" || !candidate.response.present || !candidate.rollout)
+  ) {
+    throw new Error("Luna worker marked an unbound failure as recoverable");
+  }
+  return candidate as LunaWorkerFailureReceipt;
 }
 
 async function requestJson(
@@ -229,12 +387,23 @@ function operationIdFor(
   prompt: string,
   files: readonly LunaWorkerInputFile[],
   expectedRunCount: number | null,
+  artifactContract: LunaArtifactContract,
+  expectedBaseFingerprint: string | null,
 ): string {
+  const canonicalContract = canonicalArtifactContract(artifactContract);
+  if (
+    expectedBaseFingerprint !== null &&
+    !/^[a-f0-9]{64}$/.test(expectedBaseFingerprint)
+  ) {
+    throw new Error("Luna worker base fingerprint must be a lowercase SHA-256 digest");
+  }
   const canonical = JSON.stringify({
-    protocol: "luna-tool-less-artifact-v1",
-    schemaSha256: "ac487766f625ecd680541cbf3b7a6e0018a3570e1037e65c9c629d8af52569cb",
-    permissionProfileSha256: "ebd9f548aaa2f1d48df15ea1e124462350791ede65267f7677e9a834fa0060c6",
+    protocol: ARTIFACT_PROTOCOL,
+    schemaSha256: ARTIFACT_SCHEMA_SHA256,
+    permissionProfileSha256: PERMISSION_PROFILE_SHA256,
     expectedRunCount,
+    expectedBaseFingerprint,
+    artifactContract: canonicalContract,
     promptSha256: createHash("sha256").update(prompt, "utf8").digest("hex"),
     files: [...files]
       .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
@@ -255,10 +424,38 @@ function assertJobState(value: unknown): LunaWorkerJobState {
     typeof candidate.jobId !== "string" ||
     typeof candidate.operationId !== "string" ||
     !/^[a-f0-9]{64}$/.test(candidate.operationId) ||
+    typeof candidate.runCount !== "number" ||
+    !Number.isSafeInteger(candidate.runCount) ||
+    candidate.runCount < 0 ||
+    (candidate.threadId !== undefined && typeof candidate.threadId !== "string") ||
     !new Set(["queued", "running", "failed", "timed_out", "cancelled", "interrupted"])
       .has(candidate.status ?? "")
   ) {
     throw new Error("Luna worker returned an invalid job state");
+  }
+  if (candidate.failure !== undefined) candidate.failure = assertFailureReceipt(candidate.failure);
+  if (
+    candidate.rawEnvelopeSha256 !== undefined &&
+    !/^[a-f0-9]{64}$/.test(candidate.rawEnvelopeSha256)
+  ) {
+    throw new Error("Luna worker returned an invalid raw-envelope failure hash");
+  }
+  if (
+    candidate.rolloutSha256 !== undefined &&
+    !/^[a-f0-9]{64}$/.test(candidate.rolloutSha256)
+  ) {
+    throw new Error("Luna worker returned an invalid rollout failure hash");
+  }
+  if (
+    candidate.rolloutResponseItems !== undefined &&
+    (!Number.isSafeInteger(candidate.rolloutResponseItems) || candidate.rolloutResponseItems < 1)
+  ) {
+    throw new Error("Luna worker returned an invalid rollout failure count");
+  }
+  for (const digest of [candidate.materializedFingerprint, candidate.artifactContractSha256]) {
+    if (digest !== undefined && !/^[a-f0-9]{64}$/.test(digest)) {
+      throw new Error("Luna worker returned an invalid materialization state hash");
+    }
   }
   return candidate as LunaWorkerJobState;
 }
@@ -279,6 +476,24 @@ function assertWorkerCursor(value: unknown): LunaWorkerCursor {
     (candidate.rolloutSha256 !== undefined && !/^[a-f0-9]{64}$/.test(candidate.rolloutSha256))
   ) {
     throw new Error("Luna worker returned an invalid cursor");
+  }
+  if (candidate.failure !== undefined) candidate.failure = assertFailureReceipt(candidate.failure);
+  if (
+    candidate.rawEnvelopeSha256 !== undefined &&
+    !/^[a-f0-9]{64}$/.test(candidate.rawEnvelopeSha256)
+  ) {
+    throw new Error("Luna worker returned an invalid cursor raw-envelope hash");
+  }
+  if (
+    candidate.rolloutResponseItems !== undefined &&
+    (!Number.isSafeInteger(candidate.rolloutResponseItems) || candidate.rolloutResponseItems < 1)
+  ) {
+    throw new Error("Luna worker returned an invalid cursor rollout count");
+  }
+  for (const digest of [candidate.materializedFingerprint, candidate.artifactContractSha256]) {
+    if (digest !== undefined && !/^[a-f0-9]{64}$/.test(digest)) {
+      throw new Error("Luna worker returned an invalid cursor materialization hash");
+    }
   }
   return candidate as LunaWorkerCursor;
 }
@@ -334,7 +549,7 @@ async function pollLunaWorkerJob(
     }
     if (!new Set(["queued", "running"]).has(state.status)) {
       if (state.status === "interrupted") throw new LunaWorkerInterruptedError();
-      throw new Error(`Luna worker job ${state.status}: ${state.errorCode ?? "unknown worker failure"}`);
+      throw new LunaWorkerJobError(state);
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, remainingMs)));
   }
@@ -347,8 +562,17 @@ async function submitAndPoll(
   prompt: string,
   files: LunaWorkerInputFile[],
   expectedRunCount: number | null,
+  artifactContract: LunaArtifactContract,
+  expectedBaseFingerprint: string | null,
 ): Promise<LunaWorkerResult> {
-  const operationId = operationIdFor(prompt, files, expectedRunCount);
+  const canonicalContract = canonicalArtifactContract(artifactContract);
+  const operationId = operationIdFor(
+    prompt,
+    files,
+    expectedRunCount,
+    canonicalContract,
+    expectedBaseFingerprint,
+  );
   const startedAt = Date.now();
   for (let restartAttempt = 0; restartAttempt < 2; restartAttempt += 1) {
     try {
@@ -357,7 +581,9 @@ async function submitAndPoll(
         operationId,
         prompt,
         files,
+        artifactContract: canonicalContract,
         ...(expectedRunCount === null ? {} : { expectedRunCount }),
+        ...(expectedRunCount === null ? {} : { expectedBaseFingerprint }),
       }, 15_000);
     } catch (submissionError) {
       try {
@@ -388,9 +614,23 @@ export function workerInputFile(relativePath: string, bytes: Buffer | string): L
 
 export async function startLunaWorkerJob(
   config: LunaWorkerConfig,
-  input: { jobId: string; prompt: string; files: LunaWorkerInputFile[] },
+  input: {
+    jobId: string;
+    prompt: string;
+    files: LunaWorkerInputFile[];
+    artifactContract: LunaArtifactContract;
+  },
 ): Promise<LunaWorkerResult> {
-  return submitAndPoll(config, "/v1/jobs", input.jobId, input.prompt, input.files, null);
+  return submitAndPoll(
+    config,
+    "/v1/jobs",
+    input.jobId,
+    input.prompt,
+    input.files,
+    null,
+    input.artifactContract,
+    null,
+  );
 }
 
 export async function resumeLunaWorkerJob(
@@ -398,8 +638,10 @@ export async function resumeLunaWorkerJob(
   input: {
     jobId: string;
     expectedRunCount: number;
+    expectedBaseFingerprint: string | null;
     prompt: string;
     files?: LunaWorkerInputFile[];
+    artifactContract: LunaArtifactContract;
   },
 ): Promise<LunaWorkerResult> {
   return submitAndPoll(
@@ -409,6 +651,8 @@ export async function resumeLunaWorkerJob(
     input.prompt,
     input.files ?? [],
     input.expectedRunCount,
+    input.artifactContract,
+    input.expectedBaseFingerprint,
   );
 }
 

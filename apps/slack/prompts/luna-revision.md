@@ -34,9 +34,11 @@ or violating the permission boundary, explain that in
 Do not invoke the legacy planner, scaffold, critic, or repair committee. This is
 a continuation of your own authored film, not a fresh rewrite.
 
-Return exactly one complete `decision: "replace"` artifact envelope matching the
-worker-supplied output schema, with no Markdown fence or surrounding prose.
-Re-emit every required file and all used assets, even when some bytes are
-unchanged. Preserve binary assets only through exact hash-bound copy mappings
-from the supplied accepted bundle. The trusted worker validates and atomically
-materializes the result; you do not write files yourself.
+Return exactly one artifact envelope matching the worker-supplied output schema
+and exact `baseFingerprint`, with no Markdown fence or surrounding prose. When
+the request changes nothing, use `decision: "keep"` and an empty `files` array.
+Otherwise use `decision: "replace"`, declare the complete final manifest, mark
+unchanged files `action: "inherit"` with their exact base SHA-256, and use
+`action: "replace"` only for changed bytes. Never retype or base64-synthesize an
+unchanged binary. The trusted worker validates and atomically materializes the
+result; you do not write files yourself.

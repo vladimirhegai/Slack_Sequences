@@ -10,6 +10,29 @@ import { dataDir } from "./engine/projectTemplates.ts";
 
 export type JobStatus = "building" | "ready" | "error";
 
+export type StoredCreateTone = "crisp-saas" | "warm-startup" | "bold-launch";
+
+/**
+ * The minimum user-authored create request needed to start a fresh build.
+ *
+ * This is deliberately an allowlist rather than a serialized `CreateArgs`:
+ * callbacks, OAuth tokens, retrieved Slack context, model output, and preset
+ * functions must never land in jobs.json. The invoking user/team IDs are safe
+ * handles used to retrieve the already-encrypted OAuth token again.
+ */
+export interface StoredCreateRequestV1 {
+  version: 1;
+  teamId?: string;
+  userId?: string;
+  product: string;
+  brandName?: string;
+  whatShipped: string;
+  audience?: string;
+  tone?: StoredCreateTone;
+  lengthSec?: number;
+  context?: string;
+}
+
 export interface Job {
   id: string;
   projectDir: string;
@@ -22,8 +45,87 @@ export interface Job {
   mp4Path?: string;
   /** Canonical artifact used by Approve & share. */
   renderQuality?: "draft" | "high";
+  /** Allowlisted original brief for a fresh create after a fail-loud result. */
+  createRequest?: StoredCreateRequestV1;
+  /** An explicit proof film was published; revision and fresh-create retry differ. */
+  publishedFallback?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+const TONES = new Set<StoredCreateTone>(["crisp-saas", "warm-startup", "bold-launch"]);
+
+function boundedString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim().slice(0, maxLength);
+  return text || undefined;
+}
+
+/**
+ * Pick and validate only retry-safe fields from an arbitrary create-shaped
+ * value. This also treats an old/corrupt jobs.json entry as non-retryable
+ * instead of passing unchecked persisted bytes into the authoring pipeline.
+ */
+export function normalizeStoredCreateRequest(value: unknown): StoredCreateRequestV1 | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const input = value as Record<string, unknown>;
+  const product = boundedString(input.product, 80);
+  const whatShipped = boundedString(input.whatShipped, 2_000);
+  if (!product || !whatShipped) return undefined;
+  const tone = typeof input.tone === "string" && TONES.has(input.tone as StoredCreateTone)
+    ? input.tone as StoredCreateTone
+    : undefined;
+  const lengthSec = typeof input.lengthSec === "number" && Number.isFinite(input.lengthSec)
+    && input.lengthSec >= 1 && input.lengthSec <= 600
+    ? input.lengthSec
+    : undefined;
+
+  const teamId = boundedString(input.teamId, 128);
+  const userId = boundedString(input.userId, 128);
+  const brandName = boundedString(input.brandName, 200);
+  const audience = boundedString(input.audience, 200);
+  const context = boundedString(input.context, 2_000);
+  return {
+    version: 1,
+    ...(teamId ? { teamId } : {}),
+    ...(userId ? { userId } : {}),
+    product,
+    ...(brandName ? { brandName } : {}),
+    whatShipped,
+    ...(audience ? { audience } : {}),
+    ...(tone ? { tone } : {}),
+    ...(lengthSec !== undefined ? { lengthSec } : {}),
+    ...(context ? { context } : {}),
+  };
+}
+
+/** Return a defensive, runtime-validated retry request for this job. */
+export function retryCreateRequest(job: Job): StoredCreateRequestV1 | undefined {
+  return normalizeStoredCreateRequest(job.createRequest);
+}
+
+/**
+ * Bind a fresh retry to the human who actually triggered it. The saved user ID
+ * proves provenance only; it must never silently lend the original invoker's
+ * hosted-Slack-MCP permissions to another channel member.
+ */
+export function retryCreateRequestForActor(
+  job: Job,
+  actorUserId: string,
+): StoredCreateRequestV1 | undefined {
+  const request = retryCreateRequest(job);
+  const userId = boundedString(actorUserId, 128);
+  if (!request || !userId) return undefined;
+  return { ...request, userId };
+}
+
+export type ConversationalJobAction = "busy" | "retry-create" | "revise" | "unavailable";
+
+/** The deterministic owner for interpreting a human reply to a job thread. */
+export function conversationalJobAction(job: Job): ConversationalJobAction {
+  if (job.status === "building") return "busy";
+  if (job.status === "error") return "retry-create";
+  return job.projectDir ? "revise" : "unavailable";
 }
 
 function jobsFile(): string {

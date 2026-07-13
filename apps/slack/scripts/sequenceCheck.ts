@@ -7,12 +7,10 @@
  * explicitly selects the preserved legacy provider committee. The script does
  * not post to Slack and does not require Slack tokens.
  */
-// Load apps/slack/.env like the bot (src/index.ts) does, so `--provider
-// openrouter-api` (and any model/thinking overrides) resolve their keys. Without
-// this the OpenRouter/OpenAI providers silently see no key and the run falls back
-// to the default provider — a live probe then measures the wrong bot
-// (md-audit-probe-3: `no OpenRouter API key`). dotenv never overrides a var
-// already present in the real environment.
+// Load apps/slack/.env like the bot (src/index.ts) does. The default route stays
+// Luna regardless of legacy credentials; `--provider` is the only CLI switch
+// that explicitly enters the preserved legacy provider committee. dotenv never
+// overrides a variable already present in the real environment.
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";

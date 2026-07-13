@@ -34,20 +34,20 @@ and the ending rest. These are questions for your judgment, not quotas.
 
 Choose exactly one outcome:
 
-1. Keep the film. Return every accepted deliverable byte unchanged and add
-   `deliverables/self-review.md` explaining briefly why no change is warranted.
-2. Make one coherent polish pass. Return the complete replacement bundle and
-   add `deliverables/self-review.md` explaining the visual problem and the
-   single directing idea behind the changes.
+1. Keep the film. Return `decision: "keep"`, the exact worker-supplied
+   `baseFingerprint`, and an empty `files` array. Do not churn bytes merely to
+   leave a review note.
+2. Make one coherent polish pass. Return `decision: "replace"` with the exact
+   base fingerprint and complete final manifest. Use `action: "inherit"` for
+   unchanged files and `action: "replace"` only for changed bytes. You may add
+   `deliverables/self-review.md` explaining the single directing idea.
 
 Do not revise merely to create more motion, copy the reference film, satisfy an
 advisory score, or decorate a transition. Preserve verified facts, exact local
 execution, runtime, selectors, and deterministic seeking. Do not make a second
 polish pass.
 
-Return exactly one complete `decision: "replace"` artifact envelope matching the
-worker-supplied output schema, with no Markdown fence or surrounding prose. Even
-when keeping the film, re-emit the complete accepted bundle rather than referring
-to worker state. Preserve binary assets only through exact hash-bound copy
-mappings from the supplied accepted bundle. The trusted worker validates and
-atomically materializes the result; you do not write files yourself.
+Return exactly one artifact envelope matching the worker-supplied output schema,
+with no Markdown fence or surrounding prose. Never retype or base64-synthesize
+an unchanged binary. The trusted worker validates the exact base and atomically
+materializes the result; you do not write files yourself.

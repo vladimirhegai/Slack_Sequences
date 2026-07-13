@@ -7,11 +7,15 @@ import { validateStoryboardPlan } from "../src/engine/compositionRunner.ts";
 import {
   assetBriefContext,
   assetBriefPlanningOffer,
+  assetPacksRoot,
   clearAssetBrief,
   loadAssetBrief,
+  preparedLunaAssetPack,
+  reserveLunaAssetPack,
   saveAssetBrief,
   storeReferenceImages,
   type ChannelAssetBrief,
+  type ChannelLunaAssetPackReceiptV1,
 } from "../src/assetBrief.ts";
 import { ASSET_LIBRARY } from "../src/engine/assets/index.ts";
 
@@ -66,13 +70,107 @@ describe("asset brief store", () => {
       expect(path.resolve(ref).startsWith(path.resolve(tempDir))).toBe(true);
     }
   });
+
+  it("resolves only the current versioned receipt inside the host-owned pack root", () => {
+    const channel = "C-PACK";
+    const first = reserveLunaAssetPack(channel);
+    const firstRun = path.join(first.projectDir, "worker-runs", "0001-create");
+    fs.mkdirSync(path.join(firstRun, "deliverables"), { recursive: true });
+    fs.writeFileSync(path.join(firstRun, "deliverables", "asset-pack.json"), "{}\n");
+    const receipt: ChannelLunaAssetPackReceiptV1 = {
+      version: 1,
+      id: first.id,
+      storageKey: first.storageKey,
+      latestRunDir: "worker-runs/0001-create",
+      fingerprint: "a".repeat(64),
+      materializedFingerprint: "b".repeat(64),
+      workerJobId: "asset-pack-unit",
+      workerRunCount: 1,
+      threadId: "thread-unit",
+      createdAt: "2026-07-13T00:00:00.000Z",
+    };
+    saveAssetBrief(brief({ channel, assetPack: receipt }));
+
+    const stored = loadAssetBrief(channel)!;
+    expect(stored.assetPack).toEqual(receipt);
+    expect(path.resolve(first.projectDir).startsWith(path.resolve(assetPacksRoot()))).toBe(true);
+    expect(preparedLunaAssetPack(stored)).toMatchObject({
+      deliverablesDir: path.join(firstRun, "deliverables"),
+      approvedRoot: path.resolve(assetPacksRoot()),
+      receipt,
+    });
+
+    const second = reserveLunaAssetPack(channel);
+    const secondRun = path.join(second.projectDir, "worker-runs", "0001-create");
+    fs.mkdirSync(path.join(secondRun, "deliverables"), { recursive: true });
+    const replacement = {
+      ...receipt,
+      id: second.id,
+      storageKey: second.storageKey,
+      latestRunDir: "worker-runs/0001-create",
+      fingerprint: "c".repeat(64),
+      createdAt: "2026-07-13T00:01:00.000Z",
+    } satisfies ChannelLunaAssetPackReceiptV1;
+    saveAssetBrief(brief({ channel, assetPack: replacement }));
+
+    expect(second.storageKey).not.toBe(first.storageKey);
+    expect(preparedLunaAssetPack(loadAssetBrief(channel)!)?.deliverablesDir)
+      .toBe(path.join(secondRun, "deliverables"));
+    expect(fs.existsSync(first.projectDir)).toBe(true);
+
+    const unsupportedVersion = {
+      ...stored,
+      assetPack: { ...receipt, version: 2 },
+    } as unknown as ChannelAssetBrief;
+    expect(preparedLunaAssetPack(unsupportedVersion)).toBeUndefined();
+    expect(preparedLunaAssetPack({
+      ...stored,
+      assetPack: { ...receipt, storageKey: "../outside" },
+    })).toBeUndefined();
+    expect(preparedLunaAssetPack({
+      ...stored,
+      assetPack: { ...receipt, latestRunDir: "../../outside" },
+    })).toBeUndefined();
+  });
+
+  it("clears raw references and every versioned pack for the channel", () => {
+    const channel = "C-CLEAR";
+    const refs = storeReferenceImages(channel, [
+      { name: "product.png", buffer: Buffer.from("product") },
+    ]);
+    const first = reserveLunaAssetPack(channel);
+    const second = reserveLunaAssetPack(channel);
+    saveAssetBrief(brief({
+      channel,
+      refs,
+      imageCount: 1,
+      assetPack: {
+        version: 1,
+        id: second.id,
+        storageKey: second.storageKey,
+        latestRunDir: "worker-runs/0001-create",
+        fingerprint: "d".repeat(64),
+        materializedFingerprint: "e".repeat(64),
+        workerJobId: "asset-pack-clear",
+        workerRunCount: 1,
+        threadId: "thread-clear",
+        createdAt: "2026-07-13T00:00:00.000Z",
+      },
+    }));
+
+    expect(clearAssetBrief(channel)).toBe(true);
+    expect(loadAssetBrief(channel)).toBeUndefined();
+    expect(fs.existsSync(refs[0]!)).toBe(false);
+    expect(fs.existsSync(first.projectDir)).toBe(false);
+    expect(fs.existsSync(second.projectDir)).toBe(false);
+  });
 });
 
 describe("assetBriefContext", () => {
   it("commits accent, canvas tone, and the user's notes as prose", () => {
     const context = assetBriefContext(brief());
     expect(context).toContain("#FF8A5C");
-    expect(context).toContain("THE single accent");
+    expect(context).toContain("Treat it as evidence, not a quota");
     expect(context).toContain("dark UI");
     expect(context).toContain("terminal-first devtool");
   });

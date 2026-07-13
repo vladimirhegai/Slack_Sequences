@@ -86,10 +86,13 @@ function operational(
 
 /** Behavior switches. Every entry has an explicit rollback posture. */
 export const FEATURE_FLAG_REGISTRY = {
-  SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK: optOut(
+  SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK: mode(
+    "off",
+    ["off", "on"],
+    { "0": "off", off: "off", "1": "on", on: "on" },
     "orchestrator",
-    "Publish the labeled model-free proof film after creative authoring is exhausted.",
-    "Set to 0 to fail loud with FAILURE.md instead of publishing the fallback film.",
+    "Permit an explicitly requested model-free proof film after creative authoring is exhausted.",
+    "Leave off for ordinary Slack runs; set to 1 only for an operator-requested proof-film drill.",
   ),
   SLACK_SEQUENCES_AUTHOR_ROUTE: mode(
     "luna-direct",
@@ -329,11 +332,11 @@ export const OPERATIONAL_ENV_REGISTRY = {
     "Service discovery for an already-selected author route, not a rollout switch.",
   ),
   SLACK_SEQUENCES_LUNA_JOB_TIMEOUT_MS: operational(
-    "1200000",
+    "1800000",
     ["<milliseconds >= 30000>"],
     "Luna worker transport",
     "Bound one initial, review, or revision Codex turn.",
-    "Unset to restore the twenty-minute bound.",
+    "Unset to restore the worker-aligned thirty-minute bound.",
     "A request deadline for an already-selected author route, not a rollout switch.",
   ),
   SLACK_SEQUENCES_PROVIDER: operational(

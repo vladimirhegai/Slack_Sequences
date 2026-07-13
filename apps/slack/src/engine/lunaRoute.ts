@@ -10,14 +10,23 @@ import { resolveFeatureFlag, type SlackSequencesEnvSource } from "./featureFlags
 import {
   resolveLunaWorkerConfig,
   inspectLunaWorkerCursor,
+  LUNA_FILM_ARTIFACT_CONTRACT,
+  LunaWorkerJobError,
   resumeLunaWorkerJob,
   startLunaWorkerJob,
   workerInputFile,
+  type LunaArtifactContract,
   type LunaWorkerDeliverable,
   type LunaWorkerCursor,
   type LunaWorkerInputFile,
   type LunaWorkerResult,
 } from "./lunaWorkerClient.ts";
+import {
+  LUNA_ASSET_PACK_CONTRACT,
+  validateLunaAssetPack,
+  type LunaAssetPackV1,
+  type ValidatedLunaAssetPack,
+} from "./lunaAssetPack.ts";
 
 const PROMPT_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -131,10 +140,12 @@ export interface LunaSessionReceiptV1 {
   latestRawSourceSha256: string;
   latestArtifactFingerprint: string;
   latestMaterializedFingerprint: string;
+  latestArtifactContractSha256?: string;
   /** Persisted-rollout provenance for the latest host-accepted artifact bundle. */
   latestRolloutSha256: string;
   /** Persisted-rollout provenance for the latest worker generation, accepted or not. */
   workerCursorRolloutSha256?: string;
+  workerCursorMaterializedFingerprint?: string;
   workerCursorDisposition: "accepted" | "unaccepted";
   workerCursorError?: string;
   latestRunDir: string;
@@ -153,9 +164,52 @@ export interface LunaAuthoredComposition {
   assetFiles: Array<{ relativePath: string; bytes: Buffer }>;
 }
 
+export interface LunaAuthoredAssetPack {
+  worker: LunaWorkerResult;
+  runDir: string;
+  validated: ValidatedLunaAssetPack;
+}
+
+export const LUNA_DIRECTION_ARTIFACT_CONTRACT: Readonly<LunaArtifactContract> = Object.freeze({
+  id: "film-direction-v1",
+  requiredPaths: Object.freeze([
+    "deliverables/director-treatment.md",
+    "deliverables/storyboard.json",
+  ]),
+});
+
+export const LUNA_SYNTHETIC_DIRECTION_ARTIFACT_CONTRACT: Readonly<LunaArtifactContract> =
+  Object.freeze({
+    id: "film-direction-with-synthetic-ui-v1",
+    requiredPaths: Object.freeze([
+      ...LUNA_DIRECTION_ARTIFACT_CONTRACT.requiredPaths,
+      ...LUNA_ASSET_PACK_CONTRACT.requiredPaths,
+    ]),
+  });
+
 export interface LunaAssetTransaction {
   commit(): void;
   rollback(): void;
+}
+
+export type LunaCreateWorkflowStage = "luna-direction" | "luna-build";
+
+export function lunaCreateFailureStage(error: unknown): LunaCreateWorkflowStage | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const stage = (error as { lunaCreateStage?: unknown }).lunaCreateStage;
+  return stage === "luna-direction" || stage === "luna-build" ? stage : undefined;
+}
+
+function tagLunaCreateFailure(error: unknown, stage: LunaCreateWorkflowStage): unknown {
+  if (error && typeof error === "object" && Object.isExtensible(error)) {
+    Object.defineProperty(error, "lunaCreateStage", {
+      value: stage,
+      configurable: true,
+      enumerable: false,
+    });
+    return error;
+  }
+  return Object.assign(new Error(String(error)), { lunaCreateStage: stage });
 }
 
 /** A paid worker turn whose exact result exists but failed host acceptance. */
@@ -208,6 +262,26 @@ function sha256(bytes: Buffer | string): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function canonicalContract(contract: LunaArtifactContract): { id: string; requiredPaths: string[] } {
+  return { id: contract.id, requiredPaths: [...contract.requiredPaths].sort() };
+}
+
+function artifactContractSha256(contract: LunaArtifactContract): string {
+  return sha256(JSON.stringify(canonicalContract(contract)));
+}
+
+function materializedFingerprint(
+  contractSha256: string,
+  entries: readonly { path: string; sha256: string }[],
+): string {
+  return sha256(JSON.stringify({
+    contractSha256,
+    files: [...entries]
+      .map((entry) => ({ path: entry.path, sha256: entry.sha256.toLowerCase() }))
+      .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
+  }));
+}
+
 function safeLeafName(value: string, fallback: string): string {
   const safe = path.basename(value).replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80);
   return safe || fallback;
@@ -255,12 +329,82 @@ function approvedAssetInputs(referencePaths: readonly string[], approvedRoot?: s
   return { files, manifest };
 }
 
+function approvedUiPackInputs(
+  deliverablesDir?: string,
+  approvedRoot?: string,
+  expectedFingerprint?: string,
+): { files: LunaWorkerInputFile[]; validated?: ValidatedLunaAssetPack } {
+  if (!deliverablesDir) return { files: [] };
+  if (!approvedRoot) throw new Error("A prepared Luna UI pack requires an approved host root");
+  if (!expectedFingerprint || !/^[a-f0-9]{64}$/.test(expectedFingerprint)) {
+    throw new Error("A prepared Luna UI pack requires its host-accepted fingerprint");
+  }
+  const rootReal = fs.realpathSync(approvedRoot);
+  const dirInfo = fs.lstatSync(deliverablesDir);
+  if (!dirInfo.isDirectory() || dirInfo.isSymbolicLink()) {
+    throw new Error("Prepared Luna UI pack must be a regular directory");
+  }
+  const dirReal = fs.realpathSync(deliverablesDir);
+  const relativeToRoot = path.relative(rootReal, dirReal);
+  if (
+    !relativeToRoot || relativeToRoot === ".." || relativeToRoot.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeToRoot)
+  ) {
+    throw new Error("Prepared Luna UI pack escaped its approved host root");
+  }
+  const bundle = new Map<string, Buffer>();
+  let totalBytes = 0;
+  const walk = (directory: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) throw new Error("Prepared Luna UI pack cannot contain symbolic links");
+      if (entry.isDirectory()) {
+        walk(absolute);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const relative = path.relative(dirReal, absolute).replace(/\\/g, "/");
+      if (
+        !new Set(["asset-pack.json", "ui-kit.html", "assets-manifest.json"]).has(relative) &&
+        !relative.startsWith("assets/luna/")
+      ) {
+        continue;
+      }
+      const bytes = fs.readFileSync(absolute);
+      totalBytes += bytes.length;
+      if (bytes.length > MAX_DELIVERABLE_BYTES || totalBytes > MAX_DELIVERABLE_TOTAL_BYTES) {
+        throw new Error("Prepared Luna UI pack exceeds the bounded input size");
+      }
+      bundle.set(`deliverables/${relative}`, bytes);
+    }
+  };
+  walk(dirReal);
+  const validated = validateLunaAssetPack(bundle);
+  if (validated.fingerprint !== expectedFingerprint) {
+    throw new Error("Prepared Luna UI pack bytes no longer match their accepted fingerprint");
+  }
+  return {
+    validated,
+    files: [...bundle.entries()].map(([name, bytes]) =>
+      workerInputFile(`inputs/ui-pack/${name.slice("deliverables/".length)}`, bytes)
+    ),
+  };
+}
+
 function initialWorkerFiles(
   facts: LunaFactEnvelope,
   referencePaths: readonly string[],
   approvedRoot?: string,
+  preparedPackDir?: string,
+  preparedPackRoot?: string,
+  preparedPackFingerprint?: string,
 ): LunaWorkerInputFile[] {
   const assets = approvedAssetInputs(referencePaths, approvedRoot);
+  const preparedPack = approvedUiPackInputs(
+    preparedPackDir,
+    preparedPackRoot,
+    preparedPackFingerprint,
+  );
   const assetBrief = [
     "# Approved brand asset intake",
     "",
@@ -282,6 +426,23 @@ function initialWorkerFiles(
       "inputs/references/slack-ad-motion-principles.md",
       prompt("luna-motion-reference.md"),
     ),
+    workerInputFile("inputs/ui-pack-status.json", JSON.stringify({
+      version: 1,
+      mode: preparedPack.validated ? "prepared" : "synthetic-required",
+      ...(preparedPack.validated
+        ? {
+            fingerprint: preparedPack.validated.fingerprint,
+            components: preparedPack.validated.pack.components.map((component) => component.id),
+          }
+        : {}),
+    }, null, 2) + "\n"),
+    ...(!preparedPack.validated
+      ? [workerInputFile(
+          "inputs/references/synthetic-ui-pack-contract.md",
+          prompt("luna-asset-pack.md"),
+        )]
+      : []),
+    ...preparedPack.files,
     ...assets.files,
   ];
 }
@@ -334,10 +495,140 @@ function nextRunDir(projectDir: string, kind: string): string {
   throw new Error("Could not allocate a unique Luna evidence run directory");
 }
 
+function persistWorkerFailure(
+  projectDir: string,
+  kind: string,
+  error: LunaWorkerJobError,
+): void {
+  const root = path.join(projectDir, "planning", "luna", "worker-failures");
+  fs.mkdirSync(root, { recursive: true });
+  const file = path.join(
+    root,
+    `${new Date().toISOString().replace(/[:.]/g, "-")}-${safeLeafName(kind, "stage")}.json`,
+  );
+  writeJsonAtomic(file, {
+    version: 1,
+    stage: kind,
+    cursor: error.cursor,
+    message: error.message,
+    recordedAt: new Date().toISOString(),
+  });
+}
+
+function protocolRecoveryFiles(error: LunaWorkerJobError): LunaWorkerInputFile[] {
+  return [workerInputFile(
+    "inputs/protocol-recovery/failure.json",
+    JSON.stringify({ version: 1, ...error.cursor.failure }, null, 2) + "\n",
+  )];
+}
+
+async function recoverArtifactProtocolOnce(input: {
+  projectDir: string;
+  kind: string;
+  error: unknown;
+  contract: LunaArtifactContract;
+  expectedBaseFingerprint: string | null;
+}): Promise<LunaWorkerResult> {
+  if (!(input.error instanceof LunaWorkerJobError)) throw input.error;
+  persistWorkerFailure(input.projectDir, input.kind, input.error);
+  const { cursor } = input.error;
+  if (!cursor.failure?.recoverable || cursor.failure.category !== "artifact_protocol") {
+    throw input.error;
+  }
+  if (!cursor.threadId || cursor.status !== "failed") {
+    throw new Error("Recoverable Luna protocol failure has no exact failed thread cursor");
+  }
+  const expectedBaseFingerprint = cursor.failure.baseFingerprint ??
+    input.expectedBaseFingerprint;
+  const recovered = await resumeLunaWorkerJob(resolveLunaWorkerConfig(), {
+    jobId: cursor.jobId,
+    expectedRunCount: cursor.runCount,
+    expectedBaseFingerprint,
+    prompt: prompt("luna-protocol-recovery.md"),
+    files: protocolRecoveryFiles(input.error),
+    artifactContract: input.contract,
+  });
+  if (recovered.jobId !== cursor.jobId || recovered.threadId !== cursor.threadId) {
+    throw new Error("Luna protocol recovery did not resume the exact failed thread");
+  }
+  if (recovered.runCount !== cursor.runCount + 1) {
+    throw new Error("Luna protocol recovery did not advance the failed cursor exactly once");
+  }
+  return recovered;
+}
+
+async function startWorkerStage(input: {
+  projectDir: string;
+  kind: string;
+  jobId: string;
+  promptText: string;
+  files: LunaWorkerInputFile[];
+  contract: LunaArtifactContract;
+}): Promise<LunaWorkerResult> {
+  try {
+    return await startLunaWorkerJob(resolveLunaWorkerConfig(), {
+      jobId: input.jobId,
+      prompt: input.promptText,
+      files: input.files,
+      artifactContract: input.contract,
+    });
+  } catch (error) {
+    return recoverArtifactProtocolOnce({
+      projectDir: input.projectDir,
+      kind: input.kind,
+      error,
+      contract: input.contract,
+      expectedBaseFingerprint: null,
+    });
+  }
+}
+
+async function resumeWorkerStage(input: {
+  projectDir: string;
+  kind: string;
+  jobId: string;
+  expectedRunCount: number;
+  expectedBaseFingerprint: string | null;
+  promptText: string;
+  files: LunaWorkerInputFile[];
+  contract: LunaArtifactContract;
+}): Promise<LunaWorkerResult> {
+  try {
+    return await resumeLunaWorkerJob(resolveLunaWorkerConfig(), {
+      jobId: input.jobId,
+      expectedRunCount: input.expectedRunCount,
+      expectedBaseFingerprint: input.expectedBaseFingerprint,
+      prompt: input.promptText,
+      files: input.files,
+      artifactContract: input.contract,
+    });
+  } catch (error) {
+    return recoverArtifactProtocolOnce({
+      projectDir: input.projectDir,
+      kind: input.kind,
+      error,
+      contract: input.contract,
+      expectedBaseFingerprint: input.expectedBaseFingerprint,
+    });
+  }
+}
+
 function persistWorkerResult(projectDir: string, kind: string, result: LunaWorkerResult): {
   runDir: string;
   files: Map<string, Buffer>;
-} {
+};
+function persistWorkerResult(
+  projectDir: string,
+  kind: string,
+  result: LunaWorkerResult,
+  contract: LunaArtifactContract,
+): { runDir: string; files: Map<string, Buffer> };
+function persistWorkerResult(
+  projectDir: string,
+  kind: string,
+  result: LunaWorkerResult,
+  contract: LunaArtifactContract = LUNA_FILM_ARTIFACT_CONTRACT,
+): { runDir: string; files: Map<string, Buffer> } {
   // Persist the paid worker receipt and its exact encoded response before any
   // host-side interpretation. A bad hash/path/schema is still evidence; the
   // validator may reject it, but it must never make the paid bytes disappear.
@@ -352,6 +643,8 @@ function persistWorkerResult(projectDir: string, kind: string, result: LunaWorke
     model: result.model,
     reasoningEffort: result.reasoningEffort,
     codexVersion: result.codexVersion,
+    artifactContract: canonicalContract(contract),
+    artifactContractSha256: result.artifactContractSha256,
     rawEnvelopeSha256: result.rawEnvelopeSha256,
     materializedFingerprint: result.materializedFingerprint,
     rolloutSha256: result.rolloutSha256,
@@ -380,7 +673,7 @@ function persistWorkerResult(projectDir: string, kind: string, result: LunaWorke
     throw new Error("Luna worker raw artifact-envelope hash does not match its final message");
   }
   let totalBytes = 0;
-  const fingerprintEntries: string[] = [];
+  const fingerprintEntries: Array<{ path: string; sha256: string }> = [];
   for (const deliverable of result.deliverables) {
     const relative = normalizeWorkerPath(deliverable.path);
     if (files.has(relative)) throw new Error(`Luna worker returned duplicate deliverable ${relative}`);
@@ -389,11 +682,20 @@ function persistWorkerResult(projectDir: string, kind: string, result: LunaWorke
     if (totalBytes > MAX_DELIVERABLE_TOTAL_BYTES) {
       throw new Error("Luna worker deliverables exceeded the host total-size limit");
     }
-    fingerprintEntries.push(`${relative}:${deliverable.sha256.toLowerCase()}`);
+    fingerprintEntries.push({ path: relative, sha256: deliverable.sha256.toLowerCase() });
     files.set(relative, bytes);
   }
-  const materializedFingerprint = sha256(Buffer.from(fingerprintEntries.sort().join("\n"), "utf8"));
-  if (materializedFingerprint !== result.materializedFingerprint) {
+  const expectedContractSha256 = artifactContractSha256(contract);
+  if (result.artifactContractSha256 !== expectedContractSha256) {
+    throw new Error("Luna worker artifact contract hash does not match the host-requested contract");
+  }
+  for (const requiredPath of contract.requiredPaths) {
+    if (!files.has(requiredPath)) {
+      throw new Error(`Luna worker omitted contract-required ${requiredPath}`);
+    }
+  }
+  const fingerprint = materializedFingerprint(expectedContractSha256, fingerprintEntries);
+  if (fingerprint !== result.materializedFingerprint) {
     throw new Error("Luna worker materialized fingerprint does not match its deliverables");
   }
 
@@ -713,6 +1015,17 @@ export function parseLunaMotionIntent(
   if (!intent.energyPeak || !intent.finalRestingHold) {
     throw new Error("Luna motion intent must declare one energy peak and final resting hold");
   }
+  // Protocol-v1 drafts sometimes used the unambiguous `selector` spelling for
+  // the final hold while every other semantic subject used `primarySelector`.
+  // Canonicalize that exact alias in memory (raw paid bytes remain untouched in
+  // the evidence run) so a repair turn is reserved for executable defects.
+  const restingHold = intent.finalRestingHold as Record<string, unknown>;
+  if (
+    restingHold.primarySelector === undefined &&
+    typeof restingHold.selector === "string" && restingHold.selector.trim()
+  ) {
+    restingHold.primarySelector = restingHold.selector;
+  }
   const sceneIds = new Set(storyboard.map((scene) => scene.id));
   const document = parseHTML(html).document;
   const compositionRoots = document.querySelectorAll<HTMLElement>("[data-composition-id]");
@@ -909,8 +1222,10 @@ function saveSession(
     latestRawSourceSha256: authored.rawSourceSha256,
     latestArtifactFingerprint: authored.artifactFingerprint,
     latestMaterializedFingerprint: authored.worker.materializedFingerprint,
+    latestArtifactContractSha256: authored.worker.artifactContractSha256,
     latestRolloutSha256: authored.worker.rolloutSha256,
     workerCursorRolloutSha256: authored.worker.rolloutSha256,
+    workerCursorMaterializedFingerprint: authored.worker.materializedFingerprint,
     workerCursorDisposition: "accepted",
     latestRunDir: path.relative(projectDir, authored.runDir).replace(/\\/g, "/"),
     createdAt: previous?.createdAt ?? now,
@@ -937,9 +1252,13 @@ export function loadLunaSession(projectDir: string): LunaSessionReceiptV1 | unde
         Number.isSafeInteger(parsed.committedRevision) && parsed.committedRevision > 0 &&
         /^[a-f0-9]{64}$/.test(parsed.latestCommittedSourceSha256) &&
         /^[a-f0-9]{64}$/.test(parsed.latestMaterializedFingerprint) &&
+        (parsed.latestArtifactContractSha256 === undefined ||
+          /^[a-f0-9]{64}$/.test(parsed.latestArtifactContractSha256)) &&
         /^[a-f0-9]{64}$/.test(parsed.latestRolloutSha256) &&
         (parsed.workerCursorRolloutSha256 === undefined ||
           /^[a-f0-9]{64}$/.test(parsed.workerCursorRolloutSha256)) &&
+        (parsed.workerCursorMaterializedFingerprint === undefined ||
+          /^[a-f0-9]{64}$/.test(parsed.workerCursorMaterializedFingerprint)) &&
         (parsed.workerCursorDisposition === "accepted" || parsed.workerCursorDisposition === "unaccepted")
       ? parsed
       : undefined;
@@ -974,6 +1293,12 @@ function persistUnacceptedWorkerCursor(
     workerOperationId: cursor.operationId,
     workerRunCount: cursor.runCount,
     ...(cursor.rolloutSha256 ? { workerCursorRolloutSha256: cursor.rolloutSha256 } : {}),
+    ...((cursor.materializedFingerprint ?? cursor.failure?.baseFingerprint)
+      ? {
+          workerCursorMaterializedFingerprint:
+            cursor.materializedFingerprint ?? cursor.failure!.baseFingerprint!,
+        }
+      : {}),
     workerCursorDisposition: "unaccepted",
     workerCursorError: String(error ?? `worker turn ended as ${cursor.status}`)
       .replace(/\s+/g, " ")
@@ -994,6 +1319,10 @@ async function refreshLunaWorkerCursor(
     throw new Error(`Luna worker job is still ${cursor.status}`);
   }
   return persistUnacceptedWorkerCursor(projectDir, session, cursor, error);
+}
+
+function workerCursorBaseFingerprint(session: LunaSessionReceiptV1): string {
+  return session.workerCursorMaterializedFingerprint ?? session.latestMaterializedFingerprint;
 }
 
 function assertLunaSessionMatchesComposition(
@@ -1032,6 +1361,9 @@ export function reconcileLunaSessionAfterUndo(projectDir: string): boolean {
         ...(current.workerCursorRolloutSha256
           ? { workerCursorRolloutSha256: current.workerCursorRolloutSha256 }
           : {}),
+        ...(current.workerCursorMaterializedFingerprint
+          ? { workerCursorMaterializedFingerprint: current.workerCursorMaterializedFingerprint }
+          : {}),
         workerCursorDisposition: current.workerRunCount > receipt.workerRunCount
           ? "unaccepted" as const
           : current.workerCursorDisposition,
@@ -1056,12 +1388,10 @@ export function reconcileLunaSessionAfterUndo(projectDir: string): boolean {
 }
 
 function materializeLunaResultUnchecked(
-  projectDir: string,
-  kind: string,
+  persisted: { runDir: string; files: Map<string, Buffer> },
   result: LunaWorkerResult,
   acceptedDuration: { minSec: number; maxSec: number },
 ): LunaAuthoredComposition {
-  const persisted = persistWorkerResult(projectDir, kind, result);
   const html = requiredText(persisted.files, "composition.html");
   validateLunaHtmlSecurity(html);
   const storyboard = parseStoryboard(requiredText(persisted.files, "storyboard.json"));
@@ -1123,12 +1453,184 @@ function materializeLunaResult(
   result: LunaWorkerResult,
   acceptedDuration: { minSec: number; maxSec: number },
 ): LunaAuthoredComposition {
+  // Transport, envelope, contract, path, size and hash verification is a host
+  // integrity boundary. It stays outside the authored-defect wrapper so a bad
+  // receipt can never buy a model repair turn.
+  const persisted = persistWorkerResult(projectDir, kind, result);
   try {
-    return materializeLunaResultUnchecked(projectDir, kind, result, acceptedDuration);
+    return materializeLunaResultUnchecked(persisted, result, acceptedDuration);
   } catch (error) {
     if (error instanceof LunaRejectedBundleError) throw error;
     throw new LunaRejectedBundleError(result, error);
   }
+}
+
+interface LunaDirectionResult {
+  worker: LunaWorkerResult;
+  runDir: string;
+  files: Map<string, Buffer>;
+  storyboard: DirectScene[];
+  durationSec: number;
+  syntheticPack?: ValidatedLunaAssetPack;
+}
+
+class LunaRejectedDirectionError extends Error {
+  readonly worker: LunaWorkerResult;
+  readonly files: Map<string, Buffer>;
+
+  constructor(worker: LunaWorkerResult, files: Map<string, Buffer>, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "LunaRejectedDirectionError";
+    this.worker = worker;
+    this.files = files;
+  }
+}
+
+function materializeLunaDirection(
+  projectDir: string,
+  result: LunaWorkerResult,
+  contract: LunaArtifactContract,
+  acceptedDuration: { minSec: number; maxSec: number },
+  syntheticPackRequired: boolean,
+): LunaDirectionResult {
+  const persisted = persistWorkerResult(projectDir, "direction", result, contract);
+  try {
+    const treatment = requiredText(persisted.files, "director-treatment.md");
+    if (treatment.trim().length < 80 || treatment.length > 80_000) {
+      throw new Error("Luna direction treatment must be a bounded, substantive document");
+    }
+    const storyboard = parseStoryboard(requiredText(persisted.files, "storyboard.json"));
+    let cursor = 0;
+    for (const [index, scene] of storyboard.entries()) {
+      if (Math.abs(scene.startSec - cursor) > 0.05) {
+        throw new Error(
+          `Luna direction scene ${index + 1} must start at ${cursor.toFixed(3)}s to tile the film`,
+        );
+      }
+      cursor = scene.startSec + scene.durationSec;
+    }
+    if (cursor < acceptedDuration.minSec - 0.05 || cursor > acceptedDuration.maxSec + 0.05) {
+      throw new Error(
+        `Luna direction authored ${cursor}s but the verified envelope accepts ` +
+          `${acceptedDuration.minSec}-${acceptedDuration.maxSec}s`,
+      );
+    }
+    const syntheticPack = syntheticPackRequired
+      ? validateLunaAssetPack(persisted.files)
+      : undefined;
+    return {
+      worker: result,
+      runDir: persisted.runDir,
+      files: persisted.files,
+      storyboard,
+      durationSec: cursor,
+      ...(syntheticPack ? { syntheticPack } : {}),
+    };
+  } catch (error) {
+    throw new LunaRejectedDirectionError(result, persisted.files, error);
+  }
+}
+
+function directionRepairInputs(rejected: LunaRejectedDirectionError): LunaWorkerInputFile[] {
+  const files = [...rejected.files.entries()].map(([name, bytes]) =>
+    workerInputFile(`inputs/rejected-direction/${name.slice("deliverables/".length)}`, bytes)
+  );
+  files.push(workerInputFile(
+    "inputs/direction-repair/hard-finding.json",
+    JSON.stringify({
+      version: 1,
+      finding: rejected.message,
+      advisoryFinding: false,
+      workerJobId: rejected.worker.jobId,
+      workerRunCount: rejected.worker.runCount,
+      materializedFingerprint: rejected.worker.materializedFingerprint,
+    }, null, 2) + "\n",
+  ));
+  return files;
+}
+
+function directionBuildInputs(
+  baseFiles: readonly LunaWorkerInputFile[],
+  direction: LunaDirectionResult,
+): LunaWorkerInputFile[] {
+  const files = baseFiles
+    // The direction turn has already extracted visual facts from screenshots;
+    // avoid paying the binary context cost again on source authoring.
+    .filter((file) => !file.path.startsWith("inputs/brand-assets/"))
+    .map((file) => ({ ...file }));
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  for (const name of ["director-treatment.md", "storyboard.json"]) {
+    byPath.set(
+      `inputs/direction/${name}`,
+      workerInputFile(`inputs/direction/${name}`, requiredText(direction.files, name)),
+    );
+  }
+  if (direction.syntheticPack) {
+    for (const [name, bytes] of direction.files) {
+      const relative = name.slice("deliverables/".length);
+      if (
+        new Set(["asset-pack.json", "ui-kit.html", "assets-manifest.json"]).has(relative) ||
+        relative.startsWith("assets/luna/")
+      ) {
+        const inputPath = `inputs/ui-pack/${relative}`;
+        byPath.set(inputPath, workerInputFile(inputPath, bytes));
+      }
+    }
+    byPath.set("inputs/ui-pack-status.json", workerInputFile(
+      "inputs/ui-pack-status.json",
+      JSON.stringify({
+        version: 1,
+        mode: "synthetic",
+        fingerprint: direction.syntheticPack.fingerprint,
+        components: direction.syntheticPack.pack.components.map((component) => component.id),
+      }, null, 2) + "\n",
+    ));
+  }
+  return [...byPath.values()];
+}
+
+export async function authorLunaAssetPack(input: {
+  projectDir: string;
+  jobId: string;
+  channel: string;
+  notes?: string;
+  palette?: { accent?: string; background?: string; colors?: string[] };
+  assetReferencePaths: readonly string[];
+  assetReferenceRoot: string;
+}): Promise<LunaAuthoredAssetPack> {
+  const assets = approvedAssetInputs(input.assetReferencePaths, input.assetReferenceRoot);
+  if (!assets.files.length) throw new Error("Luna UI asset intake requires at least one approved image");
+  const files: LunaWorkerInputFile[] = [
+    workerInputFile("inputs/asset-intake.json", JSON.stringify({
+      version: 1,
+      channel: input.channel,
+      notes: input.notes ?? null,
+      palette: input.palette ?? { colors: [] },
+      images: assets.manifest,
+      trust: "visual-evidence-only",
+    }, null, 2) + "\n"),
+    ...assets.files,
+  ];
+  const result = await startWorkerStage({
+    projectDir: input.projectDir,
+    kind: "asset-pack",
+    jobId: input.jobId,
+    promptText: prompt("luna-asset-pack.md"),
+    files,
+    contract: LUNA_ASSET_PACK_CONTRACT,
+  });
+  if (result.jobId !== input.jobId) throw new Error("Luna UI pack worker returned a different job ID");
+  const persisted = persistWorkerResult(
+    input.projectDir,
+    "asset-pack",
+    result,
+    LUNA_ASSET_PACK_CONTRACT,
+  );
+  return {
+    worker: result,
+    runDir: persisted.runDir,
+    validated: validateLunaAssetPack(persisted.files),
+  };
 }
 
 function rejectedBundleInputs(
@@ -1137,6 +1639,10 @@ function rejectedBundleInputs(
 ): LunaWorkerInputFile[] {
   if (!hardFindings.length) {
     throw new Error("Luna repair requires at least one hard mechanical finding");
+  }
+  const diagnosticBytes = Buffer.byteLength(hardFindings.join("\n\n"), "utf8");
+  if (diagnosticBytes > 128 * 1024) {
+    throw new Error("Luna repair host diagnostic exceeds the 128 KB evidence bound");
   }
   if (result.deliverables.length > MAX_DELIVERABLE_COUNT) {
     throw new Error("Luna rejected bundle has too many deliverables to repair safely");
@@ -1162,6 +1668,26 @@ function rejectedBundleInputs(
     version: 1,
     findings: hardFindings,
     advisoryFindingsIncluded: false,
+  }, null, 2) + "\n"));
+  const timelineEvidence = hardFindings.flatMap((finding) => {
+    const marker = "evidence=";
+    const start = finding.indexOf(marker);
+    if (start < 0) return [];
+    try {
+      return [JSON.parse(finding.slice(start + marker.length)) as unknown];
+    } catch {
+      return [];
+    }
+  });
+  files.push(workerInputFile("inputs/repair/complete-host-diagnostic.json", JSON.stringify({
+    version: 1,
+    disposition: "blocking",
+    advisoryFindingsIncluded: false,
+    allVerbatimFindings: hardFindings,
+    blockingLines: hardFindings.flatMap((finding) =>
+      finding.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    ),
+    ...(timelineEvidence.length ? { timelineContractEvidence: timelineEvidence } : {}),
   }, null, 2) + "\n"));
   files.push(workerInputFile("inputs/repair/rejected-bundle-host.json", JSON.stringify({
     version: 1,
@@ -1199,11 +1725,15 @@ export async function repairLunaComposition(input: {
   ) {
     throw new Error("Luna repair could not prove the exact rejected worker cursor");
   }
-  const result = await resumeLunaWorkerJob(config, {
+  const result = await resumeWorkerStage({
+    projectDir: input.projectDir,
+    kind: "repair",
     jobId: rejected.jobId,
     expectedRunCount: rejected.runCount,
-    prompt: prompt("luna-repair.md"),
+    expectedBaseFingerprint: rejected.materializedFingerprint,
+    promptText: prompt("luna-repair.md"),
     files: rejectedBundleInputs(rejected, input.hardFindings),
+    contract: LUNA_FILM_ARTIFACT_CONTRACT,
   });
   if (result.jobId !== rejected.jobId) {
     throw new Error("Luna repair returned a different worker job ID");
@@ -1211,8 +1741,8 @@ export async function repairLunaComposition(input: {
   if (result.threadId !== rejected.threadId) {
     throw new Error("Luna repair resumed a different Codex thread");
   }
-  if (result.runCount !== rejected.runCount + 1) {
-    throw new Error("Luna repair did not advance the exact director thread once");
+  if (result.runCount <= rejected.runCount || result.runCount > rejected.runCount + 2) {
+    throw new Error("Luna repair did not advance the exact director thread within its one protocol retry");
   }
   return materializeLunaResult(
     input.projectDir,
@@ -1228,19 +1758,123 @@ export async function authorLunaComposition(input: {
   facts: LunaFactEnvelope;
   assetReferencePaths?: readonly string[];
   assetReferenceRoot?: string;
+  preparedAssetPackDir?: string;
+  preparedAssetPackRoot?: string;
+  preparedAssetPackFingerprint?: string;
+  onWorkflowStage?: (
+    stage: LunaCreateWorkflowStage,
+    phase: "started" | "completed",
+    durationMs?: number,
+    attempts?: number,
+  ) => void;
 }): Promise<LunaAuthoredComposition> {
   const files = initialWorkerFiles(
     input.facts,
     input.assetReferencePaths ?? [],
     input.assetReferenceRoot,
+    input.preparedAssetPackDir,
+    input.preparedAssetPackRoot,
+    input.preparedAssetPackFingerprint,
   );
-  const result = await startLunaWorkerJob(resolveLunaWorkerConfig(), {
-    jobId: input.jobId,
-    prompt: prompt("luna-director.md"),
-    files,
-  });
-  if (result.jobId !== input.jobId) throw new Error("Luna worker returned a different job ID");
-  return materializeLunaResult(input.projectDir, "create", result, lunaDurationBounds(input.facts));
+  const syntheticPackRequired = !files.some((file) =>
+    file.path === "inputs/ui-pack/asset-pack.json"
+  );
+  const directionContract = syntheticPackRequired
+    ? LUNA_SYNTHETIC_DIRECTION_ARTIFACT_CONTRACT
+    : LUNA_DIRECTION_ARTIFACT_CONTRACT;
+  const runStage = async <T>(
+    stage: LunaCreateWorkflowStage,
+    run: () => Promise<T>,
+    attempts: () => number,
+  ): Promise<T> => {
+    const started = performance.now();
+    input.onWorkflowStage?.(stage, "started");
+    try {
+      return await run();
+    } catch (error) {
+      throw tagLunaCreateFailure(error, stage);
+    } finally {
+      input.onWorkflowStage?.(
+        stage,
+        "completed",
+        Math.round(performance.now() - started),
+        Math.max(1, attempts()),
+      );
+    }
+  };
+  let directionAttempts = 0;
+  const direction = await runStage("luna-direction", async () => {
+    let directionResult = await startWorkerStage({
+      projectDir: input.projectDir,
+      kind: "direction",
+      jobId: input.jobId,
+      promptText: prompt("luna-direction.md"),
+      files,
+      contract: directionContract,
+    });
+    directionAttempts = directionResult.runCount;
+    if (directionResult.jobId !== input.jobId) {
+      throw new Error("Luna direction worker returned a different job ID");
+    }
+    try {
+      return materializeLunaDirection(
+        input.projectDir,
+        directionResult,
+        directionContract,
+        lunaDurationBounds(input.facts),
+        syntheticPackRequired,
+      );
+    } catch (error) {
+      if (!(error instanceof LunaRejectedDirectionError)) throw error;
+      directionResult = await resumeWorkerStage({
+        projectDir: input.projectDir,
+        kind: "direction-repair",
+        jobId: error.worker.jobId,
+        expectedRunCount: error.worker.runCount,
+        expectedBaseFingerprint: error.worker.materializedFingerprint,
+        promptText: prompt("luna-direction-repair.md"),
+        files: directionRepairInputs(error),
+        contract: directionContract,
+      });
+      directionAttempts = directionResult.runCount;
+      if (directionResult.threadId !== error.worker.threadId) {
+        throw new Error("Luna direction repair resumed a different Codex thread");
+      }
+      return materializeLunaDirection(
+        input.projectDir,
+        directionResult,
+        directionContract,
+        lunaDurationBounds(input.facts),
+        syntheticPackRequired,
+      );
+    }
+  }, () => directionAttempts);
+  let buildAttempts = 0;
+  return runStage("luna-build", async () => {
+    const buildResult = await resumeWorkerStage({
+      projectDir: input.projectDir,
+      kind: "build",
+      jobId: direction.worker.jobId,
+      expectedRunCount: direction.worker.runCount,
+      expectedBaseFingerprint: direction.worker.materializedFingerprint,
+      promptText: prompt("luna-director.md"),
+      files: directionBuildInputs(files, direction),
+      contract: LUNA_FILM_ARTIFACT_CONTRACT,
+    });
+    buildAttempts = buildResult.runCount - direction.worker.runCount;
+    if (buildResult.jobId !== input.jobId || buildResult.threadId !== direction.worker.threadId) {
+      throw new Error("Luna build did not continue the exact direction thread");
+    }
+    if (buildResult.runCount <= direction.worker.runCount) {
+      throw new Error("Luna build did not advance the direction thread");
+    }
+    return materializeLunaResult(
+      input.projectDir,
+      "create",
+      buildResult,
+      lunaDurationBounds(input.facts),
+    );
+  }, () => buildAttempts);
 }
 
 function acceptedBundleFiles(
@@ -1277,7 +1911,7 @@ function acceptedBundleFiles(
     throw new Error("Accepted Luna deliverable bundle escaped its accepted run");
   }
   const files: LunaWorkerInputFile[] = [];
-  const fingerprintEntries: string[] = [];
+  const fingerprintEntries: Array<{ path: string; sha256: string }> = [];
   const walk = (directory: string): void => {
     const entries = fs.readdirSync(directory, { withFileTypes: true })
       .sort((left, right) => left.name.localeCompare(right.name));
@@ -1292,19 +1926,27 @@ function acceptedBundleFiles(
       const relativePath = path.relative(deliverablesReal, absolutePath).replace(/\\/g, "/");
       const bytes = fs.readFileSync(absolutePath);
       const digest = sha256(bytes);
-      fingerprintEntries.push(`deliverables/${relativePath}:${digest}`);
+      fingerprintEntries.push({ path: `deliverables/${relativePath}`, sha256: digest });
       files.push(workerInputFile(`inputs/accepted-bundle/${relativePath}`, bytes));
     }
   };
   walk(deliverablesReal);
-  const materializedFingerprint = sha256(Buffer.from(fingerprintEntries.sort().join("\n"), "utf8"));
-  if (materializedFingerprint !== session.latestMaterializedFingerprint) {
+  const contractSha256 = session.latestArtifactContractSha256 ??
+    artifactContractSha256(LUNA_FILM_ARTIFACT_CONTRACT);
+  const currentFingerprint = session.latestArtifactContractSha256
+    ? materializedFingerprint(contractSha256, fingerprintEntries)
+    : sha256(Buffer.from(
+        fingerprintEntries.map((entry) => `${entry.path}:${entry.sha256}`).sort().join("\n"),
+        "utf8",
+      ));
+  if (currentFingerprint !== session.latestMaterializedFingerprint) {
     throw new Error("Accepted Luna bundle no longer matches its accepted materialized fingerprint");
   }
   files.push(workerInputFile("inputs/accepted-bundle-host.json", JSON.stringify({
     version: 1,
     artifactFingerprint: session.latestArtifactFingerprint,
     materializedFingerprint: session.latestMaterializedFingerprint,
+    artifactContractSha256: session.latestArtifactContractSha256 ?? null,
     acceptedRolloutSha256: session.latestRolloutSha256,
     workerCursorRolloutSha256: session.workerCursorRolloutSha256,
     workerCursorDisposition: session.workerCursorDisposition,
@@ -1373,11 +2015,15 @@ export async function selfReviewLunaComposition(input: {
   session = await refreshLunaWorkerCursor(input.projectDir, session);
   let result: LunaWorkerResult;
   try {
-    result = await resumeLunaWorkerJob(resolveLunaWorkerConfig(), {
+    result = await resumeWorkerStage({
+      projectDir: input.projectDir,
+      kind: "self-review",
       jobId: session.workerJobId,
       expectedRunCount: session.workerRunCount,
-      prompt: prompt("luna-self-review.md"),
+      expectedBaseFingerprint: workerCursorBaseFingerprint(session),
+      promptText: prompt("luna-self-review.md"),
       files: evidenceFiles(input.projectDir, input.thumbnailPaths, session),
+      contract: LUNA_FILM_ARTIFACT_CONTRACT,
     });
   } catch (error) {
     await refreshLunaWorkerCursor(input.projectDir, session, error).catch(() => undefined);
@@ -1399,6 +2045,8 @@ export async function selfReviewLunaComposition(input: {
     threadId: result.threadId,
     status: "completed",
     rolloutSha256: result.rolloutSha256,
+    materializedFingerprint: result.materializedFingerprint,
+    artifactContractSha256: result.artifactContractSha256,
   }, "worker turn completed; host acceptance pending");
   // The accepted film's duration is settled on resume; only a fresh create
   // with a new verified envelope may change runtime.
@@ -1447,11 +2095,15 @@ export async function reviseLunaComposition(input: {
   if (fs.existsSync(currentAssetsRoot)) appendCurrentAssets(currentAssetsRoot);
   let result: LunaWorkerResult;
   try {
-    result = await resumeLunaWorkerJob(resolveLunaWorkerConfig(), {
+    result = await resumeWorkerStage({
+      projectDir: input.projectDir,
+      kind: "revision",
       jobId: session.workerJobId,
       expectedRunCount: session.workerRunCount,
-      prompt: prompt("luna-revision.md"),
+      expectedBaseFingerprint: workerCursorBaseFingerprint(session),
+      promptText: prompt("luna-revision.md"),
       files: currentFiles,
+      contract: LUNA_FILM_ARTIFACT_CONTRACT,
     });
   } catch (error) {
     await refreshLunaWorkerCursor(input.projectDir, session, error).catch(() => undefined);
@@ -1473,6 +2125,8 @@ export async function reviseLunaComposition(input: {
     threadId: result.threadId,
     status: "completed",
     rolloutSha256: result.rolloutSha256,
+    materializedFingerprint: result.materializedFingerprint,
+    artifactContractSha256: result.artifactContractSha256,
   }, "worker turn completed; host acceptance pending");
   return materializeLunaResult(input.projectDir, "revision", result, {
     minSec: session.durationSec,

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1920,height=1080,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Relay — The Thread Through the Noise</title>
+<style>
+:root{--ink:#07111f;--ink2:#0b1d31;--panel:#0f2940;--line:#25465d;--muted:#7893a8;--soft:#b9cfda;--cyan:#5be7ee;--cyan2:#1aaec3;--amber:#ffbd63;--amber2:#f18b38;--white:#f2f8fa}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--ink);font-family:"Liberation Sans",Arial,sans-serif;color:var(--white)}
+#composition{position:relative;width:1920px;height:1080px;overflow:hidden;background:var(--ink);isolation:isolate}
+#composition:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 51% 47%,#102b40 0,#091a2c 43%,#07111f 78%);opacity:.95}
+#composition:after{content:"";position:absolute;inset:38px 48px;border:1px solid rgba(91,231,238,.09);pointer-events:none}
+.scene{position:absolute;inset:0;visibility:hidden;opacity:0}
+#workspace-world{position:absolute;inset:0;transform-origin:960px 540px}
+.eyebrow{font:600 18px/1 "Liberation Mono",monospace;letter-spacing:3px;text-transform:uppercase;color:var(--cyan);position:absolute}
+.heading{font-size:52px;line-height:1.04;letter-spacing:-1.6px;font-weight:600;margin:0}.sub{font-size:22px;line-height:1.35;color:var(--muted);margin:0}.mono{font-family:"Liberation Mono",monospace}
+#signal-label{left:124px;top:118px}.signal-copy{position:absolute;left:124px;top:160px;width:580px}.signal-copy .sub{margin-top:20px;max-width:490px}
+#alert-card{position:absolute;left:118px;top:394px;width:514px;height:260px;background:linear-gradient(135deg,#152f45,#10263b);border:1px solid #4c7184;border-radius:14px;padding:28px 30px;box-shadow:0 24px 70px rgba(0,0,0,.25)}
+.alert-top{display:flex;justify-content:space-between;align-items:center;color:var(--soft);font:15px "Liberation Mono",monospace;letter-spacing:.5px}.alert-dot{width:12px;height:12px;border-radius:50%;background:var(--amber);box-shadow:0 0 20px var(--amber);display:inline-block;margin-right:10px;vertical-align:-1px}.alert-title{font-size:29px;margin-top:25px;letter-spacing:-.5px}.alert-meta{font:16px "Liberation Mono",monospace;color:var(--muted);margin-top:16px}.alert-severity{color:var(--amber);font-size:15px;letter-spacing:2px}
+#noise-field{position:absolute;left:760px;top:170px;width:1015px;height:620px}.noise-card{position:absolute;width:174px;height:86px;border:1px solid #22445b;border-radius:9px;background:rgba(15,41,64,.78);padding:14px 15px;color:#7799aa;font:14px "Liberation Mono",monospace}.noise-card b{display:block;color:#b5cbd4;font:600 16px "Liberation Sans",sans-serif;margin-bottom:8px}.n1{left:44px;top:44px}.n2{left:302px;top:158px}.n3{left:635px;top:26px}.n4{left:770px;top:300px}.n5{left:202px;top:420px}.n6{left:516px;top:480px}.noise-tick{position:absolute;height:1px;background:#1b4b61;transform-origin:left center;opacity:.8}.t1{left:190px;top:105px;width:180px;transform:rotate(16deg)}.t2{left:468px;top:199px;width:225px;transform:rotate(-19deg)}.t3{left:738px;top:100px;width:178px;transform:rotate(62deg)}.t4{left:292px;top:460px;width:280px;transform:rotate(8deg)}.t5{left:675px;top:520px;width:215px;transform:rotate(-54deg)}.t6{left:103px;top:285px;width:160px;transform:rotate(-42deg)}
+#amber-thread{position:absolute;left:594px;top:520px;width:380px;height:2px;background:var(--amber);box-shadow:0 0 16px rgba(255,189,99,.8);transform-origin:left center;opacity:0}.thread-dot{position:absolute;width:13px;height:13px;border-radius:50%;background:var(--amber);box-shadow:0 0 0 5px rgba(255,189,99,.14),0 0 22px var(--amber)}
+#map-scene .map-header{position:absolute;left:118px;top:112px}.map-header .sub{margin-top:15px}.map-frame{position:absolute;left:260px;top:286px;width:1400px;height:550px;border:1px solid #2b5269;border-radius:16px;background:rgba(8,24,39,.6);box-shadow:inset 0 1px rgba(255,255,255,.025)}.map-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(91,231,238,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(91,231,238,.045) 1px,transparent 1px);background-size:70px 70px;border-radius:16px}.map-title{position:absolute;left:30px;top:24px;color:var(--muted);font:15px "Liberation Mono",monospace;letter-spacing:1px}.map-node{position:absolute;width:190px;height:92px;background:#112c43;border:1px solid #3c6072;border-radius:10px;padding:18px 20px}.map-node strong{font-size:20px;font-weight:500;display:block}.map-node span{font:14px "Liberation Mono",monospace;color:var(--muted);display:block;margin-top:10px}.node-api{left:260px;top:205px}.node-web{left:36px;top:92px}.node-worker{left:610px;top:92px}.node-db{left:900px;top:275px}.node-auth{left:625px;top:375px}.node-api.selected{border-color:var(--cyan);box-shadow:0 0 0 1px rgba(91,231,238,.3),0 0 26px rgba(91,231,238,.17)}
+#route-path{position:absolute;inset:0;width:100%;height:100%;overflow:visible;opacity:.25}.route-base{fill:none;stroke:#39738a;stroke-width:3;stroke-dasharray:7 12}.route-hot{fill:none;stroke:var(--cyan);stroke-width:5;stroke-linecap:round;stroke-dasharray:900;stroke-dashoffset:900;filter:drop-shadow(0 0 7px rgba(91,231,238,.65))}.node-api .api-pulse{position:absolute;right:16px;top:16px;width:8px;height:8px;border-radius:50%;background:var(--cyan);opacity:0}
+#cursor{position:absolute;left:392px;top:525px;width:26px;height:34px;opacity:0;z-index:4;filter:drop-shadow(0 3px 4px #000)}#cursor:before{content:"";position:absolute;left:3px;top:1px;width:16px;height:26px;background:var(--white);clip-path:polygon(0 0,100% 72%,58% 70%,43% 100%,32% 94%,45% 66%,0 66%)}#cursor-ring{position:absolute;width:64px;height:64px;border:1px solid var(--cyan);border-radius:50%;opacity:0}
+#map-thread{position:absolute;left:438px;top:536px;width:230px;height:2px;background:var(--amber);transform-origin:left center;opacity:0}.map-thread-dot{right:-7px;top:-6px}
+#release-badge{position:absolute;left:1120px;top:458px;width:232px;height:100px;border:1px solid var(--amber);border-radius:10px;background:#1c3040;padding:16px 18px;opacity:0;box-shadow:0 0 26px rgba(255,189,99,.18)}#release-badge[data-part="release"]{z-index:6}.release-kicker{font:13px "Liberation Mono",monospace;color:var(--amber);letter-spacing:1.6px}.release-value{font:19px "Liberation Mono",monospace;margin-top:12px;color:var(--white)}
+#timeline-scene{background:linear-gradient(180deg,rgba(9,25,40,.96),rgba(7,17,31,.98));transform-origin:1448px 520px}.timeline-header{position:absolute;left:118px;top:100px}.timeline-header .sub{margin-top:14px}.timeline-shell{position:absolute;left:118px;top:336px;width:1684px;height:408px;border-top:1px solid #31566b;border-bottom:1px solid #1b394e}.timeline-axis{position:absolute;left:56px;right:56px;top:194px;height:2px;background:#31566b}.axis-dot{position:absolute;top:-5px;width:12px;height:12px;border-radius:50%;background:#5b8290}.axis-dot.a{left:5%}.axis-dot.b{left:27%}.axis-dot.c{left:50%}.axis-dot.d{left:72%}.axis-dot.e{left:94%}.event{position:absolute;width:270px;padding:18px 20px;border-left:2px solid var(--cyan);background:rgba(14,40,59,.82);border-radius:0 9px 9px 0}.event b{font-size:19px;font-weight:500;display:block}.event small{display:block;color:var(--muted);font:14px "Liberation Mono",monospace;margin-top:12px}.event.alert{left:26px;top:45px}.event.trace{left:405px;top:247px}.event.logs{left:790px;top:45px}.event.deploy{left:1160px;top:247px;width:360px;border-left-color:var(--amber);box-shadow:0 0 35px rgba(255,189,99,.12)}.event.deploy b{color:var(--amber)}.timeline-label{position:absolute;left:56px;top:12px;font:14px "Liberation Mono",monospace;color:var(--muted);letter-spacing:1px}.timeline-release-pin{position:absolute;left:1320px;top:188px;width:20px;height:20px;border:3px solid var(--amber);border-radius:50%;background:var(--ink);box-shadow:0 0 0 8px rgba(255,189,99,.12),0 0 25px rgba(255,189,99,.65);opacity:0}.timeline-release-pin[data-part="release"]{z-index:4}.timeline-release-line{position:absolute;left:1329px;top:0;width:2px;height:194px;background:var(--amber);transform-origin:bottom center;transform:scaleY(0);opacity:0}.timeline-release-copy{position:absolute;left:1280px;top:110px;color:var(--amber);font:14px "Liberation Mono",monospace;letter-spacing:1px;opacity:0}.timeline-foot{position:absolute;left:118px;top:790px;color:var(--muted);font:15px "Liberation Mono",monospace;letter-spacing:1px}.tag{display:inline-block;border:1px solid #31566b;border-radius:4px;padding:6px 9px;margin-right:8px;color:#9ab4c0}
+#close-scene{display:flex;align-items:center;justify-content:center;text-align:center;background:radial-gradient(circle at 50% 44%,#123047 0,#081726 58%,#07111f 100%)}#close-scene .close-inner{transform:translateY(-22px)}.relay-mark{width:58px;height:58px;border:2px solid var(--cyan);border-radius:17px;margin:0 auto 28px;position:relative;transform:rotate(45deg);box-shadow:0 0 28px rgba(91,231,238,.18)}.relay-mark:after,.relay-mark:before{content:"";position:absolute;background:var(--cyan);border-radius:4px}.relay-mark:before{width:26px;height:2px;left:14px;top:27px}.relay-mark:after{width:2px;height:26px;left:27px;top:14px}.brand-name{font:600 25px "Liberation Mono",monospace;letter-spacing:6px;color:var(--soft);margin-bottom:52px}.close-kicker{font:600 18px "Liberation Mono",monospace;color:var(--cyan);letter-spacing:3px;text-transform:uppercase;margin-bottom:20px}.close-heading{font-size:66px;letter-spacing:-2.5px;font-weight:500;margin:0;color:var(--white)}#closing-line{opacity:0}
+#status{position:absolute;right:124px;top:118px;font:14px "Liberation Mono",monospace;color:#668398;letter-spacing:1px}.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--cyan);margin-right:9px;box-shadow:0 0 12px var(--cyan)}
+</style>
+</head>
+<body>
+<div id="composition" data-composition-id="relay-luna-launch" data-width="1920" data-height="1080" data-duration="20" data-start="0">
+  <div id="workspace-world">
+    <section id="signals-scene" class="scene" data-scene="signals" data-start="0" data-duration="4.2">
+      <div id="signal-label" class="eyebrow">RELAY / PRODUCTION SIGNALS</div>
+      <div class="signal-copy"><h1 class="heading">Something changed<br>in production.</h1><p class="sub">A noisy alert is a beginning, not an answer.</p></div>
+      <div id="alert-card"><div class="alert-top"><span><i class="alert-dot"></i>PRODUCTION ALERT</span><span class="alert-severity">SEV · HIGH</span></div><div class="alert-title">Error rate rising</div><div class="alert-meta">payments-api&nbsp;&nbsp; / &nbsp;&nbsp;now&nbsp;&nbsp; / &nbsp;&nbsp;synthetic signal</div></div>
+      <div id="noise-field"><div class="noise-card n1"><b>trace gap</b>checkout / 43ms</div><div class="noise-card n2"><b>log burst</b>worker-02 / 18:41</div><div class="noise-card n3"><b>deploy</b>web / recent</div><div class="noise-card n4"><b>error spike</b>payments / 5xx</div><div class="noise-card n5"><b>queue depth</b>orders / +12</div><div class="noise-card n6"><b>latency</b>catalog / p95</div><span class="noise-tick t1"></span><span class="noise-tick t2"></span><span class="noise-tick t3"></span><span class="noise-tick t4"></span><span class="noise-tick t5"></span><span class="noise-tick t6"></span></div>
+      <div id="amber-thread"><span class="thread-dot" style="right:-6px;top:-6px"></span></div>
+      <div id="status"><span class="status-dot"></span>LIVE / SYNTHETIC DATA</div>
+    </section>
+    <section id="map-scene" class="scene" data-scene="map" data-start="4.2" data-duration="5">
+      <div class="map-header"><div class="eyebrow">ONE CONNECTED SURFACE</div><p class="sub">Follow the alert through the service map.</p></div>
+      <div id="service-map" class="map-frame"><div class="map-grid"></div><div class="map-title">SERVICE DEPENDENCIES&nbsp;&nbsp;·&nbsp;&nbsp;12 MIN WINDOW</div><svg id="route-path" viewBox="0 0 1400 550" aria-label="Highlighted service route"><path class="route-base" d="M130 138 L355 251 L705 138 L995 321 M355 251 L720 421"/><path class="route-hot" d="M130 138 L355 251 L705 138 L995 321"/></svg><div class="map-node node-web"><strong>web</strong><span>request edge</span></div><div id="api-node" class="map-node node-api"><strong>api-gateway</strong><span>affected service</span><i class="api-pulse"></i></div><div class="map-node node-worker"><strong>worker</strong><span>async jobs</span></div><div class="map-node node-db"><strong>payments-db</strong><span>dependency</span></div><div class="map-node node-auth"><strong>auth</strong><span>dependency</span></div><div id="release-badge" data-part="release"><div class="release-kicker">CORRELATED RELEASE</div><div class="release-value">2024.11.18</div></div></div>
+      <div id="cursor" aria-label="selection cursor"><span id="cursor-ring"></span></div><div id="map-thread"><span class="thread-dot map-thread-dot"></span></div>
+    </section>
+  </div>
+  <section id="timeline-scene" class="scene" data-scene="timeline" data-start="9.2" data-duration="6.2"><div class="timeline-header"><div class="eyebrow">THE INCIDENT TIMELINE</div><p class="sub">Errors, traces, logs, and deployments — in one view.</p></div><div id="incident-timeline" class="timeline-shell"><div class="timeline-label">PAYMENTS / 18:36 — 18:48 UTC / SYNTHETIC DATA</div><div class="timeline-axis"><i class="axis-dot a"></i><i class="axis-dot b"></i><i class="axis-dot c"></i><i class="axis-dot d"></i><i class="axis-dot e"></i></div><div class="event alert"><b>Application error</b><small>5xx rate · payments-api</small></div><div class="event trace"><b>Trace sample</b><small>checkout → api-gateway</small></div><div class="event logs"><b>Log cluster</b><small>release startup warning</small></div><div id="release-event" class="event deploy"><b>Deployment · 2024.11.18</b><small>linked to api-gateway · 18:41 UTC</small></div><div id="timeline-release-anchor" class="timeline-release-pin" data-part="release"></div><div class="timeline-release-line"></div><div class="timeline-release-copy">LIKELY CAUSE CANDIDATE</div></div><div class="timeline-foot"><span class="tag">ERRORS</span><span class="tag">TRACES</span><span class="tag">LOGS</span><span class="tag" style="border-color:#a86f37;color:var(--amber)">DEPLOYMENTS</span></div></section>
+  <section id="close-scene" class="scene" data-scene="close" data-start="15.4" data-duration="4.6"><div class="close-inner"><div class="relay-mark"></div><div class="brand-name">RELAY</div><div class="close-kicker">CONNECTED CONTEXT</div><h1 id="closing-line" class="close-heading">From alert to root cause.</h1></div></section>
+</div>
+<script src="gsap.min.js"></script>
+<script>
+(function(){
+  var root=document.getElementById('composition'), id=root.getAttribute('data-composition-id');
+  var $=function(s){return document.querySelector(s)}, $$=function(s){return document.querySelectorAll(s)};
+  var scenes=$$('.scene'), release=$('#release-badge'), releaseAnchor=$('#timeline-release-anchor'), cursor=$('#cursor'), api=$('#api-node');
+  var r=release.getBoundingClientRect(), a=releaseAnchor.getBoundingClientRect(), c=cursor.getBoundingClientRect(), n=api.getBoundingClientRect();
+  var releaseDX=(r.left+r.width/2)-(a.left+a.width/2), releaseDY=(r.top+r.height/2)-(a.top+a.height/2);
+  var cursorDX=(n.left+n.width/2)-(c.left+c.width/2), cursorDY=(n.top+n.height/2)-(c.top+c.height/2);
+  var tl=gsap.timeline({paused:true,defaults:{ease:'power2.out'}});
+  tl.set(scenes,{autoAlpha:0}).set('#signals-scene',{autoAlpha:1})
+    .fromTo('#signal-label',{y:16,autoAlpha:0},{y:0,autoAlpha:1,duration:.45},.15)
+    .fromTo('.signal-copy',{y:20,autoAlpha:0},{y:0,autoAlpha:1,duration:.6},.38)
+    .fromTo('#alert-card',{x:-70,autoAlpha:0},{x:0,autoAlpha:1,duration:.7},.72)
+    .fromTo('#noise-field .noise-card',{scale:.92,autoAlpha:0},{scale:1,autoAlpha:1,duration:.42,stagger:.09},.9)
+    .fromTo('#noise-field .noise-tick',{scaleX:0,transformOrigin:'left center'},{scaleX:1,duration:.32,stagger:.07},1.22)
+    .fromTo('#amber-thread',{scaleX:0,autoAlpha:0},{scaleX:1,autoAlpha:1,duration:.75},2.35)
+    .to('#alert-card',{boxShadow:'0 0 0 2px rgba(255,189,99,.48),0 24px 70px rgba(0,0,0,.25)',duration:.22},3.03)
+    .to('#alert-card',{boxShadow:'0 24px 70px rgba(0,0,0,.25)',duration:.5},3.28)
+    .set('#signals-scene',{autoAlpha:0},4.2).set('#map-scene',{autoAlpha:1},4.2)
+    .fromTo('#map-scene .map-header',{y:22,autoAlpha:0},{y:0,autoAlpha:1,duration:.5},4.32)
+    .fromTo('.map-frame',{scale:.96,autoAlpha:0},{scale:1,autoAlpha:1,duration:.62},4.35)
+    .fromTo('.map-node',{y:14,autoAlpha:0},{y:0,autoAlpha:1,duration:.4,stagger:.1},4.65)
+    .set('#cursor',{x:cursorDX,y:cursorDY,autoAlpha:1},5.22)
+    .fromTo('#cursor-ring',{scale:.65,autoAlpha:0},{scale:1,autoAlpha:.7,duration:.35},5.25)
+    .to('#cursor',{x:cursorDX+3,y:cursorDY+2,duration:.26},5.55)
+    .to('#cursor-ring',{scale:1.25,autoAlpha:0,duration:.35},5.62)
+    .to(api,{className:'map-node node-api selected',duration:.18},5.65)
+    .to('#route-path',{autoAlpha:1,duration:.2},5.7)
+    .to('.route-hot',{strokeDashoffset:0,duration:1,ease:'power1.inOut'},5.72)
+    .to('.api-pulse',{autoAlpha:1,scale:1.5,duration:.28},6.02)
+    .fromTo('#release-badge',{y:16,autoAlpha:0},{y:0,autoAlpha:1,duration:.5},6.7)
+    .fromTo('#map-thread',{scaleX:0,autoAlpha:0},{scaleX:1,autoAlpha:1,duration:.65},7.05)
+    .set('#map-scene',{autoAlpha:0},9.2).set('#timeline-scene',{autoAlpha:1,scale:1,x:0,y:0},9.2)
+    .fromTo('#timeline-scene .timeline-header',{y:18,autoAlpha:0},{y:0,autoAlpha:1,duration:.45},9.25)
+    .fromTo('#incident-timeline',{y:28,autoAlpha:0},{y:0,autoAlpha:1,duration:.55},9.35)
+    .fromTo('#incident-timeline .event',{y:14,autoAlpha:0},{y:0,autoAlpha:1,duration:.38,stagger:.1},9.72)
+    .set('#timeline-release-anchor',{x:releaseDX,y:releaseDY,autoAlpha:1},9.38)
+    .set('.timeline-release-line',{x:releaseDX,y:releaseDY,autoAlpha:1},9.38)
+    .set('.timeline-release-copy',{x:releaseDX,y:releaseDY,autoAlpha:1},9.38)
+    .to('#timeline-scene',{scale:1.055,x:-52,y:-28,duration:.9,ease:'power2.inOut'},10.05)
+    .to('#timeline-release-anchor',{x:0,y:0,duration:.72,ease:'power3.inOut'},11.55)
+    .to('.timeline-release-line',{x:0,y:0,scaleY:1,duration:.72,ease:'power3.inOut'},11.55)
+    .to('.timeline-release-copy',{x:0,y:0,duration:.72,ease:'power3.inOut'},11.55)
+    .to('#release-event',{boxShadow:'0 0 0 2px rgba(255,189,99,.42),0 0 35px rgba(255,189,99,.2)',duration:.24},12.18)
+    .to('#release-event',{boxShadow:'0 0 35px rgba(255,189,99,.12)',duration:.5},12.55)
+    .fromTo('.timeline-foot',{y:12,autoAlpha:0},{y:0,autoAlpha:1,duration:.4},13.2)
+    .set('#timeline-scene',{autoAlpha:0},15.4).set('#close-scene',{autoAlpha:1},15.4)
+    .fromTo('#close-scene .relay-mark',{scale:.7,autoAlpha:0,rotation:45},{scale:1,autoAlpha:1,rotation:45,duration:.5},15.55)
+    .fromTo('#close-scene .brand-name',{y:12,autoAlpha:0},{y:0,autoAlpha:1,duration:.45},15.85)
+    .fromTo('#close-scene .close-kicker',{y:14,autoAlpha:0},{y:0,autoAlpha:1,duration:.4},16.28)
+    .fromTo('#closing-line',{y:18,autoAlpha:0},{y:0,autoAlpha:1,duration:.65},16.62)
+    .set('#closing-line',{autoAlpha:1},17.35);
+  tl.time(0).pause();
+  window.__timelines=window.__timelines||{}; window.__timelines[id]=tl;
+  window.__seek=function(seconds){tl.seek(Math.max(0,Math.min(20,Number(seconds)||0)),true);};
+})();
+</script>
+</body>
+</html>

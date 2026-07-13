@@ -20,6 +20,7 @@ import {
   selfReviewLunaComposition,
 } from "../src/engine/lunaRoute.ts";
 import { lunaWorkerHealthIsExact } from "../src/engine/lunaWorkerClient.ts";
+import { validateLunaAssetPack } from "../src/engine/lunaAssetPack.ts";
 
 const roots: string[] = [];
 const originalOpenRouter = PROVIDERS["openrouter-api"];
@@ -46,6 +47,28 @@ const html = `<!doctype html>
 `;
 
 const assetSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>\n`;
+
+const uiKitHtml = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><style>body{margin:0;background:#101114;color:#fff}</style></head><body><main id="route-card"><span id="route-value">Ready</span></main></body></html>\n`;
+
+const assetPack = {
+  version: 1,
+  name: "Synthetic route UI",
+  visualThesis: "One restrained release card carries the verified state.",
+  tokens: { accent: "#8b9cff", background: "#101114" },
+  components: [{
+    id: "route-card",
+    purpose: "Show the release state",
+    rootSelector: "#route-card",
+    states: [{ id: "ready", description: "The release is ready." }],
+    parts: [{
+      id: "route-value",
+      selector: "#route-value",
+      purpose: "Carry the verified value",
+      morphAnchor: true,
+    }],
+  }],
+  sourceEvidence: "Synthetic UI generated from the verified brief.",
+};
 
 const storyboard = [
   { id: "problem", title: "Problem", purpose: "Establish fragmentation", startSec: 0, durationSec: 3 },
@@ -95,9 +118,11 @@ async function fakeWorker(options: {
   compositionHtmlByRunCount?: Readonly<Record<number, string>>;
   storyboardScenes?: unknown[];
   corruptRawEnvelopeHash?: boolean;
+  corruptRawEnvelopeHashOnRunCount?: number;
   corruptMaterializedFingerprint?: boolean;
   invalidHtmlOnRunCount?: number;
   omitMotionIntentVersion?: boolean;
+  finalRestingHoldSelectorAlias?: boolean;
 } = {}): Promise<{
   url: string;
   requests: Array<{ authorization?: string; body: Record<string, unknown> }>;
@@ -106,7 +131,14 @@ async function fakeWorker(options: {
   const requests: Array<{ authorization?: string; body: Record<string, unknown> }> = [];
   const responseHtml = options.compositionHtml ?? html;
   const responseAssetSvg = options.assetSvg ?? assetSvg;
-  let latest: { jobId: string; operationId: string; runCount: number } | undefined;
+  const runCounts = new Map<string, number>();
+  let latest: {
+    jobId: string;
+    operationId: string;
+    runCount: number;
+    artifactContract: { id: string; requiredPaths: string[] };
+    expectedBaseFingerprint: string | null;
+  } | undefined;
   const server = http.createServer(async (request, response) => {
     if (request.method === "GET") {
       if (!latest) {
@@ -114,13 +146,38 @@ async function fakeWorker(options: {
         response.end(JSON.stringify({ error: { code: "job_not_found", message: "missing" } }));
         return;
       }
+      const aliasedIntent = options.finalRestingHoldSelectorAlias
+        ? {
+            ...intent,
+            finalRestingHold: {
+              startSec: intent.finalRestingHold.startSec,
+              endSec: intent.finalRestingHold.endSec,
+              selector: intent.finalRestingHold.primarySelector,
+            },
+          }
+        : intent;
+      const { version: _motionIntentVersion, ...motionIntentWithoutVersion } = aliasedIntent;
+      const responseIntent = options.omitMotionIntentVersion ? motionIntentWithoutVersion : aliasedIntent;
+      const directionDeliverables = [
+        deliverable(
+          "director-treatment.md",
+          "# Treatment\nOne verified release signal becomes a calm, unified product state while the same visual anchor carries continuity across the cut.\n",
+        ),
+        deliverable(
+          "storyboard.json",
+          JSON.stringify({ storyboard: options.storyboardScenes ?? storyboard }, null, 2) + "\n",
+        ),
+      ];
+      const syntheticPackDeliverables = [
+        deliverable("asset-pack.json", JSON.stringify(assetPack, null, 2) + "\n"),
+        deliverable("ui-kit.html", uiKitHtml),
+        deliverable("assets-manifest.json", "[]\n"),
+      ];
       const runHtml = options.compositionHtmlByRunCount?.[latest.runCount] ??
         (options.invalidHtmlOnRunCount === latest.runCount
           ? "<html><body>invalid</body></html>"
           : responseHtml);
-      const { version: _motionIntentVersion, ...motionIntentWithoutVersion } = intent;
-      const responseIntent = options.omitMotionIntentVersion ? motionIntentWithoutVersion : intent;
-      const deliverables = [
+      const filmDeliverables = [
         deliverable("composition.html", runHtml),
         deliverable(
           "storyboard.json",
@@ -137,7 +194,27 @@ async function fakeWorker(options: {
         }], null, 2) + "\n"),
         deliverable("assets/luna/mark.svg", responseAssetSvg),
       ];
-      const finalMessage = '{"decision":"replace","files":[]}';
+      const required = new Set(latest.artifactContract.requiredPaths);
+      const deliverables = required.has("deliverables/composition.html")
+        ? filmDeliverables
+        : required.has("deliverables/asset-pack.json")
+          ? [...directionDeliverables, ...syntheticPackDeliverables]
+          : directionDeliverables;
+      const artifactContractSha256 = sha256(Buffer.from(JSON.stringify({
+        id: latest.artifactContract.id,
+        requiredPaths: [...latest.artifactContract.requiredPaths].sort(),
+      })));
+      const finalMessage = JSON.stringify({
+        decision: "replace",
+        baseFingerprint: latest.expectedBaseFingerprint,
+        files: deliverables.map((file) => ({
+          path: file.path,
+          action: "replace",
+          content: Buffer.from(file.contentBase64, "base64").toString("utf8"),
+          copyFromInput: null,
+          sha256: null,
+        })),
+      });
       const payload = {
         jobId: latest.jobId,
         operationId: latest.operationId,
@@ -147,15 +224,19 @@ async function fakeWorker(options: {
         model: "gpt-5.6-luna",
         reasoningEffort: "high",
         codexVersion: "0.144.1",
-        rawEnvelopeSha256: options.corruptRawEnvelopeHash
+        artifactContractSha256,
+        rawEnvelopeSha256: options.corruptRawEnvelopeHash ||
+            options.corruptRawEnvelopeHashOnRunCount === latest.runCount
           ? "1".repeat(64)
           : sha256(Buffer.from(finalMessage)),
         materializedFingerprint: options.corruptMaterializedFingerprint
           ? "2".repeat(64)
-          : sha256(Buffer.from(deliverables
-            .map((file) => `${file.path}:${file.sha256}`)
-            .sort()
-            .join("\n"))),
+          : sha256(Buffer.from(JSON.stringify({
+            contractSha256: artifactContractSha256,
+            files: deliverables
+              .map((file) => ({ path: file.path, sha256: file.sha256 }))
+              .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
+          }))),
         rolloutSha256: String(latest.runCount).repeat(64),
         rolloutResponseItems: 4,
         finalMessage,
@@ -169,10 +250,17 @@ async function fakeWorker(options: {
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
     requests.push({ authorization: request.headers.authorization, body });
+    const jobId = String(body.jobId ?? "luna-route-proof");
+    const runCount = (runCounts.get(jobId) ?? 0) + 1;
+    runCounts.set(jobId, runCount);
     latest = {
-      jobId: String(body.jobId ?? "luna-route-proof"),
+      jobId,
       operationId: String(body.operationId),
-      runCount: requests.length,
+      runCount,
+      artifactContract: body.artifactContract as { id: string; requiredPaths: string[] },
+      expectedBaseFingerprint: typeof body.expectedBaseFingerprint === "string"
+        ? body.expectedBaseFingerprint
+        : null,
     };
     response.writeHead(202, { "content-type": "application/json" });
     response.end(JSON.stringify({ ...latest, status: "queued" }));
@@ -205,8 +293,8 @@ describe("Luna direct route", () => {
       version: "0.144.1",
       model: "gpt-5.6-luna",
       reasoningEffort: "high",
-      artifactProtocol: "luna-tool-less-artifact-v1",
-      artifactSchemaSha256: "ac487766f625ecd680541cbf3b7a6e0018a3570e1037e65c9c629d8af52569cb",
+      artifactProtocol: "luna-tool-less-artifact-v2",
+      artifactSchemaSha256: "7fa551fb261b6dee573aca74507202f5ab0b30ca00fe60cd04141dea8dfe104d",
       permissionProfileSha256: "ebd9f548aaa2f1d48df15ea1e124462350791ede65267f7677e9a834fa0060c6",
       authenticated: true,
     })).toBe(true);
@@ -261,7 +349,12 @@ describe("Luna direct route", () => {
       expect(result.authorRoute).toBe("luna-direct");
       expect(result.provider).toBe("codex-cli");
       expect(complete).not.toHaveBeenCalled();
-      expect(worker.requests).toHaveLength(2);
+      // Direction + build + optional rendered self-review stay on one thread.
+      expect(worker.requests).toHaveLength(3);
+      expect(result.stages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ stage: "luna-direction", attempts: 1 }),
+        expect.objectContaining({ stage: "luna-build", attempts: 1 }),
+      ]));
       expect(loadLunaSession(result.projectDir)).toMatchObject({
         threadId: "019f5a36-c85c-7541-94d7-c474a8e26d33",
         model: "gpt-5.6-luna",
@@ -308,6 +401,96 @@ describe("Luna direct route", () => {
       }
     }
   });
+
+  it("keeps a build integrity failure terminal instead of buying an authored repair", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-integrity-terminal-"));
+    roots.push(root);
+    const worker = await fakeWorker({ corruptRawEnvelopeHashOnRunCount: 2 });
+    vi.stubEnv("SLACK_SEQUENCES_DATA_DIR", root);
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
+    vi.stubEnv(
+      "SLACK_SEQUENCES_LUNA_WORKER_TOKEN",
+      "test-worker-token-that-is-at-least-thirty-two-characters",
+    );
+    try {
+      await expect(createVideo({
+        jobId: "luna-integrity-terminal",
+        product: "Harborview",
+        whatShipped: "Feedback routing",
+        lengthSec: 6,
+        render: false,
+        preferMcp: false,
+        allowDeterministicFallback: false,
+      })).rejects.toThrow(/raw artifact-envelope hash/i);
+      // Direction + corrupt build only. A third request would be an unsafe
+      // attempt to ask Luna to repair host transport/integrity evidence.
+      expect(worker.requests).toHaveLength(2);
+    } finally {
+      await worker.close();
+    }
+  }, 30_000);
+
+  it("rejects semantically valid prepared-pack byte drift against its accepted fingerprint", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-pack-fingerprint-"));
+    roots.push(root);
+    const deliverablesDir = path.join(root, "accepted-pack", "deliverables");
+    fs.mkdirSync(deliverablesDir, { recursive: true });
+    const packFiles = new Map<string, Buffer>([
+      ["deliverables/asset-pack.json", Buffer.from(JSON.stringify(assetPack, null, 2) + "\n")],
+      ["deliverables/ui-kit.html", Buffer.from(uiKitHtml)],
+      ["deliverables/assets-manifest.json", Buffer.from("[]\n")],
+    ]);
+    for (const [filePath, bytes] of packFiles) {
+      const destination = path.join(deliverablesDir, filePath.slice("deliverables/".length));
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.writeFileSync(destination, bytes);
+    }
+    const acceptedFingerprint = validateLunaAssetPack(packFiles).fingerprint;
+    const worker = await fakeWorker();
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
+    vi.stubEnv(
+      "SLACK_SEQUENCES_LUNA_WORKER_TOKEN",
+      "test-worker-token-that-is-at-least-thirty-two-characters",
+    );
+    const facts = {
+      version: 1 as const,
+      product: "Harborview",
+      brandName: "Harborview",
+      whatShipped: "Feedback routing",
+      targetDurationSec: 6,
+      provenance: {
+        source: "slack-user-and-authorized-workspace-context" as const,
+        unsupportedClaimsAllowed: false as const,
+      },
+    };
+    try {
+      await authorLunaComposition({
+        projectDir: path.join(root, "first-film"),
+        jobId: "luna-pack-fingerprint-valid",
+        facts,
+        preparedAssetPackDir: deliverablesDir,
+        preparedAssetPackRoot: root,
+        preparedAssetPackFingerprint: acceptedFingerprint,
+      });
+      expect(worker.requests).toHaveLength(2);
+
+      fs.writeFileSync(
+        path.join(deliverablesDir, "ui-kit.html"),
+        uiKitHtml.replace("Ready", "Still ready"),
+      );
+      await expect(authorLunaComposition({
+        projectDir: path.join(root, "second-film"),
+        jobId: "luna-pack-fingerprint-drift",
+        facts,
+        preparedAssetPackDir: deliverablesDir,
+        preparedAssetPackRoot: root,
+        preparedAssetPackFingerprint: acceptedFingerprint,
+      })).rejects.toThrow(/accepted fingerprint/);
+      expect(worker.requests).toHaveLength(2);
+    } finally {
+      await worker.close();
+    }
+  }, 30_000);
 
   it("validates the director's semantic subjects and declared timing without choosing motion", () => {
     expect(parseLunaMotionIntent(JSON.stringify(intent), html, storyboard).compositionId)
@@ -380,6 +563,52 @@ describe("Luna direct route", () => {
         html,
         storyboard,
       )).toThrow(/must use version 1/);
+    }
+  });
+
+  it("canonicalizes the incident final-hold selector alias in memory while preserving its raw bytes", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-hold-alias-"));
+    roots.push(root);
+    const projectDir = path.join(root, "project");
+    const worker = await fakeWorker({ finalRestingHoldSelectorAlias: true });
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
+    vi.stubEnv(
+      "SLACK_SEQUENCES_LUNA_WORKER_TOKEN",
+      "test-worker-token-that-is-at-least-thirty-two-characters",
+    );
+    const aliasedIntent = {
+      ...intent,
+      finalRestingHold: {
+        startSec: intent.finalRestingHold.startSec,
+        endSec: intent.finalRestingHold.endSec,
+        selector: intent.finalRestingHold.primarySelector,
+      },
+    };
+    const rawIntent = JSON.stringify(aliasedIntent, null, 2) + "\n";
+    try {
+      const authored = await authorLunaComposition({
+        projectDir,
+        jobId: "luna-final-hold-alias-proof",
+        facts: {
+          version: 1,
+          product: "Relay",
+          brandName: "Relay",
+          whatShipped: "Incident routing",
+          targetDurationSec: 6,
+          provenance: {
+            source: "slack-user-and-authorized-workspace-context",
+            unsupportedClaimsAllowed: false,
+          },
+        },
+      });
+
+      expect(authored.intent.finalRestingHold.primarySelector).toBe("#solution-primary");
+      expect(fs.readFileSync(
+        path.join(authored.runDir, "deliverables", "motion-intent.json"),
+        "utf8",
+      )).toBe(rawIntent);
+    } finally {
+      await worker.close();
     }
   });
 
@@ -576,7 +805,7 @@ describe("Luna direct route", () => {
       );
       await expect(selfReviewLunaComposition({ projectDir, thumbnailPaths: [] }))
         .rejects.toThrow(/accepted materialized fingerprint/i);
-      expect(worker.requests).toHaveLength(1);
+      expect(worker.requests).toHaveLength(2);
     } finally {
       await worker.close();
     }
@@ -587,7 +816,8 @@ describe("Luna direct route", () => {
     roots.push(root);
     const projectDir = path.join(root, "project");
     fs.mkdirSync(projectDir, { recursive: true });
-    const worker = await fakeWorker({ invalidHtmlOnRunCount: 2 });
+    // Direction=1, accepted build=2, rejected self-review=3, revision=4.
+    const worker = await fakeWorker({ invalidHtmlOnRunCount: 3 });
     vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
     vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_TOKEN", "test-worker-token-that-is-at-least-thirty-two-characters");
     try {
@@ -614,10 +844,10 @@ describe("Luna direct route", () => {
       await expect(selfReviewLunaComposition({ projectDir, thumbnailPaths: [] }))
         .rejects.toThrow(/content security policy|composition root/i);
       expect(loadLunaSession(projectDir)).toMatchObject({
-        workerRunCount: 2,
+        workerRunCount: 3,
         workerCursorDisposition: "unaccepted",
-        latestRolloutSha256: "1".repeat(64),
-        workerCursorRolloutSha256: "2".repeat(64),
+        latestRolloutSha256: "2".repeat(64),
+        workerCursorRolloutSha256: "3".repeat(64),
         latestRunDir: path.relative(projectDir, authored.runDir).replace(/\\/g, "/"),
         latestMaterializedFingerprint: authored.worker.materializedFingerprint,
       });
@@ -626,14 +856,14 @@ describe("Luna direct route", () => {
         projectDir,
         instruction: "Make the resolution more concise.",
       });
-      expect(revised.worker.runCount).toBe(3);
-      expect(worker.requests[2]!.body.expectedRunCount).toBe(2);
+      expect(revised.worker.runCount).toBe(4);
+      expect(worker.requests[3]!.body.expectedRunCount).toBe(3);
       expect(revised.draft.html).toBe(html);
       expect(loadLunaSession(projectDir)).toMatchObject({
-        workerRunCount: 3,
+        workerRunCount: 4,
         workerCursorDisposition: "unaccepted",
-        latestRolloutSha256: "1".repeat(64),
-        workerCursorRolloutSha256: "3".repeat(64),
+        latestRolloutSha256: "2".repeat(64),
+        workerCursorRolloutSha256: "4".repeat(64),
         latestRunDir: path.relative(projectDir, authored.runDir).replace(/\\/g, "/"),
       });
 
@@ -641,10 +871,10 @@ describe("Luna direct route", () => {
       fs.writeFileSync(path.join(projectDir, "composition", "manifest.json"), '{"revision":2}\n');
       confirmLunaComposition(projectDir, revised);
       expect(loadLunaSession(projectDir)).toMatchObject({
-        workerRunCount: 3,
+        workerRunCount: 4,
         workerCursorDisposition: "accepted",
-        latestRolloutSha256: "3".repeat(64),
-        workerCursorRolloutSha256: "3".repeat(64),
+        latestRolloutSha256: "4".repeat(64),
+        workerCursorRolloutSha256: "4".repeat(64),
         latestRunDir: path.relative(projectDir, revised.runDir).replace(/\\/g, "/"),
       });
     } finally {
@@ -660,7 +890,8 @@ describe("Luna direct route", () => {
       "const seed=Math.random();const master=gsap.timeline({paused:true});",
     );
     const worker = await fakeWorker({
-      compositionHtmlByRunCount: { 1: invalidHtml, 2: html, 3: html },
+      // Direction=1, rejected build=2, repaired build=3, self-review=4.
+      compositionHtmlByRunCount: { 2: invalidHtml, 3: html, 4: html },
     });
     vi.stubEnv("SLACK_SEQUENCES_DATA_DIR", root);
     vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
@@ -683,10 +914,11 @@ describe("Luna direct route", () => {
       expect(result.stages).toEqual(expect.arrayContaining([
         expect.objectContaining({ stage: "luna-repair", status: "succeeded", attempts: 1 }),
       ]));
-      expect(worker.requests).toHaveLength(3);
+      expect(worker.requests).toHaveLength(4);
       expect(worker.requests[1]!.body.expectedRunCount).toBe(1);
       expect(worker.requests[2]!.body.expectedRunCount).toBe(2);
-      const repairFiles = worker.requests[1]!.body.files as Array<{
+      expect(worker.requests[3]!.body.expectedRunCount).toBe(3);
+      const repairFiles = worker.requests[2]!.body.files as Array<{
         path: string;
         contentBase64: string;
       }>;
@@ -704,7 +936,7 @@ describe("Luna direct route", () => {
       expect(findings.advisoryFindingsIncluded).toBe(false);
       expect(findings.findings.join("\n")).toContain("Math.random is not deterministic");
       expect(loadLunaSession(result.projectDir)).toMatchObject({
-        workerRunCount: 3,
+        workerRunCount: 4,
         workerCursorDisposition: "accepted",
       });
     } finally {
@@ -738,7 +970,7 @@ describe("Luna direct route", () => {
       allowDeterministicFallback: true,
     });
     expect(result.authorRoute).toBe("luna-direct");
-    expect(result.fallback).toMatchObject({ stage: "luna-director" });
+    expect(result.fallback).toMatchObject({ stage: "luna-direction" });
     expect(result.outline).toContain("Relay shipped");
     expect(result.thumbnailPaths.length).toBeGreaterThan(0);
     expect(fs.readFileSync(path.join(result.projectDir, "FAILURE.md"), "utf8"))

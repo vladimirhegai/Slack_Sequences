@@ -28,7 +28,7 @@ The context bot is independent: `src/slackMcpContext.ts` still uses the OpenAI
 Responses API and the invoking user's Slack OAuth token. Keep its
 `OPENAI_API_KEY`; it is not the video author.
 
-## One-session creative sequence
+## Exact-thread creative sequence
 
 1. **Verified intake.** The Slack host writes a fact envelope containing the
    product, launch facts, audience, target runtime with an accepted
@@ -36,14 +36,24 @@ Responses API and the invoking user's Slack OAuth token. Keep its
    declared as data), authorized workspace context, and unsupported-claim
    prohibition. Luna chooses the exact duration inside the window on create;
    self-review and revision stay exact to the accepted cut.
-2. **Asset intake first.** `/sequences assets` remains deterministic. It stores
-   approved screenshots and palette notes. On create, the host copies only
-   those regular files into the isolated worker workspace and verifies their
-   hashes. With no images, Luna creates a small local SVG/HTML asset system
-   before authoring the film.
-3. **Director treatment.** Luna owns concept, structure, visual thesis, spatial
-   world, motion motif, transition grammar, camera philosophy, pacing, and one
-   energy peak.
+2. **Versioned UI asset intake.** `/sequences assets` deterministically stores
+   approved screenshots/palette evidence, then runs a separate Luna asset-pack
+   contract. Luna recreates a bounded code-native `ui-kit.html` plus semantic
+   component states, parts, morph anchors, and optional inert local assets. The
+   host validates CSP, selectors, schema, hashes, and a rendered preview before
+   recording the version. Raw screenshots and model-authored packs have
+   separate allowlisted roots. Preview Chromium is request-intercepted and may
+   load only regular files contained in the accepted pack; redirects, refresh
+   navigation, and remote CSS/assets are rejected. Reuse revalidates the pack
+   and its accepted fingerprint before Luna receives it. A failed pack never
+   loses the screenshots.
+3. **Direction turn.** Ordinary `/sequences` starts one exact thread with a
+   direction-only artifact contract: treatment and timed storyboard, but no
+   film HTML or guessed DOM selectors. Luna owns concept, structure, visual
+   thesis, spatial world, motion motif, transition grammar, camera philosophy,
+   pacing, and one energy peak. A prepared channel pack is supplied as visual
+   vocabulary, never a shot template. Without one, this turn also creates a
+   product-specific synthetic UI pack, so no-assets runs remain supported.
 4. **Motion intent.** Before source, Luna declares semantic primary subjects,
    persistent entities, chosen boundary anchors/strategies, causal actions,
    meaningful camera arrival/settle/hold windows, the peak, and final rest.
@@ -53,10 +63,15 @@ Responses API and the invoking user's Slack OAuth token. Keep its
    declared anchor must exist. Browser and temporal QA measure focal
    visibility and motion against each act's declared `primarySelector`, never
    against synthesized tween attention.
-5. **Full source.** The same thread authors the storyboard, DOM/CSS/SVG assets,
-   paused seekable GSAP timeline, camera, transitions, and interactions. Railway
+5. **Build turn.** The host validates direction timing/schema first, then
+   resumes the same thread with a film artifact contract. Luna authors the
+   DOM/CSS/SVG assets, paused seekable GSAP timeline, motion intent, camera,
+   transitions, and interactions against its direction. Railway
    does not permit the Codex Linux namespace sandbox, so Luna calls no tools; it
-   returns one complete schema-constrained artifact envelope instead.
+   returns one schema-constrained artifact envelope instead. Protocol v2 binds
+   every operation to the host-declared contract and exact base fingerprint;
+   unchanged files can be SHA-bound `inherit` actions and a true no-op is
+   `keep`, so review/revision no longer retypes the whole bundle.
 6. **Mechanical gate.** The trusted worker validates that envelope again,
    re-hashes every file, and atomically replaces its deliverables directory.
    The host preserves both the raw-envelope and materialized fingerprints, verifies hashes and
@@ -66,14 +81,16 @@ Responses API and the invoking user's Slack OAuth token. Keep its
    declared-boundary before/at/after sheets, camera
    start/arrival/settle/hold sheets with target visibility measurements, and
    spatial/mechanical sidecars plus the exact accepted canonical bundle to the
-   exact thread. Luna chooses to keep the film or make one coherent polish pass,
-   returning the complete bundle either way. A failed optional polish rolls source,
+   exact thread. Luna chooses `keep` or makes one coherent polish pass. A failed optional polish rolls source,
    assets, thumbnails, and temporal evidence back to the first accepted cut. The
    consumed worker generation is still recorded separately from that accepted
    cut, so a later revision resumes the exact next generation while receiving
    the last accepted bundle as its authoritative source.
-8. **Final render and revision.** The host renders/uploads the MP4. A user
-   revision resumes the persisted exact thread ID; it never uses `--last`.
+8. **Final render and revision.** The host renders/uploads the MP4. If encoding
+   fails after an authored film passed the hard composition gate, the accepted
+   storyboard remains ready and revisable while Slack reports the missing MP4
+   honestly. A user revision resumes the persisted exact thread ID; it never
+   uses `--last`.
 
 ## Creative authority versus hard ownership
 
@@ -102,12 +119,15 @@ The immediate Luna-friendly change is orchestration: bypass the legacy creative
 committee and preserve Luna's raw source separately from the committed
 trim/newline derivative.
 
-The Luna materialization seam has three deliberately narrow compatibility
+The Luna materialization seam has four deliberately narrow compatibility
 rules for host-owned mechanics:
 
 - the v1 parser supplies a missing numeric `version: 1` in memory, while an
   explicit unknown/string/null version remains a hard failure; the persisted
   motion-intent bytes are never rewritten;
+- the legacy-unambiguous final-hold key `selector` is accepted in memory as
+  `primarySelector`, while raw paid bytes remain unchanged. This prevents a
+  spelling-only repair from consuming the one executable repair turn;
 - `data-scene` is the storyboard/runtime binding key, while the element `id`
   only needs to be stable and unique for authored selectors;
 - when the declared composition ID was used as dotted
@@ -132,22 +152,33 @@ consulted by Luna's direct-composition gate.
 
 Static timeline-registration source shapes are hints on this route. Chromium
 is authoritative: it must find `window.__timelines[compositionId]`, prove that
-exact timeline is paused and seekable, and show that repeated `window.__seek(t)`
-restores the same rendered state. Absence, a wrong ID, a running timeline,
+exact timeline is paused and seekable, and use the host's canonical
+`timeline.pause(); timeline.seek(t, false)` seam across direct, later, reset-to-zero,
+and repeated seeks. Identity matrices and `transform:none` compare as the same
+rendered state. Real differences remain hard and return a bounded selector /
+property / before / after diff to the repair turn. Absence, a wrong ID, a running timeline,
 nondeterministic seek, runtime exceptions, blank output, binding/security/CSP
 failures, and encode failures stay hard. The only source adapter remains the
 existing proved dotted-composition-id to bracket-notation rewrite above.
 
 One hard mechanical rejection resumes the exact persisted worker job/thread
-once with `prompts/luna-repair.md`, the complete rejected bundle, and verbatim
-hard findings only. Generation and cursor checks require exactly one increment,
+once with `prompts/luna-repair.md`, the complete rejected bundle, every
+verbatim blocking line, and bounded structured browser evidence. Luna fixes the
+whole proven batch in one turn. Generation and cursor checks require the exact
+thread and allow at most one additional protocol-envelope recovery increment;
 and the replacement bundle traverses the complete materialization, static, and
 browser gates again. Taste advisories never enter this turn. If create or that
 single repair cannot produce an accepted film, the shared
-`SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK` switch publishes the existing
+explicit opt-in `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=1` switch publishes the existing
 honestly labeled model-free proof film; it never calls OpenRouter or disguises
-fallback as Luna. Paid worker receipt/response bytes are persisted before host
-interpretation, and surfaced Slack receipts include the job ID.
+fallback as Luna. Ordinary production runs fail loud by default. Failed jobs
+persist an allowlisted original brief (never OAuth tokens or enriched/model
+context), so a thread reply or Retry button starts a fresh Luna create rather
+than trying to revise an empty project. That fresh create runs as the human who
+clicked or replied, so another channel member never inherits the original
+requester's Slack OAuth authority. Paid worker receipt/response bytes are
+persisted before host interpretation, and surfaced Slack receipts include the
+job ID.
 
 ## Route and worker configuration
 
@@ -157,7 +188,7 @@ Slack service:
 SLACK_SEQUENCES_AUTHOR_ROUTE=luna-direct       # default when unset
 SLACK_SEQUENCES_LUNA_WORKER_URL=http://codex-worker.railway.internal:3000
 SLACK_SEQUENCES_LUNA_WORKER_TOKEN=<shared 32+ character secret>
-SLACK_SEQUENCES_LUNA_JOB_TIMEOUT_MS=1200000
+SLACK_SEQUENCES_LUNA_JOB_TIMEOUT_MS=1800000
 ```
 
 Worker service:
@@ -167,7 +198,7 @@ PORT=3000
 LUNA_WORKER_TOKEN=<same secret>
 LUNA_MODEL=gpt-5.6-luna
 LUNA_REASONING_EFFORT=high
-LUNA_JOB_TIMEOUT_MS=1200000
+LUNA_JOB_TIMEOUT_MS=1800000
 LUNA_MAX_QUEUE_DEPTH=4
 LUNA_MAX_WORKSPACE_BYTES=134217728
 LUNA_MIN_FREE_BYTES=536870912
@@ -200,7 +231,8 @@ OPENROUTER_API_KEY=...                        # only while rollback is active
   calls fail before any bundle is materialized.
 - `--output-schema` constrains the final response, but it is not the trust
   boundary: the worker independently validates schema, paths, Unicode, sizes,
-  required files, and hash-bound inert asset copies before atomic materialization.
+  host-declared required files, exact base fingerprint, keep/inherit/replace
+  actions, and hash-bound inert asset copies before atomic materialization.
 - Health and operation IDs bind the exact artifact-schema and deny-all
   permission-profile hashes. Startup also executes `codex --version` and refuses
   to open the port unless the actual binary, installed profile, and protocol
@@ -223,7 +255,9 @@ OPENROUTER_API_KEY=...                        # only while rollback is active
 ## What `/sequences` commands do
 
 - Ordinary `/sequences`, the message shortcut, and structural revisions: Luna.
-- `/sequences assets` and `assets clear`: deterministic intake, no model.
+- `/sequences assets`: deterministic screenshot/palette intake plus one Luna
+  UI-pack authoring turn and a host-rendered preview. `assets clear` is
+  deterministic and removes raw references plus all stored pack versions.
 - `/sequences demo`: curated model-free demo.
 - undo, render/re-render, approve/share, debug, help, and `mcp-test`:
   deterministic host operations.

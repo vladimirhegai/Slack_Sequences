@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   commitDirectComposition,
   loadDirectComposition,
   type DirectCompositionDraft,
 } from "../src/engine/directComposition.ts";
+import { inspectDirectComposition } from "../src/engine/layoutInspector.ts";
 
 const roots: string[] = [];
 
@@ -54,6 +56,50 @@ window.__seek=(seconds)=>{master.pause();master.seek(seconds,false);};
   };
 }
 
+function exactRelayIncident(): DirectCompositionDraft {
+  const fixture = path.join(import.meta.dirname, "fixtures", "luna-seek-relay");
+  const storyboard = JSON.parse(fs.readFileSync(path.join(fixture, "storyboard.json"), "utf8")) as {
+    storyboard: DirectCompositionDraft["storyboard"];
+  };
+  const intent = JSON.parse(fs.readFileSync(path.join(fixture, "motion-intent.json"), "utf8")) as {
+    acts: Array<{ sceneId: string; primarySelector: string }>;
+  };
+  return {
+    html: fs.readFileSync(path.join(fixture, "composition.html"), "utf8"),
+    storyboard: storyboard.storyboard,
+    declaredPrimarySelectors: Object.fromEntries(
+      intent.acts.map((act) => [act.sceneId, act.primarySelector]),
+    ),
+  };
+}
+
+function withLateIdentityTransform(draft: DirectCompositionDraft): DirectCompositionDraft {
+  return {
+    ...draft,
+    html: draft.html
+      .replace("</main>", '<div id="late-identity" aria-hidden="true"></div></main>')
+      .replace(
+        "const declared=document.querySelector",
+        'master.set("#late-identity",{x:0},4);\nconst declared=document.querySelector',
+      ),
+  };
+}
+
+function withPathDependentCallbacks(draft: DirectCompositionDraft): DirectCompositionDraft {
+  const nodes = Array.from({ length: 12 }, (_, index) =>
+    `<i id="seek-state-${index}" data-count="0" aria-hidden="true"></i>`
+  ).join("");
+  return {
+    ...draft,
+    html: draft.html
+      .replace("</main>", `${nodes}</main>`)
+      .replace(
+        "const declared=document.querySelector",
+        `master.call(()=>{document.querySelectorAll('[data-count]').forEach((element)=>{element.dataset.count=String(Number(element.dataset.count)+1);});},[],3);\nconst declared=document.querySelector`,
+      ),
+  };
+}
+
 describe("Luna browser timeline authority", () => {
   it("commits a non-blessed but browser-valid exact timeline registration end to end", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-timeline-browser-"));
@@ -85,5 +131,67 @@ describe("Luna browser timeline authority", () => {
     await expect(commitDirectComposition(root, "Relay", draft)).rejects.toThrow(
       'timeline_contract: window.__timelines["relay-browser-proof"] is absent',
     );
+  }, 60_000);
+
+  it("replays the exact Relay incident as a genuine reset-to-zero visibility leak", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-relay-incident-"));
+    roots.push(root);
+    const incident = exactRelayIncident();
+    expect(createHash("sha256").update(incident.html).digest("hex")).toBe(
+      "107e80094d250655432aadd2ee5ace8a45af50be7f6dafbb19611ee9f78093f1",
+    );
+    const qa = await inspectDirectComposition(root, incident, { captureGuide: false });
+
+    expect(qa.errors[0]).toContain("timeline_contract: canonical seek(1.890)");
+    expect(qa.timelineContract).toMatchObject({
+      compositionId: "relay-luna-launch",
+      seekSequence: [1.89, 7.4, 0, 1.89],
+    });
+    expect(qa.timelineContract?.changeCount).toBeGreaterThan(8);
+    expect(qa.timelineContract?.differences[0]).toMatchObject({
+      selector: "#signals-scene",
+      property: "style.visibility",
+      before: "visible",
+      after: "hidden",
+    });
+  }, 120_000);
+
+  it("accepts a minimized late identity transform as the same rendered seek state", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-identity-seek-"));
+    roots.push(root);
+    const qa = await inspectDirectComposition(
+      root,
+      withLateIdentityTransform(browserValidComputedRegistration()),
+      { captureGuide: false },
+    );
+
+    expect(qa.errors).toEqual([]);
+    expect(qa.timelineContract).toBeUndefined();
+  }, 60_000);
+
+  it("hard-rejects real path-dependent callbacks with bounded structured evidence", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-path-dependent-seek-"));
+    roots.push(root);
+    const qa = await inspectDirectComposition(
+      root,
+      withPathDependentCallbacks(browserValidComputedRegistration()),
+      { captureGuide: false },
+    );
+
+    expect(qa.ok).toBe(false);
+    expect(qa.errors).toHaveLength(1);
+    expect(qa.errors[0]).toContain("timeline_contract: canonical seek(2.220)");
+    expect(qa.timelineContract).toMatchObject({
+      compositionId: "relay-browser-proof",
+      seekSequence: [2.22, 4.38, 0, 2.22],
+      changeCount: 12,
+    });
+    expect(qa.timelineContract?.differences).toHaveLength(8);
+    expect(qa.timelineContract?.differences[0]).toMatchObject({
+      selector: "#seek-state-0",
+      property: "attribute.data-count",
+      before: "0",
+    });
+    expect(qa.timelineContract?.differences[0]?.after).not.toBe("0");
   }, 60_000);
 });
