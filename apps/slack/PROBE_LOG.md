@@ -743,3 +743,27 @@ selectors and reintroduced legacy source-shape errors. The probe harness now
 passes the persisted selector intent into the same direct validator. Exact
 model-free replay of the downloaded run remains the authority; no second paid
 probe was spent.
+
+## 2026-07-13 live Slack publish incident
+
+### malformed optional Luna camera declaration (fixed; no paid rerun)
+
+Slack surfaced `submit_composition - Publish HyperFrames composition -
+unavailable` during a live `/sequences` run. Railway logs showed the direct MCP
+authoring attempt failing, followed by the in-process fallback failing with
+`Cannot read properties of undefined (reading 'length')` in
+`engine/directComposition.ts`. The Slack-hosted MCP also returned HTTP 424 while
+retrieving workspace context; that is non-fatal enrichment loss and was not the
+publish failure.
+
+The deterministic owner was `storyboardMarkdown()`: Luna's lightweight
+storyboard parser accepted an optional `camera: { version: 1 }` object, then the
+publisher dereferenced `camera.path.length` even though `path` was absent. A
+model-free fixture reproduced the exact exception before any browser or render
+work.
+
+The fix normalizes optional camera declarations with the existing camera
+contract during Luna parsing (malformed declarations are dropped) and makes the
+publisher's path check defensive. A regression test proves that malformed
+cameras cannot reach direct publication. No new paid run was spent; retry after
+the Slack deployment is the validation path.

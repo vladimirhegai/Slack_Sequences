@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { parseHTML } from "linkedom";
 import type { ProviderId } from "@sequences/platform/providers";
 import { normalizeStoryboardCutIntent } from "./cutContract.ts";
+import { normalizeStoryboardCameraIntent } from "./cameraContract.ts";
 import type { DirectCompositionDraft, DirectScene } from "./directComposition.ts";
 import { resolveFeatureFlag, type SlackSequencesEnvSource } from "./featureFlags.ts";
 import {
@@ -753,6 +754,14 @@ function parseStoryboard(raw: string): DirectScene[] {
       const cut = normalizeStoryboardCutIntent(record.cut);
       if (cut) record.cut = cut;
       else delete record.cut;
+    }
+    if (record.camera !== undefined) {
+      const camera = normalizeStoryboardCameraIntent(record.camera, {
+        startSec: candidate.startSec,
+        durationSec: candidate.durationSec,
+      });
+      if (camera) record.camera = camera;
+      else delete record.camera;
     }
   }
   return scenes as DirectScene[];

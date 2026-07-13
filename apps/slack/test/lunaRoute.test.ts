@@ -673,6 +673,39 @@ describe("Luna direct route", () => {
     }
   });
 
+  it("drops malformed optional camera declarations before direct publication", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-camera-shape-"));
+    roots.push(root);
+    const worker = await fakeWorker({
+      storyboardScenes: [
+        { ...storyboard[0], camera: { version: 1 } },
+        storyboard[1],
+      ],
+    });
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_TOKEN", "test-worker-token-that-is-at-least-thirty-two-characters");
+    try {
+      const authored = await authorLunaComposition({
+        projectDir: path.join(root, "camera-shape"),
+        jobId: "luna-camera-shape-proof",
+        facts: {
+          version: 1,
+          product: "Harborview",
+          brandName: "Harborview",
+          whatShipped: "Feedback routing",
+          targetDurationSec: 6,
+          provenance: {
+            source: "slack-user-and-authorized-workspace-context",
+            unsupportedClaimsAllowed: false,
+          },
+        },
+      });
+      expect(authored.draft.storyboard[0]!.camera).toBeUndefined();
+    } finally {
+      await worker.close();
+    }
+  });
+
   it("preserves exact raw source bytes, hashes approved assets, and persists the exact thread", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-route-"));
     roots.push(root);

@@ -926,7 +926,7 @@ export function storyboardMarkdown(title: string, scenes: DirectScene[]): string
             : ""
         }`
         : "",
-      scene.camera?.path.length
+      scene.camera?.path?.length
         ? `- Camera path: ${scene.camera.path
           .map((move) => `${move.move}${move.toPart ? `→${move.toPart}` : move.toRegion ? `→${move.toRegion}` : ""}`)
           .join(", ")}`
