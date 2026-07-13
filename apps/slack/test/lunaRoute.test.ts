@@ -8,6 +8,7 @@ import { PROVIDERS, type AgentProvider } from "@sequences/platform/providers";
 import { createVideo } from "../src/orchestrator.ts";
 import {
   activateLunaAssets,
+  authorLunaAssetPack,
   authorLunaComposition,
   confirmLunaComposition,
   loadLunaSession,
@@ -114,6 +115,7 @@ function deliverable(relativePath: string, text: string) {
 
 async function fakeWorker(options: {
   assetSvg?: string;
+  assetPackHtmlByRunCount?: Readonly<Record<number, string>>;
   compositionHtml?: string;
   compositionHtmlByRunCount?: Readonly<Record<number, string>>;
   storyboardScenes?: unknown[];
@@ -168,9 +170,10 @@ async function fakeWorker(options: {
           JSON.stringify({ storyboard: options.storyboardScenes ?? storyboard }, null, 2) + "\n",
         ),
       ];
+      const packHtml = options.assetPackHtmlByRunCount?.[latest.runCount] ?? uiKitHtml;
       const syntheticPackDeliverables = [
         deliverable("asset-pack.json", JSON.stringify(assetPack, null, 2) + "\n"),
-        deliverable("ui-kit.html", uiKitHtml),
+        deliverable("ui-kit.html", packHtml),
         deliverable("assets-manifest.json", "[]\n"),
       ];
       const runHtml = options.compositionHtmlByRunCount?.[latest.runCount] ??
@@ -429,6 +432,76 @@ describe("Luna direct route", () => {
       await worker.close();
     }
   }, 30_000);
+
+  it("repairs the exact missing-CSP-quote asset-pack incident once on the same thread", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-asset-csp-repair-"));
+    roots.push(root);
+    const reference = path.join(root, "brand.png");
+    fs.writeFileSync(reference, Buffer.from("approved-brand-bytes"));
+    const malformed = uiKitHtml.replace("form-action 'none'\">", "form-action 'none'>");
+    const worker = await fakeWorker({
+      assetPackHtmlByRunCount: { 1: malformed, 2: uiKitHtml },
+    });
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
+    vi.stubEnv(
+      "SLACK_SEQUENCES_LUNA_WORKER_TOKEN",
+      "test-worker-token-that-is-at-least-thirty-two-characters",
+    );
+    try {
+      const authored = await authorLunaAssetPack({
+        projectDir: path.join(root, "project"),
+        jobId: "asset-pack-csp-repair-proof",
+        channel: "C123",
+        assetReferencePaths: [reference],
+        assetReferenceRoot: root,
+      });
+      expect(authored.worker.runCount).toBe(2);
+      expect(authored.validated.html).toBe(uiKitHtml);
+      expect(worker.requests).toHaveLength(2);
+      expect(worker.requests[1]!.body.expectedRunCount).toBe(1);
+      const repairFiles = worker.requests[1]!.body.files as Array<{
+        path: string;
+        contentBase64: string;
+      }>;
+      const finding = repairFiles.find(
+        (file) => file.path === "inputs/asset-pack-repair/hard-finding.json",
+      );
+      expect(Buffer.from(finding!.contentBase64, "base64").toString("utf8"))
+        .toContain("exactly one head-scoped exact local-only Content Security Policy");
+      expect(fs.readdirSync(path.join(root, "project", "planning", "luna", "runs")))
+        .toEqual(["0001-asset-pack", "0002-asset-pack-repair"]);
+    } finally {
+      await worker.close();
+    }
+  });
+
+  it("fails after one asset-pack repair when the repaired CSP is still malformed", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-asset-csp-terminal-"));
+    roots.push(root);
+    const reference = path.join(root, "brand.png");
+    fs.writeFileSync(reference, Buffer.from("approved-brand-bytes"));
+    const malformed = uiKitHtml.replace("form-action 'none'\">", "form-action 'none'>");
+    const worker = await fakeWorker({
+      assetPackHtmlByRunCount: { 1: malformed, 2: malformed },
+    });
+    vi.stubEnv("SLACK_SEQUENCES_LUNA_WORKER_URL", worker.url);
+    vi.stubEnv(
+      "SLACK_SEQUENCES_LUNA_WORKER_TOKEN",
+      "test-worker-token-that-is-at-least-thirty-two-characters",
+    );
+    try {
+      await expect(authorLunaAssetPack({
+        projectDir: path.join(root, "project"),
+        jobId: "asset-pack-csp-terminal-proof",
+        channel: "C123",
+        assetReferencePaths: [reference],
+        assetReferenceRoot: root,
+      })).rejects.toThrow(/exactly one head-scoped/);
+      expect(worker.requests).toHaveLength(2);
+    } finally {
+      await worker.close();
+    }
+  });
 
   it("rejects semantically valid prepared-pack byte drift against its accepted fingerprint", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-luna-pack-fingerprint-"));

@@ -1706,6 +1706,28 @@ function directionBuildInputs(
   return [...byPath.values()];
 }
 
+function assetPackRepairInputs(
+  result: LunaWorkerResult,
+  files: ReadonlyMap<string, Buffer>,
+  error: unknown,
+): LunaWorkerInputFile[] {
+  const inputs = [...files.entries()].map(([name, bytes]) =>
+    workerInputFile(`inputs/rejected-asset-pack/${name.slice("deliverables/".length)}`, bytes)
+  );
+  inputs.push(workerInputFile(
+    "inputs/asset-pack-repair/hard-finding.json",
+    JSON.stringify({
+      version: 1,
+      finding: error instanceof Error ? error.message : String(error),
+      advisoryFinding: false,
+      workerJobId: result.jobId,
+      workerRunCount: result.runCount,
+      materializedFingerprint: result.materializedFingerprint,
+    }, null, 2) + "\n",
+  ));
+  return inputs;
+}
+
 export async function authorLunaAssetPack(input: {
   projectDir: string;
   jobId: string;
@@ -1728,7 +1750,7 @@ export async function authorLunaAssetPack(input: {
     }, null, 2) + "\n"),
     ...assets.files,
   ];
-  const result = await startWorkerStage({
+  let result = await startWorkerStage({
     projectDir: input.projectDir,
     kind: "asset-pack",
     jobId: input.jobId,
@@ -1737,17 +1759,51 @@ export async function authorLunaAssetPack(input: {
     contract: LUNA_ASSET_PACK_CONTRACT,
   });
   if (result.jobId !== input.jobId) throw new Error("Luna UI pack worker returned a different job ID");
-  const persisted = persistWorkerResult(
+  let persisted = persistWorkerResult(
     input.projectDir,
     "asset-pack",
     result,
     LUNA_ASSET_PACK_CONTRACT,
   );
-  return {
-    worker: result,
-    runDir: persisted.runDir,
-    validated: validateLunaAssetPack(persisted.files),
-  };
+  try {
+    return {
+      worker: result,
+      runDir: persisted.runDir,
+      validated: validateLunaAssetPack(persisted.files),
+    };
+  } catch (error) {
+    const rejected = result;
+    result = await resumeWorkerStage({
+      projectDir: input.projectDir,
+      kind: "asset-pack-repair",
+      jobId: result.jobId,
+      expectedRunCount: result.runCount,
+      expectedBaseFingerprint: result.materializedFingerprint,
+      promptText: prompt("luna-asset-pack-repair.md"),
+      files: assetPackRepairInputs(result, persisted.files, error),
+      contract: LUNA_ASSET_PACK_CONTRACT,
+    });
+    if (result.jobId !== rejected.jobId || result.threadId !== rejected.threadId) {
+      throw new Error("Luna UI pack repair did not continue the exact asset thread");
+    }
+    if (
+      result.runCount <= rejected.runCount ||
+      result.runCount > rejected.runCount + 2
+    ) {
+      throw new Error("Luna UI pack repair did not advance within its one repair turn");
+    }
+    persisted = persistWorkerResult(
+      input.projectDir,
+      "asset-pack-repair",
+      result,
+      LUNA_ASSET_PACK_CONTRACT,
+    );
+    return {
+      worker: result,
+      runDir: persisted.runDir,
+      validated: validateLunaAssetPack(persisted.files),
+    };
+  }
 }
 
 function rejectedBundleInputs(

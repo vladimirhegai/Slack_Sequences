@@ -821,3 +821,23 @@ existing outside-root intake test and worker wrong-hash copy test remain the
 negative controls. This changes no prompt, story, gate, fallback, or attempt
 count. One fresh asset-prepared probe is authorized by the owner after local
 verification and deployment.
+
+### malformed CSP quoting in live Luna asset pack (fixed; rerun authorized)
+
+Authorized asset-prepared probe `asset-probe-20260713-95414c4-a` completed one
+`gpt-5.6-luna`/high worker turn, then failed the host UI-pack validator before
+the film job began. The exact `ui-kit.html` contained the complete required
+local-only policy in the document head, but omitted the closing double quote on
+its `content` attribute. This was a genuine markup/security failure; the host
+correctly refused to accept or preview the pack. Raw screenshots and the exact
+worker response, rollout, materialized fingerprint, and deliverables remain on
+Railway.
+
+The asset-intake path previously had no same-thread hard repair even though
+ordinary film direction/build did. It now persists the rejected pack first,
+then allows one exact-thread replacement turn containing the rejected bytes and
+complete objective finding. Worker integrity/protocol failures remain terminal;
+unchanged bytes must inherit the exact base hash; a second host rejection fails
+visibly without a third call. The exact missing-quote regression repairs on run
+2, and a negative control proves two malformed responses stop after two calls.
+One cache-distinct rerun is authorized after verification and deployment.

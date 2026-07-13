@@ -103,8 +103,10 @@ no knowledge of the catalog, or a legacy planner disguised as a Luna prompt.
    separate allowlisted roots. Preview Chromium is request-intercepted and may
    load only regular files contained in the accepted pack; redirects, refresh
    navigation, and remote CSS/assets are rejected. Reuse revalidates the pack
-   and its accepted fingerprint before Luna receives it. A failed pack never
-   loses the screenshots.
+   and its accepted fingerprint before Luna receives it. One objective
+   schema/selector/security rejection may resume the exact asset thread once
+   with the rejected bytes and complete hard finding; a second rejection fails
+   visibly. A failed pack never loses the screenshots.
 3. **Direction turn.** Ordinary `/sequences` starts one exact thread with a
    direction-only artifact contract: treatment and timed storyboard, but no
    film HTML or guessed DOM selectors. Luna owns concept, structure, visual
