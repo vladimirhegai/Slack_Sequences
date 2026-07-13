@@ -82,7 +82,7 @@ function usage(): string {
     "  npm run sequence:check --workspace @sequences/slack -- --product RADAR --what \"Live operational view\" --audience \"PMs\" --length 15 --no-mcp",
     "",
     "Options:",
-    "  --demo                    Use the deterministic /sequences demo plan; no model call.",
+    "  --demo                    Use the deterministic legacy engine fixture; no model call.",
     "  --input <file.json>        Read product/whatShipped/audience/tone/lengthSec/context.",
     "  --product <text>           Product name.",
     "  --brand <text>             Brand name; defaults to product.",

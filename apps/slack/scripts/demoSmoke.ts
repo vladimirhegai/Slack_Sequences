@@ -1,5 +1,5 @@
 /**
- * Model-free smoke of the `/sequences demo` reel: applies the curated demo plan
+ * Model-free smoke of the legacy engine fixture: applies the curated demo plan
  * (no provider, no API key) and proves real per-scene thumbnails land on disk —
  * the exact create → thumbnails path the Slack bot runs, minus Slack.
  *
@@ -22,7 +22,7 @@ const result = await createVideo({
   render: process.env.VERIFY_RENDER === "1",
 });
 
-console.log("=== /sequences demo (preset: %s) ===", result.usedPreset ? "yes" : "no");
+console.log("=== legacy engine demo fixture (preset: %s) ===", result.usedPreset ? "yes" : "no");
 console.log(result.outline);
 console.log("\n%s", result.lint);
 for (const receipt of result.toolCalls) {

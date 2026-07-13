@@ -1,0 +1,67 @@
+{
+  "storyboard": [
+    {
+      "id": "scene-01",
+      "title": "The launch-video question",
+      "purpose": "State the problem in a bright, high-contrast opening and establish the film’s single question.",
+      "startSec": 0,
+      "durationSec": 2.2
+    },
+    {
+      "id": "scene-02",
+      "title": "Create the launch channel",
+      "purpose": "Move into the dark Slack world and show the named channel being created with a visible, causal input state.",
+      "startSec": 2.2,
+      "durationSec": 2.8
+    },
+    {
+      "id": "scene-03",
+      "title": "The workspace is ready",
+      "purpose": "Reveal the main workspace with the launch channel selected; carry the channel label from setup into the product surface.",
+      "startSec": 5,
+      "durationSec": 2.4
+    },
+    {
+      "id": "scene-04",
+      "title": "A product ready, no launch plan",
+      "purpose": "Let the unresolved launch need appear as a readable message: “The product is ready but... how do we launch it”.",
+      "startSec": 7.4,
+      "durationSec": 2.4
+    },
+    {
+      "id": "scene-05",
+      "title": "The answer in the thread",
+      "purpose": "Introduce the response “How about using Sequences?” and give it a settled read before the camera follows it.",
+      "startSec": 9.8,
+      "durationSec": 1.8
+    },
+    {
+      "id": "scene-06",
+      "title": "Type the turning point",
+      "purpose": "Push into the active message/composer surface and show the named product action `/sequences` being typed and submitted.",
+      "startSec": 11.6,
+      "durationSec": 2.8
+    },
+    {
+      "id": "scene-07",
+      "title": "Sequences launch dialog",
+      "purpose": "Make the command’s consequence the hero: the Sequences modal opens over the dimmed workspace and holds at display scale, with the real Create control visible.",
+      "startSec": 14.4,
+      "durationSec": 3.2
+    },
+    {
+      "id": "scene-08",
+      "title": "Create releases the frame",
+      "purpose": "Use the modal’s Create action as a brief confirmation and transition out of the dense workspace into an empty dark closing field.",
+      "startSec": 17.6,
+      "durationSec": 2.4
+    },
+    {
+      "id": "scene-09",
+      "title": "The launch-video transformation",
+      "purpose": "Resolve on the committed closing statement “Sequences transforms your product into a launch video” and hold without additional competing motion.",
+      "startSec": 20,
+      "durationSec": 5
+    }
+  ]
+}

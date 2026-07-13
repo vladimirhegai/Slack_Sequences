@@ -1,7 +1,8 @@
 # Golden reference film — study the craft, never the surface
 
-`inputs/references/golden-demo/**` is the **complete source of one strong,
-hand-authored launch film for a different product (Slack).** It is supplied so
+`inputs/references/golden-demo/**` contains the **complete editable source and
+rendered visual evidence for one strong, hand-authored launch film for a
+different product (Slack).** It is supplied so
 you are not authoring blind: it shows what a high-craft, seekable, multi-act
 film actually looks like in code. It is a *craft* reference, not a template and
 not a shot list.
@@ -27,7 +28,10 @@ not a shot list.
 
 Read `STORYBOARD.md` for the beat-by-beat intent, then `index.html`,
 `style.css`, `polish.css`, `config.js`, and the paused seekable master in
-`timeline.js` to see how those choices are built.
+`timeline.js` to see how those choices are built. Inspect
+`rendered/contact-sheet.jpg` and `rendered/temporal-strip.jpg` to see the actual
+film across time, and use `rendered/qa-report.json` only as evidence that the
+reference itself passed its deterministic frame checks.
 
 ## The fence — do NOT copy the surface
 

@@ -1729,6 +1729,7 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "near_blank_scene",
       "browser_warning",
       "browser_runtime",
+      "browser_qa_infrastructure",
       "invalid_inline_script_syntax",
       "overlapping_clips_same_track",
       "overlapping_gsap_tweens",
@@ -1741,7 +1742,9 @@ export const SENTINEL_CONTRACT: readonly SentinelContractRow[] = [
       "window.__seek round-trip is timeline_contract (the author loop re-authors full-context, " +
       "not a compact patch); a scene/film that renders empty is near_blank_scene / " +
       "near_blank_film; a console error/warning surfaces as browser_runtime / " +
-      "browser_warning; a patch that breaks inline-script parse is " +
+      "browser_warning; browser_qa_infrastructure blocks a declared-intent " +
+      "composition when the measurement authority itself is unavailable; a " +
+      "patch that breaks inline-script parse is " +
       "invalid_inline_script_syntax (revert only that edit); the lint gate rejects " +
       "overlapping_clips_same_track and overlapping_gsap_tweens (sub-epsilon " +
       "floating-point endpoint overlaps excepted).",

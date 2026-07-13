@@ -1,7 +1,7 @@
 /**
- * The `/sequences demo` payload — a curated, deterministic launch reel.
+ * Legacy-engine deterministic demo fixture used by local smoke/check scripts.
  *
- * This is the one path that must NEVER fail a demo: no modal to fill, no model
+ * This fixture has no modal to fill and no model
  * call, no API key. We hand-author a known-good Plan (still routed through
  * planToCommands → ProjectStore.apply → solver → linter, so the 9 laws and the
  * quality story hold) and let the engine produce thumbnails + MP4. It doubles as
@@ -10,7 +10,7 @@
 import type { Plan, Project } from "@sequences/core";
 import type { BriefFields } from "./orchestrator.ts";
 
-/** Product identity for the canned demo (a believable release: "Relay v2"). */
+/** Product identity for the local legacy-engine fixture. */
 export const DEMO_BRIEF: BriefFields & { brandName: string } = {
   product: "Relay",
   brandName: "Relay",

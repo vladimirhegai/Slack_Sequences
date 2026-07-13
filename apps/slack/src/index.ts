@@ -33,7 +33,7 @@ import {
   type Tone,
   type VideoResult,
 } from "./orchestrator.ts";
-import { DEMO_BRIEF, buildDemoPlan } from "./demo.ts";
+import { uploadGoldenDemo } from "./goldenDemo.ts";
 import {
   conversationalJobAction,
   createJob,
@@ -657,11 +657,9 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     } catch (error) {
       // Workspace context is an enrichment, not a prerequisite. A transient
       // hosted-MCP/OpenAI fault (already retried inside the retriever) must never
-      // sink the whole build — degrade to the brief the user provided and surface
-      // a visible, non-blocking note instead of failing the video.
+      // sink the whole build. Degrade silently to the verified brief; a context
+      // service outage is operational telemetry, not storyboard content.
       logBackgroundError("Slack workspace context retrieval failed; building without it", error);
-      slackMcpNote =
-        "Couldn’t reach Slack’s hosted MCP for workspace context — built from the details you provided. Run `/sequences` again to include verified context.";
     }
   }
 
@@ -1165,7 +1163,7 @@ app.command("/sequences", async ({ command, ack, client, respond }) => {
         "*Sequences — from shipped to shown.*\n" +
         "• `/sequences` — open the modal and turn a launch into an on-brand video.\n" +
         "• `/sequences assets` — upload 1–5 UI screenshots; every video in this channel picks up your brand (`assets clear` to forget).\n" +
-        "• `/sequences demo` — build a ready-made *Relay v2* launch reel (no setup).\n" +
+        "• `/sequences demo` — post the golden *Sequences for Slack* ad (no setup, no model).\n" +
         "• `/sequences mcp-test` — self-check every service (MCP, render host, Slack, config).\n" +
         "• `/sequences debug on|off` — show/hide the model-stage receipt trail on results.\n" +
         "• *🎬 Make a launch video* message shortcut — draft a video from any message.\n" +
@@ -1233,22 +1231,16 @@ app.command("/sequences", async ({ command, ack, client, respond }) => {
   }
 
   if (text === "demo") {
-    // The zero-setup path: a curated, deterministic reel. No modal, no model.
-    await respond({ response_type: "ephemeral", text: "Spinning up the *Relay v2* demo reel… :clapper:" });
+    // The zero-setup path: upload the exact QA-approved golden film. No modal,
+    // authoring model, generated plan, browser render, or mutable project.
+    await respond({ response_type: "ephemeral", text: "Posting the golden *Sequences for Slack* ad… :clapper:" });
     runInBackground(
       "/sequences demo",
-      runCreate(client, {
-        channel: command.channel_id,
-        product: DEMO_BRIEF.product,
-        brandName: DEMO_BRIEF.brandName,
-        whatShipped: DEMO_BRIEF.whatShipped,
-        audience: DEMO_BRIEF.audience,
-        tone: DEMO_BRIEF.tone,
-        lengthSec: DEMO_BRIEF.lengthSec,
-        presetPlan: buildDemoPlan,
-        notifyFailure: async (message) => {
+      uploadGoldenDemo(client, command.channel_id).catch(async (error) => {
+        await safeNotify(async (message) => {
           await respond({ response_type: "ephemeral", text: message });
-        },
+        }, error);
+        throw error;
       }),
     );
     return;

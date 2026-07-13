@@ -12,6 +12,7 @@
 **/dist
 **/renders
 **/*.mp4
+!apps/slack/demo-output/slack-ad-luna/slack-ad-luna-with-audio.mp4
 # Local Brag research checkout is not runtime input; bundled music licensing
 # must be verified before redistribution.
 apps/slack/vendor/brag

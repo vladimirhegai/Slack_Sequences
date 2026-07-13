@@ -37,6 +37,10 @@ const GOLDEN_DEMO_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../demos/slack-ad",
 );
+const GOLDEN_DEMO_OUTPUT_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../demo-output/slack-ad-luna",
+);
 // Creative code only — no operational brief, render harness, or brand binaries.
 const GOLDEN_DEMO_REFERENCE_FILES: readonly string[] = [
   "STORYBOARD.md",
@@ -45,6 +49,12 @@ const GOLDEN_DEMO_REFERENCE_FILES: readonly string[] = [
   "polish.css",
   "config.js",
   "timeline.js",
+];
+const GOLDEN_DEMO_RENDERED_REFERENCE_FILES: readonly string[] = [
+  "README.txt",
+  "contact-sheet.jpg",
+  "temporal-strip.jpg",
+  "qa-report.json",
 ];
 const MAX_REFERENCE_FILE_BYTES = 12 * 1024 * 1024;
 const MAX_REFERENCE_TOTAL_BYTES = 28 * 1024 * 1024;
@@ -181,6 +191,12 @@ export interface LunaMotionIntentV1 {
     actorSelector: string;
     targetSelector: string;
     resultSelector: string;
+    startSec: number;
+    actionSec: number;
+    settleSec: number;
+    beforeSampleSec: number;
+    afterSampleSec: number;
+    observableStateChange: string;
   }>;
   energyPeak: Record<string, unknown> & { startSec: number; endSec: number };
   finalRestingHold: Record<string, unknown> & {
@@ -478,6 +494,15 @@ function goldenDemoReferenceInputs(
     for (const name of GOLDEN_DEMO_REFERENCE_FILES) {
       const bytes = fs.readFileSync(path.join(GOLDEN_DEMO_DIR, name));
       files.push(workerInputFile(`inputs/references/golden-demo/${name}`, bytes));
+    }
+    // Raw render frames exceed the worker's closed 32 MB / 192-file boundary.
+    // The film's contact sheet and temporal strip preserve the full visual arc
+    // as native image attachments, while QA/README keep the rendered evidence
+    // auditable. The MP4 would be opaque to Codex and is intentionally reserved
+    // for deterministic Slack demo delivery.
+    for (const name of GOLDEN_DEMO_RENDERED_REFERENCE_FILES) {
+      const bytes = fs.readFileSync(path.join(GOLDEN_DEMO_OUTPUT_DIR, name));
+      files.push(workerInputFile(`inputs/references/golden-demo/rendered/${name}`, bytes));
     }
     return files;
   } catch {
@@ -1276,9 +1301,23 @@ export function parseLunaMotionIntent(
     requireSelector(document, camera.targetSelector, `cameraMoves[${index}].targetSelector`);
   }
   for (const [index, interaction] of intent.interactions.entries()) {
-    requireSelector(document, interaction.actorSelector, `interactions[${index}].actorSelector`);
-    requireSelector(document, interaction.targetSelector, `interactions[${index}].targetSelector`);
-    requireSelector(document, interaction.resultSelector, `interactions[${index}].resultSelector`);
+    requireSelector(document, interaction.actorSelector, `interactions[${index}].actorSelector`, true);
+    requireSelector(document, interaction.targetSelector, `interactions[${index}].targetSelector`, true);
+    requireSelector(document, interaction.resultSelector, `interactions[${index}].resultSelector`, true);
+    const before = finite(interaction.beforeSampleSec, `interactions[${index}].beforeSampleSec`);
+    const start = finite(interaction.startSec, `interactions[${index}].startSec`);
+    const action = finite(interaction.actionSec, `interactions[${index}].actionSec`);
+    const settle = finite(interaction.settleSec, `interactions[${index}].settleSec`);
+    const after = finite(interaction.afterSampleSec, `interactions[${index}].afterSampleSec`);
+    if (!(before >= 0 && before <= start && start < action && action <= settle && settle <= after && after <= duration)) {
+      throw new Error(`Luna interaction ${index + 1} lacks before/start/action/settle/after ordering`);
+    }
+    if (
+      typeof interaction.observableStateChange !== "string" ||
+      !interaction.observableStateChange.trim()
+    ) {
+      throw new Error(`Luna interaction ${index + 1} must declare an observable state change`);
+    }
   }
   const peakStart = finite(intent.energyPeak.startSec, "energyPeak.startSec");
   const peakEnd = finite(intent.energyPeak.endSec, "energyPeak.endSec");
@@ -1581,6 +1620,18 @@ function materializeLunaResultUnchecked(
       declaredPrimarySelectors: Object.fromEntries(
         intent.acts.map((act) => [act.sceneId, act.primarySelector]),
       ),
+      declaredInteractions: intent.interactions.map((interaction, index) => ({
+        id: `luna-interaction-${String(index + 1).padStart(2, "0")}`,
+        actorSelector: interaction.actorSelector,
+        targetSelector: interaction.targetSelector,
+        resultSelector: interaction.resultSelector,
+        startSec: interaction.startSec,
+        actionSec: interaction.actionSec,
+        settleSec: interaction.settleSec,
+        beforeSampleSec: interaction.beforeSampleSec,
+        afterSampleSec: interaction.afterSampleSec,
+        observableStateChange: interaction.observableStateChange,
+      })),
     },
     intent,
     worker: result,

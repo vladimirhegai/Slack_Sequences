@@ -23,6 +23,7 @@ import {
   supersampleJobFields,
 } from "./render.ts";
 import { inspectDirectComposition } from "./layoutInspector.ts";
+import { unresolvedHardBrowserFindings } from "./runner/browserQuality.ts";
 import { launchHeadlessBrowser } from "./browserLifecycle.ts";
 import {
   type InteractionIntentV1,
@@ -229,6 +230,25 @@ export interface DirectCompositionDraft {
    * the declared-intent contract replaces it.
    */
   declaredPrimarySelectors?: Record<string, string>;
+  /**
+   * Luna's selector-level interaction promises. Unlike the legacy typed
+   * interaction runtime, these describe author-owned DOM/GSAP choreography;
+   * browser QA resolves the real actor and target geometry at action time.
+   */
+  declaredInteractions?: DeclaredInteractionIntentV1[];
+}
+
+export interface DeclaredInteractionIntentV1 {
+  id: string;
+  actorSelector: string;
+  targetSelector: string;
+  resultSelector: string;
+  startSec: number;
+  actionSec: number;
+  settleSec: number;
+  beforeSampleSec: number;
+  afterSampleSec: number;
+  observableStateChange: string;
 }
 
 export interface DirectCompositionManifest {
@@ -249,6 +269,8 @@ export interface DirectCompositionManifest {
    * the same advisory policy as the original transactional commit.
    */
   declaredPrimarySelectors?: Record<string, string>;
+  /** Persisted selector-level interaction evidence for replay and revision. */
+  declaredInteractions?: DeclaredInteractionIntentV1[];
   provenance: {
     source: "agent";
     operation: "create" | "revise";
@@ -1012,10 +1034,21 @@ export async function commitDirectComposition(
   const declaredIntentPresent = Boolean(
     draft.declaredPrimarySelectors && Object.keys(draft.declaredPrimarySelectors).length,
   );
-  if (!browserQa.ok && (!browserQa.infraError || declaredIntentPresent)) {
+  const declaredHardFindings = declaredIntentPresent
+    ? unresolvedHardBrowserFindings(browserQa)
+    : [];
+  if (
+    (!browserQa.ok && (!browserQa.infraError || declaredIntentPresent)) ||
+    (declaredIntentPresent && declaredHardFindings.length > 0)
+  ) {
+    const findings = [
+      ...declaredHardFindings,
+      ...(browserQa.infraError ? [`browser_qa_infrastructure: ${browserQa.infraError}`] : []),
+      ...browserQa.errors,
+    ];
     throw new Error(
       `composition failed browser runtime validation:\n${
-        browserQa.errors.map((error) => `- ${error}`).join("\n")
+        [...new Set(findings)].map((error) => `- ${error}`).join("\n")
       }`,
     );
   }
@@ -1037,7 +1070,7 @@ export async function commitDirectComposition(
   const interactionCount = normalized.scenes.reduce(
     (count, scene) => count + (scene.interactions?.length ?? 0),
     0,
-  );
+  ) + (draft.declaredInteractions?.length ?? 0);
   const previous = hasDirectComposition(dir) ? loadDirectComposition(dir).manifest : undefined;
   const revision = (previous?.revision ?? 0) + 1;
   const manifest: DirectCompositionManifest = {
@@ -1054,6 +1087,9 @@ export async function commitDirectComposition(
     sourceHash: createHash("sha256").update(draft.html).digest("hex"),
     ...(draft.declaredPrimarySelectors
       ? { declaredPrimarySelectors: draft.declaredPrimarySelectors }
+      : {}),
+    ...(draft.declaredInteractions?.length
+      ? { declaredInteractions: draft.declaredInteractions }
       : {}),
     provenance: {
       source: "agent",
@@ -1326,6 +1362,9 @@ export async function directLintText(projectDir: string): Promise<string> {
     storyboard: current.manifest.scenes,
     ...(current.manifest.declaredPrimarySelectors
       ? { declaredPrimarySelectors: current.manifest.declaredPrimarySelectors }
+      : {}),
+    ...(current.manifest.declaredInteractions?.length
+      ? { declaredInteractions: current.manifest.declaredInteractions }
       : {}),
   });
   if (!validation.ok) return `lint: ${validation.errors.length} error(s)`;

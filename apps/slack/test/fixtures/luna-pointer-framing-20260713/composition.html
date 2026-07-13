@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang='en'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=1920,height=1080,initial-scale=1'>
+  <meta http-equiv='Content-Security-Policy' content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Sequences — From prompt to launch video</title>
+  <style>
+    :root{--bg:#1a1d21;--deep:#1e2125;--surface:#232529;--raised:#2a2d32;--plum:#231427;--plum-deep:#1a0d1d;--accent:#8d3b98;--bright:#a34dad;--teal:#0d4c54;--amber:#6d3200;--text:#f1eaf3;--muted:#b8b0bd;--subtle:#847b89;--border:#3a3d43;--soft:#303238;--green:#0b9b78;--paper:#f7f8fa;--ink:#24212a}
+    *{box-sizing:border-box}
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);font-family:Liberation Sans,Arial,sans-serif}
+    body{width:1920px;height:1080px;color:var(--text)}
+    #sequences-launch-film{position:relative;width:1920px;height:1080px;overflow:hidden;background:var(--bg)}
+    .scene{position:absolute;inset:0;overflow:hidden;opacity:0;visibility:hidden}
+    .scene-stage{position:absolute;inset:0}
+    .safe{position:absolute;inset:38px 48px;pointer-events:none}
+    .eyebrow{font-size:18px;letter-spacing:.16em;text-transform:uppercase;color:#ba7ec4;font-weight:700}
+    .display{font-weight:800;letter-spacing:-.055em;line-height:.96}
+    .soft-line{height:1px;background:rgba(255,255,255,.12)}
+    .grain{position:absolute;inset:0;opacity:.06;pointer-events:none;background-image:radial-gradient(rgba(255,255,255,.5) .7px,transparent .7px);background-size:7px 7px;mix-blend-mode:screen}
+
+    #scene-01{background:var(--paper);color:var(--ink)}
+    #scene-01 .opening-kicker{position:absolute;left:112px;top:118px;color:#775c80;font-size:18px;letter-spacing:.12em;text-transform:uppercase;font-weight:700}
+    #opening-question{position:absolute;left:112px;top:282px;width:1450px;font-size:116px}
+    #opening-question .accent{color:var(--accent)}
+    #scene-01 .opening-rule{position:absolute;left:112px;bottom:152px;width:760px;height:10px;background:linear-gradient(90deg,var(--accent),#d49bdb 65%,transparent)}
+    #scene-01 .opening-note{position:absolute;right:112px;bottom:150px;color:#766e7a;font-size:22px;letter-spacing:.01em}
+
+    .dark-world{background:radial-gradient(900px 640px at 70% 20%,#32193b 0%,var(--bg) 52%,#111317 100%)}
+    .world-glow{position:absolute;width:800px;height:800px;border-radius:50%;right:-220px;top:-280px;background:radial-gradient(circle,rgba(163,77,173,.18),transparent 68%);filter:blur(8px)}
+    .channel-dialog{position:absolute;left:50%;top:50%;width:970px;min-height:670px;transform:translate(-50%,-50%);padding:44px 48px 36px;background:rgba(27,30,34,.98);border:1px solid #4a4d54;border-radius:16px;box-shadow:0 32px 100px rgba(0,0,0,.5);color:var(--text)}
+    .dialog-title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:38px}
+    .dialog-title{font-size:42px;font-weight:800;letter-spacing:-.04em}
+    .dialog-close{font-size:34px;color:var(--muted);line-height:1}
+    .field-label{font-size:18px;font-weight:700;margin-bottom:11px;color:#ddd5e0}
+    .channel-name-input{height:78px;border:1px solid #50535b;border-radius:12px;background:#1b1e22;display:flex;align-items:center;padding:0 20px;color:var(--muted);font-size:28px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+    .channel-name-input.focused{border-color:#ae65b8;box-shadow:0 0 0 3px rgba(174,101,184,.18)}
+    #channel-name-copy{color:var(--text);white-space:nowrap;overflow:hidden;display:inline-block;width:0}
+    #channel-caret{width:3px;height:34px;background:#f5edf6;margin-left:5px;opacity:0}
+    .channel-hash{font-size:28px;margin-right:14px;color:#aaa0ad}
+    .channel-helper{font-size:18px;line-height:1.45;color:var(--muted);max-width:790px;margin:13px 0 0}
+    .dialog-footer{display:flex;align-items:center;justify-content:space-between;margin-top:92px;border-top:1px solid var(--soft);padding-top:25px;color:var(--muted);font-size:18px}
+    .primary-button{border:0;border-radius:10px;background:#25282d;color:#8e8991;font:700 18px Liberation Sans,Arial,sans-serif;padding:15px 28px}
+    .primary-button.active{background:var(--accent);color:#fff;box-shadow:0 0 0 1px rgba(218,160,226,.2)}
+    .pointer{position:absolute;width:30px;height:42px;opacity:0;z-index:10;filter:drop-shadow(0 4px 7px rgba(0,0,0,.5))}
+    .pointer:before{content:'';position:absolute;left:3px;top:2px;width:18px;height:27px;background:#fff;clip-path:polygon(0 0,0 100%,31% 73%,52% 100%,66% 93%,45% 66%,100% 66%)}
+
+    .workspace-shell{position:absolute;left:72px;right:72px;top:62px;bottom:62px;border:1px solid #464951;border-radius:18px;overflow:hidden;background:var(--deep);box-shadow:0 28px 90px rgba(0,0,0,.42);display:grid;grid-template-columns:72px 360px 1fr;grid-template-rows:58px 1fr;color:var(--text)}
+    .topbar{grid-column:1/4;background:#2a0f2c;display:flex;align-items:center;gap:24px;padding:0 28px;color:#d9c6dc;font-size:22px}
+    .topbar .search{margin-left:120px;width:760px;height:34px;border-radius:8px;background:rgba(255,255,255,.11);display:flex;align-items:center;padding:0 16px;color:#d8c9da;font-size:15px}
+    .rail{grid-row:2;background:#2a0f2c;display:flex;align-items:center;flex-direction:column;gap:24px;padding-top:20px;color:#e8dcec;font-size:21px}
+    .rail-mark{width:42px;height:42px;border-radius:10px;background:#e2dee5;color:#38243c;display:grid;place-items:center;font-weight:800;font-size:16px;margin-bottom:10px}
+    .sidebar{grid-row:2;background:linear-gradient(180deg,#29152e,#1d1020);border-right:1px solid #4b2c50;padding:24px 14px;color:#cabdce}
+    .workspace-name{display:flex;justify-content:space-between;padding:0 10px 20px;color:#fff;font-weight:800;font-size:20px}
+    .find-box{height:36px;border:1px solid #604265;border-radius:8px;background:#1b111f;padding:0 11px;display:flex;align-items:center;gap:8px;font-size:13px;color:#c8b5ca}
+    .side-heading{font-size:12px;color:#bda9c1;text-transform:uppercase;letter-spacing:.11em;margin:28px 10px 8px}
+    .channel-row{height:38px;border-radius:7px;padding:0 11px;display:flex;align-items:center;gap:9px;font-size:15px;color:#c9b7cb}
+    .channel-row.selected{background:var(--accent);color:#fff;font-weight:700}
+    .hash{color:#a18ea5;font-size:19px}.selected .hash{color:#ead9ec}
+    .app-row{display:flex;align-items:center;gap:9px;padding:9px 11px;font-size:15px;color:#c9b7cb}
+    .app-dot{width:19px;height:19px;border-radius:5px;background:linear-gradient(135deg,#ec5baf 0 22%,#f7d23b 22% 40%,#54d3d0 40% 60%,#7d75ec 60% 78%,#f16956 78%);border:2px solid #f4edf5}
+    .channel-main{grid-column:3;grid-row:2;background:#1a1d21;position:relative;overflow:hidden}
+    .channel-header{height:82px;border-bottom:1px solid #393c42;padding:17px 30px;display:flex;align-items:flex-start;justify-content:space-between}
+    .channel-header strong{font-size:23px}.channel-tools{font-size:15px;color:var(--muted)}
+    .channel-body{padding:72px 42px}.channel-body h2{font-size:42px;margin:0 0 10px;letter-spacing:-.04em}.channel-body p{font-size:19px;color:var(--muted);margin:0}
+    .onboarding-line{display:flex;gap:15px;margin-top:40px}.onboard-card{width:220px;height:150px;border:1px solid #46505a;border-radius:11px;overflow:hidden}.onboard-card .card-head{height:62px;padding:14px;background:var(--teal);font-size:15px;font-weight:700}.onboard-card:nth-child(2) .card-head{background:var(--amber)}.onboard-card:nth-child(3) .card-head{background:#2a072d}.card-art{height:88px;background:linear-gradient(180deg,#e8edf0,#cfd7dd)}.onboard-card:nth-child(2) .card-art{background:linear-gradient(135deg,#ff9eb4,#b95089)}.onboard-card:nth-child(3) .card-art{background:linear-gradient(135deg,#3d093d,#a34dad)}
+    .message-surface{position:absolute;left:32px;right:32px;top:145px;border-top:1px solid #393c42;padding-top:25px;opacity:0}.message-line{display:flex;gap:14px;align-items:flex-start}.avatar{width:46px;height:46px;border-radius:10px;background:#8d3b98;display:grid;place-items:center;font-weight:800;color:#fff;flex:0 0 auto}.avatar.teal{background:#0d7d78}.message-meta{font-size:17px;font-weight:700}.message-time{font-size:13px;color:#847b89;font-weight:400;margin-left:8px}.message-copy{font-size:23px;line-height:1.35;margin:9px 0 0;color:#f1eaf3}.answer-bubble{border-left:3px solid var(--accent);padding-left:16px}
+    .typed{display:inline-block;overflow:hidden;white-space:nowrap;width:0}.caret{display:inline-block;width:3px;height:25px;background:#f5edf6;margin-left:5px;vertical-align:-3px;opacity:0}
+    .workspace-caption{position:absolute;left:32px;bottom:25px;font-size:14px;color:#847b89;letter-spacing:.04em}
+
+    #scene-06{background:#111317}
+    #command-world{position:absolute;inset:0;background:radial-gradient(800px 600px at 50% 45%,#32203a 0%,#17191d 60%,#101114 100%)}
+    #command-stage{position:absolute;left:50%;top:50%;width:1420px;height:780px;transform:translate(-50%,-50%);border:1px solid #484b53;border-radius:18px;background:#1a1d21;box-shadow:0 32px 120px rgba(0,0,0,.55);overflow:hidden}
+    .command-context{position:absolute;inset:0;opacity:.55}.command-context .sidebar{position:absolute;left:0;top:0;bottom:0;width:300px}.command-context .channel-main{position:absolute;left:300px;right:0;top:0;bottom:0}.command-context .channel-header{height:76px}.command-context .channel-body{padding-top:44px}
+    #command-hero{position:absolute;left:420px;right:70px;top:250px;height:230px;border:2px solid #a34dad;border-radius:16px;background:#22252a;box-shadow:0 0 0 8px rgba(163,77,173,.1),0 24px 70px rgba(0,0,0,.42);padding:34px 42px}
+    .command-label{font-size:15px;text-transform:uppercase;letter-spacing:.13em;color:#c58dce;font-weight:700;margin-bottom:18px}.command-line{display:flex;align-items:center;gap:8px;font:32px Liberation Mono,monospace;color:#fff}.command-prompt{color:#bd83c5}.command-field{display:inline-block;overflow:hidden;white-space:nowrap;width:0}.command-submit{position:absolute;right:38px;bottom:28px;width:48px;height:34px;border-radius:8px;background:#0b9b78;color:#fff;display:grid;place-items:center;font-size:19px;box-shadow:0 5px 16px rgba(11,155,120,.24)}
+    #command-anchor{position:absolute;left:0;top:0;width:1px;height:1px}
+
+    #scene-07{background:#101216}
+    #launch-dialog-world{position:absolute;inset:0;background:#101216}
+    .dialog-backdrop{position:absolute;inset:0;background:linear-gradient(135deg,rgba(28,12,31,.78),rgba(9,12,15,.88));opacity:.82}
+    .behind-shell{position:absolute;left:55px;right:55px;top:45px;bottom:45px;opacity:.32;transform:scale(1.02)}
+    #launch-dialog{position:absolute;left:50%;top:50%;width:1380px;height:840px;transform:translate(-50%,-50%);border:1px solid #555861;border-radius:18px;background:#1b1e22;box-shadow:0 36px 130px rgba(0,0,0,.72),0 0 0 1px rgba(255,255,255,.04);padding:36px 46px 0;color:var(--text);opacity:0}
+    .launch-head{display:flex;align-items:center;gap:17px;border-bottom:1px solid var(--soft);padding-bottom:25px}.sequence-mark{width:48px;height:48px;border-radius:9px;background:linear-gradient(135deg,#ec5baf 0 20%,#f7d23b 20% 37%,#54d3d0 37% 55%,#7d75ec 55% 72%,#f16956 72%);border:4px solid #f4edf5;box-shadow:0 0 0 1px #777}.launch-title{font-size:33px;font-weight:800;letter-spacing:-.03em}.launch-close{margin-left:auto;font-size:32px;color:var(--muted)}
+    .launch-copy{padding:24px 0 18px;border-bottom:1px solid var(--soft);font-size:17px;line-height:1.45;color:#d9d2dc}.launch-copy strong{color:#fff;font-size:18px}.launch-form{display:grid;grid-template-columns:1fr 1fr;column-gap:28px;padding-top:23px}.launch-field{margin-bottom:18px}.launch-label{font-size:15px;font-weight:700;color:#ddd5e0;margin-bottom:8px}.launch-box{min-height:48px;border:1px solid #50535b;border-radius:9px;background:#1b1e22;padding:13px 15px;color:#d0c6d2;font-size:16px}.launch-box.tall{height:102px;color:#b8b0bd;line-height:1.35}.launch-box.select{display:flex;justify-content:space-between}.launch-actions{position:absolute;left:0;right:0;bottom:0;height:83px;border-top:1px solid var(--soft);display:flex;align-items:center;justify-content:flex-end;gap:14px;padding:0 46px}.cancel-button{height:44px;padding:0 23px;border:1px solid #51545b;border-radius:9px;background:transparent;color:#eee8ef;font:700 16px Liberation Sans,Arial,sans-serif}.create-button{height:44px;padding:0 27px;border:1px solid #0b9b78;border-radius:9px;background:#0b9b78;color:#fff;font:800 16px Liberation Sans,Arial,sans-serif;box-shadow:0 7px 18px rgba(11,155,120,.22)}
+    #launch-dialog-anchor{position:absolute;left:50%;top:50%;width:1px;height:1px}
+    #create-cursor{right:190px;bottom:64px}
+
+    #scene-08{background:#111418}
+    #create-result{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;opacity:0}.result-ring{width:148px;height:148px;border-radius:50%;border:2px solid #0b9b78;display:grid;place-items:center;margin:0 auto 28px;color:#0b9b78;font-size:64px;box-shadow:0 0 0 18px rgba(11,155,120,.07),0 0 90px rgba(11,155,120,.22)}.result-word{font-size:32px;font-weight:800;letter-spacing:-.04em}.result-sub{margin-top:10px;color:var(--muted);font-size:18px}.release-line{position:absolute;left:50%;top:50%;width:0;height:2px;background:linear-gradient(90deg,transparent,#a34dad,transparent);transform:translate(-50%,-50%);opacity:0}
+
+    #scene-09{background:radial-gradient(900px 600px at 50% 43%,#2a1730 0%,#1a1d21 63%,#101216 100%)}
+    #closing-statement{position:absolute;left:150px;right:150px;top:320px;text-align:center;font-size:100px;line-height:1.02;letter-spacing:-.06em;font-weight:800;color:#f1eaf3;opacity:0}
+    #closing-statement .product{color:#d8a1df}.closing-rule{position:absolute;left:50%;top:675px;width:260px;height:4px;transform:translateX(-50%);background:linear-gradient(90deg,transparent,#a34dad,transparent);opacity:0}.closing-foot{position:absolute;left:0;right:0;bottom:118px;text-align:center;color:#847b89;font-size:16px;letter-spacing:.13em;text-transform:uppercase;opacity:0}
+  </style>
+</head>
+<body>
+  <main id='sequences-launch-film' data-composition-id='sequences-launch-film' data-width='1920' data-height='1080' data-duration='25' data-start='0'>
+    <section id='scene-01' class='scene' data-scene='scene-01' data-start='0' data-duration='2.2'>
+      <div class='opening-kicker'>Sequences / launch film</div>
+      <h1 id='opening-question' class='display'>Ever struggle with a<br><span class='accent'>launch video?</span></h1>
+      <div class='opening-rule'></div><div class='opening-note'>A better starting point is already in the conversation.</div><div class='grain'></div>
+    </section>
+
+    <section id='scene-02' class='scene dark-world' data-scene='scene-02' data-start='2.2' data-duration='2.8'>
+      <div id='channel-world' class='scene-stage'><div class='world-glow'></div>
+        <div id='channel-dialog' class='channel-dialog'>
+          <div class='dialog-title-row'><div class='dialog-title'>Create a channel</div><div class='dialog-close'>×</div></div>
+          <div class='field-label'>Name</div>
+          <div id='channel-name-input' class='channel-name-input focused'><span class='channel-hash'>#</span><span id='channel-name-copy'></span><i id='channel-caret'></i></div>
+          <p class='channel-helper'>Channels are where conversations happen around a topic. Use a name that is easy to find and understand.</p>
+          <div class='dialog-footer'><span>Step 1 of 2</span><button id='next-channel-button' class='primary-button'>Next</button></div>
+        </div>
+        <div id='channel-pointer' class='pointer'></div>
+      </div><div class='grain'></div>
+    </section>
+
+    <section id='scene-03' class='scene dark-world' data-scene='scene-03' data-start='5' data-duration='2.4'>
+      <div id='workspace-setup' class='workspace-shell'>
+        <div class='topbar'><span>‹</span><span>›</span><span>◷</span><div class='search'>⌕ &nbsp; Search Sequences Hackathon</div><span>?</span></div>
+        <div class='rail'><div class='rail-mark'>SH</div><span>⌂</span><span>◌</span><span>♧</span><span>□</span><span>•••</span></div>
+        <aside class='sidebar'><div class='workspace-name'><span>Sequences Hackathon</span><span>⌄</span></div><div class='find-box'>⌕ &nbsp; Find a conversation...</div><div class='side-heading'>Channels</div><div id='workspace-launch-anchor' class='channel-row selected'><span class='hash'>#</span><span>launch</span></div><div class='channel-row'><span class='hash'>#</span><span>general</span></div><div class='channel-row'><span class='hash'>#</span><span>product</span></div><div class='side-heading'>Agents &amp; apps</div><div class='app-row'><span class='app-dot'></span>Sequences</div></aside>
+        <article class='channel-main'><div class='channel-header'><strong># launch</strong><div class='channel-tools'>Messages &nbsp;&nbsp; Add canvas &nbsp;&nbsp; Files &nbsp; +</div></div><div class='channel-body'><h2>Start the launch conversation</h2><p>The launch channel is ready for the next message.</p><div class='onboarding-line'><div class='onboard-card'><div class='card-head'>Launch brief</div><div class='card-art'></div></div><div class='onboard-card'><div class='card-head'>Product story</div><div class='card-art'></div></div><div class='onboard-card'><div class='card-head'>Audience</div><div class='card-art'></div></div></div></div><div class='workspace-caption'># launch · a focused place to begin</div></article>
+      </div><div class='grain'></div>
+    </section>
+
+    <section id='scene-04' class='scene dark-world' data-scene='scene-04' data-start='7.4' data-duration='2.4'>
+      <div id='question-world' class='workspace-shell'>
+        <div class='topbar'><span>‹</span><span>›</span><span>◷</span><div class='search'>⌕ &nbsp; Search Sequences Hackathon</div><span>?</span></div><div class='rail'><div class='rail-mark'>SH</div><span>⌂</span><span>◌</span><span>♧</span><span>□</span><span>•••</span></div>
+        <aside class='sidebar'><div class='workspace-name'><span>Sequences Hackathon</span><span>⌄</span></div><div class='find-box'>⌕ &nbsp; Find a conversation...</div><div class='side-heading'>Channels</div><div class='channel-row selected'><span class='hash'>#</span><span>launch</span></div><div class='channel-row'><span class='hash'>#</span><span>general</span></div><div class='channel-row'><span class='hash'>#</span><span>product</span></div><div class='side-heading'>Agents &amp; apps</div><div class='app-row'><span class='app-dot'></span>Sequences</div></aside>
+        <article class='channel-main'><div class='channel-header'><strong># launch</strong><div class='channel-tools'>Messages &nbsp;&nbsp; Add canvas &nbsp;&nbsp; Files &nbsp; +</div></div><div class='message-surface' id='question-message'><div class='message-line'><div class='avatar'>T</div><div><div class='message-meta'>Teammate <span class='message-time'>9:41 AM</span></div><div class='message-copy'><span class='typed' id='question-typed'></span><i class='caret' id='question-caret'></i></div></div></div></div><div class='workspace-caption'># launch · the question is in the room</div></article>
+      </div><div class='grain'></div>
+    </section>
+
+    <section id='scene-05' class='scene dark-world' data-scene='scene-05' data-start='9.8' data-duration='1.8'>
+      <div id='answer-world' class='workspace-shell'>
+        <div class='topbar'><span>‹</span><span>›</span><span>◷</span><div class='search'>⌕ &nbsp; Search Sequences Hackathon</div><span>?</span></div><div class='rail'><div class='rail-mark'>SH</div><span>⌂</span><span>◌</span><span>♧</span><span>□</span><span>•••</span></div>
+        <aside class='sidebar'><div class='workspace-name'><span>Sequences Hackathon</span><span>⌄</span></div><div class='find-box'>⌕ &nbsp; Find a conversation...</div><div class='side-heading'>Channels</div><div class='channel-row selected'><span class='hash'>#</span><span>launch</span></div><div class='channel-row'><span class='hash'>#</span><span>general</span></div><div class='channel-row'><span class='hash'>#</span><span>product</span></div><div class='side-heading'>Agents &amp; apps</div><div class='app-row'><span class='app-dot'></span>Sequences</div></aside>
+        <article class='channel-main'><div class='channel-header'><strong># launch</strong><div class='channel-tools'>Messages &nbsp;&nbsp; Add canvas &nbsp;&nbsp; Files &nbsp; +</div></div><div class='message-surface' id='answer-message'><div class='message-line'><div class='avatar'>T</div><div><div class='message-meta'>Teammate <span class='message-time'>9:41 AM</span></div><div class='message-copy'>The product is ready but... how do we launch it</div></div></div><div class='message-line answer-bubble' style='margin:28px 0 0 60px'><div class='avatar teal'>S</div><div><div class='message-meta'>Sequences <span class='message-time'>9:42 AM</span></div><div id='answer-anchor' class='message-copy'><span class='typed' id='answer-typed'></span><i class='caret' id='answer-caret'></i></div></div></div></div><div class='workspace-caption'># launch · one answer changes the direction</div></article>
+      </div><div class='grain'></div>
+    </section>
+
+    <section id='scene-06' class='scene' data-scene='scene-06' data-start='11.6' data-duration='2.8'>
+      <div id='command-world'><div id='command-stage'><div class='command-context'><aside class='sidebar'><div class='workspace-name'><span>Sequences Hackathon</span><span>⌄</span></div><div class='find-box'>⌕ &nbsp; Find a conversation...</div><div class='side-heading'>Channels</div><div class='channel-row selected'><span class='hash'>#</span>launch</div><div class='channel-row'><span class='hash'>#</span>general</div><div class='side-heading'>Agents &amp; apps</div><div class='app-row'><span class='app-dot'></span>Sequences</div></aside><article class='channel-main'><div class='channel-header'><strong># launch</strong><div class='channel-tools'>Messages &nbsp;&nbsp; Add canvas &nbsp; +</div></div><div class='channel-body'><h2>How about using Sequences?</h2><p>The next step is one command away.</p></div></article></div><div id='command-hero'><span id='command-anchor'></span><div class='command-label'>Message #launch</div><div id='command-field' class='command-line'><span class='command-prompt'>›</span><span class='command-field' id='command-typed'></span><i class='caret' id='command-caret'></i></div><div id='command-submit' class='command-submit'>↵</div></div></div></div><div class='grain'></div>
+    </section>
+
+    <section id='scene-07' class='scene' data-scene='scene-07' data-start='14.4' data-duration='3.2'>
+      <div id='launch-dialog-world'><div class='behind-shell workspace-shell'><div class='topbar'><span>‹</span><span>›</span><span>◷</span><div class='search'>⌕ &nbsp; Search Sequences Hackathon</div><span>?</span></div><div class='rail'><div class='rail-mark'>SH</div><span>⌂</span><span>◌</span><span>♧</span><span>□</span></div><aside class='sidebar'><div class='workspace-name'><span>Sequences Hackathon</span><span>⌄</span></div><div class='find-box'>⌕ &nbsp; Find a conversation...</div><div class='side-heading'>Channels</div><div class='channel-row selected'><span class='hash'>#</span>launch</div></aside><article class='channel-main'><div class='channel-header'><strong># launch</strong><div class='channel-tools'>Messages &nbsp; Add canvas &nbsp; Files</div></div></article></div><div class='dialog-backdrop'></div><div id='launch-dialog-anchor'></div><div id='launch-dialog'><div class='launch-head'><div class='sequence-mark'>▤</div><div class='launch-title'>Make a launch video</div><div class='launch-close'>×</div></div><div class='launch-copy'><strong>Turn your launch into a short, on-brand video.</strong><br>Give Sequences the essentials and watch the launch take shape.</div><div class='launch-form'><div><div class='launch-field'><div class='launch-label'>Product</div><div class='launch-box'>Sequences</div></div><div class='launch-field'><div class='launch-label'>What shipped / the launch</div><div class='launch-box tall'>Prompts and images become a professional SaaS motion design ad.</div></div></div><div><div class='launch-field'><div class='launch-label'>Audience <span style='font-weight:400;color:#847b89'>(optional)</span></div><div class='launch-box'>Slack users</div></div><div class='launch-field'><div class='launch-label'>Tone</div><div class='launch-box select'><span>Bold launch</span><span>⌄</span></div></div></div></div><div class='launch-actions'><button class='cancel-button'>Cancel</button><button id='create-button' class='create-button'>Create</button></div></div><div id='create-cursor' class='pointer'></div></div><div class='grain'></div>
+    </section>
+
+    <section id='scene-08' class='scene' data-scene='scene-08' data-start='17.6' data-duration='2.4'>
+      <div class='release-line'></div><div id='create-result'><div class='result-ring'>✓</div><div class='result-word'>Sequences</div><div class='result-sub'>A launch starts with the next frame.</div></div><div class='grain'></div>
+    </section>
+
+    <section id='scene-09' class='scene' data-scene='scene-09' data-start='20' data-duration='5'>
+      <div id='closing-statement'>Sequences transforms<br>your product into a <span class='product'>launch video</span></div><div class='closing-rule'></div><div class='closing-foot'>Sequences · from prompt to launch video</div><div class='grain'></div>
+    </section>
+  </main>
+  <script src='gsap.min.js'></script>
+  <script>
+    (function(){
+      'use strict';
+      var id='sequences-launch-film';
+      var q=function(s){return document.querySelector(s)};
+      var qa=function(s){return Array.prototype.slice.call(document.querySelectorAll(s))};
+      var root=q('#'+id);
+      var scenes=qa('.scene');
+      var text={question:'The product is ready but... how do we launch it',answer:'How about using Sequences?',command:'/sequences',channel:'Launch'};
+      function prep(selector,value){var el=q(selector);el.textContent=value;el.style.width='auto';var w=Math.ceil(el.getBoundingClientRect().width);el.style.width='0px';return w}
+      var channelW=prep('#channel-name-copy',text.channel);
+      var questionW=prep('#question-typed',text.question);
+      var answerW=prep('#answer-typed',text.answer);
+      var commandW=prep('#command-typed',text.command);
+      var tl=gsap.timeline({paused:true,defaults:{ease:'power3.out'}});
+      gsap.set(scenes,{autoAlpha:0});
+      gsap.set('#scene-01',{autoAlpha:1});
+      gsap.set('#opening-question',{opacity:1});
+      gsap.set('#channel-dialog,#question-message,#answer-message,#create-result,#closing-statement',{opacity:0});
+      gsap.set('#command-caret,#channel-caret,#question-caret,#answer-caret',{opacity:0});
+
+      tl.to('#opening-question',{opacity:0,y:-35,filter:'blur(10px)',duration:.32,ease:'power2.in'},1.86)
+        .to('#scene-01',{autoAlpha:0,duration:.18},2.02)
+        .set('#scene-02',{autoAlpha:1},2.02)
+        .fromTo('#channel-dialog',{opacity:0,y:55,scale:.94},{opacity:1,y:0,scale:1,duration:.55,ease:'back.out(1.2)'},2.12)
+        .fromTo('#channel-caret',{opacity:0},{opacity:1,duration:.08},2.56)
+        .to('#channel-name-copy',{width:channelW,duration:.62,ease:'steps(5)'},2.64)
+        .to('#next-channel-button',{backgroundColor:'#8d3b98',color:'#ffffff',duration:.22},3.3)
+        .to('#channel-pointer',{opacity:1,left:'calc(50% + 322px)',top:'calc(50% + 230px)',duration:.45,ease:'power2.inOut'},3.54)
+        .to('#next-channel-button',{scale:.93,duration:.1,ease:'power2.in'},4.02)
+        .to('#next-channel-button',{scale:1,duration:.18,ease:'back.out(1.7)'},4.12)
+        .to('#channel-pointer',{opacity:0,duration:.15},4.28)
+        .to('#channel-dialog',{opacity:0,scale:.98,y:-20,duration:.35,ease:'power2.in'},4.38)
+        .to('#scene-02',{autoAlpha:0,duration:.18},4.52)
+        .set('#scene-03',{autoAlpha:1},4.52)
+        .fromTo('#workspace-setup',{opacity:0,scale:.97,y:25},{opacity:1,scale:1,y:0,duration:.48,ease:'power2.out'},4.55)
+        .to('#workspace-setup',{scale:1.015,duration:1.2,ease:'sine.inOut'},5.3)
+        .to('#workspace-setup',{scale:1,duration:.65,ease:'sine.inOut'},6.5)
+        .to('#scene-03',{autoAlpha:0,duration:.22},7.23)
+        .set('#scene-04',{autoAlpha:1},7.23)
+        .fromTo('#question-world',{opacity:0,scale:1.02},{opacity:1,scale:1,duration:.34},7.25)
+        .fromTo('#question-message',{opacity:0,y:24},{opacity:1,y:0,duration:.38},7.42)
+        .fromTo('#question-caret',{opacity:0},{opacity:1,duration:.08},7.5)
+        .to('#question-typed',{width:questionW,duration:1.05,ease:'steps(43)'},7.58)
+        .set('#question-caret',{opacity:0},8.72)
+        .to('#scene-04',{autoAlpha:0,duration:.22},9.54)
+        .set('#scene-05',{autoAlpha:1},9.54)
+        .fromTo('#answer-world',{opacity:0,scale:1.035},{opacity:1,scale:1,duration:.38},9.56)
+        .fromTo('#answer-message',{opacity:0,y:28},{opacity:1,y:0,duration:.4},9.68)
+        .fromTo('#answer-caret',{opacity:0},{opacity:1,duration:.08},10.04)
+        .to('#answer-typed',{width:answerW,duration:.7,ease:'steps(25)'},10.12)
+        .set('#answer-caret',{opacity:0},10.92)
+        .to('#answer-world',{scale:1.08,duration:.58,ease:'power2.inOut'},11.15)
+        .to('#scene-05',{autoAlpha:0,duration:.2},11.48)
+        .set('#scene-06',{autoAlpha:1},11.48)
+        .fromTo('#command-stage',{opacity:0,scale:.82},{opacity:1,scale:1,duration:.55,ease:'power3.out'},11.5)
+        .to('#command-stage',{scale:1.12,duration:.68,ease:'power2.inOut'},11.72)
+        .fromTo('#command-caret',{opacity:0},{opacity:1,duration:.08},11.88)
+        .to('#command-typed',{width:commandW,duration:1.18,ease:'steps(9)'},11.96)
+        .to('#command-submit',{scale:.92,backgroundColor:'#0b9b78',duration:.12,ease:'power2.in'},13.28)
+        .to('#command-submit',{scale:1,duration:.2,ease:'back.out(1.5)'},13.4)
+        .to('#command-stage',{scale:1.16,duration:.32,ease:'power3.in'},13.52)
+        .to('#scene-06',{autoAlpha:0,duration:.2},14.2)
+        .set('#scene-07',{autoAlpha:1},14.2)
+        .fromTo('#launch-dialog-world',{opacity:0},{opacity:1,duration:.18},14.22)
+        .fromTo('#launch-dialog',{opacity:0,scale:.86,y:'-47%'},{opacity:1,scale:1,y:'-50%',duration:.62,ease:'back.out(1.1)'},14.28)
+        .to('#launch-dialog',{boxShadow:'0 36px 130px rgba(0,0,0,.72),0 0 0 10px rgba(163,77,173,.08)',duration:.42,ease:'power2.out'},14.92)
+        .to('#create-cursor',{opacity:1,left:'calc(50% + 418px)',top:'calc(50% + 330px)',duration:.5,ease:'power2.inOut'},15.78)
+        .to('#create-button',{scale:.94,duration:.1,ease:'power2.in'},16.32)
+        .to('#create-button',{scale:1,duration:.2,ease:'back.out(1.5)'},16.42)
+        .to('#create-cursor',{opacity:0,duration:.16},16.62)
+        .to('#launch-dialog',{opacity:0,scale:1.025,duration:.28,ease:'power2.in'},17.22)
+        .to('#launch-dialog-world',{opacity:0,duration:.2},17.42)
+        .set('#scene-08',{autoAlpha:1},17.42)
+        .fromTo('#release-line',{opacity:0,width:0},{opacity:1,width:1500,duration:.55,ease:'power2.out'},17.48)
+        .to('#release-line',{opacity:0,duration:.34,ease:'power2.in'},18.03)
+        .fromTo('#create-result',{opacity:0,scale:.78},{opacity:1,scale:1,duration:.55,ease:'back.out(1.25)'},17.68)
+        .to('#create-result',{scale:1.04,duration:.18,ease:'power2.out'},18.36)
+        .to('#create-result',{scale:1,duration:.34,ease:'power2.inOut'},18.54)
+        .to('#scene-08',{autoAlpha:0,duration:.3},19.62)
+        .set('#scene-09',{autoAlpha:1},19.62)
+        .fromTo('#closing-statement',{opacity:0,y:48,filter:'blur(14px)'},{opacity:1,y:0,filter:'blur(0px)',duration:.76,ease:'power3.out'},20.02)
+        .fromTo('.closing-rule',{opacity:0,width:0},{opacity:1,width:260,duration:.48,ease:'power2.out'},20.62)
+        .fromTo('.closing-foot',{opacity:0,y:12},{opacity:1,y:0,duration:.42},20.78)
+        .to({}, {duration:4.02},20.98);
+
+      window.__timelines=window.__timelines||{};
+      window.__timelines[id]=tl;
+      window.__seek=function(seconds){var t=Math.max(0,Math.min(25,Number(seconds)||0));tl.seek(t,false);return tl.time()};
+      tl.seek(0,false);
+    })();
+  </script>
+</body>
+</html>

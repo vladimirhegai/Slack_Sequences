@@ -65,7 +65,7 @@ export function diagnosticsBlocks(report: DiagnosticsReport): KnownBlock[] {
     { type: "section", text: { type: "mrkdwn", text: lines } },
     {
       type: "context",
-      elements: [{ type: "mrkdwn", text: "Run `/sequences demo` for a full end-to-end render smoke." }],
+      elements: [{ type: "mrkdwn", text: "Run `/sequences demo` to post the packaged golden Slack ad." }],
     },
   ];
 }

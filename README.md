@@ -31,8 +31,8 @@ Read [apps/slack/CLAUDE.md](apps/slack/CLAUDE.md),
 
 ## What works today
 
-- `/sequences demo` builds a deterministic five-scene Relay v2 reel with no
-  model or API key.
+- `/sequences demo` posts the packaged golden Sequences for Slack ad with no
+  model, render, or API key.
 - `/sequences` and the **🎬 Make a launch video** message shortcut collect a
   launch brief; the shortcut reads the whole release **thread** for context.
 - The default author is `gpt-5.6-luna` at high reasoning in a private Railway

@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "compositionId": "sequences-launch-film",
+  "durationSec": 25,
+  "creativeOwner": "Luna director",
+  "acts": [
+    {"sceneId":"scene-01","startSec":0,"endSec":2.2,"primarySelector":"#opening-question"},
+    {"sceneId":"scene-02","startSec":2.2,"endSec":5,"primarySelector":"#channel-dialog"},
+    {"sceneId":"scene-03","startSec":5,"endSec":7.4,"primarySelector":"#workspace-setup"},
+    {"sceneId":"scene-04","startSec":7.4,"endSec":9.8,"primarySelector":"#question-message"},
+    {"sceneId":"scene-05","startSec":9.8,"endSec":11.6,"primarySelector":"#answer-message"},
+    {"sceneId":"scene-06","startSec":11.6,"endSec":14.4,"primarySelector":"#command-hero"},
+    {"sceneId":"scene-07","startSec":14.4,"endSec":17.6,"primarySelector":"#launch-dialog"},
+    {"sceneId":"scene-08","startSec":17.6,"endSec":20,"primarySelector":"#create-result"},
+    {"sceneId":"scene-09","startSec":20,"endSec":25,"primarySelector":"#closing-statement"}
+  ],
+  "boundaries": [
+    {"id":"b01","atSec":2.2,"fromScene":"scene-01","toScene":"scene-02","strategy":"hard","mechanicalOwner":"cut","cause":"The film moves from the isolated launch question into the dark product world.","evidenceSampleSec":[2.1,2.25]},
+    {"id":"b02","atSec":5,"fromScene":"scene-02","toScene":"scene-03","strategy":"camera-continuation","mechanicalOwner":"continuity","cause":"The entered Launch label is carried into the selected launch channel in the workspace.","outgoingAnchorSelector":"#channel-name-copy","incomingAnchorSelector":"#workspace-launch-anchor","evidenceSampleSec":[4.8,5.15]},
+    {"id":"b03","atSec":7.4,"fromScene":"scene-03","toScene":"scene-04","strategy":"crossfade","mechanicalOwner":"authored","cause":"The quiet channel surface gives way to the message that creates the launch need.","evidenceSampleSec":[7.25,7.55]},
+    {"id":"b04","atSec":9.8,"fromScene":"scene-04","toScene":"scene-05","strategy":"crossfade","mechanicalOwner":"authored","cause":"The answer arrives in the same thread after the unresolved question has been read.","evidenceSampleSec":[9.65,9.95]},
+    {"id":"b05","atSec":11.6,"fromScene":"scene-05","toScene":"scene-06","strategy":"camera-continuation","mechanicalOwner":"authored","cause":"The camera follows the answer into the active message surface where the named command is typed.","outgoingAnchorSelector":"#answer-anchor","incomingAnchorSelector":"#command-anchor","evidenceSampleSec":[11.45,11.8]},
+    {"id":"b06","atSec":14.4,"fromScene":"scene-06","toScene":"scene-07","strategy":"causal-reveal","mechanicalOwner":"continuity","cause":"Submitting /sequences visibly causes the Sequences launch dialog to open over the workspace.","outgoingAnchorSelector":"#command-submit","incomingAnchorSelector":"#launch-dialog-anchor","evidenceSampleSec":[14.2,14.55]},
+    {"id":"b07","atSec":17.6,"fromScene":"scene-07","toScene":"scene-08","strategy":"hard","mechanicalOwner":"authored","cause":"The Create action releases the dense modal register into a sparse consequence field.","evidenceSampleSec":[17.45,17.75]},
+    {"id":"b08","atSec":20,"fromScene":"scene-08","toScene":"scene-09","strategy":"hard","mechanicalOwner":"cut","cause":"The confirmation clears to give the verified transformation statement a committed closing rest.","evidenceSampleSec":[19.85,20.15]}
+  ],
+  "cameraMoves": [
+    {"sceneId":"scene-02","worldSelector":"#channel-world","targetSelector":"#channel-dialog","startSec":2.25,"arrivalSec":2.7,"settleEndSec":3.05,"holdEndSec":4.8,"motivation":"The new channel name becomes the first concrete product surface."},
+    {"sceneId":"scene-05","worldSelector":"#answer-world","targetSelector":"#answer-message","startSec":9.85,"arrivalSec":10.35,"settleEndSec":10.7,"holdEndSec":11.5,"motivation":"Attention moves from the whole workspace to the answer that proposes Sequences."},
+    {"sceneId":"scene-06","worldSelector":"#command-world","targetSelector":"#command-field","startSec":11.6,"arrivalSec":12.25,"settleEndSec":12.6,"holdEndSec":14.25,"motivation":"The named product action is the semantic hinge and must fill the frame."},
+    {"sceneId":"scene-07","worldSelector":"#launch-dialog-world","targetSelector":"#launch-dialog","startSec":14.4,"arrivalSec":14.95,"settleEndSec":15.35,"holdEndSec":17.6,"motivation":"The modal consequence becomes the product hero at decisive display scale."}
+  ],
+  "interactions": [
+    {"actorSelector":"#channel-caret","targetSelector":"#channel-name-input","resultSelector":"#next-channel-button","startSec":2.65,"actionSec":3.5,"settleSec":3.8,"beforeSampleSec":2.6,"afterSampleSec":3.95,"observableStateChange":"Launch is revealed in the channel field and Next changes from subdued graphite to active plum."},
+    {"actorSelector":"#channel-pointer","targetSelector":"#next-channel-button","resultSelector":"#workspace-setup","startSec":4.15,"actionSec":4.62,"settleSec":4.95,"beforeSampleSec":4.1,"afterSampleSec":5.1,"observableStateChange":"The channel dialog exits and the workspace opens with launch selected."},
+    {"actorSelector":"#command-caret","targetSelector":"#command-field","resultSelector":"#command-submit","startSec":11.85,"actionSec":13.55,"settleSec":14.05,"beforeSampleSec":11.8,"afterSampleSec":14.15,"observableStateChange":"The /sequences command fills the active surface, presses, and opens the launch dialog."},
+    {"actorSelector":"#create-cursor","targetSelector":"#create-button","resultSelector":"#create-result","startSec":16.2,"actionSec":16.8,"settleSec":17.35,"beforeSampleSec":16.15,"afterSampleSec":17.45,"observableStateChange":"Create presses with restrained utility motion and produces a brief confirmation release."}
+  ],
+  "energyPeak": {"startSec":13.45,"endSec":15.35,"reason":"The typed /sequences submission and its immediate launch-dialog consequence form the single dominant product reveal."},
+  "finalRestingHold": {"startSec":21.1,"endSec":25,"primarySelector":"#closing-statement","reason":"The verified transformation statement remains fully readable without further transform or opacity motion."},
+  "geometryPolicy": {"measuredPairs":[{"from":"#channel-name-copy","to":"#workspace-launch-anchor","purpose":"Carry the Launch label from setup into the workspace."},{"from":"#answer-anchor","to":"#command-anchor","purpose":"Align the message answer with the command close-up."},{"from":"#command-submit","to":"#launch-dialog-anchor","purpose":"Place the modal reveal on the submitted command focal point."},{"from":"#create-button","to":"#create-result","purpose":"Center the confirmation consequence on the real Create control."}]}
+}

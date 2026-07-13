@@ -327,7 +327,7 @@ OPENROUTER_API_KEY=...                        # only while rollback is active
 - `/sequences assets`: deterministic screenshot/palette intake plus one Luna
   UI-pack authoring turn and a host-rendered preview. `assets clear` is
   deterministic and removes raw references plus all stored pack versions.
-- `/sequences demo`: curated model-free demo.
+- `/sequences demo`: packaged, QA-approved golden Slack ad; no model or render.
 - undo, render/re-render, approve/share, debug, help, and `mcp-test`:
   deterministic host operations.
 

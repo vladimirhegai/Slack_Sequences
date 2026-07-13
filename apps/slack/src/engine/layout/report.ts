@@ -152,7 +152,7 @@ export type LayoutOverflow = Partial<Record<"left" | "right" | "top" | "bottom",
 export interface LoadBearingContainmentEvidence {
   sceneId: string;
   part: string;
-  detector: "primary-moment" | "camera-blocking";
+  detector: "primary-moment" | "camera-blocking" | "declared-primary";
   time: number;
   found: boolean;
   opacity: number;
@@ -757,7 +757,9 @@ function loadBrowserAudit(name: "layout-audit.browser.js" | "contrast-audit.brow
 // v41: author-declared per-scene primary selectors (Luna motion intent) drive
 // continuous-motion focal attention, waive layout_intent_missing, and flag
 // contrast findings on the declared primary subject.
-const QA_CACHE_VERSION = 41;
+// v42: declared Luna interactions and per-act primaries are measured directly
+// against live actor/target geometry and viewport containment.
+const QA_CACHE_VERSION = 42;
 
 /** Everything environment-side that can change the verdict for the same draft. */
 let cachedStaticFingerprint: string | undefined;
@@ -839,6 +841,8 @@ function qaCacheKey(projectDir: string, draft: DirectCompositionDraft): string {
     .update(JSON.stringify(draft.storyboard))
     .update("\0")
     .update(JSON.stringify(draft.declaredPrimarySelectors ?? null))
+    .update("\0")
+    .update(JSON.stringify(draft.declaredInteractions ?? null))
     .digest("hex");
 }
 
@@ -2324,6 +2328,338 @@ async function auditFocalParts(
     focalPart,
     time,
   });
+}
+
+/**
+ * Luna owns its DOM and GSAP, so its motion-intent interactions cannot rely on
+ * the legacy data-part cursor compiler. Resolve the declared selectors against
+ * the rendered frame instead: the actor hotspot must land inside the live
+ * target at actionSec, and the promised result must visibly change between the
+ * director's own before/after evidence times.
+ */
+async function auditDeclaredInteractions(
+  page: import("puppeteer-core").Page,
+  draft: DirectCompositionDraft,
+  seekContent: (time: number) => Promise<void>,
+): Promise<{ issues: DirectLayoutIssue[]; evidence: DirectInteractionEvidence[] }> {
+  const issues: DirectLayoutIssue[] = [];
+  const evidence: DirectInteractionEvidence[] = [];
+  for (const intent of (draft.declaredInteractions ?? []).slice(0, 8)) {
+    await seekContent(intent.actionSec);
+    const action = await page.evaluate((payload) => {
+      type Rect = LayoutRect;
+      const query = (selector: string): HTMLElement | null => {
+        try {
+          return document.querySelector<HTMLElement>(selector);
+        } catch {
+          return null;
+        }
+      };
+      const rectValue = (value: DOMRect): Rect => ({
+        left: value.left,
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        width: value.width,
+        height: value.height,
+      });
+      const chainOpacity = (element: Element): number => {
+        let opacity = 1;
+        let node: Element | null = element;
+        while (node) {
+          const style = getComputedStyle(node);
+          if (style.display === "none" || style.visibility === "hidden") return 0;
+          const own = Number.parseFloat(style.opacity);
+          opacity *= Number.isFinite(own) ? own : 1;
+          node = node.parentElement;
+        }
+        return opacity;
+      };
+      const root = document.querySelector<HTMLElement>(
+        "[data-composition-id][data-width][data-height]",
+      );
+      const actor = query(payload.actorSelector);
+      const target = query(payload.targetSelector);
+      if (!root || !actor || !target) {
+        return {
+          bound: false as const,
+          actorFound: Boolean(actor),
+          targetFound: Boolean(target),
+          sceneId: target?.closest<HTMLElement>("[data-scene]")?.dataset.scene ??
+            actor?.closest<HTMLElement>("[data-scene]")?.dataset.scene,
+        };
+      }
+      const frameRect = root.getBoundingClientRect();
+      const actorRect = actor.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const visibleFraction = (rect: DOMRect): number => {
+        const width = Math.max(
+          0,
+          Math.min(rect.right, frameRect.right) - Math.max(rect.left, frameRect.left),
+        );
+        const height = Math.max(
+          0,
+          Math.min(rect.bottom, frameRect.bottom) - Math.max(rect.top, frameRect.top),
+        );
+        const area = rect.width * rect.height;
+        return area > 0 ? (width * height) / area : 0;
+      };
+      const hotspotX = Math.max(
+        0,
+        Math.min(1, Number.parseFloat(actor.dataset.cursorHotspotX ?? "0") || 0),
+      );
+      const hotspotY = Math.max(
+        0,
+        Math.min(1, Number.parseFloat(actor.dataset.cursorHotspotY ?? "0") || 0),
+      );
+      const cursor = {
+        x: actorRect.left + actorRect.width * hotspotX,
+        y: actorRect.top + actorRect.height * hotspotY,
+      };
+      const inset = Math.min(
+        12,
+        Math.max(2, Math.min(targetRect.width, targetRect.height) * 0.14),
+        Math.max(0, targetRect.width / 2 - 0.5),
+        Math.max(0, targetRect.height / 2 - 0.5),
+      );
+      const targetPoint = {
+        x: Math.max(targetRect.left + inset, Math.min(targetRect.right - inset, cursor.x)),
+        y: Math.max(targetRect.top + inset, Math.min(targetRect.bottom - inset, cursor.y)),
+      };
+      const hit =
+        cursor.x >= targetRect.left + inset && cursor.x <= targetRect.right - inset &&
+        cursor.y >= targetRect.top + inset && cursor.y <= targetRect.bottom - inset;
+      return {
+        bound: true as const,
+        sceneId: target.closest<HTMLElement>("[data-scene]")?.dataset.scene ??
+          actor.closest<HTMLElement>("[data-scene]")?.dataset.scene,
+        actorOpacity: chainOpacity(actor),
+        actorVisibleFraction: visibleFraction(actorRect),
+        targetOpacity: chainOpacity(target),
+        targetVisibleFraction: visibleFraction(targetRect),
+        actorRect: rectValue(actorRect),
+        targetRect: rectValue(targetRect),
+        cursor,
+        targetPoint,
+        hotspot: { x: hotspotX, y: hotspotY },
+        deltaPx: Math.hypot(cursor.x - targetPoint.x, cursor.y - targetPoint.y),
+        hit,
+      };
+    }, intent);
+    const add = (code: string, message: string, fixHint: string): void => {
+      issues.push({
+        code,
+        severity: "error",
+        time: intent.actionSec,
+        interactionId: intent.id,
+        selector: intent.actorSelector,
+        ...(action.sceneId ? { sceneId: action.sceneId } : {}),
+        message,
+        fixHint,
+        source: "sequences",
+      });
+    };
+    if (!action.bound) {
+      add(
+        "interaction_binding_missing",
+        `Declared interaction "${intent.id}" cannot resolve its actor or target selector.`,
+        "Keep the declared actor and target selectors unique and present in the accepted DOM.",
+      );
+      continue;
+    }
+    evidence.push({
+      id: intent.id,
+      phase: "press",
+      time: intent.actionSec,
+      cursor: action.cursor,
+      target: action.targetPoint,
+      deltaPx: action.deltaPx,
+      hit: action.hit,
+      cursorRect: action.actorRect,
+      targetRect: action.targetRect,
+      hotspot: action.hotspot,
+    });
+    if (
+      action.actorOpacity < 0.15 || action.actorVisibleFraction < 0.85 ||
+      action.targetOpacity < 0.35 || action.targetVisibleFraction < 0.85
+    ) {
+      add(
+        "interaction_not_visible",
+        `Declared interaction "${intent.id}" does not keep its actor and target visibly ready at ` +
+          `${intent.actionSec.toFixed(2)}s.`,
+        "Keep the pointer and the real target on frame and visible through the declared action time.",
+      );
+    }
+    if (!action.hit) {
+      add(
+        "interaction_target_miss",
+        `Declared interaction "${intent.id}" misses ${intent.targetSelector} by ` +
+          `${Math.round(action.deltaPx * 10) / 10}px at ${intent.actionSec.toFixed(2)}s.`,
+        "Derive the pointer endpoint from the target's measured screen-space rect at action time.",
+      );
+    }
+
+    const resultSnapshot = async (time: number) => {
+      await seekContent(time);
+      return page.evaluate((selector) => {
+        let element: HTMLElement | null = null;
+        try {
+          element = document.querySelector<HTMLElement>(selector);
+        } catch {
+          return null;
+        }
+        if (!element) return null;
+        const rect = element.getBoundingClientRect();
+        let opacity = 1;
+        let node: Element | null = element;
+        while (node) {
+          const style = getComputedStyle(node);
+          if (style.display === "none" || style.visibility === "hidden") opacity = 0;
+          const own = Number.parseFloat(style.opacity);
+          opacity *= Number.isFinite(own) ? own : 1;
+          node = node.parentElement;
+        }
+        const style = getComputedStyle(element);
+        return {
+          opacity: Math.round(opacity * 1_000) / 1_000,
+          rect: [rect.left, rect.top, rect.width, rect.height].map((value) => Math.round(value * 10) / 10),
+          transform: style.transform,
+          backgroundColor: style.backgroundColor,
+          color: style.color,
+          text: (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 256),
+        };
+      }, intent.resultSelector);
+    };
+    const before = await resultSnapshot(intent.beforeSampleSec);
+    const after = await resultSnapshot(intent.afterSampleSec);
+    if (!before || !after || JSON.stringify(before) === JSON.stringify(after)) {
+      add(
+        "interaction_result_static",
+        `Declared interaction "${intent.id}" promises "${intent.observableStateChange}", but ` +
+          `${intent.resultSelector} does not visibly change between ` +
+          `${intent.beforeSampleSec.toFixed(2)}s and ${intent.afterSampleSec.toFixed(2)}s.`,
+        "Make the declared result visibly change inside the evidence window, or correct the declared sample times.",
+      );
+    }
+  }
+  return { issues, evidence };
+}
+
+/**
+ * Luna's per-act primary selector is the route-neutral load-bearing contract.
+ * Sample the held body of every act, after entrances and before exits, against
+ * the real frame under all authored transforms. Decorative cropping remains
+ * free; only the director's declared semantic subject must stay at least 85%
+ * visible.
+ */
+async function auditDeclaredPrimarySelectors(
+  page: import("puppeteer-core").Page,
+  draft: DirectCompositionDraft,
+  seekContent: (time: number) => Promise<void>,
+  containmentEvidence: LoadBearingContainmentEvidence[] = [],
+): Promise<DirectLayoutIssue[]> {
+  const issues: DirectLayoutIssue[] = [];
+  for (const scene of draft.storyboard) {
+    const selector = draft.declaredPrimarySelectors?.[scene.id];
+    if (!selector) continue;
+    const sampleAt = scene.startSec + scene.durationSec * 0.6;
+    await seekContent(sampleAt);
+    const measured = await page.evaluate((payload) => {
+      const root = document.querySelector<HTMLElement>(
+        "[data-composition-id][data-width][data-height]",
+      );
+      let focal: HTMLElement | null = null;
+      try {
+        focal = document.querySelector<HTMLElement>(payload.selector);
+      } catch {
+        focal = null;
+      }
+      if (!root || !focal) return { missing: true, opacity: 0, visibleFraction: 0 };
+      const frame = root.getBoundingClientRect();
+      const rect = focal.getBoundingClientRect();
+      let opacity = 1;
+      let node: Element | null = focal;
+      while (node) {
+        const style = getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden") opacity = 0;
+        const own = Number.parseFloat(style.opacity);
+        opacity *= Number.isFinite(own) ? own : 1;
+        node = node.parentElement;
+      }
+      const width = Math.max(
+        0,
+        Math.min(rect.right, frame.right) - Math.max(rect.left, frame.left),
+      );
+      const height = Math.max(
+        0,
+        Math.min(rect.bottom, frame.bottom) - Math.max(rect.top, frame.top),
+      );
+      const area = rect.width * rect.height;
+      const rectValue = (value: DOMRect) => ({
+        left: value.left,
+        top: value.top,
+        right: value.right,
+        bottom: value.bottom,
+        width: value.width,
+        height: value.height,
+      });
+      const cssSafe = Number.parseFloat(getComputedStyle(root).getPropertyValue("--space-safe"));
+      const safe = Number.isFinite(cssSafe) && cssSafe > 0
+        ? cssSafe
+        : Math.round(Math.min(frame.width, frame.height) * 0.06);
+      return {
+        missing: false,
+        opacity,
+        visibleFraction: area > 0 ? (width * height) / area : 0,
+        rect: rectValue(rect),
+        frameRect: rectValue(frame),
+        safeRect: {
+          left: frame.left + safe,
+          top: frame.top + safe,
+          right: frame.right - safe,
+          bottom: frame.bottom - safe,
+          width: frame.width - safe * 2,
+          height: frame.height - safe * 2,
+        },
+      };
+    }, { selector });
+    containmentEvidence.push({
+      sceneId: scene.id,
+      part: selector,
+      detector: "declared-primary",
+      time: sampleAt,
+      found: !measured.missing,
+      opacity: measured.opacity,
+      visibleFraction: measured.visibleFraction,
+      requiredVisibleFraction: 0.85,
+      ...(measured.rect ? { rect: measured.rect } : {}),
+      ...(measured.frameRect ? { frameRect: measured.frameRect } : {}),
+      ...(measured.safeRect ? { safeRect: measured.safeRect } : {}),
+    });
+    if (!measured.missing && measured.opacity >= 0.35 && measured.visibleFraction >= 0.85) {
+      continue;
+    }
+    const invisible = measured.missing || measured.opacity < 0.35;
+    issues.push({
+      code: invisible ? "spatial_focal_invisible" : "spatial_focal_offframe",
+      severity: "warning",
+      time: sampleAt,
+      selector,
+      sceneId: scene.id,
+      part: selector,
+      declaredPrimary: true,
+      message: invisible
+        ? `Declared primary ${selector} is not visibly ready in scene "${scene.id}" at ` +
+          `${sampleAt.toFixed(2)}s.`
+        : `Declared primary ${selector} is only ` +
+          `${Math.round(measured.visibleFraction * 100)}% inside the frame in scene ` +
+          `"${scene.id}" at ${sampleAt.toFixed(2)}s.`,
+      fixHint:
+        "Preserve the treatment while removing compounded transforms or reframing the declared subject so at least 85% remains on frame.",
+      source: "sequences",
+    });
+  }
+  return issues;
 }
 
 /**
@@ -4793,6 +5129,10 @@ export async function inspectDirectComposition(
     // allowed to touch CSS.
     rawIssues.push(...contrastWorst.values());
 
+    const declaredInteractionAudit = await auditDeclaredInteractions(page, draft, seekContent);
+    rawIssues.push(...declaredInteractionAudit.issues);
+    interactionEvidence.push(...declaredInteractionAudit.evidence);
+
     // Rendering may seek frames out of order. Revisit each interaction arrival
     // after seeking forward and backward; a history-dependent cursor will not
     // return to the same measured hotspot.
@@ -5758,9 +6098,11 @@ export async function inspectDirectComposition(
       });
     }
 
-    rawIssues.push(...await (graphOwnedCamera
-      ? auditCameraBlockingLandings(page, draft, seekContent, loadBearingContainment)
-      : auditPrimaryMomentFocals(page, draft, seekContent, loadBearingContainment)));
+    rawIssues.push(...await (draft.declaredPrimarySelectors
+      ? auditDeclaredPrimarySelectors(page, draft, seekContent, loadBearingContainment)
+      : graphOwnedCamera
+        ? auditCameraBlockingLandings(page, draft, seekContent, loadBearingContainment)
+        : auditPrimaryMomentFocals(page, draft, seekContent, loadBearingContainment)));
 
     // Exit discipline (WS4): a surface whose last beat has passed still sitting
     // at full opacity over the focal element is the "assets don't disappear and

@@ -21,7 +21,10 @@ const PROMPT_FILE_CEILING = 24 * 1024;
 const ASSEMBLED_REGRESSION_CEILING = 192 * 1024;
 
 function input(filePath: string, content: string, attachAsImage = false) {
-  const bytes = Buffer.from(content);
+  return inputBytes(filePath, Buffer.from(content), attachAsImage);
+}
+
+function inputBytes(filePath: string, bytes: Buffer, attachAsImage = false) {
   return {
     path: filePath,
     bytes,
@@ -78,6 +81,7 @@ describe("Luna prompt and tool-less context budgets", () => {
       provenance: { unsupportedClaimsAllowed: false },
     });
     const goldenDir = path.resolve(promptsDir, "..", "demos", "slack-ad");
+    const goldenOutputDir = path.resolve(promptsDir, "..", "demo-output", "slack-ad-luna");
     const goldenNames = [
       "STORYBOARD.md",
       "index.html",
@@ -95,6 +99,13 @@ describe("Luna prompt and tool-less context budgets", () => {
         input(
           `inputs/references/golden-demo/${name}`,
           fs.readFileSync(path.join(goldenDir, name), "utf8"),
+        )
+      ),
+      ...["README.txt", "contact-sheet.jpg", "temporal-strip.jpg", "qa-report.json"].map((name) =>
+        inputBytes(
+          `inputs/references/golden-demo/rendered/${name}`,
+          fs.readFileSync(path.join(goldenOutputDir, name)),
+          /\.(?:jpg|jpeg|png|webp)$/i.test(name),
         )
       ),
       input("inputs/art-direction.json", JSON.stringify({

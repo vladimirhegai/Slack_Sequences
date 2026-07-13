@@ -482,6 +482,9 @@ async function applyDirectMutation(
         ...(draft.declaredPrimarySelectors
           ? { declaredPrimarySelectors: draft.declaredPrimarySelectors }
           : {}),
+        ...(draft.declaredInteractions?.length
+          ? { declaredInteractions: draft.declaredInteractions }
+          : {}),
       });
       const receipt: ToolCallReceipt = {
         tool,
@@ -761,7 +764,7 @@ export interface CreateVideoOptions extends BriefFields {
   /**
    * Skip creative authoring and apply this plan directly. A function receives the
    * freshly-initialized project so it can reference seeded asset ids. This is the
-   * deterministic `/sequences demo` path — instant, key-free, and known-good.
+   * deterministic local engine smoke path — key-free and known-good.
    */
   presetPlan?: Plan | ((project: Project) => Plan);
 }

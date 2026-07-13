@@ -149,6 +149,13 @@ export function startMcpServer(projectDir: string): void {
               "Optional author-declared primary selector by scene id; presence selects the Luna declared-intent validation policy.",
             additionalProperties: { type: "string" },
           },
+          declaredInteractions: {
+            type: "array",
+            description:
+              "Optional Luna selector-level interactions measured against live actor/target geometry.",
+            items: { type: "object" },
+            maxItems: 8,
+          },
         },
         required: ["title", "html", "storyboard"],
         additionalProperties: false,
@@ -167,6 +174,12 @@ export function startMcpServer(projectDir: string): void {
               ? {
                   declaredPrimarySelectors:
                     args.declaredPrimarySelectors as DirectCompositionDraft["declaredPrimarySelectors"],
+                }
+              : {}),
+            ...(Array.isArray(args.declaredInteractions)
+              ? {
+                  declaredInteractions:
+                    args.declaredInteractions as DirectCompositionDraft["declaredInteractions"],
                 }
               : {}),
           });
