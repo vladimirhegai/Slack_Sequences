@@ -95,6 +95,42 @@ import {
   temporalSceneSampleTimes,
 } from "../temporalSampling.ts";
 
+/**
+ * Two computed `transform` values render as the same deterministic state when
+ * their matrices match component-wise within a sub-pixel epsilon. Rotated
+ * elements vary by ~1e-6 across equivalent seek paths (browser/GSAP float
+ * noise); genuine non-deterministic motion differs by orders of magnitude more,
+ * and any resulting position shift is separately caught by the 0.1px rect
+ * tolerance. `"none"` is treated as the 2D identity. This is the unit-tested
+ * twin of the inline comparison used inside the in-browser timeline-contract
+ * probe; keep the two in sync.
+ */
+export function timelineTransformsEquivalent(
+  before: string,
+  after: string,
+  epsilon = 1e-3,
+): boolean {
+  const vector = (value: string): number[] | null => {
+    if (value === "none") return [1, 0, 0, 1, 0, 0];
+    const match = /^matrix(3d)?\(([^)]+)\)$/.exec(value);
+    if (!match) return null;
+    const values = match[2]!.split(",").map((entry) => Number(entry.trim()));
+    return values.every((entry) => Number.isFinite(entry)) ? values : null;
+  };
+  const nearIdentity = (candidate: number[]): boolean => {
+    const identity = candidate.length === 16
+      ? [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+      : [1, 0, 0, 1, 0, 0];
+    return candidate.length === identity.length &&
+      candidate.every((entry, index) => Math.abs(entry - identity[index]!) <= epsilon);
+  };
+  const left = vector(before);
+  const right = vector(after);
+  if (!left || !right) return before === after;
+  if (left.length !== right.length) return nearIdentity(left) && nearIdentity(right);
+  return left.every((entry, index) => Math.abs(entry - right[index]!) <= epsilon);
+}
+
 export type LayoutSeverity = "error" | "warning" | "info";
 
 export interface LayoutRect {
@@ -4180,18 +4216,33 @@ export async function inspectDirectComposition(
         const compare = (before: SnapshotNode[], after: SnapshotNode[]) => {
           const differences: Difference[] = [];
           let changeCount = 0;
-          const equivalentStyle = (name: string, value: string): string => {
-            if (name !== "transform" || value === "none") return value;
+          // Rotated-element matrices vary by ~1e-6 across equivalent seek paths
+          // (browser/GSAP float noise). Compare transforms component-wise within
+          // a sub-pixel epsilon instead of by string, so genuine non-determinism
+          // still fails while float noise does not; rendered position is
+          // separately guarded by the 0.1px rect tolerance below. Unit-tested
+          // twin: timelineTransformsEquivalent in this module — keep in sync.
+          const TRANSFORM_EPSILON = 1e-3;
+          const matrixVector = (value: string): number[] | null => {
+            if (value === "none") return [1, 0, 0, 1, 0, 0];
             const match = /^matrix(3d)?\(([^)]+)\)$/.exec(value);
-            if (!match) return value;
+            if (!match) return null;
             const values = match[2]!.split(",").map((entry) => Number(entry.trim()));
-            const identity = match[1]
+            return values.every((entry) => Number.isFinite(entry)) ? values : null;
+          };
+          const nearIdentity = (candidate: number[]): boolean => {
+            const identity = candidate.length === 16
               ? [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
               : [1, 0, 0, 1, 0, 0];
-            return values.length === identity.length &&
-                values.every((entry, index) => Number.isFinite(entry) && Math.abs(entry - identity[index]!) <= 1e-6)
-              ? "none"
-              : value;
+            return candidate.length === identity.length &&
+              candidate.every((entry, index) => Math.abs(entry - identity[index]!) <= TRANSFORM_EPSILON);
+          };
+          const transformEquivalent = (before: string, after: string): boolean => {
+            const left = matrixVector(before);
+            const right = matrixVector(after);
+            if (!left || !right) return before === after;
+            if (left.length !== right.length) return nearIdentity(left) && nearIdentity(right);
+            return left.every((entry, index) => Math.abs(entry - right[index]!) <= TRANSFORM_EPSILON);
           };
           const bounded = (value: string | number | null | undefined): string | number | null =>
             value == null
@@ -4232,7 +4283,12 @@ export async function inspectDirectComposition(
             }
             if (left.text !== right.text) add(selector, "text", left.text, right.text);
             for (const name of Object.keys(left.style)) {
-              if (equivalentStyle(name, left.style[name] ?? "") !== equivalentStyle(name, right.style[name] ?? "")) {
+              const leftValue = left.style[name] ?? "";
+              const rightValue = right.style[name] ?? "";
+              const differs = name === "transform"
+                ? !transformEquivalent(leftValue, rightValue)
+                : leftValue !== rightValue;
+              if (differs) {
                 add(selector, `style.${name}`, left.style[name], right.style[name]);
               }
             }

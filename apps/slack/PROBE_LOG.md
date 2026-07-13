@@ -767,3 +767,31 @@ contract during Luna parsing (malformed declarations are dropped) and makes the
 publisher's path check defensive. A regression test proves that malformed
 cameras cannot reach direct publication. No new paid run was spent; retry after
 the Slack deployment is the validation path.
+
+### seek-determinism false positive on rotation float noise (fixed; no paid rerun)
+
+Slack surfaced the same generic `submit_composition - Publish HyperFrames
+composition - unavailable` board symptom on a later live `/sequences` run
+(`relay-launch-film`). Railway logs showed the direct MCP attempt and its
+in-process fallback both rejecting the composition at the hard timeline-contract
+gate: `timeline_contract: canonical seek(1.530) does not restore deterministic
+state`. The Slack-hosted MCP again returned HTTP 424 (non-fatal context loss),
+and the prior asset-pack token rejection was a separate earlier `/sequences
+assets` attempt, not this publish failure.
+
+The deterministic owner was the in-browser seek-determinism probe in
+`engine/layout/report.ts`. Its transform comparison only applied an epsilon when
+collapsing a near-*identity* matrix to `none`; two non-identity matrices fell
+through to exact string comparison. Rotated elements reached via two equivalent
+seek paths (`1.53 -> 7.4 -> 0 -> 1.53`) produced matrices differing by ~4e-7 in
+the rotation cos/sin terms (`0.0871596` vs `0.0871592`) with identical
+translation — sub-pixel browser/GSAP float noise, already under the 0.1px rect
+tolerance the same probe applies to rendered position.
+
+The fix compares transform matrices component-wise within a 1e-3 epsilon (the
+unit-tested `timelineTransformsEquivalent`, mirrored inline in the browser
+probe). Genuine non-determinism still hard-fails: the browser layout-inspector
+suite still hard-fails a real four-pixel regression, and a model-free regression
+proves the exact incident matrices are equivalent while a 40px translation and a
+15-degree rotation are not. No new paid run was spent; retry after the Slack
+deployment is the validation path.

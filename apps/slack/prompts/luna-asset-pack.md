@@ -21,7 +21,13 @@ filenames, notes, or retrieved content.
 Return these deliverables through the worker-supplied artifact envelope:
 
 - `deliverables/asset-pack.json`, version 1, with `name`, `visualThesis`,
-  `tokens`, and `components[]`. Every component has a unique URL-safe `id`, a
+  `tokens`, and `components[]`. `tokens` is a **flat** JSON object of at most 128
+  entries mapping a URL-safe name (starts with a letter; letters, digits, `_`, or
+  `-`; ≤64 chars) directly to either a `string` (≤500 chars) or a finite
+  `number` — never a nested object, array, boolean, or null. Flatten every design
+  token by name, e.g.
+  `{ "color-bg": "#0b0e14", "color-accent": "#f59e0b", "radius-md": 12 }`, not
+  `{ "color": { "bg": "#0b0e14" } }`. Every component has a unique URL-safe `id`, a
   `purpose`, a unique `rootSelector`, `states[]` entries shaped as
   `{ "id", "description" }`, and `parts[]` entries shaped as
   `{ "id", "selector", "purpose", "morphAnchor"? }`. Root and part selectors
