@@ -841,3 +841,26 @@ unchanged bytes must inherit the exact base hash; a second host rejection fails
 visibly without a third call. The exact missing-quote regression repairs on run
 2, and a negative control proves two malformed responses stop after two calls.
 One cache-distinct rerun is authorized after verification and deployment.
+
+### interaction selector aliases in live launch film (fixed; exact replay first)
+
+Cache-distinct rehearsal `sequences-launch-live-20260713-d8c1da1-b` accepted
+its prepared asset pack and direction, then persisted both the build and its
+one bounded repair before failing loud. Both motion-intent files used the
+unambiguous protocol-v1 aliases `actor`, `target`, and `result` for interaction
+selectors. The repair added only `actorSelector` to the first interaction, so
+the host correctly exposed the next missing canonical field rather than
+publishing unverified evidence.
+
+The director prompt had described "actor, target, result selectors" without
+spelling the literal JSON properties, while the host required
+`actorSelector`, `targetSelector`, and `resultSelector`. The prompt now names
+the complete literal interaction shape. The v1 parser also canonicalizes only
+those three exact non-empty aliases when their canonical field is omitted,
+matching its existing bounded final-hold alias policy. Explicit canonical
+values still win and invalid selectors still fail. Raw paid bytes remain
+unchanged in the evidence run. The exact repaired artifact is replayed
+model-free before any further live action. That terminal run now passes the
+current static and browser gate with `modelCalls: 0`; its layout, contrast,
+framing, liveness, and moment findings remain visible as advisory evidence for
+the output audit rather than being misclassified as protocol failure.

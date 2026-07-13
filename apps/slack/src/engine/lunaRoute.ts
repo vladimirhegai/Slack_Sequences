@@ -1142,6 +1142,29 @@ export function parseLunaMotionIntent(
   ) {
     restingHold.primarySelector = restingHold.selector;
   }
+  // The live launch-film probe exposed the same protocol-v1 wording gap for
+  // interaction subjects: the director emitted the unambiguous `actor`,
+  // `target`, and `result` selector aliases because the prompt described those
+  // nouns without spelling the canonical property names. Canonicalize only an
+  // omitted canonical field backed by a non-empty string alias. An explicit
+  // canonical value still wins (and still fails below when invalid), while the
+  // exact paid JSON remains untouched in its persisted evidence run.
+  for (const interaction of intent.interactions) {
+    if (!interaction || typeof interaction !== "object") continue;
+    const record = interaction as Record<string, unknown>;
+    for (const [canonical, alias] of [
+      ["actorSelector", "actor"],
+      ["targetSelector", "target"],
+      ["resultSelector", "result"],
+    ] as const) {
+      if (
+        record[canonical] === undefined &&
+        typeof record[alias] === "string" && (record[alias] as string).trim()
+      ) {
+        record[canonical] = record[alias];
+      }
+    }
+  }
   const sceneIds = new Set(storyboard.map((scene) => scene.id));
   const document = parseHTML(html).document;
   const compositionRoots = document.querySelectorAll<HTMLElement>("[data-composition-id]");

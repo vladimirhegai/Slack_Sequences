@@ -685,6 +685,38 @@ describe("Luna direct route", () => {
     }
   });
 
+  it("canonicalizes the live interaction selector aliases without overriding canonical fields", () => {
+    const parsed = parseLunaMotionIntent(JSON.stringify({
+      ...intent,
+      interactions: [{
+        actor: "#problem-primary",
+        target: "#handoff-out",
+        result: "#solution-primary",
+        startSec: 1,
+        actionSec: 1.25,
+        settleSec: 1.5,
+        beforeSampleSec: 0.9,
+        afterSampleSec: 1.6,
+        observableStateChange: "The handoff becomes the resolved primary subject.",
+      }],
+    }), html, storyboard);
+    expect(parsed.interactions[0]).toMatchObject({
+      actorSelector: "#problem-primary",
+      targetSelector: "#handoff-out",
+      resultSelector: "#solution-primary",
+    });
+
+    expect(() => parseLunaMotionIntent(JSON.stringify({
+      ...intent,
+      interactions: [{
+        actor: "#problem-primary",
+        actorSelector: "#missing",
+        target: "#handoff-out",
+        result: "#solution-primary",
+      }],
+    }), html, storyboard)).toThrow(/actorSelector matches no element/);
+  });
+
   it("normalizes only the proved composition's dotted timeline binding", () => {
     const invalid = html.replace(
       "window.__timelines[compositionId]=master",

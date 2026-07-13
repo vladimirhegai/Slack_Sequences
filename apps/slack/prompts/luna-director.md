@@ -194,8 +194,10 @@ Construct version 1 with:
 - `cameraMoves[]`: only meaningful lens moves, with `sceneId`, world and target
   selectors, `startSec`, `arrivalSec`, `settleEndSec`, `holdEndSec`, and
   motivation;
-- `interactions[]`: actor, target, result selectors, timing, before/after sample
-  times, and the observable state change;
+- `interactions[]`: the literal properties `actorSelector`, `targetSelector`,
+  `resultSelector`, `startSec`, `actionSec`, `settleSec`, `beforeSampleSec`,
+  `afterSampleSec`, and `observableStateChange` (never abbreviate the selector
+  keys to `actor`, `target`, or `result`, and never nest the timing fields);
 - one `energyPeak` window and one `finalRestingHold` window;
 - `geometryPolicy` naming every measured pair used for load-bearing placement.
 
