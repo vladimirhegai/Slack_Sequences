@@ -47,11 +47,17 @@ import {
   type ComponentKind,
 } from "./componentContract.ts";
 import { CAMERA_RUNTIME_VERSION } from "./cameraContract.ts";
+import { CONTINUITY_RUNTIME_VERSION } from "./continuityGraph.ts";
 import { CUT_RUNTIME_VERSION } from "./cutContract.ts";
 import { INTERACTION_RUNTIME_VERSION } from "./interactionContract.ts";
 import { TIME_RUNTIME_VERSION } from "./timeRamp.ts";
 import { FX_RUNTIME_VERSION } from "./fxContract.ts";
 import { CINEMA_KIT_VERSION } from "./cinemaKit.ts";
+import {
+  ENVIRONMENT_KIT_VERSION,
+  ENVIRONMENT_RUNTIME_VERSION,
+} from "./environmentContract.ts";
+import { slackSequencesEnvRawValue } from "./featureFlags.ts";
 
 export const RECIPE_FORMAT_VERSION = 2;
 /** Prompt/DOM budget: at most this many recipe instances per film. */
@@ -72,7 +78,7 @@ const DEFAULT_RECIPES_ROOT = path.resolve(
  * never a parallel studio-only pipeline. Production never sets it.
  */
 function resolveRecipesRoot(): string {
-  const override = process.env.SLACK_SEQUENCES_RECIPES_DIR;
+  const override = slackSequencesEnvRawValue("SLACK_SEQUENCES_RECIPES_DIR");
   return override ? path.resolve(override) : DEFAULT_RECIPES_ROOT;
 }
 
@@ -108,6 +114,9 @@ export interface RecipeEngineFences {
     | "componentKit"
     | "componentRuntime"
     | "cameraRuntime"
+    | "continuityRuntime"
+    | "environmentRuntime"
+    | "environmentKit"
     | "cutRuntime"
     | "interactionRuntime"
     | "timeRuntime"
@@ -175,6 +184,9 @@ export function currentEngineFences(): Required<Pick<RecipeEngineFences, "kitVer
       componentKit: COMPONENT_KIT_VERSION,
       componentRuntime: COMPONENT_RUNTIME_VERSION,
       cameraRuntime: CAMERA_RUNTIME_VERSION,
+      continuityRuntime: CONTINUITY_RUNTIME_VERSION,
+      environmentRuntime: ENVIRONMENT_RUNTIME_VERSION,
+      environmentKit: ENVIRONMENT_KIT_VERSION,
       cutRuntime: CUT_RUNTIME_VERSION,
       interactionRuntime: INTERACTION_RUNTIME_VERSION,
       timeRuntime: TIME_RUNTIME_VERSION,
@@ -498,12 +510,45 @@ export interface RecipeReconcileResult {
   notes: string[];
 }
 
+const DASHBOARD_CHART_KINDS = new Set<ComponentKind>([
+  "chart-bars",
+  "chart-line",
+  "progress-ring",
+]);
+
+/**
+ * A recipe with this component signature is a complete dashboard surface, not
+ * a decorative layer. If the scene already owns either the dashboard-grid
+ * generator or the same authored app-window/metric/chart signature, injecting
+ * the frozen fragment would render a second primary window beside it.
+ *
+ * This intentionally does not infer from prose or from one overlapping kind:
+ * an app-window alone is ambiguous and remains eligible for recipe adoption.
+ */
+function duplicatesExistingPrimaryDashboard(
+  scene: DirectScene,
+  manifest: RecipeManifest,
+): boolean {
+  const recipeKinds = new Set(manifest.componentKinds ?? []);
+  const recipeIsDashboard =
+    recipeKinds.has("app-window") &&
+    recipeKinds.has("stat-card") &&
+    [...DASHBOARD_CHART_KINDS].some((kind) => recipeKinds.has(kind));
+  if (!recipeIsDashboard) return false;
+  if ((scene.plugins ?? []).some((plugin) => plugin.kind === "dashboard-grid")) return true;
+  const sceneKinds = new Set((scene.components ?? []).map((component) => component.kind));
+  return sceneKinds.has("app-window") &&
+    sceneKinds.has("stat-card") &&
+    [...DASHBOARD_CHART_KINDS].some((kind) => sceneKinds.has(kind));
+}
+
 /**
  * Sentinel L2 governor over declared recipes — deterministic repair, zero paid
  * attempts, degrade-never-veto (the dropUnusableGradeShifts precedent):
  * - unknown / stale recipe → declaration dropped with a note;
  * - over-budget (> MAX_RECIPES_PER_FILM instances) → earliest declarations win;
  * - duplicate id in one scene → first wins;
+ * - full dashboard recipe + existing primary dashboard/plugin surface → authored surface wins;
  * - param violations → default / clamp / drop-param; a REQUIRED param with no
  *   usable value drops the whole declaration (the fragment would render a
  *   literal "{{slot}}" otherwise).
@@ -531,6 +576,13 @@ export function reconcileRecipeDeclarations(
         sceneNotes.push(
           `recipe "${declaration.id}" is stale (${recipe.staleReasons.join(", ")}) — ` +
             `declaration dropped; re-prove it in the studio`,
+        );
+        continue;
+      }
+      if (duplicatesExistingPrimaryDashboard(scene, recipe.manifest)) {
+        sceneNotes.push(
+          `recipe "${declaration.id}" duplicates an existing primary dashboard surface — ` +
+            `declaration absorbed; the authored/plugin surface wins`,
         );
         continue;
       }
@@ -934,14 +986,182 @@ export function recipeRetrievalScore(manifest: RecipeManifest, query: string): n
   return score;
 }
 
+export const RECIPE_AUTO_DECLARE_SCORE = 6;
+
+export interface RecipeAutoDeclareResult {
+  scenes: DirectScene[];
+  declared: Array<{ recipeId: string; sceneId: string; score: number }>;
+  /** Existing or prospective auto declarations absorbed by an owned primary surface. */
+  absorbed: Array<{ recipeId: string; sceneId: string }>;
+}
+
+function appendRecipeNormalization(scene: DirectScene, note: string): DirectScene {
+  if (scene.sentinelNormalizations?.includes(note)) return scene;
+  return {
+    ...scene,
+    sentinelNormalizations: [...(scene.sentinelNormalizations ?? []), note],
+  };
+}
+
+function primaryDashboardRecipeNormalization(recipeId: string): string {
+  return `recipe-auto-declare: absorbed primary-surface duplicate "${recipeId}"; ` +
+    `the authored/plugin dashboard wins`;
+}
+
+function briefProductName(query: string): string | undefined {
+  const value = query.match(/^Product:\s*(.+)$/im)?.[1]?.trim();
+  return value && value.length <= 80 ? value : undefined;
+}
+
+/**
+ * High-confidence, degrade-never-veto recipe adoption (WS-G1). Only recipes
+ * whose every parameter has a safe manifest default are eligible; the host
+ * never guesses required creative copy. Existing non-conflicting declarations
+ * win, an already-owned primary dashboard wins over a duplicate recipe, the
+ * film cap remains authoritative, and scene choice is deterministic.
+ */
+export function autoDeclareHighConfidenceRecipes(
+  scenes: DirectScene[],
+  recipes: RecipeDefinition[],
+  query: string,
+  minimumScore = RECIPE_AUTO_DECLARE_SCORE,
+): RecipeAutoDeclareResult {
+  const definitions = new Map(recipes.map((recipe) => [recipe.manifest.id, recipe]));
+  const absorbed: Array<{ recipeId: string; sceneId: string }> = [];
+  const blockedRecipeIds = new Set<string>();
+  let changed = false;
+  // Cached plans created before this governor can already contain the injected
+  // declaration. Absorb it before the existing-id/budget checks, then block it
+  // from being auto-added again in the same replay.
+  const next = scenes.map((scene) => {
+    if (!scene.recipes?.length) return scene;
+    const removed: string[] = [];
+    const kept = scene.recipes.filter((declaration) => {
+      const recipe = definitions.get(declaration.id);
+      if (!recipe || !duplicatesExistingPrimaryDashboard(scene, recipe.manifest)) return true;
+      absorbed.push({ recipeId: declaration.id, sceneId: scene.id });
+      blockedRecipeIds.add(declaration.id);
+      removed.push(declaration.id);
+      changed = true;
+      return false;
+    });
+    if (!removed.length) return scene;
+    let normalized: DirectScene = {
+      ...scene,
+      ...(kept.length ? { recipes: kept } : { recipes: undefined }),
+    };
+    for (const recipeId of removed) {
+      normalized = appendRecipeNormalization(
+        normalized,
+        primaryDashboardRecipeNormalization(recipeId),
+      );
+    }
+    return normalized;
+  });
+  const existing = new Set(
+    [...blockedRecipeIds, ...next.flatMap((scene) =>
+      (scene.recipes ?? []).map((declaration) => declaration.id)
+    )],
+  );
+  let remaining = Math.max(
+    0,
+    MAX_RECIPES_PER_FILM - next.reduce((count, scene) => count + (scene.recipes?.length ?? 0), 0),
+  );
+  if (!remaining) return { scenes: changed ? next : scenes, declared: [], absorbed };
+  const eligible = recipes
+    .map((recipe) => ({ recipe, score: recipeRetrievalScore(recipe.manifest, query) }))
+    .filter(({ recipe, score }) =>
+      !recipe.stale && !existing.has(recipe.manifest.id) && score >= minimumScore &&
+      recipe.manifest.params.every((param) => param.default !== undefined)
+    )
+    .sort((a, b) => b.score - a.score || a.recipe.manifest.id.localeCompare(b.recipe.manifest.id));
+  const declared: Array<{ recipeId: string; sceneId: string; score: number }> = [];
+  for (const { recipe, score } of eligible) {
+    if (!remaining) break;
+    const window = recipe.manifest.durationWindow;
+    const candidates = next
+      .map((scene, index) => {
+        const durationEligible =
+          (window?.minSec === undefined || scene.durationSec >= window.minSec) &&
+          (window?.maxSec === undefined || scene.durationSec <= window.maxSec);
+        if (!durationEligible || (scene.recipes?.length ?? 0) >= MAX_RECIPES_PER_FILM) return undefined;
+        const kinds = new Set((scene.components ?? []).map((component) => component.kind));
+        const componentOverlap = (recipe.manifest.componentKinds ?? [])
+          .filter((kind) => kinds.has(kind)).length;
+        const sceneText = [scene.title, scene.purpose, scene.foreground, scene.background]
+          .filter(Boolean).join(" ");
+        const localScore = recipeRetrievalScore(recipe.manifest, sceneText);
+        return { index, rank: componentOverlap * 4 + localScore, startSec: scene.startSec };
+      })
+      .filter((entry): entry is { index: number; rank: number; startSec: number } => Boolean(entry))
+      .sort((a, b) => b.rank - a.rank || a.startSec - b.startSec || a.index - b.index);
+    const target = candidates[0];
+    if (!target) continue;
+    const targetScene = next[target.index]!;
+    if (duplicatesExistingPrimaryDashboard(targetScene, recipe.manifest)) {
+      absorbed.push({ recipeId: recipe.manifest.id, sceneId: targetScene.id });
+      const normalized = appendRecipeNormalization(
+        targetScene,
+        primaryDashboardRecipeNormalization(recipe.manifest.id),
+      );
+      if (normalized !== targetScene) {
+        next[target.index] = normalized;
+        changed = true;
+      }
+      continue;
+    }
+    const product = briefProductName(query);
+    const params = Object.fromEntries(
+      recipe.manifest.params.map((param) => [
+        param.name,
+        param.name === "product" && param.kind === "text" && product &&
+            (!param.maxChars || product.length <= param.maxChars)
+          ? product
+          : param.default!,
+      ]),
+    );
+    const scene: DirectScene = {
+      ...targetScene,
+      recipes: [
+        ...(targetScene.recipes ?? []),
+        { version: 1, id: recipe.manifest.id, params },
+      ],
+    };
+    next[target.index] = scene;
+    declared.push({ recipeId: recipe.manifest.id, sceneId: scene.id, score });
+    existing.add(recipe.manifest.id);
+    remaining -= 1;
+    changed = true;
+  }
+  return { scenes: changed ? next : scenes, declared, absorbed };
+}
+
+/** Cut markdown to a budget at a paragraph boundary (never mid-sentence). */
+function trimMarkdownToBudget(markdown: string, budget: number): string {
+  if (markdown.length <= budget) return markdown;
+  const slice = markdown.slice(0, budget);
+  const paragraphEnd = slice.lastIndexOf("\n\n");
+  return (paragraphEnd > budget * 0.5 ? slice.slice(0, paragraphEnd) : slice).trimEnd() + "\n…";
+}
+
 /**
  * The planner-facing teaching block for retrieved recipes. Recipes are
  * host-instantiated proven patterns, so the instruction is deliberately
  * strong: when one matches the brief, declaring it is the DEFAULT — the
  * planner may decline only when it genuinely conflicts with the brief.
+ *
+ * `markdownBudget` bounds each recipe's doc inside the block: the skill
+ * context is a fixed window shared with blueprints/motion rules, and an
+ * unbounded recipe.md (they grow with every authored recipe) would push the
+ * craft reference past the final trim. Param slots + the declaration example
+ * are never trimmed — they are the executable part.
  */
-export function recipePlanningVocabulary(recipes: RecipeDefinition[]): string {
+export function recipePlanningVocabulary(
+  recipes: RecipeDefinition[],
+  options: { markdownBudget?: number } = {},
+): string {
   if (!recipes.length) return "";
+  const markdownBudget = options.markdownBudget ?? Infinity;
   const blocks = recipes.map((recipe) => {
     const params = recipe.manifest.params.map((param) => {
       const constraint =
@@ -966,7 +1186,9 @@ export function recipePlanningVocabulary(recipes: RecipeDefinition[]): string {
     };
     return [
       `<recipe id="${recipe.manifest.id}">`,
-      recipe.markdown || recipe.manifest.title,
+      Number.isFinite(markdownBudget)
+        ? trimMarkdownToBudget(recipe.markdown || recipe.manifest.title, markdownBudget)
+        : recipe.markdown || recipe.manifest.title,
       "",
       `Param slots:`,
       ...params,

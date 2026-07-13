@@ -101,6 +101,77 @@ document.querySelectorAll('.severity-dot').forEach((dot, i) => {
     ]));
   });
 
+  it("resolves scene-local t(seconds) helpers to absolute film time", () => {
+    const report = analyzeMotionDensity(html(`
+(() => {
+  const sceneStart = 5;
+  const t = (s) => sceneStart + s;
+  tl.to("#proof-title", { opacity: 1, duration: .4 }, t(.6));
+  tl.to("#proof-copy", { opacity: 1, duration: .4 }, t(2.2));
+})();
+(() => {
+  const sceneStart = 10;
+  const t = (s) => sceneStart + s;
+  tl.to("#close-title", { opacity: 1, duration: .4 }, t(.5));
+  tl.to("#close-copy", { opacity: 1, duration: .4 }, t(2.4));
+})();
+`), scenes, 15);
+    expect(report.warnings.some((warning) => warning.includes("no absolute timeline position")))
+      .toBe(false);
+    expect(report.activities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: "gsap.to", startSec: 5.6 }),
+      expect.objectContaining({ source: "gsap.to", startSec: 12.4 }),
+    ]));
+  });
+
+  it("keeps repeated sceneStart constants scoped to their function IIFEs", () => {
+    const report = analyzeMotionDensity(html(`
+(function (tl) {
+  const sceneStart = 0;
+  tl.to("#signal-title", { opacity: 1, duration: .4 }, sceneStart + .4);
+  tl.to("#signal-copy", { opacity: 1, duration: .4 }, sceneStart + 2.5);
+})(tl);
+(function (tl) {
+  const sceneStart = 5;
+  tl.to("#proof-title", { opacity: 1, duration: .4 }, sceneStart + .4);
+  tl.to("#proof-copy", { opacity: 1, duration: .4 }, sceneStart + 2.5);
+})(tl);
+(function (tl) {
+  const sceneStart = 10;
+  tl.to("#close-title", { opacity: 1, duration: .4 }, sceneStart + .4);
+  tl.to("#close-copy", { opacity: 1, duration: .4 }, sceneStart + 2.5);
+})(tl);
+`), scenes, 15);
+    expect(report.sceneReports.map((entry) => entry.authoredBeatCount)).toEqual([2, 2, 2]);
+    expect(report.warnings.some((warning) => warning.includes("motion/density"))).toBe(false);
+  });
+
+  it("counts repeated mechanical legs on one interaction target as one authored beat", () => {
+    const report = analyzeMotionDensity(html(`
+tl.to(cursor, { opacity: 1, duration: .2 }, 2.00);
+tl.to(cursor, { scale: .84, duration: .12 }, 2.40);
+tl.to(button, { scale: .95, duration: .12 }, 2.42);
+tl.to(cursor, { scale: 1, duration: .14 }, 2.55);
+tl.to(button, { scale: 1, duration: .14 }, 2.55);
+tl.to(buttonLabel, { opacity: 0, duration: .2 }, 2.65);
+tl.to(buttonCheck, { opacity: 1, duration: .2 }, 2.65);
+tl.to(button, { background: "#54c994", duration: .35 }, 2.65);
+tl.to(statValue, { textContent: "Ready", duration: .01 }, 2.70);
+tl.to(statValue, { scale: 1.06, duration: .3 }, 2.70);
+`), scenes, 15);
+    expect(report.warnings.some((warning) => warning.includes("motion/density"))).toBe(false);
+  });
+
+  it("still warns when nine independently targeted subjects start inside one second", () => {
+    const burst = Array.from({ length: 9 }, (_, index) =>
+      `tl.to("#subject-${index}", { opacity: 1, duration: .2 }, ${2 + index * 0.05});`
+    ).join("\n");
+    const report = analyzeMotionDensity(html(burst), scenes, 15);
+    expect(report.warnings.some((warning) =>
+      warning.includes("motion/density: 9 authored beats")
+    )).toBe(true);
+  });
+
   it("does not let ambient drift or decorative rules impersonate story beats", () => {
     const driftingScenes: DirectScene[] = scenes.map((scene) => ({
       ...scene,

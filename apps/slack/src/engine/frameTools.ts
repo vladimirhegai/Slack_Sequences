@@ -16,6 +16,7 @@ import {
   shade,
 } from "./brandTokens.ts";
 import type { FrameBasis, FrameColors, FrameType } from "./framePresets.ts";
+import type { TypographyPairingMode } from "./designDialects.ts";
 
 export type ColorHarmony = "monochromatic" | "analogous" | "complementary" | "split-complementary";
 export type NeutralTemperature = "cool" | "neutral" | "warm";
@@ -301,6 +302,7 @@ export function validateTypography(
   proposal: Partial<FrameType>,
   fallback: FrameType,
   committed: { display?: string; body?: string },
+  options: { pairingMode?: TypographyPairingMode } = {},
 ): ToolResult<FrameType> {
   const repairs: string[] = [];
   const embedded = new Set<string>(EMBEDDED_FONTS);
@@ -318,7 +320,12 @@ export function validateTypography(
     repairs.push(`replaced non-mono chrome font "${mono}" with JetBrains Mono`);
     mono = "JetBrains Mono";
   }
-  if (display === body && !committed.display && !committed.body) {
+  if (
+    display === body &&
+    !committed.display &&
+    !committed.body &&
+    (options.pairingMode ?? "contrasting") === "contrasting"
+  ) {
     body = FONT_KIND[display] === "serif" ? "Inter" : "EB Garamond";
     repairs.push(`separated display/body roles by replacing duplicate body font with ${body}`);
   }

@@ -85,25 +85,26 @@ export const sparkCard = defineAsset({
   border-radius: var(--cinema-radius, 14px);
   color: var(--text, #edf0f6);
   background:
-    radial-gradient(130% 120% at 22% 0%, rgba(255, 255, 255, 0.06), transparent 55%),
+    radial-gradient(130% 130% at 20% -8%, rgba(255, 255, 255, 0.06), transparent 56%),
     color-mix(in srgb, var(--surface, #161b24) 93%, var(--sk-accent, #6ea8ff) 7%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.11),
     0 0 0 1px var(--cinema-edge, rgba(255, 255, 255, 0.09)),
-    0 0.9em 2.2em rgba(0, 0, 0, 0.4);
+    0 0.24em 0.6em rgba(0, 0, 0, 0.28),
+    0 0.9em 2.1em rgba(0, 0, 0, 0.4);
 }
 .asset-spark-card .sk-label {
   font-size: 0.7em;
   font-weight: 600;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted, #9aa5b4);
 }
 .asset-spark-card .sk-value {
-  margin-top: 0.14em;
+  margin-top: 0.16em;
   font-size: 1.9em;
-  font-weight: 700;
-  letter-spacing: -0.015em;
+  font-weight: 680;
+  letter-spacing: -0.022em;
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
@@ -111,21 +112,21 @@ export const sparkCard = defineAsset({
 .asset-spark-card .sk-line {
   fill: none;
   stroke: var(--sk-accent, #6ea8ff);
-  stroke-width: 2.6;
+  stroke-width: 2.4;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-dasharray: 1;
   stroke-dashoffset: calc(1 - var(--sk-draw, 1));
-  filter: drop-shadow(0 0 0.35em color-mix(in srgb, var(--sk-accent, #6ea8ff) 50%, transparent));
+  filter: drop-shadow(0 0.15em 0.3em color-mix(in srgb, var(--sk-accent, #6ea8ff) 38%, transparent));
 }
 .asset-spark-card .sk-area {
   fill: var(--sk-accent, #6ea8ff);
-  opacity: calc(var(--sk-draw, 1) * 0.14);
+  opacity: calc(var(--sk-draw, 1) * 0.12);
 }
 .asset-spark-card .sk-tip {
   fill: var(--sk-accent, #6ea8ff);
   opacity: clamp(0, calc((var(--sk-draw, 1) - 0.85) / 0.15), 1);
-  filter: drop-shadow(0 0 0.4em color-mix(in srgb, var(--sk-accent, #6ea8ff) 70%, transparent));
+  filter: drop-shadow(0 0 0.32em color-mix(in srgb, var(--sk-accent, #6ea8ff) 58%, transparent));
 }
 `.trim(),
   render: ({ params, partId, escapeHtml }) =>

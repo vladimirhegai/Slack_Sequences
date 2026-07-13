@@ -23,8 +23,10 @@ import {
 } from "../src/engine/directComposition.ts";
 import { loadRecipeLibrary } from "../src/engine/recipeContract.ts";
 import { initializeProject } from "../src/engine/projectTemplates.ts";
+import { runRecipeGatePublication } from "./gatePublication.ts";
 import { buildRecipeDemoDraft } from "./scaffold.ts";
 import { loadRecipeSource, type RecipeSource } from "./recipeSource.ts";
+import { recipeThumbnailQualityErrors } from "./thumbnailQuality.ts";
 
 const APP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const STUDIO_ROOT = path.join(APP_DIR, ".data", "studio");
@@ -121,9 +123,20 @@ export async function gateRecipe(id: string): Promise<RecipeGateOutcome> {
         errors.push(...validation.errors);
       } else {
         try {
-          await commitDirectComposition(projectDir, source.manifest.title, draft);
-          const thumbs = await generateDirectThumbnails(projectDir);
-          thumbnails = Object.keys(thumbs.files);
+          const publication = await runRecipeGatePublication(
+            projectDir,
+            async () => {
+              await commitDirectComposition(projectDir, source.manifest.title, draft);
+              return generateDirectThumbnails(projectDir);
+            },
+            (thumbs) => recipeThumbnailQualityErrors(
+              Object.values(thumbs.files).map((file) => path.join(projectDir, "build", file)),
+            ),
+          );
+          errors.push(...publication.errors);
+          // A red candidate has been rolled back; do not advertise its capture
+          // keys against the restored last-green preview directory.
+          thumbnails = publication.errors.length ? [] : Object.keys(publication.value.files);
         } catch (error) {
           errors.push(error instanceof Error ? error.message : String(error));
         }

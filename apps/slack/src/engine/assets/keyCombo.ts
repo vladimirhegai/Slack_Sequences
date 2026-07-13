@@ -75,15 +75,18 @@ export const keyCombo = defineAsset({
   font-size: calc(var(--kc-size, 72px) / 72 * 16px);
   display: inline-flex;
   align-items: center;
-  gap: 0.55em;
+  gap: 0.5em;
   padding: 0 1em;
   border-radius: 999px;
   color: var(--text, #edf0f6);
-  background: color-mix(in srgb, var(--surface, #161b24) 94%, var(--kc-accent, #6ea8ff) 6%);
+  background:
+    radial-gradient(130% 180% at 26% -20%, rgba(255, 255, 255, 0.05), transparent 58%),
+    color-mix(in srgb, var(--surface, #161b24) 94%, var(--kc-accent, #6ea8ff) 6%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.1),
     0 0 0 1px var(--cinema-edge, rgba(255, 255, 255, 0.09)),
-    0 0.6em 1.6em rgba(0, 0, 0, 0.34);
+    0 0.14em 0.4em rgba(0, 0, 0, 0.28),
+    0 0.55em 1.5em rgba(0, 0, 0, 0.32);
 }
 .asset-key-combo .kc-cap {
   display: inline-grid;
@@ -91,27 +94,28 @@ export const keyCombo = defineAsset({
   min-width: 1.9em;
   height: 1.9em;
   padding: 0 0.42em;
-  border-radius: 0.42em;
+  border-radius: 0.46em;
   font-size: 0.92em;
-  font-weight: 700;
-  color: color-mix(in srgb, var(--kc-accent, #6ea8ff) 85%, var(--text, #edf0f6));
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: color-mix(in srgb, var(--kc-accent, #6ea8ff) 82%, var(--text, #edf0f6));
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent 45%),
-    var(--surface-2, #1d2430);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.11), transparent 48%),
+    color-mix(in srgb, var(--surface-2, #1d2430) 96%, var(--kc-accent, #6ea8ff) 4%);
   transform: translateY(calc(var(--kc-press, 0) * 0.14em));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
     inset 0 0 0 1px var(--cinema-edge, rgba(255, 255, 255, 0.08)),
     0 calc(0.18em * (1 - var(--kc-press, 0))) 0 color-mix(in srgb, var(--canvas, #0a0c10) 82%, var(--kc-accent, #6ea8ff)),
-    0 calc(0.28em * (1 - var(--kc-press, 0))) 0.6em rgba(0, 0, 0, 0.4);
+    0 calc(0.26em * (1 - var(--kc-press, 0))) 0.6em rgba(0, 0, 0, 0.42);
 }
-.asset-key-combo .kc-plus { color: var(--muted, #9aa5b4); font-size: 0.8em; }
+.asset-key-combo .kc-plus { color: var(--muted, #9aa5b4); font-size: 0.78em; opacity: 0.7; }
 .asset-key-combo .kc-label {
-  margin-left: 0.25em;
+  margin-left: 0.28em;
   font-size: 0.82em;
   font-weight: 500;
   color: var(--muted, #9aa5b4);
-  letter-spacing: 0.01em;
+  letter-spacing: 0.005em;
   white-space: nowrap;
 }
 `.trim(),

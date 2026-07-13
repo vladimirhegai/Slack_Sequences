@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_RECIPES_PER_FILM,
+  autoDeclareHighConfidenceRecipes,
   injectRecipeContract,
   loadRecipeLibrary,
   normalizeStoryboardRecipeDeclarations,
@@ -328,6 +329,222 @@ describe("stripRecipeMarkup", () => {
     const html = `<p>before</p><div class="seq-recipe" data-sequences-recipe="x" data-recipe-uid="u">` +
       `<div><div>deep</div></div></div><p>after</p>`;
     expect(stripRecipeMarkup(html)).toBe("<p>before</p><p>after</p>");
+  });
+});
+
+describe("high-confidence host recipe adoption", () => {
+  const scenes: DirectScene[] = [
+    scene({ id: "hook", startSec: 0, durationSec: 4 }),
+    scene({ id: "proof", startSec: 4, durationSec: 4 }),
+    scene({ id: "close", startSec: 8, durationSec: 4 }),
+  ];
+
+  it("auto-declares a strong match only when every parameter has a safe default", () => {
+    const safe = definition({
+      manifest: manifest({
+        id: "safe-hero",
+        tags: ["roulette"],
+        triggerPatterns: ["roulette", "word spins"],
+        params: [
+          { name: "copy", kind: "text", default: "Ship it", maxChars: 24 },
+          { name: "speed", kind: "number", default: 1, min: 0.5, max: 2 },
+        ],
+      }),
+    });
+    const result = autoDeclareHighConfidenceRecipes(
+      scenes,
+      [safe],
+      "A roulette hero where the word spins, then roulette resolves",
+    );
+    expect(result.declared).toEqual([{ recipeId: "safe-hero", sceneId: "hook", score: 7 }]);
+    expect(result.scenes[0]!.recipes).toEqual([{
+      version: 1,
+      id: "safe-hero",
+      params: { copy: "Ship it", speed: 1 },
+    }]);
+
+    const unsafe = definition({
+      manifest: manifest({
+        id: "unsafe-copy",
+        tags: ["roulette"],
+        triggerPatterns: ["roulette", "word spins"],
+        params: [{ name: "copy", kind: "text", maxChars: 24 }],
+      }),
+    });
+    expect(autoDeclareHighConfidenceRecipes(scenes, [unsafe], "roulette word spins roulette")
+      .declared).toEqual([]);
+  });
+
+  it("binds an auto-declared product slot to the current brief instead of demo copy", () => {
+    const productRecipe = definition({
+      manifest: manifest({
+        id: "product-hero",
+        tags: ["launch"],
+        triggerPatterns: ["command center", "living dashboard"],
+        params: [{ name: "product", kind: "text", default: "Northstar", maxChars: 40 }],
+      }),
+    });
+    const result = autoDeclareHighConfidenceRecipes(
+      scenes,
+      [productRecipe],
+      "Product: LumaFlow\nA command center becomes one living dashboard launch",
+    );
+    expect(result.scenes[0]!.recipes?.[0]?.params).toEqual({ product: "LumaFlow" });
+  });
+
+  it("absorbs the exact Lumaflow dashboard recipe/plugin collision, including cached declarations", () => {
+    const dashboardRecipe = loadRecipeLibrary().recipes.get("overlap-dashboard-entrance")!;
+    const lumaflowScene = scene({
+      id: "assemble-dashboard",
+      title: "Scattered parts condense into one dashboard",
+      purpose: "See the chaos assemble into a coherent living dashboard",
+      foreground:
+        "An app-window shell lands and populates with a dashboard-grid of four metric tiles.",
+      startSec: 2.5,
+      durationSec: 6,
+      components: [
+        {
+          version: 1,
+          id: "dashboard-window",
+          kind: "app-window",
+          region: "dashboard-station",
+          role: "support",
+          entityId: "product-shell",
+        },
+        {
+          version: 1,
+          id: "release-table",
+          kind: "table",
+          region: "risk-card-station",
+          role: "hero",
+          entityId: "release-entity",
+        },
+        {
+          version: 1,
+          id: "metrics-grid-tile-1",
+          kind: "stat-card",
+          region: "dashboard-station",
+          role: "support",
+          entityId: "metric-1",
+          pluginUid: "assemble-dashboard-metrics-grid",
+        },
+        {
+          version: 1,
+          id: "metrics-grid-tile-2",
+          kind: "chart-bars",
+          region: "dashboard-station",
+          role: "support",
+          entityId: "metric-2",
+          pluginUid: "assemble-dashboard-metrics-grid",
+        },
+        {
+          version: 1,
+          id: "metrics-grid-tile-3",
+          kind: "stat-card",
+          region: "dashboard-station",
+          role: "support",
+          entityId: "metric-3",
+          pluginUid: "assemble-dashboard-metrics-grid",
+        },
+        {
+          version: 1,
+          id: "metrics-grid-tile-4",
+          kind: "progress-ring",
+          region: "dashboard-station",
+          role: "support",
+          entityId: "metric-4",
+          pluginUid: "assemble-dashboard-metrics-grid",
+        },
+      ],
+      plugins: [{
+        version: 1,
+        kind: "dashboard-grid",
+        id: "metrics-grid",
+        region: "dashboard-station",
+        params: { tiles: 4, emphasis: "mixed", topic: "release metrics" },
+        uid: "assemble-dashboard-metrics-grid",
+      }],
+      recipes: [{
+        version: 1,
+        id: "overlap-dashboard-entrance",
+        params: {
+          product: "Northstar",
+          title: "Release overview",
+          metric1: "2.4k",
+          metric2: "98%",
+          metric3: "14m",
+          accent: "var(--cinema-key)",
+          settleSec: 2.05,
+        },
+      }],
+    });
+    const query =
+      "An overlapping dashboard assembly where metrics cascade through the product dashboard";
+
+    const cachedReplay = autoDeclareHighConfidenceRecipes(
+      [lumaflowScene],
+      [dashboardRecipe],
+      query,
+    );
+    expect(cachedReplay.declared).toEqual([]);
+    expect(cachedReplay.absorbed).toEqual([{
+      recipeId: "overlap-dashboard-entrance",
+      sceneId: "assemble-dashboard",
+    }]);
+    expect(cachedReplay.scenes[0]!.recipes).toBeUndefined();
+    expect(cachedReplay.scenes[0]!.plugins).toEqual(lumaflowScene.plugins);
+    expect(cachedReplay.scenes[0]!.components).toEqual(lumaflowScene.components);
+    expect(cachedReplay.scenes[0]!.sentinelNormalizations?.join("\n"))
+      .toMatch(/primary-surface duplicate/);
+    const cachedReplayAgain = autoDeclareHighConfidenceRecipes(
+      cachedReplay.scenes,
+      [dashboardRecipe],
+      query,
+    );
+    expect(cachedReplayAgain.scenes).toBe(cachedReplay.scenes);
+    expect(cachedReplayAgain.scenes[0]!.sentinelNormalizations)
+      .toEqual(cachedReplay.scenes[0]!.sentinelNormalizations);
+
+    const freshScene = { ...lumaflowScene, recipes: undefined };
+    const freshReplay = autoDeclareHighConfidenceRecipes(
+      [freshScene],
+      [dashboardRecipe],
+      query,
+    );
+    expect(freshReplay.declared).toEqual([]);
+    expect(freshReplay.absorbed).toEqual([{
+      recipeId: "overlap-dashboard-entrance",
+      sceneId: "assemble-dashboard",
+    }]);
+    expect(freshReplay.scenes[0]!.recipes).toBeUndefined();
+
+    const reconciled = reconcileRecipeDeclarations([lumaflowScene], library([dashboardRecipe]));
+    expect(reconciled.scenes[0]!.recipes).toBeUndefined();
+    expect(reconciled.notes.join("\n")).toMatch(/existing primary dashboard surface/);
+  });
+
+  it("keeps an incomplete dashboard-like surface eligible when duplication is ambiguous", () => {
+    const dashboardRecipe = loadRecipeLibrary().recipes.get("overlap-dashboard-entrance")!;
+    const incomplete = scene({
+      id: "product-shell",
+      title: "Dashboard assembly",
+      purpose: "Reveal the dashboard",
+      foreground: "One empty app window waits for its metrics.",
+      startSec: 0,
+      durationSec: 6,
+      components: [{ version: 1, id: "shell", kind: "app-window", role: "hero" }],
+    });
+    const result = autoDeclareHighConfidenceRecipes(
+      [incomplete],
+      [dashboardRecipe],
+      "An overlapping dashboard assembly where metrics cascade through the dashboard",
+    );
+    expect(result.absorbed).toEqual([]);
+    expect(result.declared).toEqual([{
+      recipeId: "overlap-dashboard-entrance",
+      sceneId: "product-shell",
+      score: expect.any(Number),
+    }]);
   });
 });
 

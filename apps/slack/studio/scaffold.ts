@@ -39,7 +39,6 @@ export function buildRecipeDemoDraft(
   const keyColor = options.keyColor ?? "#ffc24d";
   const background = options.background ?? "#0b0f14";
   const textColor = options.textColor ?? "#f4f6f8";
-  const stageEnd = (stageSec - 0.01).toFixed(2);
   // The engine gate requires 2+ scenes, so the proof film is stage + slate:
   // the recipe performs, then a quiet end card holds for the outgoing read.
   const storyboard: DirectScene[] = [
@@ -63,7 +62,7 @@ export function buildRecipeDemoDraft(
       purpose: "Close the proof film with a quiet identification card",
       incomingIdea: "The pattern is proven; name it",
       foreground: "A small centered slate naming the recipe",
-      background: "The same stage, dimmer",
+      background: "Abstract end card on the same stage, dimmer",
       cameraIntent: "Locked frame",
       startSec: stageSec,
       durationSec: slateSec,
@@ -96,7 +95,7 @@ export function buildRecipeDemoDraft(
         background: linear-gradient(to top, rgba(0, 0, 0, 0.35), transparent);
       }
       #slate { display: flex; align-items: center; justify-content: center; }
-      .slate-card { text-align: center; }
+      .slate-card { position: relative; z-index: 2; text-align: center; color: ${textColor}; background: rgba(11, 15, 20, 0.9); border: 2px solid rgba(255, 255, 255, 0.16); border-radius: 28px; padding: 54px 72px; box-shadow: 0 26px 70px rgba(0, 0, 0, 0.32); }
       .slate-kicker { font-size: 22px; letter-spacing: 0.32em; text-transform: uppercase; color: ${keyColor}; }
       .slate-name { font-size: 54px; font-weight: 700; margin-top: 18px; }
     </style>
@@ -118,7 +117,9 @@ export function buildRecipeDemoDraft(
       window.__timelines = window.__timelines || {};
       var tl = gsap.timeline({ paused: true });
       tl.set("#stage", { opacity: 1 }, 0);
-      tl.set("#stage", { opacity: 0 }, ${stageEnd});
+      // Same-timestamp handoff: insertion order clears the outgoing stage and
+      // reveals the slate without leaving an unowned 0.01s host gap.
+      tl.set("#stage", { opacity: 0 }, ${stageSec});
       tl.set("#slate", { opacity: 1 }, ${stageSec});
       tl.set("#slate", { opacity: 0 }, ${durationSec});
       // A slow key-light breath keeps the stage alive around the recipe.

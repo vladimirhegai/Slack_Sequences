@@ -118,16 +118,43 @@ function importantCompanionFilm(): { storyboard: DirectScene[]; html: string } {
 <script src="gsap.min.js"></script><script src="${CAMERA_RUNTIME_FILE}"></script>
 <style>*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#090d14}
 #root,.scene{position:absolute;inset:0;overflow:hidden}.world{position:relative;width:1920px;height:1080px}
-.station{position:absolute;inset:0}.lockup{position:absolute;left:510px;top:170px;width:900px;height:190px;background:#1c2635;color:#fff;font:700 52px Arial;display:grid;place-items:center}
-.ring{position:absolute;left:810px;top:500px;width:300px;height:300px;border-radius:50%;background:#3b82f6}</style></head><body>
+.station{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:100px;padding:140px}.depth-lockup{flex:3}.depth-ring{flex:2;display:grid;place-items:center}
+[data-depth="0.3"]{position:absolute}.lockup{width:100%;height:260px;background:#1c2635;color:#fff;font:700 52px Arial;display:grid;place-items:center}
+.ring{width:300px;height:300px;border-radius:50%;background:#3b82f6}</style></head><body>
 <main id="root" data-composition-id="companion" data-width="1920" data-height="1080" data-duration="3">
 <section class="scene" data-scene="resolve"><div class="world" data-camera-world><div class="station" data-region="resolve">
-<div class="lockup" data-part="lockup" data-layout-important="1">OrbitOps resolved</div>
-<div class="ring" data-part="ring" data-layout-important="1"></div>
+<div class="depth-lockup" data-depth="0.3"><div class="lockup" data-part="lockup" data-layout-important="1">OrbitOps resolved</div></div>
+<div class="depth-ring" data-depth="1"><div class="ring" data-part="ring" data-layout-important="1"></div></div>
 </div></div></section></main><script type="application/json" id="sequences-camera">${island}</script>
 <script>window.__timelines={};const tl=gsap.timeline({paused:true});SequencesCamera.compile(tl,document.getElementById("root"));window.__timelines.companion=tl;tl.seek(0);</script>
 </body></html>`,
   };
+}
+
+function transparentListFilm(): string {
+  const storyboard: DirectScene[] = [{
+    id: "list-scene",
+    title: "Approval trail",
+    purpose: "Frame three ordered rows without a void-filled root",
+    startSec: 0,
+    durationSec: 3,
+    camera: {
+      version: 1,
+      path: [{
+        version: 1,
+        move: "push-in",
+        toPart: "approval-list",
+        startSec: 0,
+        durationSec: 1,
+      }],
+    },
+  }];
+  return `<!doctype html><html><head><meta charset="UTF-8">
+<script src="gsap.min.js"></script><script src="${CAMERA_RUNTIME_FILE}"></script>
+<style>*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden}#root,.scene{position:absolute;inset:0;overflow:hidden}.world{position:relative;width:1920px;height:1080px}.station{position:absolute;left:260px;top:140px;width:1400px;height:800px;display:flex;align-items:flex-start;padding:100px}.list{width:100%;height:100%;display:flex;flex-direction:column;gap:24px}.row{height:90px;background:#172235;color:white;display:grid;place-items:center;font:700 28px Arial}</style></head><body>
+<main id="root" data-composition-id="transparent-list" data-width="1920" data-height="1080" data-duration="3"><section class="scene" data-scene="list-scene"><div class="world" data-camera-world><div class="station" data-region="list-station"><div class="list" data-component="list" data-part="approval-list"><div class="row" data-part="row-1">Assign reviewer</div><div class="row" data-part="row-2">Resolve blocker</div><div class="row" data-part="row-3">Publish approval</div></div></div></div></section></main>
+<script type="application/json" id="sequences-camera">${JSON.stringify(resolveCameraPlan(storyboard))}</script>
+<script>window.__timelines={};const tl=gsap.timeline({paused:true});SequencesCamera.compile(tl,document.getElementById("root"));window.__timelines.list=tl;tl.seek(0);</script></body></html>`;
 }
 
 function serveDir(dir: string): Promise<{ url: string; close: () => Promise<void> }> {
@@ -204,12 +231,64 @@ describe("camera depth browser contract (orbit + rack focus)", () => {
         timeline.seek(1.6, false);
         const lockup = document.querySelector<HTMLElement>(".lockup")!.getBoundingClientRect();
         const ring = document.querySelector<HTMLElement>(".ring")!.getBoundingClientRect();
-        return { lockupTop: lockup.top, lockupBottom: lockup.bottom, ringTop: ring.top, ringBottom: ring.bottom };
+        return {
+          lockupTop: lockup.top,
+          lockupBottom: lockup.bottom,
+          lockupRight: lockup.right,
+          ringTop: ring.top,
+          ringBottom: ring.bottom,
+          ringLeft: ring.left,
+          depthPosition: getComputedStyle(document.querySelector<HTMLElement>(".depth-lockup")!).position,
+        };
       });
       expect(state.lockupTop).toBeGreaterThan(90);
       expect(state.lockupBottom).toBeLessThan(990);
       expect(state.ringTop).toBeGreaterThan(90);
       expect(state.ringBottom).toBeLessThan(990);
+      expect(state.lockupRight).toBeLessThan(state.ringLeft);
+      expect(state.depthPosition).toBe("relative");
+    } finally {
+      await browser.close();
+      await server.close();
+    }
+  }, 30_000);
+
+  it("shrinkwraps a transparent full-height list to its painted rows", async () => {
+    const browserPath = findBrowserExecutable();
+    expect(browserPath).toBeTruthy();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-camera-list-shrinkwrap-"));
+    roots.push(dir);
+    fs.writeFileSync(path.join(dir, "index.html"), transparentListFilm(), "utf8");
+    const require = createRequire(import.meta.url);
+    fs.copyFileSync(require.resolve("gsap/dist/gsap.min.js"), path.join(dir, "gsap.min.js"));
+    fs.writeFileSync(path.join(dir, CAMERA_RUNTIME_FILE), cameraRuntimeSource(), "utf8");
+    const server = await serveDir(dir);
+    const browser = await launchHeadlessBrowser({
+      executablePath: browserPath!,
+      headless: true,
+      args: ["--hide-scrollbars", "--mute-audio", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+    });
+    try {
+      const page = await browser.newPage();
+      await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+      await page.goto(server.url, { waitUntil: "networkidle0", timeout: 30_000 });
+      const state = await page.evaluate(() => {
+        const timeline = (window as unknown as {
+          __timelines: Record<string, { seek: (time: number, suppress?: boolean) => void }>;
+        }).__timelines.list!;
+        timeline.seek(1.2, false);
+        const list = document.querySelector<HTMLElement>('[data-part="approval-list"]')!;
+        const rect = list.getBoundingClientRect();
+        return {
+          marker: list.getAttribute("data-sequences-camera-shrinkwrap"),
+          layoutHeight: list.offsetHeight,
+          occupancy: rect.width * rect.height / (1920 * 1080),
+        };
+      });
+      expect(state.marker).toBe("1");
+      expect(state.layoutHeight).toBeLessThan(400);
+      expect(state.occupancy).toBeGreaterThan(0.08);
+      expect(state.occupancy).toBeLessThan(0.5);
     } finally {
       await browser.close();
       await server.close();

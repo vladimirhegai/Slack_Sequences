@@ -58,9 +58,26 @@ interface MorphState {
   bridgeVisibility: string;
   bridgeLeft: number;
   bridgeWidth: number;
-  bridgeContentOpacity: number;
+  outgoingOpacity: number;
+  outgoingLeft: number;
+  outgoingWidth: number;
+  outgoingHeight: number;
+  incomingOpacity: number;
+  incomingLeft: number;
+  incomingWidth: number;
+  incomingHeight: number;
   sourceBindings: number;
   targetBindings: number;
+  pillSourceOpacity: number;
+  pillTargetOpacity: number;
+  pillOutgoingWidth: number;
+  pillOutgoingHeight: number;
+  pillIncomingWidth: number;
+  pillIncomingHeight: number;
+  pillOutgoingText: string;
+  pillIncomingText: string;
+  pillOutgoingLabelTransform: string;
+  pillIncomingLabelTransform: string;
 }
 
 describe("component morph bridge browser contract", () => {
@@ -81,6 +98,14 @@ describe("component morph bridge browser contract", () => {
           startSec: 1,
           endSec: 2.4,
           ease: "power2.inOut",
+        }, {
+          id: "needs-to-approved",
+          kind: "morph",
+          component: "needs-review",
+          morphTo: "approved",
+          startSec: 1,
+          endSec: 2.4,
+          ease: "power2.inOut",
         }],
       }],
     };
@@ -90,10 +115,15 @@ describe("component morph bridge browser contract", () => {
 #root,.scene{position:absolute;inset:0}.source,.target{position:absolute;border:1px solid #4c5d74;box-shadow:0 18px 50px rgba(0,0,0,.25)}
 .source{left:200px;top:430px;width:320px;height:72px;border-radius:36px;background:#182231;padding:20px 28px;font:600 24px Arial}
 .target{left:900px;top:250px;width:720px;height:440px;border-radius:18px;background:#222b39;padding:36px;font:600 24px Arial}
-.row{height:70px;margin-top:18px;padding:20px;border-radius:10px;background:#303b4b}</style></head><body>
+.row{height:70px;margin-top:18px;padding:20px;border-radius:10px;background:#303b4b}
+.pill-source,.pill-target{position:absolute;height:68px;border:0;border-radius:999px;padding:0 30px;font:700 23px Arial;white-space:nowrap}
+.pill-source{left:220px;top:820px;width:260px;background:#fff0ed;color:#b42318}
+.pill-target{left:1110px;top:800px;width:190px;background:#ff5a5f;color:#fff}</style></head><body>
 <main id="root" data-composition-id="morph-smoke" data-width="1920" data-height="1080" data-duration="3.5">
 <section class="scene" data-scene="morph"><div class="source" data-part="search" data-component="search"><span>Deploy checkout</span></div>
-<div class="target" data-part="palette" data-component="command-palette"><strong>Deploy checkout</strong><div class="row">Deploy production</div><div class="row">View release notes</div></div></section></main>
+<div class="target" data-part="palette" data-component="command-palette"><strong>Deploy checkout</strong><div class="row">Deploy production</div><div class="row">View release notes</div></div>
+<button class="pill-source" data-part="needs-review" data-component="button"><span class="cmp-label">Needs review</span></button>
+<button class="pill-target" data-part="approved" data-component="button"><span class="cmp-label">Approved</span></button></section></main>
 <script type="application/json" id="sequences-components">${JSON.stringify(plan)}</script>
 <script>window.__timelines={};const tl=gsap.timeline({paused:true});SequencesComponents.compile(tl,document.getElementById("root"));window.__timelines["morph-smoke"]=tl;tl.seek(0);</script>
 </body></html>`;
@@ -123,8 +153,17 @@ describe("component morph bridge browser contract", () => {
         timeline.seek(at, false);
         const source = document.querySelector<HTMLElement>(".source")!;
         const target = document.querySelector<HTMLElement>(".target")!;
-        const bridge = document.querySelector<HTMLElement>(".seq-component-morph-bridge")!;
-        const content = bridge.querySelector<HTMLElement>(".seq-component-morph-content")!;
+        const bridges = document.querySelectorAll<HTMLElement>(".seq-component-morph-bridge");
+        const bridge = bridges[0]!;
+        const outgoing = bridge.querySelector<HTMLElement>(".seq-component-morph-outgoing")!;
+        const incoming = bridge.querySelector<HTMLElement>(".seq-component-morph-incoming")!;
+        const pillBridge = bridges[1]!;
+        const pillOutgoing = pillBridge.querySelector<HTMLElement>(".seq-component-morph-outgoing")!;
+        const pillIncoming = pillBridge.querySelector<HTMLElement>(".seq-component-morph-incoming")!;
+        const pillOutgoingRect = pillOutgoing.getBoundingClientRect();
+        const pillIncomingRect = pillIncoming.getBoundingClientRect();
+        const outgoingRect = outgoing.getBoundingClientRect();
+        const incomingRect = incoming.getBoundingClientRect();
         return {
           sourceOpacity: Number(getComputedStyle(source).opacity),
           sourceTransform: source.style.transform,
@@ -134,9 +173,30 @@ describe("component morph bridge browser contract", () => {
           bridgeVisibility: getComputedStyle(bridge).visibility,
           bridgeLeft: bridge.getBoundingClientRect().left,
           bridgeWidth: bridge.getBoundingClientRect().width,
-          bridgeContentOpacity: Number(getComputedStyle(content).opacity),
+          outgoingOpacity: Number(getComputedStyle(outgoing).opacity),
+          outgoingLeft: outgoingRect.left,
+          outgoingWidth: outgoingRect.width,
+          outgoingHeight: outgoingRect.height,
+          incomingOpacity: Number(getComputedStyle(incoming).opacity),
+          incomingLeft: incomingRect.left,
+          incomingWidth: incomingRect.width,
+          incomingHeight: incomingRect.height,
           sourceBindings: document.querySelectorAll('[data-part="search"]').length,
           targetBindings: document.querySelectorAll('[data-part="palette"]').length,
+          pillSourceOpacity: Number(getComputedStyle(document.querySelector<HTMLElement>(".pill-source")!).opacity),
+          pillTargetOpacity: Number(getComputedStyle(document.querySelector<HTMLElement>(".pill-target")!).opacity),
+          pillOutgoingWidth: pillOutgoingRect.width,
+          pillOutgoingHeight: pillOutgoingRect.height,
+          pillIncomingWidth: pillIncomingRect.width,
+          pillIncomingHeight: pillIncomingRect.height,
+          pillOutgoingText: pillOutgoing.textContent?.trim() ?? "",
+          pillIncomingText: pillIncoming.textContent?.trim() ?? "",
+          pillOutgoingLabelTransform: getComputedStyle(
+            pillOutgoing.querySelector<HTMLElement>(".cmp-label")!,
+          ).transform,
+          pillIncomingLabelTransform: getComputedStyle(
+            pillIncoming.querySelector<HTMLElement>(".cmp-label")!,
+          ).transform,
         };
       }, time);
 
@@ -150,15 +210,34 @@ describe("component morph bridge browser contract", () => {
       expect(middle.sourceTransform).not.toMatch(/scale/i);
       expect(middle.sourceWidth).toBeCloseTo(320, 0);
       expect(middle.bridgeOpacity).toBe(1);
-      expect(middle.bridgeLeft).toBeGreaterThan(200);
-      expect(middle.bridgeLeft).toBeLessThan(900);
-      expect(middle.bridgeWidth).toBeGreaterThan(320);
-      expect(middle.bridgeWidth).toBeLessThan(720);
-      expect(middle.bridgeContentOpacity).toBeLessThan(0.05);
+      // The bridge is now a fixed, non-clipping paint layer. Its two children
+      // carry the motion as intact layouts instead of resizing one shell.
+      expect(middle.bridgeLeft).toBeCloseTo(0, 0);
+      expect(middle.bridgeWidth).toBeCloseTo(1920, 0);
+      expect(middle.outgoingOpacity).toBeGreaterThan(0);
+      expect(middle.outgoingOpacity).toBeLessThan(1);
+      expect(middle.incomingOpacity).toBeGreaterThan(0);
+      expect(middle.incomingOpacity).toBeLessThan(1);
+      expect(middle.outgoingLeft).toBeGreaterThan(200);
+      expect(middle.outgoingLeft).toBeLessThan(900);
+      expect(middle.incomingLeft).toBeGreaterThan(200);
+      expect(middle.incomingLeft).toBeLessThan(900);
+      // Uniform scale preserves each endpoint's own aspect ratio throughout
+      // the crossfade: no rubber-sheet text, rows, or controls.
+      expect(middle.outgoingWidth / middle.outgoingHeight).toBeCloseTo(320 / 72, 2);
+      expect(middle.incomingWidth / middle.incomingHeight).toBeCloseTo(720 / 440, 2);
+      expect(middle.pillOutgoingWidth / middle.pillOutgoingHeight).toBeCloseTo(260 / 68, 2);
+      expect(middle.pillIncomingWidth / middle.pillIncomingHeight).toBeCloseTo(190 / 68, 2);
+      expect(middle.pillOutgoingText).toBe("Needs review");
+      expect(middle.pillIncomingText).toBe("Approved");
+      expect(middle.pillOutgoingLabelTransform).toBe("none");
+      expect(middle.pillIncomingLabelTransform).toBe("none");
 
       const after = await capture(2.6);
       expect(after.sourceOpacity).toBe(0);
       expect(after.targetOpacity).toBe(1);
+      expect(after.pillSourceOpacity).toBe(0);
+      expect(after.pillTargetOpacity).toBe(1);
       expect(after.bridgeOpacity).toBe(0);
       expect(after.sourceBindings).toBe(1);
       expect(after.targetBindings).toBe(1);

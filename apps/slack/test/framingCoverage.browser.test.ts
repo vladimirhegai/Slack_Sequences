@@ -4,9 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DirectScene } from "../src/engine/directComposition.ts";
 import { inspectDirectComposition } from "../src/engine/layoutInspector.ts";
-import { correctSparseFraming } from "../src/engine/compositionRunner.ts";
+import { correctSparseFraming } from "../src/engine/runner/repairs.ts";
 import { initializeProject } from "../src/engine/projectTemplates.ts";
 import { CAMERA_RUNTIME_FILE, resolveCameraPlan } from "../src/engine/cameraContract.ts";
+import { sourceRetryFeedbackForBrowserQa } from "../src/engine/runner/browserQuality.ts";
 
 const roots: string[] = [];
 
@@ -20,8 +21,8 @@ afterEach(() => {
  * on-frame content (post camera transform), so a landing whose frame is
  * genuinely mostly empty raises `camera_framed_sparse`, while a landing whose
  * frame is filled — even a tight one — stays silent. Camera-less scenes get
- * the same discipline once at mid-window, and the film's final resolve is
- * exempt (a compact end card is a deliberate close).
+ * the same discipline once at mid-window. Closing frames participate too: a
+ * tiny lockup in a void is still an under-composed frame.
  */
 function coverageFilm(): { storyboard: DirectScene[]; html: string } {
   const cameraScene = (
@@ -81,7 +82,7 @@ function coverageFilm(): { storyboard: DirectScene[]; html: string } {
     {
       id: "close",
       title: "Closing resolve",
-      purpose: "A deliberately compact end card (exempt as the final scene)",
+      purpose: "A compact end card that must still compose the full frame",
       startSec: 20,
       durationSec: 2.5,
     },
@@ -103,6 +104,7 @@ body{color:#e8edf6;font-family:Arial,sans-serif}
 .small-card{width:360px;height:180px;border-radius:20px;background:#22314a;display:grid;place-items:center;font-size:28px}
 .big-panel{width:1500px;height:820px;border-radius:24px;background:#1c2c44;display:grid;place-items:center;font-size:48px}
 .scatter-card{position:absolute;width:140px;height:90px;border-radius:12px;background:#22314a;display:grid;place-items:center}
+.credited-env{position:absolute;inset:0;background:linear-gradient(135deg,#17263d,#315178)}
 .center{position:absolute;inset:0;display:grid;place-items:center}
 </style></head><body>
 <main id="root" data-composition-id="coverage-smoke" data-width="1920" data-height="1080" data-duration="22.5">
@@ -131,6 +133,7 @@ body{color:#e8edf6;font-family:Arial,sans-serif}
 <div class="scatter-card" style="left:140px;top:120px">A</div><div class="scatter-card" style="right:140px;bottom:120px">B</div>
 </section>
 <section id="close" class="scene clip" data-scene="close" data-start="20" data-duration="2.5" data-track-index="1">
+<div class="credited-env" data-layout-ignore data-composition-credit="1"></div>
 <div class="center"><div class="small-card" data-part="end-card">the end card</div></div>
 </section>
 </main>
@@ -153,7 +156,102 @@ window.__timelines["coverage-smoke"]=tl;tl.seek(0);
   return { storyboard, html };
 }
 
+/**
+ * One deliberately under-composed frame that still clears the older sparse
+ * framing floor. Keeping the two thresholds apart isolates A3 mode policy:
+ * audit/block must disagree only about strict-polish pressure, not geometry.
+ */
+function compositionFloorFilm(): { storyboard: DirectScene[]; html: string } {
+  const storyboard: DirectScene[] = [{
+    id: "composition-floor",
+    title: "Underfilled composition",
+    purpose: "Exercise the whole-frame composition mode without a sparse focal",
+    startSec: 0,
+    durationSec: 3,
+    spatialIntent: {
+      version: 1,
+      focalPart: "floor-panel",
+      composition: "one medium product panel centered in an otherwise bare frame",
+      relationships: ["floor-panel is the sole focal and remains centered"],
+    },
+  }];
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>Composition floor mode smoke</title><script src="gsap.min.js"></script><style>
+*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#0c1220}
+#root,.scene{position:relative;width:1920px;height:1080px;overflow:hidden}
+.scene{position:absolute;inset:0;display:grid;place-items:center}
+.floor-panel{width:880px;height:480px;border:2px solid #42658f;border-radius:28px;background:#243a5a}
+</style></head><body>
+<main id="root" data-composition-id="composition-floor-smoke" data-width="1920" data-height="1080" data-duration="3">
+<section class="scene clip" data-scene="composition-floor" data-start="0" data-duration="3" data-track-index="1">
+<div class="floor-panel" data-part="floor-panel" data-layout-important></div>
+</section></main>
+<script>
+window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
+tl.set('[data-scene="composition-floor"]',{opacity:1},0);
+window.__timelines["composition-floor-smoke"]=tl;tl.seek(0);
+</script></body></html>`;
+  return { storyboard, html };
+}
+
 describe("framing coverage browser audit (camera_framed_sparse)", () => {
+  it("keeps the composition floor advisory visible in audit and block modes", async () => {
+    const priorComposition = process.env.SLACK_SEQUENCES_COMPOSITION;
+    const priorContinuous = process.env.SLACK_SEQUENCES_CONTINUOUS_MOTION;
+    process.env.SLACK_SEQUENCES_CONTINUOUS_MOTION = "0";
+    const draft = compositionFloorFilm();
+    const inspectMode = async (mode: "audit" | "block") => {
+      process.env.SLACK_SEQUENCES_COMPOSITION = mode;
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), `sequences-composition-${mode}-`));
+      roots.push(dir);
+      initializeProject(dir, { name: mode, brandName: mode, seedScreenshot: false });
+      return inspectDirectComposition(dir, draft, { captureGuide: false });
+    };
+    try {
+      const audit = await inspectMode("audit");
+      const block = await inspectMode("block");
+      const auditFinding = audit.issues.find((issue) =>
+        issue.code === "composition_frame_underfilled"
+      );
+      const blockFinding = block.issues.find((issue) =>
+        issue.code === "composition_frame_underfilled"
+      );
+
+      expect(audit.infraError).toBeUndefined();
+      expect(audit.errors).toEqual([]);
+      expect(audit.ok).toBe(true);
+      expect(audit.strictOk).toBe(true);
+      expect(auditFinding).toMatchObject({
+        severity: "warning",
+        sceneId: "composition-floor",
+      });
+      expect(auditFinding!.message).toContain("mode=audit");
+      expect(audit.issues.some((issue) => issue.code === "camera_framed_sparse")).toBe(false);
+
+      expect(block.infraError).toBeUndefined();
+      expect(block.errors).toEqual([]);
+      expect(block.ok).toBe(true);
+      expect(block.strictOk).toBe(false);
+      expect(blockFinding).toMatchObject({
+        severity: "warning",
+        sceneId: "composition-floor",
+      });
+      expect(blockFinding!.message).toContain("mode=block");
+      expect(blockFinding!.selector).toBe(auditFinding!.selector);
+      const blockWarning = block.warnings.find((warning) =>
+        warning.startsWith("composition_frame_underfilled")
+      );
+      expect(blockWarning).toBeDefined();
+      expect(sourceRetryFeedbackForBrowserQa(block)).not.toContain(blockWarning!);
+    } finally {
+      if (priorComposition === undefined) delete process.env.SLACK_SEQUENCES_COMPOSITION;
+      else process.env.SLACK_SEQUENCES_COMPOSITION = priorComposition;
+      if (priorContinuous === undefined) delete process.env.SLACK_SEQUENCES_CONTINUOUS_MOTION;
+      else process.env.SLACK_SEQUENCES_CONTINUOUS_MOTION = priorContinuous;
+    }
+  }, 60_000);
+
   it("flags sparse landings and static frames, passes filled ones", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-coverage-smoke-"));
     roots.push(dir);
@@ -168,7 +266,7 @@ describe("framing coverage browser audit (camera_framed_sparse)", () => {
     const stationFinding = sparse.find((issue) => issue.selector === '[data-region="lonely"]');
     expect(stationFinding).toBeDefined();
     expect(stationFinding!.severity).toBe("warning");
-    expect(stationFinding!.message).toMatch(/fills only \d+% of the frame/);
+    expect(stationFinding!.message).toMatch(/fills only \d+% of the 24x14 occupancy grid/);
     // …the filled camera landing does not…
     expect(sparse.some((issue) => issue.selector.includes("packed"))).toBe(false);
     // …a drift-only camera scene has no landing to sample, so it takes the
@@ -178,10 +276,21 @@ describe("framing coverage browser audit (camera_framed_sparse)", () => {
     expect(sparse.some((issue) => issue.selector === '[data-scene="static-sparse"]')).toBe(true);
     // …the frame-filling camera-less scene stays silent…
     expect(sparse.some((issue) => issue.selector.includes("static-filled"))).toBe(false);
-    // A large diagonal bbox made from tiny painted islands is still sparse.
-    expect(sparse.some((issue) => issue.selector === '[data-scene="static-scattered"]')).toBe(true);
-    // …and the film's final resolve is exempt: a compact end card is deliberate.
-    expect(sparse.some((issue) => issue.selector.includes("close"))).toBe(false);
+    // A large diagonal bbox made from tiny painted islands is still sparse:
+    // the grid is the primary signal while the old bbox remains diagnostic.
+    const scattered = sparse.find((issue) => issue.selector === '[data-scene="static-scattered"]');
+    expect(scattered).toBeDefined();
+    expect(scattered!.framing!.bboxFraction).toBeGreaterThan(0.5);
+    expect(scattered!.framing!.fraction).toBeLessThan(0.18);
+    // …and the film's final resolve is no longer exempt.
+    expect(sparse.some((issue) => issue.selector === '[data-scene="close"]')).toBe(true);
+    const underfilled = qa.issues.filter((issue) => issue.code === "composition_frame_underfilled");
+    // Bare canvas paint does not rescue a tiny semantic composition…
+    expect(underfilled.some((issue) => issue.sceneId === "static-sparse")).toBe(true);
+    // …but an explicit host environment earns whole-frame composition credit.
+    // The semantic sparse finding above remains independent, so the focal
+    // still cannot hide behind pretty wallpaper.
+    expect(underfilled.some((issue) => issue.sceneId === "close")).toBe(false);
     // Sparse framings are polish findings: they block strictOk (the repair
     // loop gets a chance) but never publication.
     expect(qa.strictOk).toBe(false);
@@ -200,12 +309,17 @@ describe("framing coverage browser audit (camera_framed_sparse)", () => {
     expect(landing?.framing?.sceneId).toBe("sparse-cam");
     expect(landing!.framing!.fraction).toBeGreaterThan(0);
 
-    // The pure correction bumps ONLY the bumpable landing (the drift-only and
-    // camera-less sparse scenes have no full move to zoom).
+    // The pure correction bumps the existing landing and promotes the targeted
+    // connective drift into one measured push-in. Camera-less sparse scenes
+    // remain deliberately untouched.
     const fix = correctSparseFraming(draft.storyboard, qa);
-    expect(fix.corrected).toEqual(["sparse-cam"]);
+    expect(fix.corrected).toEqual(["sparse-cam", "drift-sparse"]);
     const bumped = fix.storyboard[0]!.camera!.path[0]!.zoom!;
     expect(bumped).toBeGreaterThan(1.05);
+    const promoted = fix.storyboard[2]!.camera!.path[0]!;
+    expect(promoted.move).toBe("push-in");
+    expect(promoted.zoom).toBeGreaterThan(1.05);
+    expect(promoted.startSec + promoted.durationSec).toBeLessThanOrEqual(10.58);
 
     // Re-inject the camera island from the mutated storyboard (the seam
     // applyDeterministicSourceRepairs / cut-discovery use) and re-measure.
@@ -223,12 +337,12 @@ describe("framing coverage browser audit (camera_framed_sparse)", () => {
     expect(qa2.errors).toEqual([]);
     const sparseAfter = qa2.issues.filter((issue) => issue.code === "camera_framed_sparse");
     // The corrected landing no longer reads as sparse…
-    expect(sparseAfter.some((issue) => issue.framing?.sceneId === "sparse-cam")).toBe(false);
+    expect(sparseAfter.filter((issue) => issue.framing?.sceneId === "sparse-cam")).toEqual([]);
     // …the correction introduced no new clipping…
     const clippedBefore = qa.issues.filter((issue) => issue.code === "camera_framed_clipped").length;
     const clippedAfter = qa2.issues.filter((issue) => issue.code === "camera_framed_clipped").length;
     expect(clippedAfter).toBeLessThanOrEqual(clippedBefore);
     // …and the overall sparse count strictly dropped.
     expect(sparseAfter.length).toBeLessThan(sparseBefore.length);
-  }, 45_000);
+  }, 75_000);
 });

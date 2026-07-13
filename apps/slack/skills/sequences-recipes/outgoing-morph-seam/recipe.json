@@ -1,0 +1,98 @@
+{
+  "format": 2,
+  "revision": 2,
+  "id": "outgoing-morph-seam",
+  "title": "Outgoing product surface compressed into a match-cut handoff",
+  "description": "A resolved product card clears its detail, compresses into a pill, and moves toward the next shot during the final seam window so a shape-match cut reads as caused.",
+  "tags": [
+    "outgoing-motion",
+    "morph-seam",
+    "shape-match",
+    "match-cut",
+    "handoff",
+    "anticipation"
+  ],
+  "triggerPatterns": [
+    "outgoing (motion|morph)",
+    "morph seam",
+    "shape[ -]?match (cut|handoff|transition)",
+    "match[ -]?cut (pill|handoff|seam)",
+    "continuity handoff",
+    "compress(es|ed|ing)? .*pill",
+    "moves? toward .*cut"
+  ],
+  "durationWindow": {
+    "minSec": 4.1,
+    "maxSec": 9
+  },
+  "componentKinds": [
+    "app-window",
+    "button"
+  ],
+  "params": [
+    {
+      "name": "eyebrow",
+      "kind": "text",
+      "description": "Small context line above the result.",
+      "default": "APPROVAL WORKFLOW",
+      "maxChars": 28
+    },
+    {
+      "name": "title",
+      "kind": "text",
+      "description": "Resolved product outcome shown before the handoff.",
+      "default": "Ready for launch",
+      "maxChars": 36
+    },
+    {
+      "name": "body",
+      "kind": "text",
+      "description": "One short supporting line inside the source surface.",
+      "default": "Every reviewer signed off in the release thread.",
+      "maxChars": 64
+    },
+    {
+      "name": "handoffLabel",
+      "kind": "text",
+      "description": "The compact label that survives into the outgoing pill.",
+      "default": "Approved",
+      "maxChars": 18
+    },
+    {
+      "name": "bridgePart",
+      "kind": "part-ref",
+      "description": "Stable data-part used as the outgoing shape-match endpoint.",
+      "default": "morph-seam"
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for the status, seam line, and landed pill.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "handoffSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the pill completes its seam move; place the cut 0.35–0.7s later.",
+      "default": 4,
+      "min": 3.15,
+      "max": 8.5
+    }
+  ],
+  "engine": {
+    "kitVersions": {
+      "componentKit": 1,
+      "componentRuntime": 1,
+      "cameraRuntime": 1,
+      "continuityRuntime": 1,
+      "environmentRuntime": 1,
+      "environmentKit": 1,
+      "cutRuntime": 1,
+      "interactionRuntime": 1,
+      "timeRuntime": 1,
+      "fxRuntime": 1,
+      "cinemaKit": 1
+    }
+  },
+  "fragmentHash": "e53eedf09de050e841c8e04fc7de80a1decec9be8710636af8bc3e9d234281a4"
+}

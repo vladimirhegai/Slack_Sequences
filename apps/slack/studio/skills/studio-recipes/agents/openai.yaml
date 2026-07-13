@@ -1,0 +1,4 @@
+interface:
+  display_name: "Studio Recipes"
+  short_description: "Author and gate motion recipes"
+  default_prompt: "Use -recipes to author, gate, and export a Studio motion recipe."

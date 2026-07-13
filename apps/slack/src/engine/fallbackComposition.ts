@@ -407,12 +407,14 @@ h1{max-width:11ch;font-size:150px;line-height:.88}h2{max-width:15ch;font-size:92
 .mark{justify-self:end;color:${accent};font-size:230px;font-weight:900;line-height:.8;opacity:.16}
 .tools{color:${muted};font-size:30px;letter-spacing:.06em}
 .rule{width:280px;height:5px;border-radius:3px;background:${accent};transform:scaleX(0);transform-origin:left}
-.proof{padding:54px;border-radius:32px;display:flex;flex-direction:column;gap:34px}
+.proof{padding:28px 46px;border-radius:32px;display:flex;flex-direction:column;gap:28px}
 .progress-cap{color:${muted};font-size:24px;letter-spacing:.08em;text-transform:uppercase}
 .audience{max-width:24ch;color:${muted};font-size:38px;line-height:1.2}.lockup{font-size:52px;font-weight:900;letter-spacing:-.04em}
 .divider{width:220px;height:3px;background:rgba(255,255,255,.22);transform:scaleX(0)}
 .cta{padding:28px 48px;border-radius:999px;background:${accent};color:${accentText};font-size:48px;font-weight:850}
 .promise{color:${muted};font-size:28px}
+#fallback-close .zone{width:1100px;padding:64px 96px;border:2px solid rgba(255,255,255,.14);border-radius:40px;background:rgba(16,28,39,.88);box-shadow:0 30px 90px rgba(0,0,0,.34)}
+#fallback-close .lockup{font-size:72px}#fallback-close .cta{padding:32px 64px;font-size:54px}#fallback-close .promise{font-size:32px}
 </style></head><body>
 <main id="root" data-composition-id="${compositionId}" data-width="1920" data-height="1080" data-duration="${duration}">
 <section id="fallback-hook" class="scene clip layout-editorial-left" data-scene="fallback-hook" data-start="0" data-duration="${first}" data-track-index="1">

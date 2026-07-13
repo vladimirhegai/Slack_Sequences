@@ -5,9 +5,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildDirectLayoutSampleTimes,
   inspectDirectComposition,
+  interactionPhase,
   primaryFocalReview,
   spatialFocalPartAt,
+  transitionOutgoingStateMoved,
 } from "../src/engine/layoutInspector.ts";
+import type { InteractionIntentV1 } from "../src/engine/interactionContract.ts";
 import {
   CAMERA_RUNTIME_FILE,
   resolveCameraPlan,
@@ -16,6 +19,49 @@ import { findBrowserExecutable } from "../src/engine/render.ts";
 import type { DirectCompositionDraft, DirectScene } from "../src/engine/directComposition.ts";
 
 const roots: string[] = [];
+
+describe("interaction endpoint sampling", () => {
+  const intent: InteractionIntentV1 = {
+    version: 1,
+    id: "cursor-arrival",
+    sceneId: "proof",
+    cursorId: "cursor",
+    targetPart: "total",
+    action: "hover",
+    startSec: 8.4,
+    arriveSec: 10.6,
+    from: "frame:bottom-right",
+    path: "direct",
+    aimX: 0.5,
+    aimY: 0.5,
+    feedback: "none",
+  };
+
+  it("keeps a nearby pre-arrival tween boundary on the cursor path", () => {
+    expect(interactionPhase(intent, 10.588)).toBe("path");
+    expect(interactionPhase(intent, 10.6)).toBe("arrival");
+  });
+});
+
+describe("declared transition outgoing liveness", () => {
+  const state = (overrides: Partial<Parameters<typeof transitionOutgoingStateMoved>[0]> = {}) => ({
+    missing: false,
+    opacity: 1,
+    left: 100,
+    top: 100,
+    width: 400,
+    height: 180,
+    transform: "none",
+    clipPath: "none",
+    ...overrides,
+  });
+
+  it("distinguishes a genuinely static outgoing leg from visible bridge movement", () => {
+    expect(transitionOutgoingStateMoved(state(), state())).toBe(false);
+    expect(transitionOutgoingStateMoved(state(), state({ left: 103 }))).toBe(true);
+    expect(transitionOutgoingStateMoved(state(), state({ opacity: 0.9 }))).toBe(true);
+  });
+});
 
 describe("morph-aware spatial focal review", () => {
   const morphScene: DirectScene = {
@@ -99,6 +145,35 @@ tl.set("#one",{opacity:1},0).set("#one",{opacity:0},2.99);
 tl.set("#two",{opacity:1},3).set("#two",{opacity:0},6);
 window.__timelines["layout-test"]=tl;
 </script></body></html>`,
+  };
+}
+
+function repeatedCompactContrastSelectorDraft(): DirectCompositionDraft {
+  return {
+    storyboard: [{
+      id: "one",
+      title: "One",
+      purpose: "Prove unique contrast bindings",
+      startSec: 0,
+      durationSec: 3,
+      spatialIntent: {
+        version: 1,
+        focalPart: "proof",
+        composition: "two supporting labels beneath one proof panel",
+        relationships: ["both labels remain readable"],
+      },
+    }],
+    html: `<!doctype html><html><head><script src="gsap.min.js"></script><style>
+html,body{margin:0;width:800px;height:600px;overflow:hidden;background:#fff}
+#root{position:relative;width:800px;height:600px;overflow:hidden;background:#fff;color:#111}
+.scene{position:absolute;inset:0}.panel{position:absolute;left:100px;top:120px;width:600px;height:320px;background:#fff}
+.low{display:inline-block;position:absolute;color:rgb(180,180,180);font:400 20px/1.2 Arial}
+.low:first-child{left:60px;top:80px}.low:last-child{left:360px;top:220px}
+</style></head><body><main id="root" data-composition-id="contrast-unique" data-width="800" data-height="600" data-duration="3">
+<section class="scene" data-scene="one" data-start="0" data-duration="3" data-track-index="1">
+<div class="panel" data-part="proof"><span class="low">Changeable</span><span class="low">Jun 16</span></div>
+</section></main><script>window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
+window.__timelines["contrast-unique"]=tl;</script></body></html>`,
   };
 }
 
@@ -338,6 +413,9 @@ function interactionDraft(
   ease = "power3.out",
   nestedCursor = false,
   revealTargetOnArrival = false,
+  moveTargetOnRelease = false,
+  item?: number,
+  postBaselineShift?: "target" | "cursor",
 ): DirectCompositionDraft {
   const interaction = {
     version: 1 as const,
@@ -345,6 +423,7 @@ function interactionDraft(
     sceneId: "one",
     cursorId: "pointer",
     targetPart: "primary-action",
+    ...(item !== undefined ? { item } : {}),
     action: "click" as const,
     startSec: 0.5,
     arriveSec: 1.5,
@@ -390,13 +469,20 @@ html,body{margin:0;width:800px;height:600px;overflow:hidden;background:#10131a}
 .scene{position:absolute;inset:0;opacity:0}
 [data-camera-world],[data-camera-overlay]{position:absolute;inset:0}
 #target{position:absolute;left:410px;top:230px;width:180px;height:72px;border:0;border-radius:18px;background:#74f7c5}
+#target.item-list{height:156px;padding:8px;box-sizing:border-box;background:#252a35}
+#target .cmp-item{height:44px;padding:10px;box-sizing:border-box;border-radius:10px;background:#3b4352;color:#fff}
+#target .cmp-item+.cmp-item{margin-top:4px}
 #cursor{position:absolute;left:0;top:0;width:28px;height:28px;pointer-events:none;z-index:20}
 #ripple{position:absolute;left:0;top:0;width:64px;height:64px;border:2px solid #74f7c5;border-radius:50%;pointer-events:none;opacity:0}
 </style></head><body>
 <main id="root" data-composition-id="interaction-test" data-width="800" data-height="600" data-duration="6">
   <section id="one" class="scene clip" data-scene="one" data-start="0" data-duration="3" data-track-index="1">
     <div id="world" data-camera-world>
-      <button id="target" data-part="primary-action" data-layout-important>Deploy</button>
+      ${item === undefined
+        ? '<button id="target" data-part="primary-action" data-layout-important>Deploy</button>'
+        : '<div id="target" class="item-list" data-part="primary-action" data-layout-important>' +
+          '<div class="cmp-item">Trace A</div><div class="cmp-item">Trace B</div>' +
+          '<div class="cmp-item">Trace C</div></div>'}
     </div>
     <div data-camera-overlay>
       ${nestedCursor ? "<span class=\"cursor-shell\">" : ""}
@@ -420,6 +506,15 @@ tl.set("#two",{opacity:1},3).set("#two",{opacity:0},6);
 tl.to("#world",{x:-100,duration:1,ease:"power2.inOut"},0.5);
 ${revealTargetOnArrival
   ? 'tl.fromTo("#target",{opacity:0},{opacity:1,duration:.1,ease:"none"},1.35);'
+  : ""}
+${moveTargetOnRelease ? 'tl.set("#target",{x:4},1.75);' : ""}
+${postBaselineShift
+  ? `const postBaselineShift={p:0};
+tl.to(postBaselineShift,{p:1,duration:.1,ease:"none",onUpdate(){
+  if(postBaselineShift.p>.5)document.querySelector("#${
+    postBaselineShift === "target" ? "target" : "cursor"
+  }").style.left="${postBaselineShift === "target" ? "360px" : "40px"}";
+}},2.7);`
   : ""}
 SequencesInteractions.compile(tl,document.getElementById("root"));
 ${endpointNudge ? `tl.set("#cursor",{x:"+=${endpointNudge}"},1.6);` : ""}
@@ -537,6 +632,27 @@ describe("direct layout inspector", () => {
   );
 
   it.skipIf(!findBrowserExecutable())(
+    "enriches repeated compact contrast selectors to their distinct sampled text nodes",
+    async () => {
+      const result = await inspectDirectComposition(
+        projectDir(),
+        repeatedCompactContrastSelectorDraft(),
+      );
+      const contrast = result.issues.filter((issue) =>
+        issue.code === "contrast_aa" && ["Changeable", "Jun 16"].includes(issue.text ?? "")
+      );
+      expect(contrast).toHaveLength(2);
+      expect(contrast.every((issue) => issue.sceneId === "one")).toBe(true);
+      const selectors = contrast.map((issue) => issue.repairSelector);
+      expect(selectors.every(Boolean)).toBe(true);
+      expect(new Set(selectors).size).toBe(2);
+      expect(selectors.every((selector) => selector?.startsWith('[data-scene="one"] > ')))
+        .toBe(true);
+    },
+    60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
     "flags a single short blank scene for repair without blocking the film",
     async () => {
       const result = await inspectDirectComposition(projectDir(), nearBlankDraft("one"));
@@ -622,6 +738,75 @@ describe("direct layout inspector", () => {
       expect(press?.hit).toBe(true);
       expect(press?.deltaPx).toBeLessThanOrEqual(2);
       expect(result.guidePngBase64?.length).toBeGreaterThan(100);
+    },
+    60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "keeps seek stability target-relative when the measured anchor moves after baseline",
+    async () => {
+      const result = await inspectDirectComposition(
+        projectDir(),
+        interactionDraft(0, "power3.out", false, false, false, undefined, "target"),
+      );
+      expect(
+        result.ok,
+        JSON.stringify({ errors: result.errors, issues: result.issues, evidence: result.interactions }),
+      ).toBe(true);
+      expect(result.issues.some((issue) => issue.code === "interaction_seek_instability"))
+        .toBe(false);
+    },
+    60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "still rejects an independently shifted cursor after an out-of-order seek",
+    async () => {
+      const result = await inspectDirectComposition(
+        projectDir(),
+        interactionDraft(0, "power3.out", false, false, false, undefined, "cursor"),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.issues.some((issue) => issue.code === "interaction_seek_instability"))
+        .toBe(true);
+    },
+    60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "pins cursor, ripple, and QA evidence to the same semantic collection item",
+    async () => {
+      const result = await inspectDirectComposition(
+        projectDir(),
+        interactionDraft(0, "power3.out", false, false, false, 2),
+      );
+      expect(
+        result.ok,
+        JSON.stringify({ errors: result.errors, issues: result.issues, evidence: result.interactions }),
+      ).toBe(true);
+      const press = result.interactions?.find((entry) => entry.phase === "press");
+      expect(press?.hit).toBe(true);
+      expect(press?.deltaPx).toBeLessThanOrEqual(2);
+      expect(press?.targetRect?.height).toBeCloseTo(44, 0);
+      expect(press?.targetRect?.top).toBeGreaterThan(270);
+    },
+    60_000,
+  );
+
+  it.skipIf(!findBrowserExecutable())(
+    "re-pins the cursor after a target transform that begins on the release seam",
+    async () => {
+      const result = await inspectDirectComposition(
+        projectDir(),
+        interactionDraft(0, "power3.out", false, false, true),
+      );
+      expect(
+        result.ok,
+        JSON.stringify({ errors: result.errors, issues: result.issues, evidence: result.interactions }),
+      ).toBe(true);
+      const release = result.interactions?.find((entry) => entry.phase === "release");
+      expect(release?.hit).toBe(true);
+      expect(release?.deltaPx).toBeLessThanOrEqual(2);
     },
     60_000,
   );

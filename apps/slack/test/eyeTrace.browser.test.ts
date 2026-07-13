@@ -110,6 +110,12 @@ window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
 tl.set("#jump-from",{opacity:1},0).set("#jump-from",{opacity:0},2.999);
 tl.set("#jump-to",{opacity:1},3).set("#jump-to",{opacity:0},5.999);
 tl.set("#ping",{opacity:1},6).set("#ping",{opacity:0},9);
+// A quiet operated push keeps this eye-trace fixture honest under the
+// independent rendered-liveness audit. It does not carry the eye across the
+// hard cut; each scene scales around the same viewport center.
+tl.fromTo("#jump-from",{scale:1},{scale:1.03,duration:2.98,ease:"none"},0);
+tl.fromTo("#jump-to",{scale:1},{scale:1.03,duration:2.98,ease:"none"},3);
+tl.fromTo("#ping",{scale:1},{scale:1.03,duration:2.98,ease:"none"},6);
 tl.fromTo("#jump-to [data-part=panel-b]",{opacity:0},{opacity:1,duration:.3},3.15);
 tl.to("#ping [data-part=pp-a]",{scale:1.04,duration:.25,yoyo:true,repeat:1},6.8);
 tl.to("#ping [data-part=pp-b]",{scale:1.05,duration:.25,yoyo:true,repeat:1},7.4);
@@ -139,6 +145,15 @@ describe("eye-trace continuity browser audit", () => {
     const pingPong = qa.issues.filter((issue) => issue.code === "eye_trace_pingpong");
     expect(pingPong).toHaveLength(1);
     expect(pingPong[0]!.message).toContain('"pp-first" -> "pp-second"');
+    expect(pingPong[0]!.eyeTracePingPong).toMatchObject({
+      sceneId: "ping",
+      firstBeatId: "pp-first",
+      secondBeatId: "pp-second",
+    });
+    // This fixture exercises eye trace, not stopped-slide detection. Its
+    // operated holds must satisfy the separate rendered-liveness obligation so
+    // audit mode below can isolate the eye-trace disposition.
+    expect(qa.issues.filter((issue) => issue.code === "motion_quiet_window")).toEqual([]);
     // The jump is a strictOk-blocking polish finding under the default mode.
     expect(qa.strictOk).toBe(false);
 
@@ -149,6 +164,7 @@ describe("eye-trace continuity browser audit", () => {
       const auditQa = await inspectDirectComposition(dir, draft, { captureGuide: false });
       expect(auditQa.issues.some((issue) => issue.code === "eye_trace_jump")).toBe(true);
       expect(auditQa.issues.some((issue) => issue.code === "eye_trace_pingpong")).toBe(true);
+      expect(auditQa.issues.some((issue) => issue.code === "motion_quiet_window")).toBe(false);
       expect(auditQa.ok).toBe(true);
       expect(auditQa.strictOk).toBe(true);
     } finally {

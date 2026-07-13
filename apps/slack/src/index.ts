@@ -49,15 +49,19 @@ import { isDebugEnabled, setDebugEnabled } from "./debugFlags.ts";
 import {
   CREATE_STEPS,
   EtaTracker,
+  LEGACY_CREATE_STEPS,
+  LEGACY_REVISE_STEPS,
   REVISE_STEPS,
   estimateStepMs,
   formatEtaMs,
   recordStepDuration,
   visibleEtaMs,
 } from "./engine/stageTimings.ts";
+import { resolveAuthorRoute } from "./engine/lunaRoute.ts";
 import { loadJobFrame, publicFrameMd } from "./engine/frameDesign.ts";
 import {
   assetBriefContext,
+  assetBriefReferencesRoot,
   assetBriefPlanningOffer,
   clearAssetBrief,
   extractPaletteFromImages,
@@ -150,6 +154,9 @@ function runJobInBackground(
 
 /** Honest phase copy for each named model stage while it runs. */
 const STAGE_PHASES: Record<string, string> = {
+  "luna-director": "Luna is directing and authoring the film…",
+  "luna-self-review": "Luna is reviewing the rendered motion…",
+  "luna-revision": "Luna is revising its film…",
   "frame-design": "Choosing a visual direction…",
   "storyboard-plan": "Shaping the story beats…",
   "source-author": "Building the HyperFrames composition…",
@@ -189,7 +196,7 @@ class BuildingView {
     this.timer = setInterval(() => this.render(), 5_000);
   }
 
-  /** Model-stage pulse (frame-design / storyboard-plan / source-author). */
+  /** Model-stage pulse (Luna director/review or legacy frame/storyboard/source). */
   onStage(stage: string, phase: "started" | "completed", durationMs?: number): void {
     if (phase === "started") {
       this.tracker.start(stage);
@@ -327,7 +334,10 @@ function stageBlocks(
     slackMcpNote: result.slackMcpNote,
     usedPreset: result.usedPreset,
     fallback: result.fallback ? { stage: result.fallback.stage } : undefined,
-    provider: result.provider,
+    provider: result.authorRoute === "luna-direct"
+      ? "Luna 5.6 · high (Codex CLI)"
+      : result.provider,
+    ledgerStatus: result.ledgerStatus,
     renderQuality,
     debugStages: isDebugEnabled() ? result.stages : undefined,
     renderEtaLabel: stage === "rendering"
@@ -498,7 +508,7 @@ interface CreateArgs {
   tone?: Tone;
   lengthSec?: number;
   context?: string;
-  /** Deterministic demo path: skip the planning brain, apply this plan directly. */
+  /** Deterministic demo path: skip creative authoring and apply this plan directly. */
   presetPlan?: CreateVideoOptions["presetPlan"];
   /** Ephemeral response or DM used when no channel message could be created. */
   notifyFailure?: (message: string) => Promise<void>;
@@ -541,7 +551,13 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     args.channel,
     messageTs,
     args.product,
-    new EtaTracker(args.presetPlan ? ["submit_plan", "render_preview"] : CREATE_STEPS),
+    new EtaTracker(
+      args.presetPlan
+        ? ["submit_plan", "render_preview"]
+        : resolveAuthorRoute() === "luna-direct"
+          ? CREATE_STEPS
+          : LEGACY_CREATE_STEPS,
+    ),
   );
   const onProgress: ProgressCallback = (progress) => view.onProgress(progress);
 
@@ -558,6 +574,8 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
   // Context plane: search Slack through Slack's hosted MCP server with the
   // invoking user's permissions. The deterministic demo deliberately skips it.
   let enrichedContext = args.context;
+  let lunaContext = args.context;
+  let assetReferencePaths: string[] | undefined;
   let slackMcpTools: string[] | undefined;
   let slackMcpNote: string | undefined;
   if (userToken) {
@@ -573,6 +591,7 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
         "Verified workspace context retrieved through Slack's hosted MCP server:",
         workspace.text,
       ].filter(Boolean).join("\n\n");
+      lunaContext = enrichedContext;
       slackMcpTools = workspace.toolsCalled;
     } catch (error) {
       // Workspace context is an enrichment, not a prerequisite. A transient
@@ -585,7 +604,7 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
     }
   }
 
-  // Channel brand brief (`/sequences asset`): committed brand truth captured
+  // Channel brand brief (`/sequences assets`): committed brand truth captured
   // from the user's own screenshots outranks anything inferred, so it is
   // appended AFTER workspace context. The deterministic demo skips it.
   if (!args.presetPlan) {
@@ -601,6 +620,10 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
       ]
         .filter(Boolean)
         .join("\n\n");
+      lunaContext = [lunaContext, assetBriefContext(assetBrief)]
+        .filter(Boolean)
+        .join("\n\n");
+      assetReferencePaths = assetBrief.refs;
     }
   }
 
@@ -617,6 +640,9 @@ async function runCreate(client: WebClient, args: CreateArgs): Promise<void> {
       tone: args.tone,
       lengthSec: args.lengthSec,
       context: enrichedContext,
+      lunaContext,
+      assetReferencePaths,
+      assetReferenceRoot: assetReferencePaths?.length ? assetBriefReferencesRoot() : undefined,
       presetPlan: args.presetPlan,
       render: false,
       onProgress,
@@ -700,7 +726,9 @@ async function runRevise(client: WebClient, jobId: string, instruction: string):
     job.channel,
     messageTs,
     job.title,
-    new EtaTracker(REVISE_STEPS),
+    new EtaTracker(
+      resolveAuthorRoute() === "luna-direct" ? REVISE_STEPS : LEGACY_REVISE_STEPS,
+    ),
   );
   const onProgress: ProgressCallback = (progress) => view.onProgress(progress);
   updateJob(jobId, { status: "building" });
@@ -713,6 +741,7 @@ async function runRevise(client: WebClient, jobId: string, instruction: string):
       instruction,
       render: false,
       onProgress,
+      onStageProgress: (stage, phase, durationMs) => view.onStage(stage, phase, durationMs),
     });
   } catch (error) {
     view.stop();
@@ -968,7 +997,7 @@ app.command("/sequences", async ({ command, ack, client, respond }) => {
       text:
         "*Sequences — from shipped to shown.*\n" +
         "• `/sequences` — open the modal and turn a launch into an on-brand video.\n" +
-        "• `/sequences asset` — upload UI screenshots once; every video in this channel picks up your brand (`asset clear` to forget).\n" +
+        "• `/sequences assets` — upload 1–5 UI screenshots; every video in this channel picks up your brand (`assets clear` to forget).\n" +
         "• `/sequences demo` — build a ready-made *Relay v2* launch reel (no setup).\n" +
         "• `/sequences mcp-test` — self-check every service (MCP, render host, Slack, config).\n" +
         "• `/sequences debug on|off` — show/hide the model-stage receipt trail on results.\n" +
@@ -1031,7 +1060,7 @@ app.command("/sequences", async ({ command, ack, client, respond }) => {
       response_type: "ephemeral",
       text: removed
         ? ":wastebasket: Forgot this channel's brand brief — videos go back to inferred styling."
-        : "No brand brief is stored for this channel. `/sequences asset` to capture one.",
+        : "No brand brief is stored for this channel. `/sequences assets` to capture one.",
     });
     return;
   }
@@ -1193,7 +1222,7 @@ app.view("asset_brief", async ({ ack, view, client }) => {
           text:
             `:art: Captured your brand from ${images.length} screenshot${images.length === 1 ? "" : "s"}` +
             (paletteText ? ` — ${paletteText}.` : ".") +
-            " Every `/sequences` video in this channel now uses it. `/sequences asset clear` to forget.",
+            " Every `/sequences` video in this channel now uses it. `/sequences assets clear` to forget.",
         });
         if (palette) {
           const preview = await renderAssetBriefPreview(brief);

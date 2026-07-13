@@ -89,13 +89,14 @@ export const teamMedallion = defineAsset({
   place-content: center;
   color: var(--text, #edf0f6);
   background:
-    radial-gradient(120% 120% at 30% 16%, rgba(255, 255, 255, 0.07), transparent 55%),
+    radial-gradient(120% 120% at 32% 14%, rgba(255, 255, 255, 0.08), transparent 56%),
     color-mix(in srgb, var(--surface, #161b24) 92%, var(--tm-accent, #6ea8ff) 8%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.12),
     inset 0 0 0 1px var(--cinema-edge, rgba(255, 255, 255, 0.09)),
     inset 0 -1em 2em rgba(0, 0, 0, 0.3),
-    0 1em 2.4em rgba(0, 0, 0, 0.42);
+    0 0.28em 0.7em rgba(0, 0, 0, 0.3),
+    0 1.1em 2.5em rgba(0, 0, 0, 0.42);
 }
 .asset-team-medallion .tm-row {
   display: flex;

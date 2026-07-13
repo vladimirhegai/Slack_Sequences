@@ -390,7 +390,7 @@ describe("MD3 text FX browser contract (assemble / rise / underline / pop)", () 
 });
 
 describe("swap settle browser contract (probe-audit-01 residual)", () => {
-  it("removes the old copy from layout and rejoins the new copy to normal flow at the beat end, seek-safely", async () => {
+  it("lays out the incoming copy in its final box from frame one and removes the old copy seek-safely", async () => {
     const browserPath = findBrowserExecutable();
     expect(browserPath, "a Chromium/Chrome/Edge executable is required").toBeTruthy();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-swap-smoke-"));
@@ -403,7 +403,8 @@ describe("swap settle browser contract (probe-audit-01 residual)", () => {
       durationSec: 4,
       components: [{ version: 1, id: "hero-copy", kind: "headline", role: "hero" }],
       beats: [
-        { version: 1, id: "tag-swap", sceneId: "hero", component: "hero-copy", kind: "swap", atSec: 1, durationSec: 0.5, text: "Ship with momentum" },
+        { version: 1, id: "label-splits", sceneId: "hero", component: "hero-copy", kind: "type", atSec: 0.2, durationSec: 0.35, text: "Needs review", style: "rise" },
+        { version: 1, id: "tag-swap", sceneId: "hero", component: "hero-copy", kind: "swap", atSec: 1, durationSec: 0.5, text: "Approved" },
       ],
     }];
     const island = JSON.stringify(resolveComponentPlan(storyboard));
@@ -419,7 +420,7 @@ body{color:#eef2f8;font-family:Arial,sans-serif}
 </style></head><body>
 <main id="root" data-composition-id="swap-smoke" data-width="1920" data-height="1080" data-duration="4">
 <section id="hero" class="scene clip" data-scene="hero" data-start="0" data-duration="4" data-track-index="1">
-<h1 class="cmp cmp-headline" data-component="headline" data-part="hero-copy"><span class="cmp-text" data-cmp-text>Cadence</span></h1>
+<h1 class="cmp cmp-headline" data-component="headline" data-part="hero-copy"><span class="cmp-text" data-cmp-text>Needs review</span></h1>
 </section>
 </main>
 <script type="application/json" id="sequences-components">${island}</script>
@@ -460,6 +461,10 @@ window.__timelines["swap-smoke"]=tl;tl.seek(0);
         oldOpacity: number;
         newPosition: string;
         newOpacity: number;
+        newLeft: number;
+        newText: string;
+        splitUnits: number;
+        splitRows: number;
       }
       const stateAt = async (time: number): Promise<SwapState> =>
         page.evaluate((at: number) => {
@@ -472,34 +477,55 @@ window.__timelines["swap-smoke"]=tl;tl.seek(0);
           }
           const oldSpan = document.querySelector<HTMLElement>(".cmp-swap-old")!;
           const newSpan = document.querySelector<HTMLElement>(".cmp-swap-new")!;
+          const splitTops = Array.from(oldSpan.querySelectorAll<HTMLElement>(".cmp-split"))
+            .map((unit) => Math.round(unit.getBoundingClientRect().top * 100) / 100);
           return {
             oldDisplay: getComputedStyle(oldSpan).display,
             oldOpacity: Number.parseFloat(getComputedStyle(oldSpan).opacity),
             newPosition: getComputedStyle(newSpan).position,
             newOpacity: Number.parseFloat(getComputedStyle(newSpan).opacity),
+            newLeft: Math.round(newSpan.getBoundingClientRect().left * 100) / 100,
+            newText: (newSpan.textContent || "").trim(),
+            splitUnits: oldSpan.querySelectorAll(".cmp-split").length,
+            splitRows: new Set(splitTops).size,
           };
         }, time);
 
-      // Before the beat: the old copy owns the slot in normal flow; the
-      // incoming copy is pre-rendered hidden, floating absolute.
-      const before = await stateAt(0.4);
-      expect(before.oldDisplay).toBe("inline-block");
+      // Before the beat the outgoing copy is visible while the hidden incoming
+      // copy already owns the slot's final normal-flow box.
+      const before = await stateAt(0.9);
+      expect(before.oldDisplay).not.toBe("none");
       expect(before.oldOpacity).toBe(1);
-      expect(before.newPosition).toBe("absolute");
+      expect(before.newPosition).toBe("static");
       expect(before.newOpacity).toBe(0);
-      // After the beat settles: the old copy has LEFT the layout entirely and
-      // the new copy sits in normal flow — no zeroed-out ghost box under an
-      // absolutely-positioned overlay for the rest of the film.
+      expect(before.splitUnits).toBe(11);
+      expect(before.splitRows).toBe(1);
+      const during = await stateAt(1.35);
+      expect(during.newOpacity).toBeGreaterThan(0);
+      // After the beat settles the old copy is hidden and the new copy remains
+      // in the same normal-flow box it occupied from compile time.
       const settled = await stateAt(2.0);
       expect(settled.oldDisplay).toBe("none");
       expect(settled.newPosition).toBe("static");
       expect(settled.newOpacity).toBe(1);
+      // The incoming label must paint from its eventual horizontal box rather
+      // than borrowing the old label's box and snapping when the settle set
+      // changes it back to normal flow.
+      expect(before.newLeft).toBe(settled.newLeft);
+      expect(during.newLeft).toBe(settled.newLeft);
+      expect([before.newText, during.newText, settled.newText]).toEqual([
+        "Approved",
+        "Approved",
+        "Approved",
+      ]);
       // Seek-safety both ways: back before the beat restores the pre-swap
       // arrangement byte-exactly, forward again re-settles it.
-      const restored = await stateAt(0.4);
+      const restored = await stateAt(0.9);
       expect(restored).toEqual(before);
       const replay = await stateAt(2.0);
       expect(replay).toEqual(settled);
+      const replayDuring = await stateAt(1.35);
+      expect(replayDuring).toEqual(during);
       expect(consoleErrors).toEqual([]);
     } finally {
       await browser.close();

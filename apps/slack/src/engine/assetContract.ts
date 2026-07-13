@@ -178,6 +178,29 @@ export interface AssetRenderContext {
   escapeHtml: (value: string) => string;
 }
 
+export interface AssetAutoDeclareContext {
+  /** Complete trusted brief; useful only when the target scene repeats the same fact. */
+  query: string;
+  /** Target-scene prose, ordered title/purpose/foreground/background. */
+  sceneText: string;
+}
+
+/**
+ * Optional proof that an asset can be adopted without creative defaults.
+ *
+ * Host auto-declaration is stricter than ordinary planner declaration: every
+ * semantic value must be derived from trusted scene/brief text. Assets without
+ * this binder remain fully planner-declarable, but the host will not silently
+ * publish their catalog demo copy as product truth.
+ */
+export interface AssetAutoDeclareSpecV1 {
+  bindParams: (
+    context: AssetAutoDeclareContext,
+  ) => Record<string, string | number> | undefined;
+  /** Typed hero kinds that already own the same visual idea. */
+  equivalentComponentKinds?: string[];
+}
+
 export interface AssetDefinitionV1 {
   version: 1;
   /** Library id, e.g. "glass-metric". The plugin kind becomes `asset-<id>`. */
@@ -187,6 +210,8 @@ export interface AssetDefinitionV1 {
   family: AssetSilhouetteFamily;
   params: AssetParamSpecV1[];
   animations: AssetAnimationSpecV1[];
+  /** Present only when host adoption can bind semantic params from trusted facts. */
+  autoDeclare?: AssetAutoDeclareSpecV1;
   /**
    * Static per-kind CSS (injected once per film / lab page). Reads params
    * ONLY through the root's custom properties, brand truth ONLY through the
@@ -224,6 +249,11 @@ export function defineAsset(definition: AssetDefinitionV1): AssetDefinitionV1 {
   };
   if (!ID_PATTERN.test(definition.id)) fail(`invalid id`);
   if (!(definition.family in FAMILY_GROUPS)) fail(`unknown family "${definition.family}"`);
+  for (const kind of definition.autoDeclare?.equivalentComponentKinds ?? []) {
+    if (!/^[a-z][a-z0-9-]*$/.test(kind)) {
+      fail(`autoDeclare has invalid equivalent component kind "${kind}"`);
+    }
+  }
   const paramNames = new Set<string>();
   for (const param of definition.params) {
     if (paramNames.has(param.name)) fail(`duplicate param "${param.name}"`);

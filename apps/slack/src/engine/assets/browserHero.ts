@@ -91,6 +91,7 @@ export const browserHero = defineAsset({
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.12),
     0 0 0 1px var(--cinema-edge, rgba(255, 255, 255, 0.10)),
+    0 0.4em 0.9em rgba(0, 0, 0, 0.3),
     0 1.6em 3.4em rgba(0, 0, 0, 0.44);
 }
 .asset-browser-hero[data-tone="glass"] {
@@ -135,9 +136,11 @@ export const browserHero = defineAsset({
   --bh-i: 0;
   height: 6.2em;
   background:
-    radial-gradient(120% 160% at 12% 0%, color-mix(in srgb, var(--bh-accent, #6ea8ff) 34%, transparent), transparent 62%),
-    linear-gradient(135deg, color-mix(in srgb, var(--bh-accent, #6ea8ff) 22%, var(--surface-2, #1d2430)), var(--surface-2, #1d2430));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    radial-gradient(130% 175% at 10% -20%, color-mix(in srgb, var(--bh-accent, #6ea8ff) 32%, transparent), transparent 60%),
+    linear-gradient(140deg, color-mix(in srgb, var(--bh-accent, #6ea8ff) 24%, var(--surface-2, #1d2430)), var(--surface-2, #1d2430) 78%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 0 1px color-mix(in srgb, var(--bh-accent, #6ea8ff) 12%, transparent);
 }
 .asset-browser-hero .bh-row {
   height: 2.1em;

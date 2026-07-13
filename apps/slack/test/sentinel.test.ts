@@ -37,8 +37,16 @@ describe("Sentinel contract registry — closed-world finding coverage", () => {
     }
   });
 
+  it("scans canonical signatures after runner helper extraction", () => {
+    const signatureSource = "runner/findingSignatures.ts";
+    expect(FINDING_SOURCE_FILES).toContain(signatureSource);
+    expect(extractFindingCodes(readSource(signatureSource))).toEqual(
+      expect.arrayContaining(["camera_part_missing", "moment_unbound"]),
+    );
+  });
+
   it("registers EVERY finding class the validators actually emit (closed world)", () => {
-    // The guarantee the FALLBACKS.md catalog never had: a NEW finding code that
+    // SENTINEL.md's closed-world guarantee: a NEW finding code that
     // no row owns fails CI here. Either add/expand a row in sentinel.ts, or — if
     // it is genuinely not a finding — add it to NON_FINDING_LITERALS (a
     // conscious, reviewed act).

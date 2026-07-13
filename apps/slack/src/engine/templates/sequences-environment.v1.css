@@ -1,0 +1,375 @@
+/*
+ * Sequences environment kit v1.
+ * Host-owned paint only: no interaction, no text, no camera-world filters.
+ * Every fallback avoids pure white/black and remains 8-bit/H.264 friendly.
+ */
+
+[data-scene]:has(> .seq-env) {
+  isolation: isolate;
+}
+
+.seq-env,
+.seq-env * {
+  box-sizing: border-box;
+}
+
+.seq-env {
+  --seq-env-scrim-opacity: 0.2;
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  background: var(--surface-2, #151b26);
+  color: var(--text, #eef1f5);
+  transform: translateZ(0);
+}
+
+.seq-env__depth,
+.seq-env__wallpaper,
+.seq-env__generated-field,
+.seq-env__scrim {
+  position: absolute;
+  inset: 0;
+}
+
+.seq-env__depth {
+  overflow: hidden;
+  transform: none;
+  z-index: 0;
+}
+
+.seq-env__wallpaper {
+  left: -4%;
+  top: -4%;
+  width: 108%;
+  height: 108%;
+  max-width: none;
+  max-height: none;
+  object-fit: cover;
+  transform-origin: 50% 50%;
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.seq-env__scrim {
+  opacity: 1;
+  z-index: 2;
+}
+
+.seq-env__scrim--none {
+  display: none;
+}
+
+.seq-env__scrim--full-scrim {
+  background: rgba(9, 13, 21, var(--seq-env-scrim-opacity));
+}
+
+.seq-env__scrim--gradient-scrim {
+  background: linear-gradient(90deg,
+    rgba(9, 13, 21, var(--seq-env-scrim-opacity)),
+    rgba(9, 13, 21, 0) 66%);
+}
+
+.seq-env[data-env-safe-side="right"] .seq-env__scrim--gradient-scrim,
+.seq-env[data-env-safe-side="top-right"] .seq-env__scrim--gradient-scrim {
+  background: linear-gradient(270deg,
+    rgba(9, 13, 21, var(--seq-env-scrim-opacity)),
+    rgba(9, 13, 21, 0) 66%);
+}
+
+.seq-env[data-env-safe-side="top-center"] .seq-env__scrim--gradient-scrim,
+.seq-env[data-env-safe-side="top-left"] .seq-env__scrim--gradient-scrim,
+.seq-env[data-env-safe-side="top-right"] .seq-env__scrim--gradient-scrim {
+  background: linear-gradient(180deg,
+    rgba(9, 13, 21, var(--seq-env-scrim-opacity)),
+    rgba(9, 13, 21, 0) 62%);
+}
+
+.seq-env[data-env-safe-side="bottom-left"] .seq-env__scrim--gradient-scrim {
+  background: linear-gradient(0deg,
+    rgba(9, 13, 21, var(--seq-env-scrim-opacity)),
+    rgba(9, 13, 21, 0) 62%);
+}
+
+.seq-env__scrim--localized-scrim {
+  inset: 7% auto auto 6%;
+  width: 43%;
+  height: 40%;
+  border-radius: 64px;
+  background: rgba(9, 13, 21, var(--seq-env-scrim-opacity));
+}
+
+.seq-env[data-env-safe-side="right"] .seq-env__scrim--localized-scrim,
+.seq-env[data-env-safe-side="top-right"] .seq-env__scrim--localized-scrim {
+  right: 6%;
+  left: auto;
+}
+
+.seq-env[data-env-safe-side="top-center"] .seq-env__scrim--localized-scrim,
+.seq-env[data-env-safe-side="center"] .seq-env__scrim--localized-scrim {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.seq-env[data-env-safe-side="bottom-left"] .seq-env__scrim--localized-scrim {
+  top: auto;
+  bottom: 7%;
+}
+
+.seq-env__light {
+  position: absolute;
+  width: 42%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  opacity: 0.2;
+  background: radial-gradient(circle,
+    color-mix(in srgb, var(--accent, #6ea8ff) 42%, transparent),
+    transparent 68%);
+  transform: translate3d(0, 0, 0);
+  transform-origin: center;
+  will-change: transform, opacity;
+  z-index: 1;
+}
+
+.seq-env__light--wallpaper {
+  right: -9%;
+  top: -18%;
+}
+
+/* Desktop stage ------------------------------------------------------- */
+
+.seq-env__desktop-menubar {
+  position: absolute;
+  top: 20px;
+  left: 28px;
+  right: 28px;
+  height: 34px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 9px;
+  padding: 0 13px;
+  border: 1px solid rgba(238, 241, 245, 0.22);
+  border-radius: 12px;
+  background: rgba(16, 22, 33, 0.34);
+  box-shadow: 0 10px 34px rgba(9, 13, 21, 0.14);
+  z-index: 3;
+}
+
+.seq-env__desktop-menubar span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(238, 241, 245, 0.68);
+}
+
+.seq-env__desktop-window {
+  position: absolute;
+  border: 1px solid rgba(238, 241, 245, 0.28);
+  border-radius: 24px;
+  background: rgba(231, 235, 241, 0.16);
+  box-shadow: 0 30px 80px rgba(9, 13, 21, 0.24);
+  will-change: transform;
+  z-index: 3;
+}
+
+.seq-env__desktop-window::before {
+  content: "";
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  right: 18px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(238, 241, 245, 0.22);
+}
+
+.seq-env__desktop-window i {
+  position: absolute;
+  left: 9%;
+  right: 9%;
+  height: 10%;
+  border-radius: 999px;
+  background: rgba(238, 241, 245, 0.16);
+}
+
+.seq-env__desktop-window i:nth-child(1) { top: 35%; right: 42%; }
+.seq-env__desktop-window i:nth-child(2) { top: 52%; left: 18%; }
+.seq-env__desktop-window i:nth-child(3) { top: 69%; right: 28%; }
+
+.seq-env__desktop-window--back {
+  width: 33%;
+  height: 42%;
+  right: 7%;
+  top: 13%;
+  opacity: 0.74;
+}
+
+.seq-env__desktop-window--front {
+  width: 38%;
+  height: 50%;
+  left: 5%;
+  bottom: 12%;
+  opacity: 0.66;
+}
+
+.seq-env__dock {
+  position: absolute;
+  left: 50%;
+  bottom: 25px;
+  display: flex;
+  gap: 12px;
+  padding: 11px 14px;
+  border: 1px solid rgba(238, 241, 245, 0.26);
+  border-radius: 20px;
+  background: rgba(16, 22, 33, 0.46);
+  box-shadow: 0 18px 46px rgba(9, 13, 21, 0.24);
+  translate: -50% 0;
+  will-change: transform;
+  z-index: 3;
+}
+
+.seq-env__dock i {
+  width: 31px;
+  height: 31px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent, #6ea8ff) 58%, #d9dee7);
+  border: 1px solid rgba(238, 241, 245, 0.38);
+}
+
+.seq-env__dock i:nth-child(2n) {
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--surface, #1b2330) 52%, #d9dee7);
+}
+
+/* Product pedestals --------------------------------------------------- */
+
+.seq-env__pedestal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  overflow: hidden;
+  border: 1px solid rgba(238, 241, 245, 0.42);
+  background: rgba(238, 241, 245, 0.9);
+  box-shadow: 0 48px 120px rgba(9, 13, 21, 0.34),
+    0 2px 8px rgba(9, 13, 21, 0.24);
+  transform: translate(-50%, -50%);
+  z-index: 3;
+}
+
+.seq-env__pedestal--screen {
+  width: min(78%, 1450px);
+  height: min(73%, 790px);
+  border-radius: 34px;
+}
+
+.seq-env__pedestal--app {
+  width: calc(100% - 104px);
+  height: calc(100% - 92px);
+  border-radius: 28px;
+}
+
+.seq-env__pedestal-chrome {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 18px;
+  background: rgba(216, 221, 229, 0.94);
+  border-bottom: 1px solid rgba(16, 22, 33, 0.12);
+}
+
+.seq-env__pedestal-chrome i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(16, 22, 33, 0.35);
+}
+
+.seq-env__pedestal-surface {
+  position: absolute;
+  inset: 44px 0 0;
+  background:
+    linear-gradient(90deg,
+      color-mix(in srgb, var(--accent, #6ea8ff) 8%, #eef1f5),
+      rgba(238, 241, 245, 0.96) 28%),
+    #eef1f5;
+}
+
+/* A dark frame cannot place a near-white monitor behind transparent dark UI.
+ * The 2026-07-11 LaunchRelay probe did exactly that: the production pedestal
+ * became the dominant white card and erased the intended hazard-dark film.
+ * Keep the same physical screen shape, but honor the plan's committed basis. */
+.seq-env[data-env-basis="dark"] .seq-env__pedestal {
+  border-color: rgba(238, 241, 245, 0.24);
+  background: color-mix(in srgb, var(--surface, #171e2a) 92%, #eef1f5);
+}
+
+.seq-env[data-env-basis="dark"] .seq-env__pedestal-chrome {
+  background: color-mix(in srgb, var(--surface-2, #151b26) 94%, #d8dde5);
+  border-bottom-color: rgba(238, 241, 245, 0.14);
+}
+
+.seq-env[data-env-basis="dark"] .seq-env__pedestal-chrome i {
+  background: rgba(238, 241, 245, 0.4);
+}
+
+.seq-env[data-env-basis="dark"] .seq-env__pedestal-surface {
+  background:
+    linear-gradient(90deg,
+      color-mix(in srgb, var(--accent, #6ea8ff) 7%, var(--surface-2, #151b26)),
+      color-mix(in srgb, var(--surface, #171e2a) 96%, #eef1f5) 28%),
+    var(--surface, #171e2a);
+}
+
+/* Generated token field ---------------------------------------------- */
+
+.seq-env--generated-field {
+  background: color-mix(in srgb, var(--surface, #171e2a) 88%, var(--accent, #6ea8ff));
+}
+
+.seq-env__generated-field {
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 42% 48% at 18% 22%,
+      color-mix(in srgb, var(--accent, #6ea8ff) 28%, transparent), transparent 72%),
+    radial-gradient(ellipse 38% 52% at 82% 78%,
+      color-mix(in srgb, var(--cinema-bloom, #8ba8d4) 22%, transparent), transparent 72%),
+    var(--surface-2, #151b26);
+}
+
+.seq-env__light--a { left: -8%; top: -15%; }
+.seq-env__light--b { right: -7%; bottom: -18%; opacity: 0.14; }
+
+.seq-env__field-card {
+  position: absolute;
+  width: 26%;
+  height: 31%;
+  border: 1px solid color-mix(in srgb, var(--accent, #6ea8ff) 30%, transparent);
+  border-radius: var(--cinema-radius, 30px);
+  background: color-mix(in srgb, var(--surface, #171e2a) 82%, transparent);
+  box-shadow: 0 30px 80px rgba(9, 13, 21, 0.16);
+  opacity: 0.58;
+  will-change: transform;
+  z-index: 3;
+}
+
+.seq-env__field-card--a { left: 7%; bottom: 10%; }
+.seq-env__field-card--b { right: 8%; top: 12%; width: 20%; height: 24%; opacity: 0.42; }
+
+.seq-env[data-env-basis="light"] {
+  background: var(--surface-2, #e4e7ec);
+}
+
+.seq-env[data-env-basis="light"] .seq-env__generated-field {
+  background:
+    radial-gradient(ellipse 42% 48% at 18% 22%,
+      color-mix(in srgb, var(--accent, #5b7cfa) 20%, transparent), transparent 72%),
+    radial-gradient(ellipse 38% 52% at 82% 78%,
+      color-mix(in srgb, var(--cinema-bloom, #8ba8d4) 17%, transparent), transparent 72%),
+    var(--surface-2, #e4e7ec);
+}

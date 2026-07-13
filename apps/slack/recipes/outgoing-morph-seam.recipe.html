@@ -1,0 +1,335 @@
+<script type="application/json" data-recipe-meta>
+{
+  "format": 2,
+  "id": "outgoing-morph-seam",
+  "title": "Outgoing product surface compressed into a match-cut handoff",
+  "description": "A resolved product card clears its detail, compresses into a pill, and moves toward the next shot during the final seam window so a shape-match cut reads as caused.",
+  "tags": [
+    "outgoing-motion",
+    "morph-seam",
+    "shape-match",
+    "match-cut",
+    "handoff",
+    "anticipation"
+  ],
+  "triggerPatterns": [
+    "outgoing (motion|morph)",
+    "morph seam",
+    "shape[ -]?match (cut|handoff|transition)",
+    "match[ -]?cut (pill|handoff|seam)",
+    "continuity handoff",
+    "compress(es|ed|ing)? .*pill",
+    "moves? toward .*cut"
+  ],
+  "durationWindow": { "minSec": 4.1, "maxSec": 9 },
+  "componentKinds": ["app-window", "button"],
+  "params": [
+    {
+      "name": "eyebrow",
+      "kind": "text",
+      "description": "Small context line above the result.",
+      "default": "APPROVAL WORKFLOW",
+      "maxChars": 28
+    },
+    {
+      "name": "title",
+      "kind": "text",
+      "description": "Resolved product outcome shown before the handoff.",
+      "default": "Ready for launch",
+      "maxChars": 36
+    },
+    {
+      "name": "body",
+      "kind": "text",
+      "description": "One short supporting line inside the source surface.",
+      "default": "Every reviewer signed off in the release thread.",
+      "maxChars": 64
+    },
+    {
+      "name": "handoffLabel",
+      "kind": "text",
+      "description": "The compact label that survives into the outgoing pill.",
+      "default": "Approved",
+      "maxChars": 18
+    },
+    {
+      "name": "bridgePart",
+      "kind": "part-ref",
+      "description": "Stable data-part used as the outgoing shape-match endpoint.",
+      "default": "morph-seam"
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for the status, seam line, and landed pill.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "handoffSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the pill completes its seam move; place the cut 0.35–0.7s later.",
+      "default": 4,
+      "min": 3.15,
+      "max": 8.5
+    }
+  ],
+  "revision": 1,
+  "demo": {
+    "durationSec": 4.75,
+    "params": {
+      "eyebrow": "APPROVAL WORKFLOW",
+      "title": "Ready for launch",
+      "body": "Every reviewer signed off in the release thread.",
+      "handoffLabel": "Approved",
+      "bridgePart": "morph-seam",
+      "accent": "var(--cinema-key)",
+      "handoffSec": 4
+    }
+  },
+  "sanityBriefs": [
+    "End the scene with outgoing motion: the product card compresses into a pill for a shape-match handoff at the cut.",
+    "Build a morph seam where the approved surface moves toward the match-cut instead of changing shots from a static frame."
+  ]
+}
+</script>
+<template data-recipe-doc>
+# outgoing-morph-seam — resolved surface, motivated compression, handoff pill
+
+**What it is.** A source surface with a clear result state, followed by a
+purpose-built outgoing phrase. Its product detail releases first, the surface
+compresses into a rounded pill, the surviving outcome label appears, and the
+pill continues toward the next shot. The movement begins before the boundary,
+so a subsequent shape-match reads as the consequence of the product action
+rather than an ornamental transition pasted onto two static frames.
+
+**When to declare it.** Use for an outgoing morph seam, shape-match handoff,
+continuity handoff, or match cut whose source can resolve into a pill. Its
+defaults are complete for host auto-declaration. Set `bridgePart` to the exact
+outgoing cut endpoint and use the same value as the scene cut's `fromPart`;
+the incoming shot should expose a similarly proportioned pill or compact card.
+
+**How to stage the shot around it.** Keep the camera settled during the final
+0.5 seconds. Put the boundary 0.35–0.7 seconds after `handoffSec`, while the
+pill is still carrying gentle directional momentum. Do not animate the scene
+wrapper in competition with the cut runtime. The detailed product result is a
+PRIMARY moment before the compression; the landed pill is transition
+paperwork, not a new information beat.
+
+**Slots.** `eyebrow`, `title`, and `body` describe the source result;
+`handoffLabel` survives the compression; `bridgePart` is the stable cut
+endpoint; `accent` is a brand token; `handoffSec` is when the compressed pill
+lands before the cut.
+</template>
+<style data-recipe-style>
+  .rcp-seam {
+    position: relative;
+    box-sizing: border-box;
+    width: 1200px;
+    height: 590px;
+    overflow: hidden;
+    border-radius: 34px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: #151d28;
+    color: #f4f6f8;
+    box-shadow: 0 44px 110px rgba(0, 0, 0, 0.46);
+    transform-origin: 50% 50%;
+  }
+  .rcp-seam .rcp-seam-accent {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 8px;
+    background: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-seam .rcp-seam-main {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 64px;
+    padding: 70px 76px 66px 86px;
+  }
+  .rcp-seam .rcp-seam-copy {
+    align-self: center;
+  }
+  .rcp-seam .rcp-seam-eyebrow {
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    color: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-seam .rcp-seam-title {
+    margin-top: 24px;
+    font-size: 70px;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    font-weight: 760;
+  }
+  .rcp-seam .rcp-seam-body {
+    margin-top: 26px;
+    max-width: 580px;
+    font-size: 25px;
+    line-height: 1.45;
+    color: rgba(244, 246, 248, 0.68);
+  }
+  .rcp-seam .rcp-seam-proof {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 20px;
+  }
+  .rcp-seam .rcp-seam-proof-row {
+    display: grid;
+    grid-template-columns: 48px 1fr auto;
+    align-items: center;
+    gap: 16px;
+    min-height: 82px;
+    padding: 0 20px;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .rcp-seam .rcp-seam-avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.16);
+  }
+  .rcp-seam .rcp-seam-person {
+    font-size: 19px;
+    font-weight: 620;
+  }
+  .rcp-seam .rcp-seam-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    color: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-seam .rcp-seam-check {
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--rcp-accent, #ffc24d);
+    color: #0b0e12;
+    font-size: 15px;
+    font-weight: 900;
+  }
+  .rcp-seam .rcp-seam-handoff {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    opacity: 0;
+    white-space: nowrap;
+    font-size: 38px;
+    font-weight: 730;
+    letter-spacing: -0.015em;
+  }
+  .rcp-seam .rcp-seam-handoff-check {
+    display: inline-grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--rcp-accent, #ffc24d);
+    color: #0b0e12;
+    font-size: 27px;
+    font-weight: 900;
+  }
+  .rcp-seam .rcp-seam-line {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 720px;
+    height: 3px;
+    margin-left: -360px;
+    margin-top: -1px;
+    border-radius: 999px;
+    background: var(--rcp-accent, #ffc24d);
+    opacity: 0;
+    transform: scaleX(0.2);
+  }
+  .rcp-seam .rcp-seam-pulse {
+    position: absolute;
+    right: 72px;
+    top: 50%;
+    width: 340px;
+    height: 340px;
+    margin-top: -170px;
+    border: 2px solid var(--rcp-accent, #ffc24d);
+    border-radius: 50%;
+    opacity: 0;
+    pointer-events: none;
+  }
+</style>
+<template data-recipe-markup>
+  <div class="rcp-seam" data-part="{{bridgePart}}" data-layout-important
+    data-layout-anchor="frame:center" style="--rcp-accent: {{accent}}">
+    <div class="rcp-seam-accent"></div>
+    <div class="rcp-seam-main">
+      <div class="rcp-seam-copy">
+        <div class="rcp-seam-eyebrow">{{eyebrow}}</div>
+        <div class="rcp-seam-title">{{title}}</div>
+        <div class="rcp-seam-body">{{body}}</div>
+      </div>
+      <div class="rcp-seam-proof">
+        <div class="rcp-seam-proof-row"><span class="rcp-seam-avatar"></span><span class="rcp-seam-person">Maya Chen</span><span class="rcp-seam-state"><span class="rcp-seam-check">✓</span>Approved</span></div>
+        <div class="rcp-seam-proof-row"><span class="rcp-seam-avatar"></span><span class="rcp-seam-person">Theo Martin</span><span class="rcp-seam-state"><span class="rcp-seam-check">✓</span>Approved</span></div>
+        <div class="rcp-seam-proof-row"><span class="rcp-seam-avatar"></span><span class="rcp-seam-person">Priya Shah</span><span class="rcp-seam-state"><span class="rcp-seam-check">✓</span>Approved</span></div>
+      </div>
+    </div>
+    <div class="rcp-seam-handoff"><span class="rcp-seam-handoff-check">✓</span>{{handoffLabel}}</div>
+    <div class="rcp-seam-line" data-layout-ignore></div>
+    <div class="rcp-seam-pulse" data-layout-ignore></div>
+  </div>
+</template>
+<script data-recipe-motion>
+  var handoff = {{start}} + {{handoffSec}};
+
+  // Resolve the product result first: one surface, then three tightly
+  // overlapped approvals. The audience reads the state before it transforms.
+  // Paint the source surface immediately so the scene never opens on host
+  // furniture alone; its resolved claim is already readable while the
+  // approval rows follow into place.
+  tl.fromTo('[data-part="{{bridgePart}}"]', { y: 28, scale: 0.985 },
+    { y: 0, scale: 1, duration: 0.6, ease: "power3.out" }, {{start}});
+  tl.fromTo('[data-part="{{bridgePart}}"] .rcp-seam-copy', { x: -20, opacity: 0.68 },
+    { x: 0, opacity: 1, duration: 0.55, ease: "power3.out" }, {{start}} + 0.12);
+  tl.fromTo('[data-part="{{bridgePart}}"] .rcp-seam-proof-row', { x: 22, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.5, stagger: 0.09, ease: "seqSettle" }, {{start}} + 0.48);
+  tl.fromTo('[data-part="{{bridgePart}}"] .rcp-seam-check', { scale: 0.35, rotate: -18 },
+    { scale: 1.14, rotate: 0, duration: 0.24, stagger: 0.09, ease: "power4.out" }, {{start}} + 0.68);
+  tl.to('[data-part="{{bridgePart}}"] .rcp-seam-check',
+    { scale: 1, duration: 0.2, stagger: 0.09, ease: "seqSettle" }, {{start}} + 0.94);
+  tl.fromTo('[data-part="{{bridgePart}}"] .rcp-seam-pulse', { scale: 0.72, opacity: 0 },
+    { scale: 1.08, opacity: 0.3, duration: 0.42, ease: "power3.out", immediateRender: false }, {{start}} + 1.02);
+  tl.to('[data-part="{{bridgePart}}"] .rcp-seam-pulse',
+    { scale: 1.22, opacity: 0, duration: 0.28, ease: "power2.out" }, {{start}} + 1.44);
+
+  // The earned seam. Detail clears before geometry changes, the source
+  // compresses into a pill, then keeps a small amount of directional travel
+  // so the cut runtime inherits visible outgoing momentum.
+  tl.to('[data-part="{{bridgePart}}"] .rcp-seam-main',
+    { y: -10, opacity: 0, duration: 0.24, ease: "power2.in" }, handoff - 0.5);
+  tl.to('[data-part="{{bridgePart}}"] .rcp-seam-accent',
+    { opacity: 0, duration: 0.16, ease: "power1.out" }, handoff - 0.42);
+  tl.to('[data-part="{{bridgePart}}"]',
+    { x: -22, scale: 1.012, duration: 0.16, ease: "power2.out" }, handoff - 0.54);
+  tl.to('[data-part="{{bridgePart}}"]',
+    { width: 360, height: 112, x: 360, borderRadius: 999, duration: 0.42, ease: "power4.inOut" }, handoff - 0.38);
+  tl.fromTo('[data-part="{{bridgePart}}"] .rcp-seam-handoff', { opacity: 0, scale: 0.94 },
+    { opacity: 1, scale: 1, duration: 0.24, ease: "power3.out" }, handoff - 0.2);
+  tl.fromTo('[data-part="{{bridgePart}}"] .rcp-seam-line', { opacity: 0, scaleX: 0.2 },
+    { opacity: 0.34, scaleX: 1, duration: 0.22, ease: "power2.out" }, handoff - 0.16);
+  tl.to('[data-part="{{bridgePart}}"] .rcp-seam-line',
+    { opacity: 0, scaleX: 0.35, duration: 0.24, ease: "power2.in" }, handoff + 0.08);
+  tl.to('[data-part="{{bridgePart}}"]',
+    { x: 520, scale: 0.96, duration: 0.36, ease: "power3.in" }, handoff + 0.06);
+</script>

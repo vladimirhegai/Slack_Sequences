@@ -17,11 +17,7 @@ import type { EmitContext, MaterializedLayer } from "../src/registry/types.ts";
 
 const EXT_ROOT = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  "..",
-  "examples",
-  "forge",
+  "fixtures",
   "extensions",
 );
 

@@ -1,6 +1,6 @@
 {
   "format": 2,
-  "revision": 11,
+  "revision": 13,
   "id": "last-word-roulette",
   "title": "Locked sentence with a final-word roulette payoff",
   "description": "Hero headline whose last word ticks through candidates on a masked wheel, then snaps onto the payoff word with an accent underline and glow.",
@@ -74,10 +74,10 @@
     {
       "name": "settleSec",
       "kind": "number",
-      "description": "Seconds after scene start when the payoff locks (leave >=1s of scene after it).",
+      "description": "Seconds after scene start when the payoff locks (leave >=1s of scene after it, and keep it at least 1s before the scene ends).",
       "default": 2.6,
-      "min": 1.6,
-      "max": 12
+      "min": 1.8,
+      "max": 8
     }
   ],
   "engine": {
@@ -92,5 +92,5 @@
       "cinemaKit": 1
     }
   },
-  "fragmentHash": "3da85bc3da217b4d38c8f691b25c3602d417647f787b0874f37df308eeca12ba"
+  "fragmentHash": "c9e18407e74a917d1eb91545ce545624ad8f2ec85d4019b0358bbc4548888c47"
 }

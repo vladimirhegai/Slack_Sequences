@@ -1,8 +1,15 @@
 /**
  * Safe latency probe for the configured planning provider. It prints timing and
  * output length only—never keys, prompts, workspace content, or model output.
+ * This legacy-provider probe is opt-in and is not used by the Luna route.
  */
 import { PROVIDERS } from "@sequences/platform/providers";
+
+if (process.env.SEQUENCES_ENABLE_LEGACY_PROBES !== "1") {
+  throw new Error(
+    "legacy paid probe disabled; set SEQUENCES_ENABLE_LEGACY_PROBES=1 explicitly",
+  );
+}
 
 const providerId = process.env.SLACK_SEQUENCES_PROVIDER ?? "openrouter-api";
 const provider = PROVIDERS[providerId as keyof typeof PROVIDERS];

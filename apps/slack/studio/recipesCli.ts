@@ -14,11 +14,13 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadRecipeLibrary, recipeRetrievalScore } from "../src/engine/recipeContract.ts";
 import { retrieveHyperframesSkillContext } from "../src/agent/skillContext.ts";
 import { gateRecipe, loadGateRecord, recipeGateDir } from "./gate.ts";
 import { exportRecipe } from "./exportRecipe.ts";
 import { listRecipeSources, recipeSourceStatuses } from "./recipeSource.ts";
+import { buildCatalogScaffold, writeCatalogScaffold } from "./catalogScaffold.ts";
 
 const [command, ...rest] = process.argv.slice(2);
 const all = rest.includes("--all");
@@ -112,6 +114,19 @@ async function main(): Promise<void> {
     case undefined:
       printList();
       return;
+    case "new": {
+      const id = ids[0];
+      if (!id) {
+        process.stderr.write("pass a recipe id\n");
+        process.exit(2);
+      }
+      const target = writeCatalogScaffold(
+        path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."),
+        buildCatalogScaffold("recipes", id),
+      );
+      process.stdout.write(`created ${target}\nread studio/skills/studio-recipes/SKILL.md before implementation\n`);
+      return;
+    }
     case "gate": {
       for (const id of targetIds()) {
         if (!(await runGate(id))) process.exitCode = 1;
@@ -125,7 +140,7 @@ async function main(): Promise<void> {
       return;
     }
     default:
-      process.stderr.write(`unknown command "${command}" — use list | gate <id> | export <id>\n`);
+      process.stderr.write(`unknown command "${command}" — use list | new <id> | gate <id> | export <id>\n`);
       process.exit(2);
   }
 }

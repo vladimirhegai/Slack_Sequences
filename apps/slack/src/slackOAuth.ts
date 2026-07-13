@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { storeSlackUserToken } from "./slackTokenStore.ts";
 
-const USER_SCOPES = [
+export const SLACK_USER_OAUTH_SCOPES = [
   "search:read.public",
   "search:read.private",
   "search:read.files",
@@ -221,7 +221,7 @@ export async function handleSlackOAuthRequest(
     // issues a user-only grant for the requested user scopes.
     const authorize = new URL("https://slack.com/oauth/v2_user/authorize");
     authorize.searchParams.set("client_id", oauth.clientId);
-    authorize.searchParams.set("scope", USER_SCOPES.join(","));
+    authorize.searchParams.set("scope", SLACK_USER_OAUTH_SCOPES.join(","));
     authorize.searchParams.set("redirect_uri", oauth.redirectUri);
     authorize.searchParams.set("state", state);
     if (url.searchParams.get("team")) authorize.searchParams.set("team", url.searchParams.get("team")!);

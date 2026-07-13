@@ -1,9 +1,11 @@
 # last-word-roulette — locked sentence, final-word wheel, payoff snap
 
 **What it is.** A hero headline whose sentence is locked while its final word
-is a masked vertical roulette: three candidate words tick past in committed
-steps, then the payoff word snaps in on a settle ease, an accent underline
-draws beneath it, and a soft glow acknowledges the landing before releasing.
+is a masked vertical roulette: the candidate words spin past twice in quick,
+committed ticks that ease off, then the payoff word snaps in on a settle ease
+with a small slot pop, an accent underline draws beneath it, and a soft glow
+acknowledges the landing before releasing. The spin occupies ~1.3s before the
+payoff locks at `settleSec`.
 
 **When to declare it.** The brief positions the product against alternatives,
 cycles through options, or builds to one decisive word — "everything becomes

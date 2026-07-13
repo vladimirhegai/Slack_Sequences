@@ -15,6 +15,12 @@ import { mcpEnabled, resolveProvider } from "./orchestrator.ts";
 import { findBrowserExecutable, findFfmpeg } from "./engine/render.ts";
 import { dataDir, initializeProject } from "./engine/projectTemplates.ts";
 import { getSlackUserToken } from "./slackTokenStore.ts";
+import { resolveAuthorRoute } from "./engine/lunaRoute.ts";
+import {
+  inspectLunaWorkerHealth,
+  lunaWorkerHealthIsExact,
+  resolveLunaWorkerConfig,
+} from "./engine/lunaWorkerClient.ts";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
@@ -137,24 +143,64 @@ export function checkPlanningBrain(): DiagnosticCheck {
     const configured = Boolean(keyName && process.env[keyName]);
     return configured
       ? {
-          label: "Planning brain",
+          label: "Legacy provider",
           status: "ok",
           detail: `${providerId} (${keyName} set)`,
           core: false,
         }
       : {
-          label: "Planning brain",
+          label: "Legacy provider",
           status: "fail",
           detail: `${providerId} selected but ${keyName ?? "its API key"} is missing`,
           core: false,
         };
   }
   return {
-    label: "Planning brain",
+    label: "Legacy provider",
     status: "warn",
     detail: `${providerId} (key-free; ensure the CLI is installed and logged in)`,
     core: false,
   };
+}
+
+async function checkLunaWorker(): Promise<DiagnosticCheck> {
+  if (resolveAuthorRoute() !== "luna-direct") {
+    return {
+      label: "Luna Codex worker",
+      status: "warn",
+      detail: "legacy-provider rollback route is selected",
+      core: false,
+    };
+  }
+  try {
+    const health = await withTimeout(
+      inspectLunaWorkerHealth(resolveLunaWorkerConfig()),
+      8_000,
+      () => ({ ok: false, status: "timed out" }),
+    );
+    if (!lunaWorkerHealthIsExact(health)) {
+      return {
+        label: "Luna Codex worker",
+        status: "fail",
+        detail: `${health.status ?? "not ready"} · model=${health.model ?? "missing"} · ` +
+          `reasoning=${health.reasoningEffort ?? "missing"} · version=${health.version ?? "missing"}`,
+        core: true,
+      };
+    }
+    return {
+      label: "Luna Codex worker",
+      status: "ok",
+      detail: `${health.model ?? "gpt-5.6-luna"} · ${health.version ?? "Codex CLI"} · authenticated`,
+      core: true,
+    };
+  } catch (error) {
+    return {
+      label: "Luna Codex worker",
+      status: "fail",
+      detail: errMessage(error),
+      core: true,
+    };
+  }
 }
 
 function checkHostedMcpContext(teamId?: string, userId?: string): DiagnosticCheck {
@@ -215,7 +261,8 @@ export async function runDiagnostics(input: DiagnosticsInput = {}): Promise<Diag
     await checkSlackApi(input.client),
     await checkSequencesMcp(),
     checkRenderHost(),
-    checkPlanningBrain(),
+    await checkLunaWorker(),
+    ...(resolveAuthorRoute() === "legacy-provider" ? [checkPlanningBrain()] : []),
     checkHostedMcpContext(input.teamId, input.userId),
     checkTokenEncryption(),
     checkDataDir(),

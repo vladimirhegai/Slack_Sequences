@@ -1,0 +1,1408 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Recipe proof — checklist-cascade</title>
+    <script src="gsap.min.js"></script>
+<script src="sequences-camera.v1.js"></script>
+    <style id="sequences-cinema" data-version="1">
+/*
+ * sequences-cinema.v1 — host-owned cinematography kit.
+ *
+ * Light, material, grade, and film texture for direct HyperFrames compositions.
+ * Pure CSS: gradients and layered shadows only — no blend modes, no filters,
+ * no animation, no network. Deterministic under seek because nothing here
+ * moves; motion stays in the one paused GSAP timeline.
+ *
+ * The kit reads the composition's own tokens (--surface, --accent, …) through
+ * cinema variables with safe fallbacks. frame.md renders the per-job values;
+ * the author only places elements and picks classes.
+ */
+
+/* ── Film texture: grain + vignette on every composition ─────────────────
+ * One pseudo-element, two background layers. Sits above scene content but
+ * below the cut runtime's overlay layer (z 2147482990). Alpha lives in the
+ * gradient stops and the grain SVG itself (feFuncA slope), so the layers can
+ * carry different strengths. Fixed feTurbulence seed keeps renders identical.
+ */
+[data-composition-id] {
+  position: relative;
+  /* MD4 grade shift: the fx runtime fades in a full-frame panel WEARING the
+   * target grade class — the panel's own ::after paints that grade's steady
+   * wash — so the turn is pure grading, no wipe geometry and no cover color
+   * brighter than the settled wash. At cover the scene's class swaps and the
+   * panel drops out on identical pixels. */
+}
+[data-composition-id]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147482960;
+  background-image:
+    radial-gradient(
+      140% 108% at 50% 42%,
+      rgba(0, 0, 0, 0) 54%,
+      var(--cinema-vignette, rgba(3, 2, 8, 0.36)) 100%
+    ),
+    url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='160'%20height='160'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.82'%20numOctaves='2'%20stitchTiles='stitch'%20seed='7'/%3E%3CfeColorMatrix%20type='saturate'%20values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA%20type='linear'%20slope='0.055'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect%20width='160'%20height='160'%20filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: no-repeat, repeat;
+  background-size: 100% 100%, 160px 160px;
+}
+
+/* ── Key light: a directional soft light field inside a scene ─────────────
+ * Place as decoration: <div class="keylight keylight-tr" data-layout-ignore>.
+ * The negative inset lets the falloff leave the frame instead of dying at
+ * the safe area. Grade classes retint it through --cinema-key.
+ */
+.keylight {
+  position: absolute;
+  inset: -18%;
+  pointer-events: none;
+  background: radial-gradient(
+    54% 46% at var(--key-x, 30%) var(--key-y, 20%),
+    var(--cinema-key, rgba(255, 255, 255, 0.09)) 0%,
+    rgba(255, 255, 255, 0) 70%
+  );
+}
+.keylight-tl { --key-x: 24%; --key-y: 14%; }
+.keylight-tr { --key-x: 76%; --key-y: 14%; }
+.keylight-c  { --key-x: 50%; --key-y: 40%; }
+.keylight-bl { --key-x: 24%; --key-y: 82%; }
+.keylight-br { --key-x: 76%; --key-y: 82%; }
+
+/* ── Bloom: a soft halo behind one hero element ───────────────────────────
+ * Size and position it yourself (absolute, behind the subject, decoration
+ * only). Grades retint it through --cinema-bloom.
+ */
+.bloom {
+  position: absolute;
+  pointer-events: none;
+  background: radial-gradient(
+    closest-side,
+    var(--cinema-bloom, rgba(255, 255, 255, 0.16)) 0%,
+    rgba(255, 255, 255, 0) 72%
+  );
+}
+
+/* ── Material: surfaces that read as lit objects, not flat rectangles ─────
+ * Sheen gradient (light from above) + hairline edge + top rim highlight +
+ * grounded shadow stack. The surface color itself stays the author's
+ * --surface token; the kit only adds the light response.
+ */
+.material {
+  background:
+    linear-gradient(
+      180deg,
+      var(--cinema-sheen, rgba(255, 255, 255, 0.05)) 0%,
+      rgba(255, 255, 255, 0) 46%
+    ),
+    var(--surface, #1a1a21);
+  border: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
+  border-radius: var(--cinema-radius, 14px);
+  box-shadow:
+    inset 0 1px 0 var(--cinema-rim, rgba(255, 255, 255, 0.08)),
+    0 2px 6px rgba(0, 0, 0, 0.3),
+    0 30px 80px var(--cinema-shadow, rgba(0, 0, 0, 0.5));
+}
+/* The one hero surface of a shot: brighter edge, deeper grounding. */
+.material-hero {
+  background:
+    linear-gradient(
+      180deg,
+      var(--cinema-sheen-hero, rgba(255, 255, 255, 0.08)) 0%,
+      rgba(255, 255, 255, 0) 42%
+    ),
+    var(--surface, #1a1a21);
+  border: 1px solid var(--cinema-edge-hero, rgba(255, 255, 255, 0.14));
+  border-radius: var(--cinema-radius, 14px);
+  box-shadow:
+    inset 0 1px 0 var(--cinema-rim-hero, rgba(255, 255, 255, 0.14)),
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    0 48px 130px var(--cinema-shadow-hero, rgba(0, 0, 0, 0.62));
+}
+/* Toolbar / header band inside a material surface. */
+.material-chrome {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0) 100%),
+    var(--surface-2, var(--surface, #20202a));
+  border-bottom: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
+}
+/* Recessed input / composer / terminal well. */
+.inset-well {
+  background: var(--cinema-well, rgba(0, 0, 0, 0.3));
+  border: 1px solid var(--cinema-edge, rgba(255, 255, 255, 0.09));
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.38);
+}
+
+/* ── Grades: the film's color script, one class per scene ─────────────────
+ * A grade retints the scene's light (key/bloom variables) and lays a
+ * near-transparent tint wash over the scene so the register shift reads as
+ * grading, not a palette swap. Assign grades as an arc across the film
+ * (e.g. cold problem → neutral turn → warm payoff), never at random.
+ * The wash is the scene element's ::after; keep authored ::after off scene
+ * wrappers that carry a grade.
+ */
+.grade-cold {
+  --cinema-key: var(--cinema-key-cold, rgba(128, 158, 222, 0.11));
+  --cinema-bloom: var(--cinema-bloom-cold, rgba(128, 158, 222, 0.17));
+}
+.grade-cold::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  background: linear-gradient(
+    155deg,
+    rgba(98, 130, 200, 0.085) 0%,
+    rgba(8, 10, 20, 0.12) 78%
+  );
+}
+.grade-neutral {
+  --cinema-key: var(--cinema-key-neutral, rgba(255, 255, 255, 0.08));
+  --cinema-bloom: var(--cinema-bloom-neutral, rgba(255, 255, 255, 0.14));
+}
+.grade-warm {
+  --cinema-key: var(--cinema-key-warm, rgba(255, 196, 120, 0.11));
+  --cinema-bloom: var(--cinema-bloom-warm, rgba(255, 196, 120, 0.2));
+}
+.grade-warm::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  background: linear-gradient(
+    205deg,
+    rgba(255, 186, 110, 0.07) 0%,
+    rgba(30, 16, 8, 0.1) 82%
+  );
+}
+.grade-noir {
+  --cinema-key: var(--cinema-key-noir, rgba(200, 205, 230, 0.06));
+  --cinema-bloom: var(--cinema-bloom-noir, rgba(200, 205, 230, 0.1));
+}
+.grade-noir::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  background: radial-gradient(
+    120% 100% at 50% 44%,
+    rgba(0, 0, 0, 0) 42%,
+    rgba(2, 2, 6, 0.3) 100%
+  );
+}
+
+/* ── Light basis ──────────────────────────────────────────────────────────
+ * Add .cinema-light to the composition root when frame.md basis is light.
+ */
+[data-composition-id].cinema-light {
+  --cinema-vignette: rgba(24, 20, 36, 0.14);
+  --cinema-edge: rgba(14, 12, 24, 0.12);
+  --cinema-edge-hero: rgba(14, 12, 24, 0.18);
+  --cinema-rim: rgba(255, 255, 255, 0.75);
+  --cinema-rim-hero: rgba(255, 255, 255, 0.9);
+  --cinema-sheen: rgba(255, 255, 255, 0.5);
+  --cinema-sheen-hero: rgba(255, 255, 255, 0.65);
+  --cinema-shadow: rgba(30, 24, 50, 0.18);
+  --cinema-shadow-hero: rgba(30, 24, 50, 0.26);
+  --cinema-well: rgba(18, 14, 30, 0.06);
+}
+</style>
+  <style id="sequences-components-kit" data-version="1">
+/*
+ * sequences-components.v1 — host-owned motion-native component kit.
+ *
+ * SaaS product surfaces as compact, state-driven markup. The kit owns
+ * structure and every visual STATE; the sequences-components runtime owns the
+ * MOTION between states, compiled into the one paused timeline. Pure static
+ * CSS: no transitions, no animations, no network — deterministic under seek
+ * by construction.
+ *
+ * Tokens: reads the composition's own palette through fallbacks
+ * (--surface, --surface-2, --accent, --accent-text, --text, --muted) plus the
+ * cinema kit's edge/radius variables. On top of those the kit derives its own
+ * design scale on .cmp (radius nesting ladder, one hairline seam color, one
+ * floating-panel shadow) so the whole set reads as one machined system rather
+ * than assembled parts. Pair surfaces with .material / .material-hero /
+ * .inset-well from the cinema kit for resting light response.
+ * Basis: dark-first values; a `.cinema-light` ancestor (the cinema kit's
+ * light-basis marker) re-tunes scrims, elevation, and segmented controls at
+ * the end of this sheet.
+ *
+ * Scale: every component sets font-size:24px (video scale) and sizes its
+ * internals in em — restyle a whole component with one font-size override.
+ * Weight ladder is deliberately narrow — 400 body, 600 labels/medium,
+ * 700 display/emphasis — so nothing shouts and the kit feels typeset, not bold.
+ */
+
+/* Base canvas: authors style #root but rarely html/body, so the first frame
+ * (and any letterboxed edge) flashed the UA's white before content painted.
+ * A tinted near-black default under --canvas keeps the void on-brand; the kit
+ * injects before authored styles, so an authored body rule still wins. */
+html,
+body {
+  background: var(--canvas, #0a0c10);
+}
+
+.cmp {
+  position: relative;
+  box-sizing: border-box;
+  font-size: 24px;
+  color: var(--text, #edf0f6);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+
+  /* Radius nesting ladder — every corner in the kit derives from the cinema
+   * kit's --cinema-radius so a film's corner language stays coherent, and
+   * inner corners stay optically concentric with the outer shell they sit in
+   * (inner radius ≈ outer − padding). Three rungs cover the whole set. */
+  --cmp-radius: var(--cinema-radius, 14px);
+  --cmp-radius-md: calc(var(--cinema-radius, 14px) * 0.78);
+  --cmp-radius-sm: calc(var(--cinema-radius, 14px) * 0.58);
+  --cmp-radius-pill: 999px;
+
+  /* One hairline seam color for every 1px edge (chrome, dividers, rings, wells),
+   * layered on the cinema kit's --cinema-edge so the light and dark bases agree
+   * without per-rule guessing. -soft is the same seam at reduced presence for
+   * interior row dividers that should recede below the outer frame. */
+  --cmp-hairline: var(--cinema-edge, rgba(255, 255, 255, 0.09));
+  --cmp-hairline-soft: color-mix(in srgb, var(--cinema-edge, rgba(255, 255, 255, 0.09)) 55%, transparent);
+
+  /* Floating-panel elevation (search results, menus, toasts, dialogs): a
+   * vertical-dominant, low-spread, cool-ambient drop — Apple-restrained, not a
+   * soft halo. Re-tuned by the light basis at the end of the sheet. */
+  --cmp-pop-shadow:
+    0 16px 40px rgba(3, 6, 14, 0.46),
+    0 3px 9px rgba(3, 6, 14, 0.3);
+}
+.cmp *,
+.cmp *::before,
+.cmp *::after {
+  box-sizing: border-box;
+}
+/* Rolling numbers (count/progress beats) must not jitter as digits change
+ * width — every value slot renders tabular. */
+.cmp [data-cmp-value],
+.cmp .cmp-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pre-built asset unit roots (assetContract.ts): each asset's LOOK lives in
+ * its own library stylesheet; the kit only guarantees the root behaves as one
+ * self-contained unit inside any station or flex/grid wrapper. */
+.asset {
+  position: relative;
+  box-sizing: border-box;
+  flex: none;
+}
+.asset *,
+.asset *::before,
+.asset *::after {
+  box-sizing: border-box;
+}
+
+/* ── shared atoms ─────────────────────────────────────────────────────── */
+
+/* Generic row/list entry used by sidebar, menus, palettes, tabs, lists. */
+.cmp .cmp-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.55em;
+  padding: 0.55em 0.85em;
+  border-radius: var(--cmp-radius-sm);
+  color: var(--muted, #9aa5b4);
+  white-space: nowrap;
+}
+/* Selection is one language everywhere: a quiet accent wash, a crisp accent
+ * hairline to define the row, and text lifted to full ink so the active row
+ * reads even when its tint sits off-frame. */
+.cmp .cmp-item[data-active="true"] {
+  color: var(--text, #edf0f6);
+  background: color-mix(in srgb, var(--accent, #6ea8ff) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #6ea8ff) 32%, transparent);
+}
+.cmp .cmp-danger {
+  color: var(--cmp-danger, #ef6a6a);
+}
+
+/* Status chip (tables, lists, stats). A leading dot in the chip's own state
+ * color gives status a mark, not just a tint — the language every real SaaS
+ * table speaks. The inset hairline keeps the pill crisp on both bases. */
+.cmp .cmp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42em;
+  padding: 0.2em 0.62em;
+  border-radius: 999px;
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: color-mix(in srgb, var(--muted, #9aa5b4) 16%, transparent);
+  color: var(--muted, #9aa5b4);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 20%, transparent);
+}
+.cmp .cmp-chip::before {
+  content: "";
+  flex: none;
+  width: 0.44em;
+  height: 0.44em;
+  border-radius: 50%;
+  background: currentColor;
+}
+.cmp .cmp-chip.cmp-ok,
+.cmp .cmp-icon.cmp-ok {
+  background: color-mix(in srgb, var(--cmp-ok, #4cc38a) 18%, transparent);
+  color: var(--cmp-ok, #4cc38a);
+}
+.cmp .cmp-chip.cmp-warn {
+  background: color-mix(in srgb, var(--cmp-warn, #f0b429) 18%, transparent);
+  color: var(--cmp-warn, #f0b429);
+}
+
+/* Typed-text slot + caret (search, palette, terminal). The runtime owns the
+ * caret's visibility window and the text's arrival. */
+.cmp .cmp-text {
+  min-height: 1.2em;
+  white-space: pre;
+  overflow: hidden;
+}
+.cmp .cmp-caret {
+  display: inline-block;
+  width: 0.08em;
+  height: 1.05em;
+  margin-left: 0.08em;
+  border-radius: 1px;
+  vertical-align: text-bottom;
+  background: var(--accent, #6ea8ff);
+  box-shadow: 0 0 0.4em color-mix(in srgb, var(--accent, #6ea8ff) 50%, transparent);
+  opacity: 0;
+}
+
+/* Highlight ring the runtime synthesizes for `highlight` beats. A hairline
+ * ring + soft accent bloom + faint fill — a focus glow, not the 3px solid
+ * "blue pulse" rectangle the live probes flagged as amateurish. */
+.cmp .cmp-highlight-ring {
+  position: absolute;
+  inset: -0.35em;
+  border: 1.5px solid color-mix(in srgb, var(--accent, #6ea8ff) 62%, transparent);
+  border-radius: calc(var(--cmp-radius) + 0.2em);
+  background: color-mix(in srgb, var(--accent, #6ea8ff) 7%, transparent);
+  box-shadow:
+    0 0 0.9em color-mix(in srgb, var(--accent, #6ea8ff) 20%, transparent),
+    inset 0 0 0.7em color-mix(in srgb, var(--accent, #6ea8ff) 10%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── app-window ───────────────────────────────────────────────────────── */
+
+.cmp-window {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--cmp-radius);
+  background: var(--surface, #161b24);
+}
+.cmp-window .cmp-chrome {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.42em;
+  padding: 0.6em 0.85em;
+  /* The title pill is out of flow (centered absolutely below); the bar keeps
+   * its full height explicitly so the chrome never collapses to dot height. */
+  min-height: 2.35em;
+  background: var(--surface-2, color-mix(in srgb, var(--surface, #161b24) 82%, #fff 4%));
+  border-bottom: 1px solid var(--cmp-hairline);
+}
+/* Traffic lights in the real macOS palette, each with a hairline rim so the
+ * dot reads as a rendered control rather than a flat swatch. */
+.cmp-window .cmp-chrome i {
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted, #9aa5b4) 42%, transparent);
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.22);
+}
+.cmp-window .cmp-chrome i:nth-child(1) { background: #ff5f57; }
+.cmp-window .cmp-chrome i:nth-child(2) { background: #febc2e; }
+.cmp-window .cmp-chrome i:nth-child(3) { background: #28c840; }
+/* The title reads as a URL/tab pill centered in the chrome (the browser
+ * idiom), not a left-hugging label. Absolute centering keeps the dots and
+ * the pill on independent geometry; long titles ellipsize instead of
+ * colliding with the traffic lights. */
+.cmp-window .cmp-chrome-title {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 56%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.2em 0.9em;
+  border-radius: 999px;
+  font-size: 0.72em;
+  letter-spacing: 0.01em;
+  color: var(--muted, #9aa5b4);
+  background: color-mix(in srgb, #000 20%, transparent);
+  box-shadow: inset 0 0 0 1px var(--cmp-hairline-soft);
+}
+.cmp-window .cmp-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  padding: 1em;
+  gap: 1em;
+}
+
+/* ── sidebar ──────────────────────────────────────────────────────────── */
+
+.cmp-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28em;
+  padding: 0.7em 0.55em;
+  min-width: 8.5em;
+  border-right: 1px solid var(--cmp-hairline);
+}
+/* Icon slot: a quiet rounded tile in front of each nav label. Real product
+ * rails carry icons; a neutral tile gives the rail that rhythm without
+ * inventing glyphs the author didn't write. The active item's tile takes the
+ * accent so selection reads at a glance even when the row tint is off-frame. */
+.cmp-sidebar .cmp-item::before {
+  content: "";
+  flex: none;
+  width: 1em;
+  height: 1em;
+  border-radius: 0.3em;
+  background: color-mix(in srgb, var(--muted, #9aa5b4) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted, #9aa5b4) 16%, transparent);
+}
+.cmp-sidebar .cmp-item[data-active="true"]::before {
+  background: color-mix(in srgb, var(--accent, #6ea8ff) 40%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #6ea8ff) 36%, transparent);
+}
+
+/* ── search ───────────────────────────────────────────────────────────── */
+
+.cmp-search {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.62em 0.95em;
+  border-radius: 999px;
+  min-width: 14em;
+}
+.cmp-search .cmp-icon {
+  color: var(--muted, #9aa5b4);
+  font-size: 1.05em;
+}
+.cmp-search .cmp-results {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 0.45em);
+  padding: 0.45em;
+  border-radius: var(--cmp-radius);
+  background: var(--surface-2, #1b212c);
+  border: 1px solid var(--cmp-hairline);
+  box-shadow: var(--cmp-pop-shadow);
+  opacity: 0; /* closed until an `open` beat reveals it */
+  transform: translateY(-0.35em);
+  z-index: 30;
+}
+
+/* ── command-palette ──────────────────────────────────────────────────── */
+
+.cmp-palette {
+  width: 26em;
+  padding: 0.7em;
+  border-radius: var(--cmp-radius);
+}
+.cmp-palette .cmp-input {
+  display: flex;
+  align-items: center;
+  gap: 0.55em;
+  padding: 0.62em 0.85em;
+  margin-bottom: 0.6em;
+  border-radius: var(--cmp-radius-sm);
+  font-size: 1.05em;
+}
+/* Result rows carry an icon slot (the ⌘K idiom — every Raycast/Linear row
+ * leads with one). A subtly lit tile, accent-tinted on the active row. */
+.cmp-palette .cmp-item::before {
+  content: "";
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  border-radius: 0.34em;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--muted, #9aa5b4) 22%, transparent) 0%,
+    color-mix(in srgb, var(--muted, #9aa5b4) 12%, transparent) 100%
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--muted, #9aa5b4) 16%, transparent);
+}
+.cmp-palette .cmp-item[data-active="true"]::before {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent, #6ea8ff) 46%, transparent) 0%,
+    color-mix(in srgb, var(--accent, #6ea8ff) 26%, transparent) 100%
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #6ea8ff) 40%, transparent);
+}
+
+/* ── dropdown + context menu ──────────────────────────────────────────── */
+
+.cmp-dropdown {
+  display: inline-flex;
+  flex-direction: column;
+}
+.cmp-dropdown .cmp-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55em;
+  padding: 0.5em 0.95em;
+  border-radius: var(--cmp-radius-sm);
+  font-weight: 600;
+}
+.cmp-dropdown .cmp-menu {
+  position: absolute;
+  top: calc(100% + 0.4em);
+  left: 0;
+  min-width: 100%;
+  padding: 0.4em;
+  border-radius: var(--cmp-radius-md);
+  opacity: 0; /* closed until an `open` beat reveals it */
+  transform: translateY(-0.3em) scale(0.96);
+  transform-origin: top left;
+  z-index: 30;
+}
+.cmp-menu-standalone {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+  min-width: 10em;
+  padding: 0.4em;
+  border-radius: var(--cmp-radius-md);
+}
+
+/* ── button ───────────────────────────────────────────────────────────── */
+
+.cmp-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  padding: 0.62em 1.4em;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  color: var(--accent-text, #0a1018);
+  /* A lit pill, not a flat fill: one soft top light-catch over the accent,
+   * grounded by a tight neutral drop plus a restrained accent bloom (not the
+   * 30px SaaS halo). background-color stays the pure accent so morph bridges
+   * sample the true surface color. */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 50%)
+    var(--accent, #6ea8ff);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 1px 2px rgba(3, 6, 14, 0.3),
+    0 6px 16px color-mix(in srgb, var(--accent, #6ea8ff) 28%, transparent);
+}
+.cmp-button .cmp-spinner {
+  display: none;
+  width: 0.8em;
+  height: 0.8em;
+  border-radius: 50%;
+  border: 0.13em solid color-mix(in srgb, var(--accent-text, #0a1018) 34%, transparent);
+  border-top-color: var(--accent-text, #0a1018);
+}
+.cmp-button .cmp-check { display: none; font-weight: 700; }
+.cmp-button[data-state="loading"] .cmp-spinner { display: inline-block; }
+.cmp-button[data-state="success"] .cmp-check { display: inline; }
+.cmp-button[data-state="success"] {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 50%)
+    var(--cmp-ok, #4cc38a);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 1px 2px rgba(3, 6, 14, 0.3),
+    0 6px 16px color-mix(in srgb, var(--cmp-ok, #4cc38a) 28%, transparent);
+}
+
+/* ── toggle ───────────────────────────────────────────────────────────── */
+
+.cmp-toggle {
+  width: 2.5em;
+  height: 1.4em;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted, #9aa5b4) 30%, transparent);
+  border: 1px solid var(--cmp-hairline);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.22);
+}
+.cmp-toggle[data-state="on"] {
+  background: var(--accent, #6ea8ff);
+  box-shadow:
+    inset 0 2px 4px color-mix(in srgb, #000 18%, transparent),
+    0 0 8px color-mix(in srgb, var(--accent, #6ea8ff) 26%, transparent);
+}
+/* Knob geometry is load-bearing: the runtime derives travel from offsetLeft +
+ * offsetWidth, so the knob stays positioned by symmetric left/top insets. */
+.cmp-toggle .cmp-knob {
+  position: absolute;
+  top: 0.12em;
+  left: 0.12em;
+  width: 1.08em;
+  height: 1.08em;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff 0%, #eceef4 100%);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.32),
+    0 0 0 0.5px rgba(0, 0, 0, 0.1);
+}
+
+/* ── toast ────────────────────────────────────────────────────────────── */
+
+.cmp-toast {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  padding: 0.8em 1.05em;
+  border-radius: var(--cmp-radius);
+  min-width: 13em;
+}
+.cmp-toast .cmp-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6em;
+  height: 1.6em;
+  border-radius: 50%;
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 24%, transparent);
+}
+.cmp-toast .cmp-title { font-weight: 600; }
+.cmp-toast .cmp-meta {
+  font-size: 0.78em;
+  color: var(--muted, #9aa5b4);
+  margin-top: 0.15em;
+}
+
+/* ── modal ────────────────────────────────────────────────────────────── */
+
+.cmp-modal {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 40;
+}
+/* The scrim is a vignette, not a flat slab: deeper at the edges so the
+ * dialog sits in a pool of focus. Light basis re-tints it at the end of the
+ * sheet. */
+.cmp-modal .cmp-scrim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    120% 100% at 50% 42%,
+    rgba(4, 6, 12, 0.5) 30%,
+    rgba(3, 4, 10, 0.68) 100%
+  );
+  opacity: 0; /* revealed by the `open` beat */
+}
+.cmp-modal .cmp-dialog {
+  position: relative;
+  min-width: 18em;
+  max-width: 30em;
+  padding: 1.3em 1.5em;
+  border-radius: var(--cmp-radius);
+  opacity: 0; /* revealed by the `open` beat */
+}
+.cmp-modal .cmp-title {
+  font-size: 1.25em;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin-bottom: 0.45em;
+}
+
+/* ── stat-card ────────────────────────────────────────────────────────── */
+
+.cmp-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+  padding: 1.05em 1.25em;
+  border-radius: var(--cmp-radius);
+  min-width: 9.5em;
+}
+.cmp-stat .cmp-label {
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted, #9aa5b4);
+}
+.cmp-stat .cmp-value {
+  font-size: 2.6em;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.cmp-stat .cmp-delta {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.14em 0.55em;
+  border-radius: 999px;
+  font-size: 0.72em;
+  font-weight: 700;
+}
+.cmp-stat .cmp-delta.cmp-up {
+  color: var(--cmp-ok, #4cc38a);
+  background: color-mix(in srgb, var(--cmp-ok, #4cc38a) 16%, transparent);
+}
+.cmp-stat .cmp-delta.cmp-down {
+  color: var(--cmp-danger, #ef6a6a);
+  background: color-mix(in srgb, var(--cmp-danger, #ef6a6a) 16%, transparent);
+}
+
+/* ── table + list ─────────────────────────────────────────────────────── */
+
+.cmp-table {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--cmp-radius);
+  overflow: hidden;
+}
+.cmp-table .cmp-head,
+.cmp-table .cmp-row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  align-items: center;
+  gap: 1em;
+  padding: 0.62em 1.05em;
+}
+.cmp-table .cmp-head {
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted, #9aa5b4);
+  background: color-mix(in srgb, var(--muted, #9aa5b4) 7%, transparent);
+  border-bottom: 1px solid var(--cmp-hairline);
+}
+.cmp-table .cmp-row + .cmp-row {
+  border-top: 1px solid var(--cmp-hairline-soft);
+}
+.cmp-table .cmp-row[data-active="true"] {
+  background: color-mix(in srgb, var(--accent, #6ea8ff) 12%, transparent);
+}
+.cmp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+}
+.cmp-list .cmp-item {
+  padding: 0.7em 0.95em;
+  border-radius: var(--cmp-radius-md);
+  white-space: normal;
+  color: var(--text, #edf0f6);
+}
+
+/* ── kanban ───────────────────────────────────────────────────────────── */
+
+.cmp-kanban {
+  display: flex;
+  gap: 0.9em;
+  align-items: flex-start;
+}
+.cmp-kanban .cmp-col {
+  flex: 1;
+  min-width: 9em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55em;
+  padding: 0.7em;
+  border-radius: var(--cmp-radius);
+  background: color-mix(in srgb, var(--surface, #161b24) 72%, transparent);
+  border: 1px solid var(--cmp-hairline-soft);
+}
+.cmp-kanban .cmp-col-title {
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted, #9aa5b4);
+  padding: 0 0.2em 0.2em;
+}
+.cmp-kanban .cmp-card {
+  padding: 0.7em 0.85em;
+  border-radius: var(--cmp-radius-sm);
+  font-weight: 600;
+}
+
+/* ── chat ─────────────────────────────────────────────────────────────── */
+
+.cmp-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+  min-width: 16em;
+}
+.cmp-chat .cmp-msg {
+  max-width: 82%;
+  padding: 0.65em 0.95em;
+  border-radius: var(--cmp-radius);
+  border-bottom-right-radius: 0.25em;
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--accent, #6ea8ff) 22%, var(--surface, #161b24));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #6ea8ff) 14%, transparent);
+  line-height: 1.35;
+}
+.cmp-chat .cmp-msg.cmp-ai {
+  align-self: flex-start;
+  border-radius: var(--cmp-radius);
+  border-bottom-left-radius: 0.25em;
+  background: var(--surface-2, #1b212c);
+  border: 1px solid var(--cmp-hairline);
+  box-shadow: none;
+}
+.cmp-chat .cmp-typing {
+  display: inline-flex;
+  gap: 0.28em;
+  align-self: flex-start;
+  padding: 0.62em 0.85em;
+  border-radius: var(--cmp-radius);
+  border-bottom-left-radius: 0.25em;
+  background: var(--surface-2, #1b212c);
+  opacity: 0; /* the runtime shows it just before a stream beat */
+}
+.cmp-chat .cmp-typing i {
+  width: 0.32em;
+  height: 0.32em;
+  border-radius: 50%;
+  background: var(--muted, #9aa5b4);
+}
+.cmp-chat .cmp-typing i:nth-child(2) { opacity: 0.7; }
+.cmp-chat .cmp-typing i:nth-child(3) { opacity: 0.45; }
+
+/* ── charts ───────────────────────────────────────────────────────────── */
+
+/* Faint horizontal gridlines turn both charts from floating marks into an
+ * instrument. Non-repeating gradient rows: one hairline per quarter-height,
+ * data furniture rather than decoration. */
+.cmp-chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.55em;
+  height: 8em;
+  padding: 0.4em 0.2em 0;
+  background-image: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--muted, #9aa5b4) 13%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 100% 25%;
+}
+.cmp-chart-bars i {
+  flex: 1;
+  min-width: 1.1em;
+  border-radius: 0.28em 0.28em 0 0;
+  /* Solid at the base — a bar fading to transparent reads as a reflection
+   * artifact, not data. Light catches the top, weight stays grounded. */
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent, #6ea8ff) 86%, #fff 10%) 0%,
+    color-mix(in srgb, var(--accent, #6ea8ff) 78%, transparent) 100%
+  );
+  transform-origin: bottom;
+}
+.cmp-chart-bars i.cmp-hero {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent, #6ea8ff) 90%, #fff 10%) 0%,
+    var(--accent, #6ea8ff) 100%
+  );
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent, #6ea8ff) 32%, transparent);
+}
+.cmp-chart-line {
+  background-image: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--muted, #9aa5b4) 13%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 100% 25%;
+}
+.cmp-chart-line svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.cmp-chart-line .cmp-stroke {
+  fill: none;
+  stroke: var(--accent, #6ea8ff);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* Glow rides the drawn portion of the stroke, so draw-on beats carry it. */
+  filter: drop-shadow(0 4px 10px color-mix(in srgb, var(--accent, #6ea8ff) 32%, transparent));
+}
+
+/* ── progress ring + bar ──────────────────────────────────────────────── */
+
+.cmp-ring {
+  display: grid;
+  place-items: center;
+  width: 7em;
+  height: 7em;
+}
+.cmp-ring svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.cmp-ring circle {
+  fill: none;
+  stroke-width: 9;
+}
+.cmp-ring .cmp-ring-bg {
+  stroke: color-mix(in srgb, var(--muted, #9aa5b4) 18%, transparent);
+}
+.cmp-ring .cmp-ring-fg {
+  stroke: var(--accent, #6ea8ff);
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--accent, #6ea8ff) 32%, transparent));
+}
+.cmp-ring .cmp-value {
+  font-size: 1.35em;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.cmp-progress {
+  height: 0.5em;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted, #9aa5b4) 18%, transparent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  min-width: 10em;
+}
+.cmp-progress i,
+.cmp-progress [data-cmp-fill] {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent, #6ea8ff) 88%, #fff 12%) 0%,
+    var(--accent, #6ea8ff) 100%
+  );
+  transform-origin: left;
+}
+
+/* ── terminal ─────────────────────────────────────────────────────────── */
+
+.cmp-terminal {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45em;
+  padding: 0.85em 1.15em 1em;
+  border-radius: var(--cmp-radius);
+  font-family: var(--font-mono, "JetBrains Mono", "Space Mono", monospace);
+  font-size: 22px;
+}
+/* Quiet traffic dots give the card its terminal identity without competing
+ * with the app-window chrome — monochrome, one element, two shadow copies. */
+.cmp-terminal::before {
+  content: "";
+  flex: none;
+  width: 0.5em;
+  height: 0.5em;
+  margin-bottom: 0.3em;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--muted, #9aa5b4) 38%, transparent);
+  box-shadow:
+    1em 0 0 color-mix(in srgb, var(--muted, #9aa5b4) 26%, transparent),
+    2em 0 0 color-mix(in srgb, var(--muted, #9aa5b4) 16%, transparent);
+}
+/* Terminals wrap long commands instead of clipping them (fix-probe-2's
+ * clipped_text: a typed command wider than the card died in browser QA twice).
+ * The typewriter grows textContent, so wrapping mid-type is native terminal
+ * behavior, not a glitch. */
+.cmp-terminal .cmp-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: visible;
+}
+.cmp-terminal .cmp-line {
+  display: flex;
+  gap: 0.6em;
+  white-space: pre;
+}
+.cmp-terminal .cmp-prompt {
+  color: var(--accent, #6ea8ff);
+  font-weight: 600;
+}
+.cmp-terminal .cmp-dim { color: var(--muted, #9aa5b4); }
+
+/* ── tabs ─────────────────────────────────────────────────────────────── */
+
+.cmp-tabs {
+  display: inline-flex;
+  gap: 0.2em;
+  padding: 0.22em;
+  border-radius: 999px;
+  background: color-mix(in srgb, #000 22%, transparent);
+  border: 1px solid var(--cmp-hairline);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+.cmp-tabs .cmp-item {
+  border-radius: 999px;
+  padding: 0.4em 1em;
+  font-weight: 600;
+}
+/* The active tab is the raised chip in the sunken track — a hairline lip plus
+ * one tight drop is all the lift it needs. */
+.cmp-tabs .cmp-item[data-active="true"] {
+  background: var(--surface-2, #232a36);
+  box-shadow:
+    inset 0 0 0 1px var(--cmp-hairline),
+    0 1px 4px rgba(0, 0, 0, 0.28);
+}
+
+/* ── avatar-stack ─────────────────────────────────────────────────────── */
+
+.cmp-avatars {
+  display: inline-flex;
+  align-items: center;
+}
+.cmp-avatars i,
+.cmp-avatars .cmp-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9em;
+  height: 1.9em;
+  border-radius: 50%;
+  font-size: 0.72em;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--text, #edf0f6);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 55%),
+    color-mix(in srgb, var(--accent, #6ea8ff) 30%, var(--surface, #161b24));
+  border: 2px solid var(--surface, #161b24);
+}
+/* Shallower overlap than the classic -50%: initials need air, and the cut
+ * crescent still reads as a stack. */
+.cmp-avatars i + i,
+.cmp-avatars i + .cmp-more { margin-left: -0.36em; }
+.cmp-avatars i:nth-child(2) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 55%),
+    color-mix(in srgb, var(--accent, #6ea8ff) 52%, var(--surface, #161b24));
+}
+.cmp-avatars i:nth-child(3) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 55%),
+    color-mix(in srgb, var(--accent, #6ea8ff) 74%, var(--surface, #161b24));
+}
+.cmp-avatars .cmp-more {
+  background: var(--surface-2, #1b212c);
+  color: var(--muted, #9aa5b4);
+}
+
+/* ── headline (MD3) ───────────────────────────────────────────────────────
+ * Hero copy as a first-class object. The kit owns only the display type; the
+ * author owns the copy and the composition. `.cmp-text` is the split slot: the
+ * runtime replaces it with per-word/per-letter inline-block spans for rise/pop/
+ * assemble reveals (transforms only — the authored copy is the final state).
+ * The .cmp base rule pins font-size to 24px; a headline sizes itself in em, so
+ * override once here (authors restyle with their own font-size).
+ */
+.cmp-headline {
+  display: inline-block;
+  margin: 0;
+  font-family: var(--font-display, inherit);
+  font-size: 3.4em;
+  font-weight: 700;
+  line-height: 1.03;
+  letter-spacing: -0.028em;
+  color: var(--text, #edf0f6);
+}
+/* No text-wrap:balance here: the typewriter grows textContent frame by frame
+ * and balancing would re-break earlier words mid-type. Greedy wrap only. */
+.cmp-headline .cmp-text {
+  display: inline-block;
+  min-height: 0;
+  overflow: visible;
+  white-space: normal;
+}
+/* Split units the runtime injects — inline-block so transforms never reflow. */
+.cmp-headline .cmp-split {
+  display: inline-block;
+  white-space: pre;
+  will-change: transform, opacity;
+}
+
+/* ── light basis ──────────────────────────────────────────────────────────
+ * The cinema kit marks a light-basis composition with `.cinema-light` on the
+ * root; dark-tuned scrims, elevation, and the segmented control re-tune here
+ * (same structure, same states — only the light response changes). The radius
+ * and hairline tokens ride --cinema-edge, so they follow the basis for free.
+ */
+.cinema-light .cmp {
+  --cmp-pop-shadow:
+    0 16px 40px rgba(24, 30, 48, 0.16),
+    0 3px 8px rgba(24, 30, 48, 0.1);
+}
+.cinema-light .cmp-modal .cmp-scrim {
+  background: radial-gradient(
+    120% 100% at 50% 42%,
+    rgba(22, 26, 40, 0.3) 30%,
+    rgba(18, 22, 34, 0.44) 100%
+  );
+}
+.cinema-light .cmp-tabs {
+  background: color-mix(in srgb, var(--muted, #5c6675) 16%, transparent);
+  box-shadow: inset 0 1px 3px rgba(24, 30, 48, 0.12);
+}
+.cinema-light .cmp-tabs .cmp-item[data-active="true"] {
+  background: var(--surface, #ffffff);
+  box-shadow:
+    inset 0 0 0 1px rgba(20, 24, 38, 0.06),
+    0 1px 5px rgba(20, 24, 38, 0.18);
+}
+.cinema-light .cmp-window .cmp-chrome-title {
+  background: color-mix(in srgb, var(--muted, #5c6675) 14%, transparent);
+}
+.cinema-light .cmp-toggle {
+  box-shadow: inset 0 1px 3px rgba(24, 30, 48, 0.14);
+}
+.cinema-light .cmp-toggle .cmp-knob {
+  box-shadow:
+    0 1px 3px rgba(24, 30, 48, 0.3),
+    0 0 0 0.5px rgba(24, 30, 48, 0.14);
+}
+</style>
+  <style>
+      :root {
+        --cinema-key: #ffc24d;
+        --cinema-bloom: #ffc24d;
+      }
+      body { margin: 0; background: #0b0f14; color: #f4f6f8; font-family: Montserrat, Inter, sans-serif; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: #0b0f14; }
+      .scene.clip { position: absolute; inset: 0; opacity: 0; }
+      #stage { display: flex; align-items: center; justify-content: center; }
+      .stage-key {
+        position: absolute; inset: 0;
+        background: radial-gradient(1200px 800px at 30% 18%, rgba(255, 255, 255, 0.07), transparent 70%);
+      }
+      .stage-floor {
+        position: absolute; left: 0; right: 0; bottom: 0; height: 38%;
+        background: linear-gradient(to top, rgba(0, 0, 0, 0.35), transparent);
+      }
+      #slate { display: flex; align-items: center; justify-content: center; }
+      .slate-card { text-align: center; }
+      .slate-kicker { font-size: 22px; letter-spacing: 0.32em; text-transform: uppercase; color: #ffc24d; }
+      .slate-name { font-size: 54px; font-weight: 700; margin-top: 18px; }
+    </style>
+  <style data-sequences-host="1" data-sequences-recipe-style="seq-recipe-base" id="sequences-recipe-style-base">.seq-recipe{display:contents}</style>
+<style data-sequences-host="1" data-sequences-recipe-style="checklist-cascade" id="sequences-recipe-style-checklist-cascade">
+.rcp-chk {
+    position: relative;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 40px;
+    text-align: left;
+  }
+  .rcp-chk .rcp-chk-head {
+    position: relative;
+    display: inline-block;
+    padding-bottom: 16px;
+  }
+  .rcp-chk .rcp-chk-title {
+    font-size: var(--rcp-title-size, 58px);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .rcp-chk .rcp-chk-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--rcp-accent, #ffc24d);
+    transform: scaleX(0);
+    transform-origin: 0 50%;
+  }
+  .rcp-chk .rcp-chk-item {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    opacity: 0;
+  }
+  .rcp-chk .rcp-chk-dot {
+    position: relative;
+    width: 50px;
+    height: 50px;
+    flex: 0 0 50px;
+    border-radius: 50%;
+    border: 2.5px solid var(--rcp-accent, #ffc24d);
+  }
+  .rcp-chk .rcp-chk-fill {
+    position: absolute;
+    inset: -2.5px;
+    border-radius: 50%;
+    background: var(--rcp-accent, #ffc24d);
+    transform: scale(0);
+    will-change: transform;
+  }
+  .rcp-chk .rcp-chk-mark {
+    position: absolute;
+    inset: 8px;
+    width: 34px;
+    height: 34px;
+  }
+  .rcp-chk .rcp-chk-path {
+    fill: none;
+    stroke: #0b0e12;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-dasharray: 24;
+    stroke-dashoffset: 24;
+  }
+  .rcp-chk .rcp-chk-copy {
+    font-size: var(--rcp-item-size, 38px);
+    font-weight: 500;
+    opacity: 0.62;
+  }
+</style>
+</head>
+  <body>
+    <div id="root" data-composition-id="recipe-demo" data-start="0" data-width="1920" data-height="1080" data-duration="7.6">
+      <section id="stage" class="scene clip" data-scene="stage" data-start="0" data-duration="6" data-track-index="1">
+<div class="seq-recipe" data-sequences-host="1" data-sequences-recipe="checklist-cascade" data-recipe-uid="stage-checklist-cascade"><div class="rcp-chk" data-part="stage-checklist-cascade-checklist" data-layout-important
+    data-layout-anchor="frame:center" style="--rcp-accent: var(--cinema-key)">
+    <div class="rcp-chk-head">
+      <span class="rcp-chk-title">Launch day, handled</span>
+      <span class="rcp-chk-bar" data-layout-ignore></span>
+    </div>
+    <div class="rcp-chk-item rcp-chk-item-1">
+      <span class="rcp-chk-dot"><span class="rcp-chk-fill"></span><svg class="rcp-chk-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="rcp-chk-path" d="M5 12.6l4.4 4.4L19 7.2"/></svg></span>
+      <span class="rcp-chk-copy">Threads summarized</span>
+    </div>
+    <div class="rcp-chk-item rcp-chk-item-2">
+      <span class="rcp-chk-dot"><span class="rcp-chk-fill"></span><svg class="rcp-chk-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="rcp-chk-path" d="M5 12.6l4.4 4.4L19 7.2"/></svg></span>
+      <span class="rcp-chk-copy">Storyboard approved</span>
+    </div>
+    <div class="rcp-chk-item rcp-chk-item-3">
+      <span class="rcp-chk-dot"><span class="rcp-chk-fill"></span><svg class="rcp-chk-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="rcp-chk-path" d="M5 12.6l4.4 4.4L19 7.2"/></svg></span>
+      <span class="rcp-chk-copy">Video rendered in channel</span>
+    </div>
+    <div class="rcp-chk-item rcp-chk-item-4">
+      <span class="rcp-chk-dot"><span class="rcp-chk-fill"></span><svg class="rcp-chk-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="rcp-chk-path" d="M5 12.6l4.4 4.4L19 7.2"/></svg></span>
+      <span class="rcp-chk-copy">Shared with the team</span>
+    </div>
+  </div></div>
+        <div class="stage-key" data-layout-ignore></div>
+        <div class="stage-floor" data-layout-ignore></div>
+      </section>
+      <section id="slate" class="scene clip" data-scene="slate" data-start="6" data-duration="1.6" data-track-index="1">
+        <div class="slate-card" data-layout-important data-layout-anchor="frame:center">
+          <div class="slate-kicker">Recipe Studio proof</div>
+          <div class="slate-name">checklist-cascade</div>
+        </div>
+      </section>
+    </div>
+    <script>
+      window.__timelines = window.__timelines || {};
+      var tl = gsap.timeline({ paused: true });
+      tl.set("#stage", { opacity: 1 }, 0);
+      tl.set("#stage", { opacity: 0 }, 5.99);
+      tl.set("#slate", { opacity: 1 }, 6);
+      tl.set("#slate", { opacity: 0 }, 7.6);
+      // A slow key-light breath keeps the stage alive around the recipe.
+      tl.fromTo(".stage-key", { opacity: 0.55 }, { opacity: 1, duration: 5.50, ease: "none" }, 0.25);
+      tl.fromTo(".slate-card", { y: 18, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power3.out" }, 6.10);
+      /*<seq-recipe uid="stage-checklist-cascade">*/
+(function(tl, root, start, duration, uid){
+// Timing spine: 0/3.4 are numeric literals, so every
+  // position below constant-folds at parse time (lint-placeable, identical
+  // at runtime). settle = the moment the LAST checkmark finishes drawing;
+  // ticks land every 0.55s before it.
+  var settle = 0 + 3.4;
+
+  // Title, then the rows cascade in.
+  tl.fromTo('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-head', { y: 16, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, 0 + 0.12);
+  tl.fromTo('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-1', { x: -18, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, 0 + 0.26);
+  tl.fromTo('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-2', { x: -18, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, 0 + 0.38);
+  tl.fromTo('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-3', { x: -18, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, 0 + 0.50);
+  tl.fromTo('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-4', { x: -18, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, 0 + 0.62);
+
+  // Tick rhythm: per row — the accent disc pops (committed, seqPop), the
+  // checkmark stroke DRAWS on, and the row copy brightens. Each draw ends
+  // 0.55s after the previous; the last finishes exactly at settle.
+  tl.fromTo('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-1 .rcp-chk-fill', { scale: 0 },
+    { scale: 1, duration: 0.25, ease: "seqPop" }, settle - 2.01);
+  tl.to('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-1 .rcp-chk-path',
+    { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, settle - 1.95);
+  tl.to('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-1 .rcp-chk-copy',
+    { opacity: 1, duration: 0.25, ease: "power2.out" }, settle - 1.96);
+
+  tl.fromTo('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-2 .rcp-chk-fill', { scale: 0 },
+    { scale: 1, duration: 0.25, ease: "seqPop" }, settle - 1.46);
+  tl.to('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-2 .rcp-chk-path',
+    { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, settle - 1.40);
+  tl.to('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-2 .rcp-chk-copy',
+    { opacity: 1, duration: 0.25, ease: "power2.out" }, settle - 1.41);
+
+  tl.fromTo('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-3 .rcp-chk-fill', { scale: 0 },
+    { scale: 1, duration: 0.25, ease: "seqPop" }, settle - 0.91);
+  tl.to('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-3 .rcp-chk-path',
+    { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, settle - 0.85);
+  tl.to('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-3 .rcp-chk-copy',
+    { opacity: 1, duration: 0.25, ease: "power2.out" }, settle - 0.86);
+
+  tl.fromTo('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-4 .rcp-chk-fill', { scale: 0 },
+    { scale: 1, duration: 0.25, ease: "seqPop" }, settle - 0.36);
+  tl.to('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-4 .rcp-chk-path',
+    { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, settle - 0.30);
+  tl.to('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-item-4 .rcp-chk-copy',
+    { opacity: 1, duration: 0.25, ease: "power2.out" }, settle - 0.31);
+
+  // Completion: the bar sweeps under the title once everything is ticked.
+  tl.fromTo('[data-part="stage-checklist-cascade-checklist"] .rcp-chk-bar', { scaleX: 0 },
+    { scaleX: 1, duration: 0.4, ease: "power3.out" }, settle + 0.10);
+})(tl, document.querySelector("[data-composition-id]"), 0, 6, "stage-checklist-cascade");
+/*</seq-recipe>*/
+window.__timelines["recipe-demo"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

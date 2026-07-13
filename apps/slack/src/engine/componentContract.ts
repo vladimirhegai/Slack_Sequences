@@ -14,8 +14,8 @@
  * The division of labor that makes components motion-native:
  * - the KIT owns structure and both end states of every component (pure
  *   static CSS — no transitions, no animations, deterministic under seek);
- * - the AUTHOR owns placement, copy, and entrances (a component arrives like
- *   any other content, addressed by its stable `data-part`);
+ * - the AUTHOR owns placement and copy; it owns root entrances only when the
+ *   scene does not declare a host-compiled `componentEntranceFamily`;
  * - the RUNTIME owns internal state motion — typing, opening, selecting,
  *   counting, chart growth, streaming, and FLIP morphs between twin
  *   components — compiled from the island into the one paused timeline.
@@ -33,13 +33,31 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DirectScene } from "./directComposition.ts";
-import { SEQUENCES_EASES } from "./cameraContract.ts";
+import { CAMERA_FULL_MOVES, SEQUENCES_EASES } from "./cameraContract.ts";
+import { canonicalCutStyle, type CutAxis } from "./cutContract.ts";
+import {
+  resolveContinuityGraph,
+  type ContinuityStateV1,
+} from "./continuityGraph.ts";
 
 export const COMPONENT_RUNTIME_VERSION = 1;
 export const COMPONENT_RUNTIME_FILE = "sequences-components.v1.js";
 export const COMPONENT_KIT_VERSION = 1;
 export const COMPONENT_KIT_FILE = "sequences-components.v1.css";
 export const COMPONENT_KIT_STYLE_ID = "sequences-components-kit";
+
+/** Typed follow-through guardrails (WS-C1). */
+export const MIN_COMPONENT_FOLLOW_LAG_MS = 60;
+export const MAX_COMPONENT_FOLLOW_LAG_MS = 120;
+export const DEFAULT_COMPONENT_FOLLOW_LAG_MS = 90;
+export const MAX_COMPONENT_FOLLOW_CHAIN_DEPTH = 3;
+export const MAX_COMPONENT_EXIT_RECEDE_PERCENT = 40;
+const DIRECTIONAL_COMPONENT_EXIT_RECEDE_PERCENT = 18;
+
+/** One host-owned root-entrance grammar per scene (WS-C2). */
+export type ComponentEntranceFamily = "rise" | "assemble" | "materialize";
+export const COMPONENT_ENTRANCE_FAMILIES: ReadonlySet<ComponentEntranceFamily> =
+  new Set<ComponentEntranceFamily>(["rise", "assemble", "materialize"]);
 
 const TEMPLATES_DIR = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -219,7 +237,6 @@ export const COMPONENT_CATALOG: ComponentKindSpec[] = [
     className: "cmp-modal",
     purpose: "Scrim plus centered dialog",
     beats: ["open", "close"],
-    morphsWith: ["stat-card"],
     markup:
       `<div class="cmp cmp-modal" data-component="modal" data-part="invite-modal">` +
       `<div class="cmp-scrim"></div><div class="cmp-dialog material-hero"><div class="cmp-title">Invite your team</div>…</div></div>`,
@@ -229,7 +246,7 @@ export const COMPONENT_CATALOG: ComponentKindSpec[] = [
     className: "cmp-stat",
     purpose: "Metric tile: label, big value (counts up), delta chip",
     beats: ["count", "open"],
-    morphsWith: ["modal"],
+    morphsWith: ["progress-ring"],
     markup:
       `<div class="cmp cmp-stat material" data-component="stat-card" data-part="latency-stat">` +
       `<div class="cmp-label">P95 latency</div><div class="cmp-value" data-cmp-value>142ms</div>` +
@@ -302,6 +319,7 @@ export const COMPONENT_CATALOG: ComponentKindSpec[] = [
     className: "cmp-ring",
     purpose: "Circular progress with a center value",
     beats: ["progress", "count", "open"],
+    morphsWith: ["stat-card"],
     markup:
       `<div class="cmp cmp-ring" data-component="progress-ring" data-part="uptime">` +
       `<svg viewBox="0 0 120 120"><circle class="cmp-ring-bg" cx="60" cy="60" r="52"/>` +
@@ -410,6 +428,23 @@ export function morphPartnerKinds(kind: ComponentKind): ComponentKind[] {
 }
 
 /**
+ * Whether two DECLARED component instances share a semantic morph family.
+ *
+ * Every kind may morph to a distinct instance of the same kind: button-to-
+ * button is the canonical pill/status transition, while stat-card-to-stat-card
+ * preserves a metric. `morphPartnerKinds` intentionally remains the narrower
+ * cross-kind inference table used when a planner forgot to declare its twin;
+ * treating the source kind as inferred there would make every missing target
+ * ambiguous and would break search-to-command-palette recovery.
+ */
+export function componentKindsMorphCompatible(
+  source: ComponentKind,
+  target: ComponentKind,
+): boolean {
+  return source === target || morphPartnerKinds(source).includes(target);
+}
+
+/**
  * The canonical host-owned root element for a declared component (Sentinel
  * Phase 1 scaffold). The catalog exemplar already carries the correct tag,
  * `cmp cmp-<kind>` class, `data-component`, and a kit-valid interior; here its
@@ -439,6 +474,12 @@ export interface SceneComponentSpecV1 {
   /** Optional camera-world station the component lives in. */
   region?: string;
   role?: "hero" | "support";
+  /**
+   * Stable semantic identity across scene-local representations. Optional and
+   * planner-facing only while the default-off continuity graph is enabled;
+   * the host stamps the corresponding DOM attribute mechanically.
+   */
+  entityId?: string;
   /**
    * Host-stamped when this component was lowered from a declared plugin unit
    * (`pluginContract.ts`) — never model-authored (`normalizeStoryboardComponents`
@@ -482,6 +523,14 @@ export interface ComponentBeatIntentV1 {
    * asset runtime compiles the spring motion; the components runtime skips it.
    */
   animation?: string;
+  /**
+   * Optional choreography dependency (WS-C1): a prior beat id, or a component
+   * id whose latest prior beat becomes the lead. Resolution owns the timing;
+   * malformed/cyclic/over-depth relationships degrade to the beat's own atSec.
+   */
+  follows?: string;
+  /** Follow delay in milliseconds; normalized to 60..120 (default 90). */
+  lagMs?: number;
   ease?: string;
 }
 
@@ -495,15 +544,37 @@ export interface ResolvedComponentBeatV1 {
   ease: string;
   text?: string;
   value?: number;
+  /** Host-derived baseline resolved by the prior continuity appearance. */
+  fromValue?: number;
   item?: number;
   toState?: string;
   morphTo?: string;
   style?: string;
   animation?: string;
+  /** Applied follow relationship only (invalid relationships are omitted). */
+  follows?: string;
+  lagMs?: number;
+  followDepth?: number;
+  /** Host-derived from a directional outgoing cut for close choreography. */
+  exitAxis?: CutAxis;
+  /** Directional travel as a percentage of the retiring component's size. */
+  exitRecedePercent?: number;
+}
+
+export interface ResolvedComponentEntranceV1 {
+  component: string;
+  startSec: number;
+  endSec: number;
+  ease: string;
 }
 
 export interface SceneComponentPlanV1 {
   sceneId: string;
+  /** State applied before any incoming-scene beat; survives arbitrary seek. */
+  initialStates?: Array<{ component: string; state: ContinuityStateV1 }>;
+  /** Declared once; every entry below uses this same visual grammar. */
+  entranceFamily?: ComponentEntranceFamily;
+  entrances?: ResolvedComponentEntranceV1[];
   beats: ResolvedComponentBeatV1[];
 }
 
@@ -594,6 +665,16 @@ function stableName(value: unknown): string {
 
 /* ---------------------------------------------------------- normalization */
 
+/** Normalize the scene-level WS-C2 enum without inventing a fallback family. */
+export function normalizeStoryboardComponentEntranceFamily(
+  value: unknown,
+): ComponentEntranceFamily | undefined {
+  const family = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return COMPONENT_ENTRANCE_FAMILIES.has(family as ComponentEntranceFamily)
+    ? family as ComponentEntranceFamily
+    : undefined;
+}
+
 /**
  * Normalize a storyboard scene's declared components. Malformed entries and
  * duplicate ids degrade to fewer components rather than failing the plan.
@@ -612,12 +693,14 @@ export function normalizeStoryboardComponents(value: unknown): SceneComponentSpe
     if (CATALOG_BY_KIND.get(kind)?.internal) return [];
     seen.add(id);
     const region = stableName(item.region);
+    const entityId = stableName(item.entityId);
     return [{
       version: 1,
       id,
       kind,
       ...(region ? { region } : {}),
       ...(item.role === "hero" || item.role === "support" ? { role: item.role } : {}),
+      ...(entityId ? { entityId } : {}),
     }];
   });
 }
@@ -669,6 +752,14 @@ export function normalizeStoryboardComponentBeats(
     const ease = typeof item.ease === "string" && EASE_PATTERN.test(item.ease.trim())
       ? item.ease.trim()
       : undefined;
+    const follows = stableName(item.follows);
+    const lagMs = follows && finite(item.lagMs)
+      ? Math.round(clamp(
+        item.lagMs,
+        MIN_COMPONENT_FOLLOW_LAG_MS,
+        MAX_COMPONENT_FOLLOW_LAG_MS,
+      ))
+      : undefined;
     return [{
       version: 1,
       id,
@@ -685,9 +776,34 @@ export function normalizeStoryboardComponentBeats(
       ...(toState && (kind === "set-state" || kind === "press") ? { toState } : {}),
       ...(kind === "morph" ? { morphTo } : {}),
       ...(beatStyle(kind, item.style) ? { style: beatStyle(kind, item.style) } : {}),
+      ...(follows ? { follows } : {}),
+      ...(lagMs !== undefined ? { lagMs } : {}),
       ...(ease ? { ease } : {}),
     }];
   }).sort((a, b) => a.atSec - b.atSec);
+}
+
+/** Repair the one unambiguous metric declaration mismatch without a paid retry. */
+export function reconcileMetricComponentKinds(
+  components: SceneComponentSpecV1[],
+  beats: ComponentBeatIntentV1[],
+): { components: SceneComponentSpecV1[]; normalized: string[] } {
+  const counted = new Set(
+    beats.filter((beat) => beat.kind === "count").map((beat) => beat.component),
+  );
+  const normalized: string[] = [];
+  const reconciled = components.map((component) => {
+    if (
+      component.kind !== "headline" || component.entityId !== "metric" ||
+      !counted.has(component.id)
+    ) return component;
+    normalized.push(
+      `component-kind-reconcile: ${component.id} headline -> stat-card ` +
+        `(metric entity owns a typed count beat)`,
+    );
+    return { ...component, kind: "stat-card" as const };
+  });
+  return { components: reconciled, normalized };
 }
 
 /* ------------------------------------------------------------- resolution */
@@ -706,42 +822,289 @@ function beatDuration(beat: ComponentBeatIntentV1): number {
   return defaults.defaultSec;
 }
 
+function entranceEase(family: ComponentEntranceFamily): string {
+  return family === "materialize" ? "sine.out" : "power3.out";
+}
+
+/**
+ * Resolve one scene grammar into explicit root-entrance windows. Plugin
+ * children already have a host-owned generator choreography, early `open`
+ * beats own their root entrance, and morph targets must stay hidden until the
+ * bridge hands off; all three are excluded to preserve one entrance owner.
+ */
+function resolveSceneComponentEntrances(
+  scene: DirectScene,
+  sceneEnd: number,
+): { family?: ComponentEntranceFamily; entrances: ResolvedComponentEntranceV1[] } {
+  const family = normalizeStoryboardComponentEntranceFamily(scene.componentEntranceFamily);
+  if (!family) return { entrances: [] };
+  const beats = scene.beats ?? [];
+  const morphTargets = new Set(
+    beats.flatMap((beat) => beat.kind === "morph" && beat.morphTo ? [beat.morphTo] : []),
+  );
+  const earlyOpenUntil = scene.startSec + Math.min(1.2, scene.durationSec * 0.28);
+  const earlyOpenOwners = new Set(
+    beats.flatMap((beat) =>
+      beat.kind === "open" && beat.atSec <= earlyOpenUntil ? [beat.component] : []
+    ),
+  );
+  const components = (scene.components ?? []).filter((component) =>
+    !component.pluginUid &&
+    !morphTargets.has(component.id) &&
+    !earlyOpenOwners.has(component.id)
+  );
+  if (!components.length) return { entrances: [] };
+  const baseStart = round(scene.startSec + clamp(scene.durationSec * 0.08, 0.12, 0.28));
+  const duration = family === "assemble" ? 0.68 : family === "materialize" ? 0.48 : 0.58;
+  const offsetWindow = Math.min(0.32, Math.max(0.12, scene.durationSec * 0.08));
+  const step = components.length > 1 ? offsetWindow / (components.length - 1) : 0;
+  const entrances = components.flatMap((component, index): ResolvedComponentEntranceV1[] => {
+    const startSec = round(clamp(baseStart + step * index, scene.startSec, sceneEnd));
+    const endSec = round(clamp(startSec + duration, startSec + 0.1, sceneEnd));
+    if (endSec - startSec < 0.08) return [];
+    return [{
+      component: component.id,
+      startSec,
+      endSec,
+      ease: entranceEase(family),
+    }];
+  });
+  return entrances.length ? { family, entrances } : { entrances: [] };
+}
+
+interface FollowCandidate {
+  order: number;
+  intent: ComponentBeatIntentV1;
+  base: ResolvedComponentBeatV1;
+}
+
+/** Mark every node that participates in a one-parent dependency cycle. */
+function cyclicFollowCandidates(dependencies: ReadonlyMap<number, number>): Set<number> {
+  const cyclic = new Set<number>();
+  for (const start of dependencies.keys()) {
+    const positions = new Map<number, number>();
+    const path: number[] = [];
+    let cursor: number | undefined = start;
+    while (cursor !== undefined) {
+      const seenAt = positions.get(cursor);
+      if (seenAt !== undefined) {
+        for (let index = seenAt; index < path.length; index += 1) cyclic.add(path[index]!);
+        break;
+      }
+      positions.set(cursor, path.length);
+      path.push(cursor);
+      cursor = dependencies.get(cursor);
+    }
+  }
+  return cyclic;
+}
+
+function followEase(kind: ComponentBeatKind): string {
+  if (kind === "type" || kind === "stream") return "none";
+  return kind === "close" ? "sine.in" : "sine.out";
+}
+
 /**
  * Resolve per-scene component declarations into the concrete beat plan the
  * runtime compiles. Windows are clamped so a beat never escapes its scene.
  */
 export function resolveComponentPlan(scenes: DirectScene[]): ComponentPlanV1 {
   const planScenes: SceneComponentPlanV1[] = [];
+  const continuity = resolveContinuityGraph(scenes);
+  const incomingStates = new Map<string, ContinuityStateV1>();
+  for (const edge of continuity.edges) {
+    if (edge.stateTransfer && edge.state) {
+      incomingStates.set(`${edge.toScene}:${edge.toPart}`, edge.state);
+    }
+  }
   for (const scene of scenes) {
     const beats = scene.beats ?? [];
-    if (!beats.length) continue;
     const componentKinds = new Map(
       (scene.components ?? []).map((component) => [component.id, component.kind]),
     );
     const sceneEnd = round(scene.startSec + scene.durationSec);
-    const resolved = beats.flatMap((beat): ResolvedComponentBeatV1[] => {
+    const canonicalCut = scene.cut
+      ? canonicalCutStyle(scene.cut.style, scene.cut.axis)
+      : undefined;
+    const exitAxis = canonicalCut?.style === "swipe" ? canonicalCut.axis ?? "right" : undefined;
+    const candidates = beats.flatMap((beat, order): FollowCandidate[] => {
       const kind = componentKinds.get(beat.component);
       if (!kind || !componentSupportsBeat(kind, beat.kind)) return [];
       const startSec = clamp(beat.atSec, scene.startSec, sceneEnd);
       const endSec = clamp(startSec + beatDuration(beat), startSec + 0.1, sceneEnd);
       if (endSec - startSec < 0.08) return [];
       return [{
-        id: beat.id,
-        component: beat.component,
-        kind: beat.kind,
-        startSec: round(startSec),
-        endSec: round(endSec),
-        ease: beat.ease ?? BEAT_DEFAULTS[beat.kind].ease,
-        ...(beat.text ? { text: beat.text } : {}),
-        ...(finite(beat.value) ? { value: beat.value } : {}),
-        ...(finite(beat.item) ? { item: beat.item } : {}),
-        ...(beat.toState ? { toState: beat.toState } : {}),
-        ...(beat.morphTo ? { morphTo: beat.morphTo } : {}),
-        ...(beat.style ? { style: beat.style } : {}),
-        ...(beat.animation ? { animation: beat.animation } : {}),
+        order,
+        intent: beat,
+        base: {
+          id: beat.id,
+          component: beat.component,
+          kind: beat.kind,
+          startSec: round(startSec),
+          endSec: round(endSec),
+          // Exit choreography is always a subtle ease-in; other beats preserve
+          // the existing explicit/default ease unless a follow is applied.
+          ease: beat.kind === "close"
+            ? "power2.in"
+            : beat.ease ?? BEAT_DEFAULTS[beat.kind].ease,
+          ...(beat.text ? { text: beat.text } : {}),
+          ...(finite(beat.value) ? { value: beat.value } : {}),
+          ...(finite(beat.item) ? { item: beat.item } : {}),
+          ...(beat.toState ? { toState: beat.toState } : {}),
+          ...(beat.morphTo ? { morphTo: beat.morphTo } : {}),
+          ...(beat.style ? { style: beat.style } : {}),
+          ...(beat.animation ? { animation: beat.animation } : {}),
+          ...(beat.kind === "close" && exitAxis
+            ? {
+                exitAxis,
+                exitRecedePercent: Math.min(
+                  MAX_COMPONENT_EXIT_RECEDE_PERCENT,
+                  DIRECTIONAL_COMPONENT_EXIT_RECEDE_PERCENT,
+                ),
+              }
+            : {}),
+        },
       }];
     });
-    if (resolved.length) planScenes.push({ sceneId: scene.id, beats: resolved });
+
+    // Beat id wins over component id when a name is ambiguous. A component
+    // reference resolves to its latest beat at/before the follower's declared
+    // time (declaration order breaks same-time ties).
+    const byBeatId = new Map<string, number>();
+    candidates.forEach((candidate, index) => {
+      if (!byBeatId.has(candidate.intent.id)) byBeatId.set(candidate.intent.id, index);
+    });
+    const dependencies = new Map<number, number>();
+    const followReferences = new Map<number, string>();
+    candidates.forEach((candidate, index) => {
+      const reference = stableName(candidate.intent.follows);
+      if (!reference) return;
+      let parent = byBeatId.get(reference);
+      if (parent === undefined && componentKinds.has(reference)) {
+        const preceding = candidates
+          .map((entry, candidateIndex) => ({ entry, candidateIndex }))
+          .filter(({ entry, candidateIndex }) =>
+            candidateIndex !== index &&
+            entry.intent.component === reference &&
+            (
+              entry.base.startSec < candidate.base.startSec ||
+              (entry.base.startSec === candidate.base.startSec && entry.order < candidate.order)
+            )
+          )
+          .sort((a, b) =>
+            b.entry.base.startSec - a.entry.base.startSec || b.entry.order - a.entry.order
+          )[0];
+        parent = preceding?.candidateIndex;
+      }
+      if (parent !== undefined) {
+        const lead = candidates[parent]!;
+        // Following may overlap different properties on one component, but two
+        // beats in the same property channel would fight for the same pixels.
+        // Degrade that relationship before timing it (the dedupe disposition).
+        if (
+          lead.intent.component === candidate.intent.component &&
+          BEAT_CHANNELS[lead.intent.kind] === BEAT_CHANNELS[candidate.intent.kind]
+        ) {
+          return;
+        }
+        dependencies.set(index, parent);
+        followReferences.set(index, reference);
+      }
+    });
+    const cyclic = cyclicFollowCandidates(dependencies);
+    const cache = new Map<number, ResolvedComponentBeatV1>();
+    const resolveCandidate = (index: number): ResolvedComponentBeatV1 => {
+      const cached = cache.get(index);
+      if (cached) return cached;
+      const candidate = candidates[index]!;
+      const parentIndex = dependencies.get(index);
+      if (parentIndex === undefined || cyclic.has(index)) {
+        cache.set(index, candidate.base);
+        return candidate.base;
+      }
+      const parent = resolveCandidate(parentIndex);
+      const depth = (parent.followDepth ?? 0) + 1;
+      if (depth > MAX_COMPONENT_FOLLOW_CHAIN_DEPTH) {
+        cache.set(index, candidate.base);
+        return candidate.base;
+      }
+      const lagMs = Math.round(clamp(
+        finite(candidate.intent.lagMs)
+          ? candidate.intent.lagMs
+          : DEFAULT_COMPONENT_FOLLOW_LAG_MS,
+        MIN_COMPONENT_FOLLOW_LAG_MS,
+        MAX_COMPONENT_FOLLOW_LAG_MS,
+      ));
+      const lagSec = lagMs / 1000;
+      const startSec = round(parent.startSec + lagSec);
+      // If the scene boundary cannot leave the leader settled first, degrade
+      // only this relationship; the original beat remains fully executable.
+      if (
+        startSec >= sceneEnd - 0.08 ||
+        parent.endSec + lagSec > sceneEnd
+      ) {
+        cache.set(index, candidate.base);
+        return candidate.base;
+      }
+      const duration = candidate.base.endSec - candidate.base.startSec;
+      const endSec = round(Math.min(
+        sceneEnd,
+        Math.max(startSec + duration, parent.endSec + lagSec),
+      ));
+      const resolved: ResolvedComponentBeatV1 = {
+        ...candidate.base,
+        startSec,
+        endSec,
+        ease: followEase(candidate.intent.kind),
+        follows: followReferences.get(index)!,
+        lagMs,
+        followDepth: depth,
+      };
+      cache.set(index, resolved);
+      return resolved;
+    };
+    const stateByComponent = new Map<string, ContinuityStateV1>();
+    const initialStates = (scene.components ?? []).flatMap((component) => {
+      const state = incomingStates.get(`${scene.id}:${component.id}`);
+      if (!state) return [];
+      stateByComponent.set(component.id, state);
+      return [{ component: component.id, state }];
+    });
+    const resolved = candidates.map((_candidate, index) => resolveCandidate(index))
+      .sort((a, b) => a.startSec - b.startSec)
+      .map((beat): ResolvedComponentBeatV1 => {
+        const prior = stateByComponent.get(beat.component);
+        let next: ContinuityStateV1 | undefined;
+        if (beat.kind === "count" && typeof beat.value === "number") {
+          next = { kind: "metric", value: beat.value };
+        } else if (beat.kind === "progress" && typeof beat.value === "number") {
+          next = { kind: "progress", value: beat.value };
+        } else if (beat.kind === "select" && typeof beat.item === "number") {
+          next = { kind: "selection", value: beat.item };
+        } else if ((beat.kind === "set-state" || beat.kind === "press") && beat.toState) {
+          next = { kind: prior?.kind === "button" ? "button" : "shell", value: beat.toState };
+        }
+        if (next) stateByComponent.set(beat.component, next);
+        return {
+          ...beat,
+          ...(prior?.kind === "metric" && typeof prior.value === "number" && beat.kind === "count"
+            ? { fromValue: prior.value }
+            : {}),
+          ...(prior?.kind === "progress" && typeof prior.value === "number" && beat.kind === "progress"
+            ? { fromValue: prior.value }
+            : {}),
+        };
+      });
+    const entrance = resolveSceneComponentEntrances(scene, sceneEnd);
+    if (resolved.length || entrance.entrances.length || initialStates.length) {
+      planScenes.push({
+        sceneId: scene.id,
+        ...(initialStates.length ? { initialStates } : {}),
+        ...(entrance.family ? { entranceFamily: entrance.family } : {}),
+        ...(entrance.entrances.length ? { entrances: entrance.entrances } : {}),
+        beats: resolved,
+      });
+    }
   }
   return { version: 1, scenes: planScenes };
 }
@@ -785,6 +1148,281 @@ export interface BeatDedupeResult {
   dropped: string[];
 }
 
+export interface EntranceRetimeResult {
+  scenes: DirectScene[];
+  /** Human-readable log lines, one per existing entrance moved earlier. */
+  normalized: string[];
+}
+
+/**
+ * A rows/open beat supplies the FIRST painted state of some component kinds:
+ * the runtime deliberately holds their children/panel invisible until that
+ * beat. When a load-bearing hero schedules that entrance well after scene
+ * entry, the audience gets an empty station while the camera travels through
+ * it (Roamly's confirmation list was blank for almost three viewer-seconds).
+ *
+ * This L2 normalizer only moves an EXISTING entrance and any moment already
+ * pinned to that exact beat. It never invents content or motion. A morph into
+ * the scene gets a slightly longer entry runway so its intact dual-clone
+ * handoff can land before the remaining rows cascade.
+ */
+export function retimeLateLoadBearingEntrances(
+  storyboard: DirectScene[],
+): EntranceRetimeResult {
+  const normalized: string[] = [];
+  const collectionKinds = new Set<ComponentKind>([
+    "app-window", "sidebar", "table", "list", "kanban", "chat", "terminal",
+  ]);
+  const sceneStartOffset = (sceneIndex: number, durationSec: number): number => {
+    const incoming = sceneIndex > 0 ? storyboard[sceneIndex - 1]?.cut?.style : undefined;
+    const runway = incoming === "morph" ? 0.48 : 0.28;
+    return Math.min(runway, Math.max(0.18, durationSec * 0.12));
+  };
+
+  const scenes = storyboard.map((scene, sceneIndex) => {
+    const beats = scene.beats ?? [];
+    if (!beats.length) return scene;
+    const components = new Map((scene.components ?? []).map((component) => [component.id, component]));
+    const openingMove = scene.camera?.path?.[0];
+    const openingPart = openingMove?.fromPart ?? openingMove?.toPart;
+    const openingRegion = openingMove?.fromRegion ?? openingMove?.toRegion;
+    const spatialFocal = scene.spatialIntent?.focalPart;
+    const offset = sceneStartOffset(sceneIndex, scene.durationSec);
+    const latestLoadBearingEntrance = scene.startSec + Math.max(0.72, offset + 0.18);
+    const targetAt = round(scene.startSec + offset);
+    const moved = new Map<string, { from: number; to: number }>();
+
+    const nextBeats = beats.map((beat) => {
+      if ((beat.kind !== "rows" && beat.kind !== "open") || beat.atSec <= latestLoadBearingEntrance) {
+        return beat;
+      }
+      const component = components.get(beat.component);
+      if (!component || component.pluginUid) return beat;
+      const firstEntrance = beats
+        .filter((candidate) =>
+          candidate.component === beat.component &&
+          (candidate.kind === "rows" || candidate.kind === "open")
+        )
+        .sort((a, b) => a.atSec - b.atSec)[0];
+      // A later rows/open is a refresh or payoff, not the first painted state.
+      if (firstEntrance?.id !== beat.id) return beat;
+      const opensWithCamera = component.id === openingPart ||
+        Boolean(component.region && component.region === openingRegion);
+      const hero = component.role === "hero";
+      // A support table can share the opening station with the true hero and
+      // still be scheduled as deliberate mid-shot development. Region overlap
+      // alone is therefore insufficient; require semantic or exact camera-part
+      // ownership before moving its first rows beat.
+      const loadBearingRows = beat.kind === "rows" && collectionKinds.has(component.kind) &&
+        (hero || component.id === openingPart || component.id === spatialFocal);
+      // `open` can be a deliberately late result (toast/CTA). Move it only
+      // when the plan explicitly makes this component the opening focal.
+      const loadBearingOpen = beat.kind === "open" &&
+        (component.id === openingPart || (component.id === spatialFocal && opensWithCamera));
+      if (!loadBearingRows && !loadBearingOpen) return beat;
+
+      moved.set(beat.id, { from: beat.atSec, to: targetAt });
+      normalized.push(
+        `scene "${scene.id}": moved load-bearing ${beat.kind} "${beat.id}" on ` +
+          `"${beat.component}" from ${beat.atSec.toFixed(2)}s to ${targetAt.toFixed(2)}s ` +
+          `(the runtime entrance cannot leave the opening station blank)`,
+      );
+      return { ...beat, atSec: targetAt };
+    });
+    if (!moved.size) return scene;
+
+    const nextMoments = (scene.moments ?? []).map((moment) => {
+      // A moment authored on the moved beat is timing paperwork for that same
+      // state change. Carry it with the beat so evidence does not become a
+      // fabricated late highlight or force a paid missing-moment retry.
+      const owner = [...moved.values()].find(({ from }) => {
+        if (Math.abs(moment.atSec - from) > 0.12) return false;
+        // If another, unmoved beat shares this cue, the moment is ambiguous;
+        // leave its semantic timing intact rather than dragging it with the
+        // entrance merely because the planner stacked two events.
+        return !beats.some((beat) =>
+          !moved.has(beat.id) && Math.abs(beat.atSec - moment.atSec) <= 0.12
+        );
+      });
+      return owner ? { ...moment, atSec: owner.to } : moment;
+    });
+    const notes = normalized.filter((line) => line.startsWith(`scene "${scene.id}":`));
+    return {
+      ...scene,
+      beats: nextBeats.sort((a, b) => a.atSec - b.atSec),
+      ...(scene.moments?.length ? { moments: nextMoments } : {}),
+      sentinelNormalizations: [
+        ...(scene.sentinelNormalizations ?? []),
+        ...notes.map((line) => `entrance-retime: ${line.replace(/^scene "[^"]+": /, "")}`),
+      ],
+    };
+  });
+  return { scenes, normalized };
+}
+
+const HELD_RESULT_STATES = new Set([
+  "approved",
+  "complete",
+  "completed",
+  "done",
+  "ready",
+  "resolved",
+  "succeed",
+  "succeeded",
+  "success",
+  "verified",
+]);
+const HELD_RESULT_FRONT_FRACTION = 0.35;
+const HELD_RESULT_HIGHLIGHT_DURATION_SEC = 0.8;
+const HELD_RESULT_HIGHLIGHT_TAIL_SEC = 1.6;
+const HELD_RESULT_MIN_BREATH_SEC = 0.8;
+const HELD_RESULT_MOMENT_EVIDENCE_BEFORE_SEC = 0.45;
+const HELD_RESULT_MOMENT_EVIDENCE_AFTER_SEC = 0.75;
+const HELD_RESULT_MOMENT_RE =
+  /\b(?:approve(?:d)?|complete(?:d)?|done|held|holds?|proof|ready|resolve(?:d|s)?|settle(?:d)?|succeed(?:ed)?|success|verified)\b/i;
+
+function beatOverlapsMoment(
+  beat: ComponentBeatIntentV1,
+  moment: NonNullable<DirectScene["moments"]>[number],
+): boolean {
+  const windowStart = moment.atSec - HELD_RESULT_MOMENT_EVIDENCE_BEFORE_SEC;
+  const windowEnd = moment.atSec + HELD_RESULT_MOMENT_EVIDENCE_AFTER_SEC;
+  return beat.atSec + beatDuration(beat) >= windowStart && beat.atSec <= windowEnd;
+}
+
+function interactionOverlapsMoment(
+  interaction: NonNullable<DirectScene["interactions"]>[number],
+  moment: NonNullable<DirectScene["moments"]>[number],
+): boolean {
+  const windowStart = moment.atSec - HELD_RESULT_MOMENT_EVIDENCE_BEFORE_SEC;
+  const windowEnd = moment.atSec + HELD_RESULT_MOMENT_EVIDENCE_AFTER_SEC;
+  const interactionEnd = interaction.releaseSec ?? interaction.pressSec ?? interaction.arriveSec;
+  return interactionEnd >= windowStart && interaction.arriveSec <= windowEnd;
+}
+
+function heldResultMomentText(
+  moment: NonNullable<DirectScene["moments"]>[number],
+): string {
+  return [
+    moment.id,
+    moment.title,
+    moment.visualState,
+    moment.change,
+    moment.motionIntent,
+  ].join(" ");
+}
+
+/**
+ * Give a deliberately held interaction result one late, host-owned proof
+ * accent when the typed plan would otherwise freeze after its entrance.
+ *
+ * This is intentionally narrower than a general liveness generator. It only
+ * applies when a 4s+ scene:
+ * - either front-loads every moment or promises an unsupported late held
+ *   success/ready/resolve moment;
+ * - finishes every full camera move before the interaction result;
+ * - lands an explicit successful set-state on the interaction target; and
+ * - leaves enough tail for a separated 800ms highlight and a final settle.
+ *
+ * The accent changes no copy, value, state, component count, or camera idea.
+ * It gives `topUpStoryboardMoments` executable evidence for the already-
+ * promised held result instead of making a paid planner invent another
+ * surface merely to satisfy the back-half moment grid.
+ */
+export function topUpHeldInteractionResultDevelopment(
+  storyboard: DirectScene[],
+): { scenes: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  const scenes = storyboard.map((scene) => {
+    const moments = scene.moments ?? [];
+    const beats = scene.beats ?? [];
+    const interactions = scene.interactions ?? [];
+    if (scene.durationSec < 4 || moments.length < 2 || !beats.length || !interactions.length) {
+      return scene;
+    }
+    const frontEdge = scene.startSec + scene.durationSec * HELD_RESULT_FRONT_FRACTION;
+
+    const interactionTargets = new Set(interactions.map((interaction) => interaction.targetPart));
+    const result = beats
+      .filter((beat) =>
+        beat.kind === "set-state" &&
+        interactionTargets.has(beat.component) &&
+        Boolean(beat.toState && HELD_RESULT_STATES.has(beat.toState))
+      )
+      .sort((a, b) => a.atSec - b.atSec)
+      .at(-1);
+    if (!result) return scene;
+    if ((scene.camera?.path ?? []).some((move) =>
+      CAMERA_FULL_MOVES.has(move.move) && move.startSec + move.durationSec > result.atSec + 0.01
+    )) return scene;
+
+    const entranceClustered = moments.every((moment) => moment.atSec <= frontEdge);
+    const unsupportedHeldMoment = moments
+      .filter((moment) =>
+        moment.atSec > frontEdge &&
+        moment.atSec >= result.atSec + HELD_RESULT_MIN_BREATH_SEC &&
+        HELD_RESULT_MOMENT_RE.test(heldResultMomentText(moment)) &&
+        !beats.some((beat) => beatOverlapsMoment(beat, moment)) &&
+        !interactions.some((interaction) => interactionOverlapsMoment(interaction, moment)) &&
+        !(scene.camera?.path ?? []).some((move) =>
+          CAMERA_FULL_MOVES.has(move.move) &&
+          move.startSec + move.durationSec >=
+            moment.atSec - HELD_RESULT_MOMENT_EVIDENCE_BEFORE_SEC &&
+          move.startSec <= moment.atSec + HELD_RESULT_MOMENT_EVIDENCE_AFTER_SEC
+        ) &&
+        !(scene.gradeShift &&
+          scene.gradeShift.atSec >= moment.atSec - HELD_RESULT_MOMENT_EVIDENCE_BEFORE_SEC &&
+          scene.gradeShift.atSec <= moment.atSec + HELD_RESULT_MOMENT_EVIDENCE_AFTER_SEC)
+      )
+      .sort((a, b) => b.atSec - a.atSec)[0];
+    if (!entranceClustered && !unsupportedHeldMoment) return scene;
+    if (beats.some((beat) =>
+      beat.id !== result.id &&
+      beat.atSec > Math.max(frontEdge, result.atSec + HELD_RESULT_MIN_BREATH_SEC)
+    )) return scene;
+
+    const defaultAtSec = scene.startSec + scene.durationSec - HELD_RESULT_HIGHLIGHT_TAIL_SEC;
+    const atSec = round(unsupportedHeldMoment
+      ? Math.min(defaultAtSec, unsupportedHeldMoment.atSec - 0.3)
+      : defaultAtSec);
+    const resultEnd = result.atSec + beatDuration(result);
+    if (atSec < resultEnd + HELD_RESULT_MIN_BREATH_SEC) return scene;
+    if (atSec + HELD_RESULT_HIGHLIGHT_DURATION_SEC > scene.startSec + scene.durationSec - 0.3) {
+      return scene;
+    }
+
+    const ids = new Set(beats.map((beat) => beat.id));
+    const base = `${scene.id}-held-result-highlight`.slice(0, 64);
+    let id = base;
+    let serial = 2;
+    while (ids.has(id)) {
+      const suffix = `-${serial}`;
+      id = `${base.slice(0, 64 - suffix.length)}${suffix}`;
+      serial += 1;
+    }
+    const note =
+      `added a late highlight on "${result.component}" at ${atSec.toFixed(2)}s so the ` +
+      `successful interaction result develops during its held frame`;
+    normalized.push(`scene "${scene.id}": ${note}`);
+    return {
+      ...scene,
+      beats: [...beats, {
+        version: 1 as const,
+        id,
+        sceneId: scene.id,
+        component: result.component,
+        kind: "highlight" as const,
+        atSec,
+        durationSec: HELD_RESULT_HIGHLIGHT_DURATION_SEC,
+        style: "ring",
+        ease: "power2.out",
+      }].sort((a, b) => a.atSec - b.atSec),
+      sentinelNormalizations: [...(scene.sentinelNormalizations ?? []), note],
+    };
+  });
+  return { scenes, normalized };
+}
+
 /**
  * Deterministic de-double pass over a parsed storyboard, run before moments
  * top-up and validation. Planners double-trigger motion three ways, and each
@@ -821,6 +1459,7 @@ export function dedupeRedundantBeats(storyboard: DirectScene[]): BeatDedupeResul
       )
       .map((intent) => ({
         part: intent.targetPart,
+        item: intent.item,
         start: intent.pressSec! - CURSOR_PRESS_SLACK_SEC,
         end: (intent.releaseSec ?? intent.pressSec! + 0.3) + CURSOR_PRESS_SLACK_SEC,
       }));
@@ -830,9 +1469,10 @@ export function dedupeRedundantBeats(storyboard: DirectScene[]): BeatDedupeResul
       const startSec = beat.atSec;
       const endSec = beat.atSec + beatDuration(beat);
       // Rule 3: cursor press already pulses this part on these frames.
-      if (PULSE_KINDS.has(beat.kind)) {
+      if (PULSE_KINDS.has(beat.kind) && beat.kind !== "highlight") {
         const cursorPress = pressWindows.find((window) =>
           window.part === beat.component &&
+          (window.item === undefined || beat.item === undefined || window.item === beat.item) &&
           startSec < window.end &&
           endSec > window.start
         );
@@ -861,7 +1501,7 @@ export function dedupeRedundantBeats(storyboard: DirectScene[]): BeatDedupeResul
         if (
           PULSE_KINDS.has(beat.kind) &&
           earlier.kind === beat.kind &&
-          !(beat.kind === "select" && earlier.item !== beat.item) &&
+          !(beat.item !== undefined && earlier.item !== undefined && earlier.item !== beat.item) &&
           startSec - earlier.atSec < PULSE_REPEAT_WINDOW_SEC
         ) {
           return true;
@@ -1132,12 +1772,86 @@ export function componentUnitCount(
 ): number {
   if (!components?.length) return 0;
   const pluginUids = new Set<string>();
+  const freeByRegion = new Map<string, SceneComponentSpecV1[]>();
+  for (const component of components) {
+    if (!component.pluginUid && component.region) {
+      const group = freeByRegion.get(component.region) ?? [];
+      group.push(component);
+      freeByRegion.set(component.region, group);
+    }
+  }
+  // One app-window chassis plus one non-overlay child in the same declared
+  // station is one product surface, not two simultaneous ideas. LumaFlow's
+  // two-second bridge (`app-window` + its action bar) burned a storyboard
+  // retry because the old raw count contradicted the finding's own wording.
+  // Keep this deliberately narrow: larger groups and transient overlays still
+  // count independently, so the original dense-scene guard retains teeth.
+  const pairedChassisRegions = new Set(
+    [...freeByRegion.entries()]
+      .filter(([, group]) =>
+        group.length === 2 && group.some((component) => component.kind === "app-window") &&
+        group.every((component) =>
+          !STACKABLE_OVERLAY_KINDS.has(component.kind) && component.kind !== "toast"
+        )
+      )
+      .map(([region]) => region),
+  );
+  const countedChassisRegions = new Set<string>();
   let free = 0;
   for (const component of components) {
     if (component.pluginUid) pluginUids.add(component.pluginUid);
-    else free += 1;
+    else if (component.region && pairedChassisRegions.has(component.region)) {
+      countedChassisRegions.add(component.region);
+    } else free += 1;
   }
-  return free + pluginUids.size;
+  return free + pluginUids.size + countedChassisRegions.size;
+}
+
+/**
+ * Film-wide complexity charges a stable entity once across scenes. `entityId`
+ * is the plan's explicit declaration that later appearances are the same
+ * continuity object, so charging every appearance as a newly introduced
+ * surface contradicts the governor's own reuse remedy. Same-scene duplicates,
+ * plugin children, and components absorbed into a paired app chassis retain
+ * their ordinary cost.
+ */
+function filmComponentUnitCount(
+  scenes: Array<Pick<DirectScene, "components">>,
+): number {
+  const rawTotal = scenes.reduce(
+    (count, scene) => count + componentUnitCount(scene.components),
+    0,
+  );
+  const entityScenes = new Map<string, Set<number>>();
+  for (const [sceneIndex, scene] of scenes.entries()) {
+    const components = scene.components ?? [];
+    const pairedChassisRegions = new Set(
+      [...new Set(components.map((component) => component.region).filter(Boolean))]
+        .filter((region) => {
+          const group = components.filter(
+            (component) => !component.pluginUid && component.region === region,
+          );
+          return group.length === 2 &&
+            group.some((component) => component.kind === "app-window") &&
+            group.every((component) =>
+              !STACKABLE_OVERLAY_KINDS.has(component.kind) && component.kind !== "toast"
+            );
+        }),
+    );
+    for (const component of components) {
+      const entityId = component.entityId?.trim();
+      if (!entityId || component.pluginUid ||
+        (component.region && pairedChassisRegions.has(component.region))) continue;
+      const appearances = entityScenes.get(entityId) ?? new Set<number>();
+      appearances.add(sceneIndex);
+      entityScenes.set(entityId, appearances);
+    }
+  }
+  const continuityReuse = [...entityScenes.values()].reduce(
+    (count, sceneIndexes) => count + Math.max(0, sceneIndexes.size - 1),
+    0,
+  );
+  return rawTotal - continuityReuse;
 }
 
 /**
@@ -1153,11 +1867,9 @@ export function auditComponentComplexity(
   scenes: Array<Pick<DirectScene, "id" | "durationSec" | "components">>,
 ): string[] {
   const findings: string[] = [];
-  let total = 0;
   let filmSec = 0;
   for (const scene of scenes) {
     const count = componentUnitCount(scene.components);
-    total += count;
     filmSec += scene.durationSec;
     const cap = Math.min(
       MAX_COMPONENTS_PER_SCENE,
@@ -1172,6 +1884,7 @@ export function auditComponentComplexity(
       );
     }
   }
+  const total = filmComponentUnitCount(scenes);
   const filmCap = Math.max(2, Math.ceil(filmSec / FILM_SEC_PER_COMPONENT));
   if (total > filmCap) {
     findings.push(
@@ -1306,7 +2019,7 @@ export function trimOverBudgetComponents(
   });
 
   // (2) Film-wide over-cap (recomputed after per-scene trims), over by 1-2.
-  const total = scenes.reduce((count, scene) => count + componentUnitCount(scene.components), 0);
+  const total = filmComponentUnitCount(scenes);
   const filmSec = scenes.reduce((sec, scene) => sec + scene.durationSec, 0);
   const filmCap = Math.max(2, Math.ceil(filmSec / FILM_SEC_PER_COMPONENT));
   const filmOver = total - filmCap;
@@ -1509,9 +2222,70 @@ export function parseComponentPlan(html: string): { plan?: ComponentPlanV1; erro
     const sceneObject = entry as Record<string, unknown>;
     const sceneId = typeof sceneObject.sceneId === "string" ? sceneObject.sceneId.trim() : "";
     if (!sceneId) errors.push(`components scene[${index}] needs a sceneId`);
-    if (!Array.isArray(sceneObject.beats) || !sceneObject.beats.length) {
-      errors.push(`components scene[${index}] needs beats`);
+    const entranceFamily = normalizeStoryboardComponentEntranceFamily(sceneObject.entranceFamily);
+    if (sceneObject.entranceFamily !== undefined && !entranceFamily) {
+      errors.push(`components scene[${index}].entranceFamily is unsupported`);
+    }
+    if (!Array.isArray(sceneObject.beats)) {
+      errors.push(`components scene[${index}] needs a beats array`);
       return [];
+    }
+    const entrances = (Array.isArray(sceneObject.entrances) ? sceneObject.entrances : [])
+      .flatMap((raw, entranceIndex): ResolvedComponentEntranceV1[] => {
+        const label = `components scene[${index}].entrances[${entranceIndex}]`;
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          errors.push(`${label} must be an object`);
+          return [];
+        }
+        const entrance = raw as Record<string, unknown>;
+        const component = stableName(entrance.component);
+        const ease = typeof entrance.ease === "string" ? entrance.ease : "";
+        if (!component) errors.push(`${label} needs a stable component`);
+        if (!finite(entrance.startSec) || !finite(entrance.endSec)) {
+          errors.push(`${label} needs finite startSec/endSec`);
+        }
+        if (!EASE_PATTERN.test(ease)) errors.push(`${label} ease "${ease}" is not a known ease`);
+        if (errors.some((error) => error.startsWith(label))) return [];
+        return [{
+          component,
+          startSec: entrance.startSec as number,
+          endSec: entrance.endSec as number,
+          ease,
+        }];
+      });
+    if (sceneObject.entrances !== undefined && !Array.isArray(sceneObject.entrances)) {
+      errors.push(`components scene[${index}].entrances must be an array`);
+    }
+    if (entrances.length && !entranceFamily) {
+      errors.push(`components scene[${index}] entrances need one entranceFamily`);
+    }
+    const initialStates = (Array.isArray(sceneObject.initialStates) ? sceneObject.initialStates : [])
+      .flatMap((raw, stateIndex): Array<{ component: string; state: ContinuityStateV1 }> => {
+        const label = `components scene[${index}].initialStates[${stateIndex}]`;
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          errors.push(`${label} must be an object`);
+          return [];
+        }
+        const entry = raw as Record<string, unknown>;
+        const component = stableName(entry.component);
+        const state = entry.state;
+        if (!component || !state || typeof state !== "object" || Array.isArray(state)) {
+          errors.push(`${label} needs a stable component and state`);
+          return [];
+        }
+        const stateObject = state as Record<string, unknown>;
+        const kind = typeof stateObject.kind === "string" ? stateObject.kind : "";
+        const value = stateObject.value;
+        if (!["metric", "button", "progress", "selection", "shell"].includes(kind) ||
+            !(typeof value === "number" && Number.isFinite(value)) &&
+            typeof value !== "string" && typeof value !== "boolean") {
+          errors.push(`${label} has an invalid typed state`);
+          return [];
+        }
+        return [{ component, state: { kind: kind as ContinuityStateV1["kind"], value } }];
+      });
+    if (sceneObject.initialStates !== undefined && !Array.isArray(sceneObject.initialStates)) {
+      errors.push(`components scene[${index}].initialStates must be an array`);
     }
     const beats = sceneObject.beats.flatMap((raw, beatIndex): ResolvedComponentBeatV1[] => {
       const label = `components scene[${index}].beats[${beatIndex}]`;
@@ -1536,6 +2310,24 @@ export function parseComponentPlan(html: string): { plan?: ComponentPlanV1; erro
       const morphTo = stableName(beat.morphTo);
       const toState = typeof beat.toState === "string" ? beat.toState : "";
       const animation = stableName(beat.animation);
+      const follows = stableName(beat.follows);
+      const exitAxis = typeof beat.exitAxis === "string" &&
+          ["left", "right", "up", "down"].includes(beat.exitAxis)
+        ? beat.exitAxis as CutAxis
+        : undefined;
+      if (beat.exitAxis !== undefined && !exitAxis) {
+        errors.push(`${label} exitAxis "${String(beat.exitAxis)}" is unsupported`);
+      }
+      if (beat.lagMs !== undefined && !finite(beat.lagMs)) {
+        errors.push(`${label} lagMs must be finite`);
+      }
+      if (beat.followDepth !== undefined && !finite(beat.followDepth)) {
+        errors.push(`${label} followDepth must be finite`);
+      }
+      if (beat.exitRecedePercent !== undefined && !finite(beat.exitRecedePercent)) {
+        errors.push(`${label} exitRecedePercent must be finite`);
+      }
+      if (errors.some((error) => error.startsWith(label))) return [];
       return [{
         id,
         component,
@@ -1545,6 +2337,7 @@ export function parseComponentPlan(html: string): { plan?: ComponentPlanV1; erro
         ease,
         ...(typeof beat.text === "string" && beat.text ? { text: beat.text } : {}),
         ...(finite(beat.value) ? { value: beat.value } : {}),
+        ...(finite(beat.fromValue) ? { fromValue: beat.fromValue } : {}),
         ...(finite(beat.item) ? { item: beat.item } : {}),
         ...(toState ? { toState } : {}),
         ...(morphTo ? { morphTo } : {}),
@@ -1556,9 +2349,27 @@ export function parseComponentPlan(html: string): { plan?: ComponentPlanV1; erro
         // runtime reads it. It MUST round-trip here or the island-equality check
         // in validateComponentContract rejects every styled film (md-audit-probe-1).
         ...(typeof beat.style === "string" && beat.style ? { style: beat.style } : {}),
+        ...(exitAxis ? { exitAxis } : {}),
+        ...(finite(beat.exitRecedePercent)
+          ? { exitRecedePercent: beat.exitRecedePercent }
+          : {}),
+        ...(follows ? { follows } : {}),
+        ...(finite(beat.lagMs) ? { lagMs: beat.lagMs } : {}),
+        ...(finite(beat.followDepth) ? { followDepth: beat.followDepth } : {}),
       }];
     });
-    return sceneId && beats.length ? [{ sceneId, beats }] : [];
+    if (!beats.length && !entrances.length && !initialStates.length) {
+      errors.push(`components scene[${index}] needs beats, entrances, or initial states`);
+    }
+    return sceneId && (beats.length || entrances.length || initialStates.length)
+      ? [{
+          sceneId,
+          ...(initialStates.length ? { initialStates } : {}),
+          ...(entranceFamily ? { entranceFamily } : {}),
+          ...(entrances.length ? { entrances } : {}),
+          beats,
+        }]
+      : [];
   });
   return errors.length
     ? { errors }
@@ -1686,7 +2497,7 @@ export function validateComponentContract(
   }
   if (!parsed.plan) {
     errors.push(
-      "storyboard declares component beats but index_html has no sequences-components JSON island",
+      "storyboard declares component choreography but index_html has no sequences-components JSON island",
     );
     return { errors: [...new Set(errors)], warnings: [...new Set(warnings)] };
   }
@@ -1707,6 +2518,14 @@ export function validateComponentContract(
     if (!scope) {
       errors.push(`component plan references unknown scene "${scenePlan.sceneId}"`);
       continue;
+    }
+    for (const entrance of scenePlan.entrances ?? []) {
+      if (attributeMatches(scope, "data-part", entrance.component) !== 1) {
+        errors.push(
+          `entrance family targets component "${entrance.component}" but scene ` +
+            `"${scenePlan.sceneId}" does not contain exactly one matching data-part element`,
+        );
+      }
     }
     for (const beat of scenePlan.beats) {
       for (const part of [beat.component, beat.morphTo]) {
@@ -1736,11 +2555,16 @@ export function componentMotionWindows(
 ): Array<{ start: number; end: number }> {
   if (!plan) return [];
   return plan.scenes.flatMap((scene) =>
-    scene.beats
-      .filter((beat) =>
-        beat.kind === "morph" ||
-        beat.kind === "open" ||
-        beat.kind === "close" ||
+    [
+      ...(scene.entrances ?? []).map((entrance) => ({
+        start: entrance.startSec - 0.05,
+        end: entrance.endSec + 0.1,
+      })),
+      ...scene.beats
+        .filter((beat) =>
+          beat.kind === "morph" ||
+          beat.kind === "open" ||
+          beat.kind === "close" ||
         // In-place component-internal motion (2026-07-08, probe-audit-01): these
         // beats animate a surface's OWN text/value/emphasis without moving the
         // surface, transiently perturbing the internal geometry the vendored
@@ -1768,9 +2592,10 @@ export function componentMotionWindows(
         // before converging to the AUTHORED copy — designed entrance motion, not
         // a layout defect, exactly like an open/morph window. The settled state
         // (the authored text) is still audited outside this window.
-        (beat.kind === "type" && beat.style != null && HEADLINE_SPLIT_STYLES.has(beat.style))
-      )
-      .map((beat) => ({ start: beat.startSec - 0.05, end: beat.endSec + 0.1 }))
+          (beat.kind === "type" && beat.style != null && HEADLINE_SPLIT_STYLES.has(beat.style))
+        )
+        .map((beat) => ({ start: beat.startSec - 0.05, end: beat.endSec + 0.1 })),
+    ]
   );
 }
 
@@ -1783,7 +2608,8 @@ export function componentMotionWindows(
 export function componentPlanningVocabulary(): string {
   const lines = COMPONENT_CATALOG.filter((spec) => !spec.internal).map((spec) => {
     const beats = [...new Set([...spec.beats])];
-    const morphs = spec.morphsWith?.length ? ` · morphs↔${spec.morphsWith.join("/")}` : "";
+    const crossKind = spec.morphsWith?.length ? `/${spec.morphsWith.join("/")}` : "";
+    const morphs = ` · morphs↔same-kind${crossKind}`;
     return `- ${spec.kind}: ${spec.purpose}${beats.length ? ` · beats: ${beats.join(",")}` : ""}${morphs}`;
   });
   return [
@@ -1819,16 +2645,16 @@ export function componentAuthoringReference(kinds?: Iterable<ComponentKind>): st
     "storyboard declares component beats, the `sequences-components` JSON island +",
     `\`${COMPONENT_RUNTIME_FILE}\` + \`SequencesComponents.compile(tl, root)\`.`,
     "Author each declared component ONCE with its exact data-part id and",
-    "data-component kind, using the kit markup below (pair with .material /",
-    ".material-hero / .inset-well for light). Author its ENTRANCE yourself;",
-    "never author its internal state motion — typing, opening, selecting,",
-    "counting, chart growth, streaming, and morphs are compiled by the host",
-    "runtime from the storyboard beats. Author the FINAL state (full text,",
-    "final numbers, final bar heights); the runtime animates toward it. States",
-    "are data-state/data-active attributes the runtime flips. A morph target",
+    "data-component kind, using the kit markup below and the frame's selected",
+    "material profile. componentEntranceFamily means the host owns root entrances.",
+    "Otherwise add one only when no typed open/pop/morph owns it. Never author",
+    "internal type/open/select/count/chart/stream/morph motion; the runtime",
+    "compiles it. Author FINAL text, numbers, and bar heights. States are",
+    "data-state/data-active attributes the runtime flips. A morph target",
     "starts hidden by the runtime; do not author an entrance for it.",
     "A `rows` or `stream` beat reveals EXISTING children: author at least 3",
-    ".cmp-row / .cmp-item / .cmp-card / .cmp-msg children inside that target",
+    ".cmp-row / .cmp-item / .cmp-card / .cmp-msg children inside that target;",
+    "a custom visual row class must also carry the generic `data-cmp-item` marker",
     "yourself — a rows beat on a childless container has nothing to reveal and",
     "aborts the compile.",
     "",

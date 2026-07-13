@@ -15,13 +15,15 @@ import {
   extractAssetMetadata,
   sha256File,
 } from "@sequences/platform/asset-metadata";
+import { slackSequencesEnvRawValue } from "./featureFlags.ts";
 
 const ENGINE_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = path.join(ENGINE_SRC_DIR, "templates");
 
 /** apps/slack/.data — per-project folders + the job map live here. */
 export function dataDir(): string {
-  return process.env.SLACK_SEQUENCES_DATA_DIR ?? path.resolve(ENGINE_SRC_DIR, "../../.data");
+  return slackSequencesEnvRawValue("SLACK_SEQUENCES_DATA_DIR") ??
+    path.resolve(ENGINE_SRC_DIR, "../../.data");
 }
 
 export function projectsDir(): string {

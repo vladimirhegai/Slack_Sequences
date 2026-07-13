@@ -1,6 +1,6 @@
 /**
- * Sequences Studio — the operator's ONE local viewer over components, assets,
- * and recipes. (`npm run studio --workspace @sequences/slack` →
+ * Sequences Studio — the operator's ONE local viewer over engine catalogs.
+ * (`npm run studio --workspace @sequences/slack` →
  * http://127.0.0.1:4321; `npm run assets` is an alias.)
  *
  * The operator VIEWS here; coding agents AUTHOR elsewhere:
@@ -11,6 +11,10 @@
  *  - recipes: the agent-authored source library (recipes/<id>.recipe.html,
  *    see recipes/README.md) joined against the exported RecipeV2 library,
  *    with gate/export buttons that run the SAME CLI machinery.
+ *  - looks: DESIGN_DIALECTS rendered as palette/type/material/motion cards;
+ *    production-cleared MIT wallpapers appear with their crop/motion metadata;
+ *  - camera: typed SceneCameraIntentV1 patterns with a seekable station map;
+ *  - plugins: PLUGIN_CATALOG kinds, params, purpose, and planning vocabulary.
  *
  * Localhost-only, no auth, no build step, no heavy deps (`http.createServer`
  * + static files + vanilla JS UI). NEVER deployed: refuses to start under
@@ -35,10 +39,15 @@ import {
 } from "../src/engine/assetContract.ts";
 import { SPRING_PRESETS, type SpringPresetName } from "../src/engine/motionSpring.ts";
 import { ASSET_LIBRARY, getAsset } from "../src/engine/assets/index.ts";
+import { BACKGROUND_CATALOG, backgroundById } from "../src/engine/backgroundCatalog.ts";
+import { CAMERA_PATTERNS } from "../src/engine/cameraPatterns.ts";
+import { DESIGN_DIALECTS } from "../src/engine/designDialects.ts";
+import { PLUGIN_CATALOG } from "../src/engine/pluginContract.ts";
 import { sweepOrphanBrowsers } from "../src/engine/browserLifecycle.ts";
 import { gateRecipe, loadGateRecord, recipeGateDir } from "./gate.ts";
 import { exportRecipe } from "./exportRecipe.ts";
 import { listRecipeSources } from "./recipeSource.ts";
+import { pluginDeclarationExample } from "./pluginExamples.ts";
 
 if (process.env.RAILWAY_ENVIRONMENT) {
   process.stderr.write(
@@ -51,6 +60,15 @@ const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "ui");
 const RECIPES_LIBRARY_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../skills/sequences-recipes",
+);
+const PROBE_PROJECTS_DIR = path.join(
+  process.env.SLACK_SEQUENCES_DATA_DIR ??
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.data"),
+  "projects",
+);
+const WALLPAPERS_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../vendor/wallpapers",
 );
 const PORT = Number(process.env.STUDIO_PORT ?? argValue("--port") ?? 4321);
 const HOST = "127.0.0.1";
@@ -101,6 +119,52 @@ function sendWithin(res: http.ServerResponse, root: string, rel: string): void {
   sendFile(res, resolved);
 }
 
+/** Like sendWithin, but honors HTTP Range so <video> can seek MP4s. */
+function sendMediaWithin(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  root: string,
+  rel: string,
+): void {
+  const resolved = path.resolve(root, rel.replace(/^\/+/, ""));
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    res.writeHead(403, { "content-type": "text/plain" });
+    res.end("forbidden");
+    return;
+  }
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("not found");
+    return;
+  }
+  const size = fs.statSync(resolved).size;
+  const type = MIME[path.extname(resolved).toLowerCase()] ?? "application/octet-stream";
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "");
+  if (range && (range[1] || range[2])) {
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (start >= size || start > end) {
+      res.writeHead(416, { "content-range": `bytes */${size}` });
+      res.end();
+      return;
+    }
+    res.writeHead(206, {
+      "content-type": type,
+      "content-range": `bytes ${start}-${end}/${size}`,
+      "content-length": end - start + 1,
+      "accept-ranges": "bytes",
+    });
+    fs.createReadStream(resolved, { start, end }).pipe(res);
+    return;
+  }
+  res.writeHead(200, {
+    "content-type": type,
+    "content-length": size,
+    "accept-ranges": "bytes",
+  });
+  fs.createReadStream(resolved).pipe(res);
+}
+
 async function readBody(req: http.IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(chunk as Buffer);
@@ -119,6 +183,59 @@ function componentsState(): unknown {
       markup: spec.markup,
     })),
     kitCss: componentKitStyleTag(),
+  };
+}
+
+/* ------------------------------------------------------- discovery catalogs */
+
+function looksState(): unknown {
+  return {
+    entries: DESIGN_DIALECTS.map((dialect) => ({
+      id: dialect.id,
+      label: dialect.label,
+      preferredBasis: dialect.preferredBasis,
+      canvas: dialect.canvas,
+      colorTopology: dialect.colorTopology,
+      palette: { ...dialect.palette, accent: dialect.accent },
+      chapterColors: dialect.chapterColors ?? [],
+      materialProfile: dialect.materialProfile,
+      type: {
+        systemId: dialect.typeSystemId,
+        ...dialect.typography,
+      },
+      visualGrammar: dialect.visualGrammar,
+      motion: dialect.motion,
+      backgroundPolicyIds: dialect.backgroundPolicyIds,
+      defaultBackgroundPolicyId: dialect.defaultBackgroundPolicyId,
+      rules: dialect.rules,
+      sourceRefs: dialect.sourceRefs,
+    })),
+    backgrounds: backgroundsState().entries,
+  };
+}
+
+function backgroundsState(): { entries: Array<unknown> } {
+  return {
+    entries: BACKGROUND_CATALOG.map((entry) => ({
+      ...entry,
+      previewUrl: `/backgrounds/${encodeURIComponent(entry.id)}`,
+    })),
+  };
+}
+
+function cameraState(): unknown {
+  return { version: 1, entries: CAMERA_PATTERNS };
+}
+
+function pluginsState(): unknown {
+  return {
+    entries: PLUGIN_CATALOG.map((spec) => ({
+      kind: spec.kind,
+      purpose: spec.purpose,
+      params: spec.params,
+      planningLine: spec.planningLine,
+      example: pluginDeclarationExample(spec),
+    })),
   };
 }
 
@@ -223,6 +340,84 @@ function recipesState(): unknown {
   return { version: library.version, warnings: library.warnings, entries, issues };
 }
 
+/* ------------------------------------------------------------ probes */
+
+/**
+ * Live-probe viewer state: every local `.data/projects/<id>` that produced a
+ * non-empty rendered MP4 (fail-loud runs and rejected attempts never render,
+ * so they are excluded by construction). The operator audits the actual film
+ * plus the temporal strip / blocking overlay QA already persists.
+ */
+function probesState(): unknown {
+  if (!fs.existsSync(PROBE_PROJECTS_DIR)) return { entries: [] };
+  const entries = fs.readdirSync(PROBE_PROJECTS_DIR, { withFileTypes: true })
+    .filter((dirent) => dirent.isDirectory())
+    .map((dirent) => {
+      const dir = path.join(PROBE_PROJECTS_DIR, dirent.name);
+      const rendersDir = path.join(dir, "renders");
+      const renders = fs.existsSync(rendersDir)
+        ? fs.readdirSync(rendersDir)
+            .filter((name) => name.endsWith(".mp4"))
+            .map((name) => ({ name, stat: fs.statSync(path.join(rendersDir, name)) }))
+            .filter((render) => render.stat.size > 0)
+            .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)
+        : [];
+      if (!renders.length) return undefined;
+      const latest = renders[0]!;
+      let sentinel: {
+        disposition?: string;
+        durationMs?: number;
+        degradations?: string[];
+        stages?: Array<{ stage: string; status: string; durationMs: number; attempts?: number }>;
+      } | undefined;
+      try {
+        sentinel = JSON.parse(
+          fs.readFileSync(path.join(dir, "planning", "sentinel-run.json"), "utf8"),
+        );
+      } catch {
+        sentinel = undefined;
+      }
+      const mediaUrl = (rel: string): string | undefined =>
+        fs.existsSync(path.join(dir, rel))
+          ? `/probe-media/${encodeURIComponent(dirent.name)}/${rel.replace(/\\/g, "/")}`
+          : undefined;
+      const thumbsDir = path.join(dir, "build", "thumbs");
+      const thumbnails = fs.existsSync(thumbsDir)
+        ? fs.readdirSync(thumbsDir)
+            .filter((name) => name.endsWith(".png"))
+            .sort()
+            .map((name) => `/probe-media/${encodeURIComponent(dirent.name)}/build/thumbs/${name}`)
+        : [];
+      return {
+        id: dirent.name,
+        renderedAt: latest.stat.mtime.toISOString(),
+        mp4: `/probe-media/${encodeURIComponent(dirent.name)}/renders/${encodeURIComponent(latest.name)}`,
+        mp4Bytes: latest.stat.size,
+        renders: renders.map((render) => ({
+          name: render.name,
+          url: `/probe-media/${encodeURIComponent(dirent.name)}/renders/${encodeURIComponent(render.name)}`,
+          bytes: render.stat.size,
+          at: render.stat.mtime.toISOString(),
+        })),
+        strip: mediaUrl(path.join("build", "qa", "temporal", "strip.png")),
+        blocking: mediaUrl(path.join("build", "qa", "temporal", "blocking.png")),
+        thumbnails,
+        disposition: sentinel?.disposition,
+        degradations: sentinel?.degradations ?? [],
+        stages: (sentinel?.stages ?? []).map((stage) => ({
+          stage: stage.stage,
+          status: stage.status,
+          attempts: stage.attempts ?? 1,
+          durationMs: stage.durationMs,
+        })),
+        wallClockMs: sentinel?.durationMs,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+    .sort((a, b) => (a.renderedAt < b.renderedAt ? 1 : -1));
+  return { entries };
+}
+
 // One long-running job at a time: gates run a real browser and the library
 // env override is process-global. A simple promise chain keeps handlers honest.
 let queue: Promise<unknown> = Promise.resolve();
@@ -256,10 +451,40 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       assets: ASSET_LIBRARY.map(assetSummary),
       morph: { default: "settle", gestures: MORPH_GESTURES },
       recipes: recipesState(),
+      looks: looksState(),
+      camera: cameraState(),
+      plugins: pluginsState(),
     });
+  }
+  if (req.method === "GET" && url.pathname === "/api/looks") {
+    return sendJson(res, 200, { looks: looksState() });
+  }
+  if (req.method === "GET" && url.pathname === "/api/backgrounds") {
+    return sendJson(res, 200, { backgrounds: backgroundsState() });
+  }
+  if (req.method === "GET" && url.pathname === "/api/camera") {
+    return sendJson(res, 200, { camera: cameraState() });
+  }
+  if (req.method === "GET" && url.pathname === "/api/plugins") {
+    return sendJson(res, 200, { plugins: pluginsState() });
   }
   if (req.method === "GET" && url.pathname === "/api/recipes") {
     return sendJson(res, 200, { recipes: recipesState() });
+  }
+  if (req.method === "GET" && url.pathname === "/api/probes") {
+    return sendJson(res, 200, { probes: probesState() });
+  }
+  if (req.method === "GET" && segments[0] === "probe-media" && segments[1]) {
+    const probeRoot = path.resolve(PROBE_PROJECTS_DIR, decodeURIComponent(segments[1]));
+    if (
+      probeRoot !== PROBE_PROJECTS_DIR &&
+      !probeRoot.startsWith(PROBE_PROJECTS_DIR + path.sep)
+    ) {
+      res.writeHead(403, { "content-type": "text/plain" });
+      res.end("forbidden");
+      return;
+    }
+    return sendMediaWithin(req, res, probeRoot, segments.slice(2).map(decodeURIComponent).join("/"));
   }
   if (req.method === "POST" && url.pathname === "/api/render") {
     const body = (await readBody(req)) as {
@@ -297,6 +522,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const root = path.join(RECIPES_LIBRARY_DIR, decodeURIComponent(segments[1]));
     return sendWithin(res, root, segments.slice(2).join("/"));
   }
+  if (
+    req.method === "GET" &&
+    segments.length === 2 &&
+    segments[0] === "backgrounds" &&
+    segments[1]
+  ) {
+    const entry = backgroundById(decodeURIComponent(segments[1]));
+    if (!entry) return sendJson(res, 404, { error: "unknown production background" });
+    return sendWithin(res, WALLPAPERS_DIR, path.basename(entry.file));
+  }
   if (req.method === "GET" && segments[0] === "ui") {
     return sendWithin(res, UI_DIR, segments.slice(1).join("/"));
   }
@@ -307,7 +542,9 @@ server.listen(PORT, HOST, () => {
   const url = `http://${HOST}:${PORT}`;
   process.stdout.write(
     `Sequences Studio → ${url}  (${COMPONENT_CATALOG.length} components · ` +
-      `${ASSET_LIBRARY.length} assets · recipes from recipes/*.recipe.html)\n`,
+      `${ASSET_LIBRARY.length} assets · ${DESIGN_DIALECTS.length} looks · ` +
+      `${CAMERA_PATTERNS.length} camera patterns · ${PLUGIN_CATALOG.length} plugins · ` +
+      `${BACKGROUND_CATALOG.length} production backgrounds · recipes from recipes/*.recipe.html)\n`,
   );
   // Operator-local hygiene: reap any headless QA browsers a previous
   // interrupted gate/test stranded on this machine (orphans only).

@@ -1,0 +1,291 @@
+<script type="application/json" data-recipe-meta>
+{
+  "format": 2,
+  "id": "metric-odometer",
+  "title": "Hero metric with masked odometer digit roll",
+  "description": "A hero stat whose digits spin on masked odometer columns, decelerating into the final figure with a left-to-right wave landing, accent underline, and glow.",
+  "tags": [
+    "metric",
+    "stat",
+    "counter",
+    "odometer",
+    "kpi",
+    "payoff",
+    "proof"
+  ],
+  "triggerPatterns": [
+    "odometer",
+    "count[ -]?(up|er)",
+    "(digits?|numbers?) (roll|spin|tick)",
+    "roll(s|ing)? (up )?to",
+    "hero (stat|metric|number)",
+    "big (stat|metric|number)",
+    "\\bkpi\\b",
+    "stat[ -]?(payoff|reveal|callout)",
+    "(uptime|revenue|latency|accuracy) (number|stat|figure)"
+  ],
+  "durationWindow": { "minSec": 3, "maxSec": 10 },
+  "componentKinds": ["stat-card"],
+  "params": [
+    {
+      "name": "value",
+      "kind": "text",
+      "description": "The final figure — up to six characters: digits 0-9 plus at most one separator (. , :). Digits roll; separators stay printed.",
+      "maxChars": 6
+    },
+    {
+      "name": "label",
+      "kind": "text",
+      "description": "What the number measures — the line under the metric.",
+      "maxChars": 30
+    },
+    {
+      "name": "prefix",
+      "kind": "text",
+      "description": "Static accent-colored lead-in ($, +, ~).",
+      "default": "",
+      "maxChars": 2
+    },
+    {
+      "name": "suffix",
+      "kind": "text",
+      "description": "Static accent-colored unit (%, ms, x).",
+      "default": "",
+      "maxChars": 3
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for prefix/suffix, underline, and glow.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "settleSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the last digit locks (leave >=1s of scene after it).",
+      "default": 2.2,
+      "min": 1.8,
+      "max": 8
+    }
+  ],
+  "revision": 1,
+  "demo": {
+    "durationSec": 4.6,
+    "params": {
+      "value": "99.99",
+      "prefix": "",
+      "suffix": "%",
+      "label": "uptime across regions",
+      "accent": "var(--cinema-key)",
+      "settleSec": 2.4
+    }
+  },
+  "sanityBriefs": [
+    "The proof shot: our uptime number rolls up to 99.99% like an odometer and locks with an underline.",
+    "A hero stat payoff where the revenue counter digits spin to the final figure."
+  ]
+}
+</script>
+<template data-recipe-doc>
+# metric-odometer — masked digit columns, wave landing, accent lock
+
+**What it is.** A hero metric built from real odometer machinery: each digit
+of the final figure is a masked vertical column that spins through a full
+digit cycle and decelerates onto its target, landing in a left-to-right wave.
+Separators (`.`, `,`, `:`) stay printed while digits move. The lock is
+acknowledged by an accent underline sweep, one committed scale pop, and a soft
+glow that releases. The label reads beneath the number the whole time, so the
+claim has context while the digits are still rolling.
+
+**When to declare it.** The brief's proof moment: an uptime/accuracy
+percentage, revenue or user count, latency figure, a multiplier — any single
+number the film hangs its credibility on. The landing is a natural PRIMARY
+moment: place a declared moment at roughly `sceneStart + settleSec` with
+motionIntent "count" or "resolve". Prefer it over a plain `count` beat when
+the number IS the shot (a `stat-card` count suits dashboards; this suits hero
+typography).
+
+**How to stage the shot around it.**
+- Give the roll its focal window: the columns spin from `settleSec - 1.2` to
+  `settleSec`; no competing motion there, and ≥1s of read after the lock.
+- Calm or slowly drifting camera; a push-in that lands just before the lock
+  pairs beautifully. Avoid whipping away before the underline finishes.
+- The number reads as the scene's hero copy — keep other copy small and
+  out of the center band.
+- `value` is at most 6 characters with one separator; put units in `suffix`
+  ("%", "ms", "x") and currency/sign in `prefix` ("$", "+").
+
+**Slots.** `value` (the final figure — digits roll, separators print),
+`label` (what it measures), `prefix`/`suffix` (static accent-colored unit
+marks), `accent` (a `var(--…)` brand token), `settleSec` (seconds after scene
+start when the last digit locks; leave ≥1s of scene after it).
+</template>
+<!--
+  metric-odometer — the KPI-payoff signature (agent-authored recipe).
+
+  Instantiation contract (host-owned — see recipeContract.ts): markup template
+  injected inside the declared scene with {{param}} slots filled; style
+  injected once into <head>; the motion body runs as (tl, root, start,
+  duration, uid) adding tweens to the ONE paused master timeline. Pure
+  function of timeline time — no clocks, no rAF, no randomness, no repeats.
+
+  Mechanism: the markup ships six pre-built columns, each a masked 20-line
+  digit strip (0-9 twice, so every roll travels at least a full cycle and no
+  column sits dead). A load-time pass distributes {{value}}'s characters
+  across the columns — digit chars keep their strip, separator chars swap to
+  a printed literal, unused columns hide. This runs once at document parse
+  (before any seek), so it is a pure function of the source: deterministic by
+  construction.
+
+  Static-analyzability convention (keeps the lint gate warning-free): tween
+  targets are INLINE STRING LITERALS with {{uid}} filled by the host, and the
+  timing spine derives from {{start}}/{{settleSec}} numeric literal slots so
+  every position constant-folds in the pinned GSAP parser. Roll TARGET VALUES
+  are runtime-computed from {{value}} — values never affect lint placement.
+-->
+<style data-recipe-style>
+  .rcp-odo {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 30px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .rcp-odo .rcp-odo-numwrap {
+    position: relative;
+    display: inline-block;
+    will-change: transform;
+  }
+  .rcp-odo .rcp-odo-row {
+    display: block;
+    white-space: nowrap;
+    font-size: var(--rcp-size, 168px);
+    font-weight: var(--rcp-weight, 800);
+    letter-spacing: -0.01em;
+    line-height: 1.04;
+  }
+  .rcp-odo .rcp-odo-fix {
+    display: inline-block;
+    vertical-align: bottom;
+    color: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-odo .rcp-odo-cell {
+    display: inline-block;
+    vertical-align: bottom;
+    overflow: hidden;
+    height: 1.04em;
+  }
+  .rcp-odo .rcp-odo-strip {
+    display: block;
+    will-change: transform;
+  }
+  .rcp-odo .rcp-odo-lit {
+    display: inline-block;
+  }
+  .rcp-odo .rcp-odo-rule {
+    display: block;
+    position: absolute;
+    left: 2%;
+    right: 2%;
+    top: calc(100% + 0.06em);
+    height: 0.05em;
+    border-radius: 999px;
+    background: var(--rcp-accent, #ffc24d);
+    transform: scaleX(0);
+    transform-origin: 50% 50%;
+    font-size: var(--rcp-size, 168px);
+  }
+  .rcp-odo .rcp-odo-glow {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 9em;
+    height: 3.4em;
+    margin-left: -4.5em;
+    margin-top: -1.7em;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, var(--rcp-accent, #ffc24d), transparent 72%);
+    opacity: 0;
+    pointer-events: none;
+    filter: blur(16px);
+    font-size: var(--rcp-size, 168px);
+  }
+  .rcp-odo .rcp-odo-label {
+    font-size: var(--rcp-label-size, 28px);
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    opacity: 0.78;
+  }
+</style>
+<template data-recipe-markup>
+  <div class="rcp-odo" data-part="{{uid}}-odometer" data-layout-important
+    data-layout-anchor="frame:center" style="--rcp-accent: {{accent}}">
+    <span class="rcp-odo-numwrap">
+      <span class="rcp-odo-glow" data-layout-ignore></span>
+      <!-- Cells sit adjacent with NO inter-element whitespace: at hero font
+           sizes a stray text node between inline-blocks renders as a huge
+           gap between digits. -->
+      <span class="rcp-odo-row"><span class="rcp-odo-fix">{{prefix}}</span><span class="rcp-odo-cell" data-part="{{uid}}-odo-0"><span class="rcp-odo-strip">0<br>1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>0<br>1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9</span><span class="rcp-odo-lit"></span></span><span class="rcp-odo-cell" data-part="{{uid}}-odo-1"><span class="rcp-odo-strip">0<br>1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>0<br>1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9</span><span class="rcp-odo-lit"></span></span><span class="rcp-odo-cell" data-part="{{uid}}-odo-2"><span class="rcp-odo-strip">0<br>1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>0<br>1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9</span><span class="rcp-odo-lit"></span></span><span class="rcp-odo-cell" data-part="{{uid}}-odo-3"><span class="rcp-odo-strip">0<br>1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>0<br>1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9</span><span class="rcp-odo-lit"></span></span><span class="rcp-odo-cell" data-part="{{uid}}-odo-4"><span class="rcp-odo-strip">0<br>1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>0<br>1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9</span><span class="rcp-odo-lit"></span></span><span class="rcp-odo-cell" data-part="{{uid}}-odo-5"><span class="rcp-odo-strip">0<br>1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>0<br>1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9</span><span class="rcp-odo-lit"></span></span><span class="rcp-odo-fix">{{suffix}}</span></span>
+      <span class="rcp-odo-rule" data-layout-ignore></span>
+    </span>
+    <div class="rcp-odo-label">{{label}}</div>
+  </div>
+</template>
+<script data-recipe-motion>
+  // Load-time column distribution: runs once at document parse, before any
+  // seek — a pure function of {{value}}. Digit chars keep their strip,
+  // separators print, unused columns hide.
+  var cells = document.querySelectorAll('[data-part="{{uid}}-odometer"] .rcp-odo-cell');
+  for (var i = 0; i < cells.length; i++) {
+    var ch = "{{value}}".charAt(i);
+    var strip = cells[i].querySelector(".rcp-odo-strip");
+    var lit = cells[i].querySelector(".rcp-odo-lit");
+    if (!ch) { cells[i].style.display = "none"; }
+    else if (ch >= "0" && ch <= "9") { lit.style.display = "none"; }
+    else { strip.style.display = "none"; lit.textContent = ch; }
+  }
+
+  // Roll targets: each strip is 20 lines (0-9 twice), one line = 5% of strip
+  // height; a digit d lands on its second copy at yPercent -5*(10+d), so
+  // every live column travels at least one full cycle. Non-digit columns
+  // resolve to 0 (their strip is hidden anyway).
+  var c0 = "{{value}}".charCodeAt(0); var y0 = (c0 >= 48 && c0 <= 57) ? (-5 * (c0 - 38)) : 0;
+  var c1 = "{{value}}".charCodeAt(1); var y1 = (c1 >= 48 && c1 <= 57) ? (-5 * (c1 - 38)) : 0;
+  var c2 = "{{value}}".charCodeAt(2); var y2 = (c2 >= 48 && c2 <= 57) ? (-5 * (c2 - 38)) : 0;
+  var c3 = "{{value}}".charCodeAt(3); var y3 = (c3 >= 48 && c3 <= 57) ? (-5 * (c3 - 38)) : 0;
+  var c4 = "{{value}}".charCodeAt(4); var y4 = (c4 >= 48 && c4 <= 57) ? (-5 * (c4 - 38)) : 0;
+  var c5 = "{{value}}".charCodeAt(5); var y5 = (c5 >= 48 && c5 <= 57) ? (-5 * (c5 - 38)) : 0;
+
+  // Timing spine: {{start}}/{{settleSec}} are numeric literals, so every
+  // position below constant-folds at parse time (lint-placeable, identical
+  // at runtime). settle = the last column's lock.
+  var settle = {{start}} + {{settleSec}};
+
+  // Entrance: the whole metric block rises as one object (label included, so
+  // the claim has context while the digits roll).
+  tl.fromTo('[data-part="{{uid}}-odometer"]', { y: 26, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.45, ease: "power3.out" }, {{start}} + 0.15);
+
+  // The roll: all columns spin together, decelerating on seqSettle, landing
+  // in a left-to-right wave (each column starts a touch later and rolls a
+  // touch longer than its left neighbor).
+  tl.fromTo('[data-part="{{uid}}-odo-0"] .rcp-odo-strip', { yPercent: 0 }, { yPercent: y0, duration: 0.95, ease: "seqSettle" }, settle - 1.20);
+  tl.fromTo('[data-part="{{uid}}-odo-1"] .rcp-odo-strip', { yPercent: 0 }, { yPercent: y1, duration: 0.97, ease: "seqSettle" }, settle - 1.17);
+  tl.fromTo('[data-part="{{uid}}-odo-2"] .rcp-odo-strip', { yPercent: 0 }, { yPercent: y2, duration: 0.99, ease: "seqSettle" }, settle - 1.14);
+  tl.fromTo('[data-part="{{uid}}-odo-3"] .rcp-odo-strip', { yPercent: 0 }, { yPercent: y3, duration: 1.01, ease: "seqSettle" }, settle - 1.11);
+  tl.fromTo('[data-part="{{uid}}-odo-4"] .rcp-odo-strip', { yPercent: 0 }, { yPercent: y4, duration: 1.03, ease: "seqSettle" }, settle - 1.08);
+  tl.fromTo('[data-part="{{uid}}-odo-5"] .rcp-odo-strip', { yPercent: 0 }, { yPercent: y5, duration: 1.05, ease: "seqSettle" }, settle - 1.05);
+
+  // Lock acknowledgment: one committed pop, underline sweep, glow release.
+  tl.fromTo('[data-part="{{uid}}-odometer"] .rcp-odo-numwrap', { scale: 1 },
+    { scale: 1.02, duration: 0.12, ease: "power2.out" }, settle - 0.03);
+  tl.to('[data-part="{{uid}}-odometer"] .rcp-odo-numwrap', { scale: 1, duration: 0.28, ease: "seqSettle" }, settle + 0.11);
+  tl.fromTo('[data-part="{{uid}}-odometer"] .rcp-odo-rule', { scaleX: 0 },
+    { scaleX: 1, duration: 0.32, ease: "power3.out" }, settle + 0.04);
+  tl.fromTo('[data-part="{{uid}}-odometer"] .rcp-odo-glow', { opacity: 0 },
+    { opacity: 0.45, duration: 0.22, ease: "power2.out" }, settle - 0.02);
+  tl.to('[data-part="{{uid}}-odometer"] .rcp-odo-glow', { opacity: 0.16, duration: 0.5, ease: "power2.inOut" }, settle + 0.24);
+</script>

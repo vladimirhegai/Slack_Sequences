@@ -12,6 +12,13 @@ import {
 } from "../src/engine/brandTokens.ts";
 import { FRAME_PRESETS, presetById } from "../src/engine/framePresets.ts";
 import {
+  BACKGROUND_POLICIES,
+  DESIGN_DIALECTS,
+  backgroundPolicyForDialect,
+  designDialectById,
+  rankDesignDialects,
+} from "../src/engine/designDialects.ts";
+import {
   buildJobFrame,
   forbiddenDefaults,
   frameCapsule,
@@ -91,6 +98,33 @@ describe("preset registry + ranking", () => {
   });
 });
 
+describe("motion-ready design dialects", () => {
+  it("keeps generic unique ids and resolves only approved background policies", () => {
+    expect(DESIGN_DIALECTS.length).toBeGreaterThanOrEqual(6);
+    expect(new Set(DESIGN_DIALECTS.map((dialect) => dialect.id)).size).toBe(DESIGN_DIALECTS.length);
+    expect(new Set(BACKGROUND_POLICIES.map((policy) => policy.id)).size).toBe(BACKGROUND_POLICIES.length);
+    for (const dialect of DESIGN_DIALECTS) {
+      expect(dialect.id).toMatch(/^[a-z]+(?:-[a-z]+)*$/);
+      expect(dialect.sourceRefs.length).toBeGreaterThan(0);
+      expect(backgroundPolicyForDialect(dialect).direction.length).toBeGreaterThan(40);
+    }
+    const gallery = designDialectById("gallery-white")!;
+    expect(backgroundPolicyForDialect(gallery, "ink-rail").id).toBe(
+      gallery.defaultBackgroundPolicyId,
+    );
+  });
+
+  it("ranks an incident timeline toward a signal-led dark dialect", () => {
+    expect(rankDesignDialects("Realtime incident alert timeline", "crisp-saas")[0]?.id)
+      .toBe("hazard-dark");
+  });
+
+  it("does not match short keywords inside unrelated words", () => {
+    expect(rankDesignDialects("Rapid capital planning", "crisp-saas")[0]?.id)
+      .not.toBe("hazard-dark");
+  });
+});
+
 describe("deterministic remap", () => {
   it("applies a usable brand accent and recomputes safe accent text", () => {
     const preset = presetById("clean-corporate")!;
@@ -101,12 +135,13 @@ describe("deterministic remap", () => {
     expect(design.brandMatched).toBe(true);
   });
 
-  it("keeps the preset accent when the brand accent is too low-contrast", () => {
+  it("keeps a coherent dialect accent when the brand accent is neutral", () => {
     const preset = presetById("bold-launch")!; // white canvas
     const tokens = extractBrandTokens("accent #FEFEFE");
     const design = remapPreset(preset, tokens, null, []);
-    // #FEFEFE is neutral so it isn't even an accent candidate → house accent kept.
-    expect(design.colors.accent).toBe(preset.colors.accent);
+    // #FEFEFE is neutral so it isn't an accent candidate; the selected dialect seeds it.
+    expect(design.colors.accent).toBe("#E60000");
+    expect(design.provenance).toContain("seed hue #E60000 from poster-signal dialect");
   });
 
   it("renders a compact operational frame.md with all required sections", () => {
@@ -116,8 +151,10 @@ describe("deterministic remap", () => {
     expect(md).toContain("# frame.md — Dark Premium for Acme");
     expect(md).toContain("## Visual thesis");
     expect(md).toContain("## Recommended semantic palette");
+    expect(md).toContain("## Visual grammar");
+    expect(md).toContain("## Motion signature");
     expect(md).toContain("## Typography");
-    expect(md).toContain("Background family:");
+    expect(md).toContain("**Background policy:**");
     expect(md).toContain("## Mood-board restraints");
     expect(md).toContain("keep dark basis");
     expect(md).toContain("sequences-frame:");
@@ -149,10 +186,12 @@ describe("deterministic remap", () => {
     expect(shared).not.toContain("data-layout-");
     expect(shared).not.toContain("Deterministic tool report");
     expect(shared).toContain("## Design direction");
+    expect(shared).toContain("## Visual grammar");
+    expect(shared).toContain("## Motion signature");
     expect(shared).toContain("## Palette");
     expect(shared).toContain("## Spatial character");
     expect(shared).toContain("## Composition cues");
-    expect(shared).toContain("single focal hue");
+    expect(shared).toContain("documented color topology");
     expect(shared).toContain("# frame.md — Bold Launch for Acme");
   });
 
@@ -161,6 +200,7 @@ describe("deterministic remap", () => {
     const tokens = extractBrandTokens("brand accent #1E2BFA");
     const design = remapPreset(preset, tokens, null, [], {
       presetId: preset.id,
+      dialectId: "poster-signal",
       basis: "dark",
       harmony: "split-complementary",
       temperature: "warm",
@@ -170,14 +210,15 @@ describe("deterministic remap", () => {
       spacing: "cinematic",
       corners: "square",
       depth: "atmospheric",
-      background: "Warm mineral grain with a restrained split-complementary edge light.",
+      backgroundPolicyId: "quiet-solid",
       exceptions: [],
     });
     expect(design.basis).toBe("dark");
     expect(design.direction.harmony).toBe("split-complementary");
     expect(design.direction.density).toBe("airy");
     expect(design.radius).toContain("0px");
-    expect(design.background).toContain("mineral grain");
+    expect(design.background.id).toBe("quiet-solid");
+    expect(design.background.direction).toContain("solid canvas");
     expect(contrastRatio(design.colors.text, design.colors.bg)).toBeGreaterThanOrEqual(7);
     expect(design.colors.accent).toBe("#1E2BFA");
   });
@@ -198,6 +239,58 @@ describe("deterministic remap", () => {
     expect(design.type.display).toBe("Outfit");
     expect(design.type.body).toBe("Inter");
     expect(design.type.mono).toBe("Space Mono");
+  });
+
+  it("keeps a dialect-approved single-family system through frame integration", () => {
+    const preset = presetById("clean-corporate")!;
+    const design = remapPreset(
+      preset,
+      extractBrandTokens(""),
+      null,
+      [],
+      {
+        presetId: preset.id,
+        dialectId: "warm-coral",
+        typeSystemId: "warmth",
+        backgroundPolicyId: "quiet-solid",
+        exceptions: [],
+      },
+    );
+    expect(design.type.display).toBe("Nunito");
+    expect(design.type.body).toBe("Nunito");
+    expect(design.typographyCharacter.pairingMode).toBe("single-family");
+  });
+
+  it("accepts depth choices within the dialect material profile and repairs the rest", () => {
+    const preset = presetById("clean-corporate")!;
+    const bordered = remapPreset(
+      preset,
+      extractBrandTokens(""),
+      null,
+      [],
+      {
+        presetId: preset.id,
+        dialectId: "gallery-white",
+        depth: "bordered",
+        exceptions: [],
+      },
+    );
+    expect(bordered.shadow).toContain("borders");
+    expect(bordered.repairs.some((repair) => repair.includes("requested bordered depth"))).toBe(false);
+
+    const repaired = remapPreset(
+      preset,
+      extractBrandTokens(""),
+      null,
+      [],
+      {
+        presetId: preset.id,
+        dialectId: "gallery-white",
+        depth: "atmospheric",
+        exceptions: [],
+      },
+    );
+    expect(repaired.repairs.some((repair) => repair.includes("permits flat/bordered"))).toBe(true);
   });
 });
 
@@ -249,6 +342,19 @@ describe("deterministic frame design tools", () => {
     expect(result.repairs.length).toBeGreaterThan(0);
   });
 
+  it("preserves an approved single-family display/body system", () => {
+    const preset = presetById("clean-corporate")!;
+    const result = validateTypography(
+      { display: "Nunito", body: "Nunito", mono: "Space Mono" },
+      preset.type,
+      {},
+      { pairingMode: "single-family" },
+    );
+    expect(result.value.display).toBe("Nunito");
+    expect(result.value.body).toBe("Nunito");
+    expect(result.repairs.some((repair) => repair.includes("separated display/body"))).toBe(false);
+  });
+
   it("turns spatial choices into bounded, legible rhythm tokens", () => {
     const compact = generateLayout({
       density: "dense",
@@ -286,10 +392,13 @@ describe("buildJobFrame end-to-end (no model, no network)", () => {
     });
     expect(fs.existsSync(path.join(dir, "frame.md"))).toBe(true);
     expect(result.presetId).toBe("crisp-dev");
+    expect(result.dialectId).toBe("hazard-dark");
     const loaded = loadJobFrame(dir);
     expect(loaded).toContain("# frame.md");
     const meta = readFrameMeta(dir);
     expect(meta?.presetId).toBe("crisp-dev");
+    expect(meta?.dialectId).toBe("hazard-dark");
+    expect(meta?.backgroundPolicyId).toBe("ink-rail");
     expect(meta?.label).toBe(result.label);
   });
 
@@ -304,12 +413,14 @@ describe("buildJobFrame end-to-end (no model, no network)", () => {
         receivedPrompt = prompt;
         return JSON.stringify({
           presetId: "clean-corporate",
+          dialectId: "poster-signal",
           thesis: "Warm precision with generous editorial pacing.",
           basis: "dark",
           harmony: "complementary",
           temperature: "warm",
           contrast: "soft",
           accentUsage: "restrained",
+          typeSystemId: "impact",
           palette: { bg: "#171410", surface: "#211D18" },
           typography: {
             display: "Oswald",
@@ -321,7 +432,8 @@ describe("buildJobFrame end-to-end (no model, no network)", () => {
           spacing: "cinematic",
           corners: "square",
           depth: "atmospheric",
-          background: "Warm charcoal grain with a quiet complementary edge light.",
+          backgroundPolicyId: "quiet-solid",
+          rules: ["One oversized phrase owns the first read."],
           exceptions: [],
         });
       },
@@ -334,11 +446,13 @@ describe("buildJobFrame end-to-end (no model, no network)", () => {
     });
     expect(receivedPrompt).toContain("Deterministic tools available");
     expect(receivedPrompt).toContain("Presets are mood and composition DNA");
+    expect(receivedPrompt).toContain("Motion-ready visual dialects");
+    expect(receivedPrompt).not.toContain("operational background family");
     expect(result.basis).toBe("dark");
     expect(result.thesis).toContain("Warm precision");
     expect(result.frameMd).toContain("harmony: **complementary**");
     expect(result.frameMd).toContain("**Display / headlines:** Oswald");
-    expect(result.frameMd).toContain("Warm charcoal grain");
+    expect(result.frameMd).toContain("Intentional solid field");
   });
 
   it("routes high-impact frame taste to reasoning-enabled GLM, not Flash", async () => {
@@ -352,19 +466,21 @@ describe("buildJobFrame end-to-end (no model, no network)", () => {
         receivedOptions = options as Record<string, unknown>;
         return JSON.stringify({
           presetId: "crisp-dev",
+          dialectId: "hazard-dark",
           thesis: "A precise instrument panel that resolves noise into one calm signal.",
           basis: "dark",
           harmony: "analogous",
           temperature: "cool",
           contrast: "crisp",
           accentUsage: "restrained",
+          typeSystemId: "condensed",
           palette: {},
           typography: {},
           density: "balanced",
           spacing: "cinematic",
           corners: "crisp",
           depth: "atmospheric",
-          background: "A quiet radial field with one measured scan line.",
+          backgroundPolicyId: "ink-rail",
           rules: ["One dominant signal per shot."],
           exceptions: [],
         });
@@ -395,6 +511,7 @@ describe("buildJobFrame end-to-end (no model, no network)", () => {
       complete: async () =>
         JSON.stringify({
           presetId: "clean-corporate",
+          dialectId: "broadsheet",
           thesis: "A calm geometric instrument panel.",
           basis: "light",
           harmony: "monochromatic",
@@ -408,7 +525,8 @@ describe("buildJobFrame end-to-end (no model, no network)", () => {
           spacing: "balanced",
           corners: "crisp",
           depth: "bordered",
-          background: "A quiet paper field.",
+          backgroundPolicyId: "paper-rules",
+          rules: ["Hairlines and type provide the structure."],
           exceptions: [],
         }),
     };
@@ -433,15 +551,42 @@ describe("forbidden defaults (brand-informed anti-patterns)", () => {
     expect(rules).toContain("tabular");
   });
 
-  it("forbids pure black on dark and pure-white washout on light", () => {
-    const darkRules = forbiddenDefaults(
-      remapPreset(presetById("dark-premium")!, extractBrandTokens(""), null, []),
-    ).join(" ");
-    expect(darkRules).toContain("#000");
-    const lightRules = forbiddenDefaults(
-      remapPreset(presetById("bold-launch")!, extractBrandTokens(""), null, []),
-    ).join(" ");
-    expect(lightRules).toContain("#FFF");
+  it("makes pure white, pure black, and solid fields dialect-aware", () => {
+    const gallery = remapPreset(
+      presetById("clean-corporate")!,
+      extractBrandTokens(""),
+      null,
+      [],
+      { presetId: "clean-corporate", dialectId: "gallery-white", exceptions: [] },
+    );
+    expect(gallery.colors.bg).toBe("#FFFFFF");
+    expect(forbiddenDefaults(gallery).join(" ")).not.toContain("#FFF");
+    expect(gallery.canvas.allowSolidField).toBe(true);
+
+    const posterDark = remapPreset(
+      presetById("bold-launch")!,
+      extractBrandTokens(""),
+      null,
+      [],
+      {
+        presetId: "bold-launch",
+        dialectId: "poster-signal",
+        basis: "dark",
+        backgroundPolicyId: "quiet-solid",
+        exceptions: [],
+      },
+    );
+    expect(posterDark.colors.bg).toBe("#000000");
+    expect(forbiddenDefaults(posterDark).join(" ")).not.toContain("#000 canvas");
+
+    const hazard = remapPreset(
+      presetById("crisp-dev")!,
+      extractBrandTokens(""),
+      null,
+      [],
+      { presetId: "crisp-dev", dialectId: "hazard-dark", exceptions: [] },
+    );
+    expect(forbiddenDefaults(hazard).join(" ")).toContain("#000 canvas");
   });
 });
 
@@ -460,6 +605,9 @@ describe("frame capsule (compact author projection)", () => {
     const capsule = frameCapsule(fullFrame());
     expect(capsule).toContain("# frame.md capsule");
     expect(capsule).toContain("## Visual thesis");
+    expect(capsule).toContain("## Visual grammar");
+    expect(capsule).toContain("## Motion signature");
+    expect(capsule).toContain("**Micro:**");
     expect(capsule).toContain("## Palette");
     expect(capsule).toContain("| Canvas |");
     expect(capsule).toContain("## Type");

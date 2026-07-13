@@ -9,7 +9,7 @@ import {
 } from "../src/index.ts";
 
 const briefs = JSON.parse(
-  fs.readFileSync(path.resolve("evals/phase1-briefs.json"), "utf8"),
+  fs.readFileSync(path.resolve(import.meta.dirname, "fixtures", "phase1-briefs.json"), "utf8"),
 ) as StructuredBrief[];
 
 describe("Phase-1 agent evaluation set", () => {

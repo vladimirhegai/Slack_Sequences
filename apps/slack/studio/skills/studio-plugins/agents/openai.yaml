@@ -1,0 +1,4 @@
+interface:
+  display_name: "Studio Plugins"
+  short_description: "Add host-generated scene plugins"
+  default_prompt: "Use -plugins to add, lower, and prove a Studio plugin."

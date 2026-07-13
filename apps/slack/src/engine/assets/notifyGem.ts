@@ -47,7 +47,7 @@ export const notifyGem = defineAsset({
       trigger: "enter",
       durationSec: 0.85,
       tracks: [
-        { property: "scale", from: 0.6, to: 1 },
+        { property: "scale", from: 0.68, to: 1 },
         { property: "opacity", from: 0, to: 1 },
       ],
     },
@@ -92,15 +92,16 @@ export const notifyGem = defineAsset({
       var(--ng-accent, #6ea8ff) 58%
     );
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
     inset 0 -0.4em 0.9em color-mix(in srgb, var(--ng-accent, #6ea8ff) 50%, rgba(0, 0, 0, 0.4)),
-    0 0.55em 1.5em rgba(0, 0, 0, 0.4),
-    0 0 1.2em color-mix(in srgb, var(--ng-accent, #6ea8ff) 40%, transparent);
+    0 0.14em 0.4em rgba(0, 0, 0, 0.3),
+    0 0.55em 1.4em rgba(0, 0, 0, 0.38),
+    0 0 0.9em color-mix(in srgb, var(--ng-accent, #6ea8ff) 32%, transparent);
 }
 .asset-notify-gem .ng-count {
   font-size: 2em;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-weight: 680;
+  letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
   color: var(--accent-text, #0b0d11);
 }
@@ -109,9 +110,9 @@ export const notifyGem = defineAsset({
   inset: 0;
   border-radius: 50%;
   pointer-events: none;
-  border: 2px solid color-mix(in srgb, var(--ng-accent, #6ea8ff) 80%, transparent);
+  border: 0.13em solid color-mix(in srgb, var(--ng-accent, #6ea8ff) 78%, transparent);
   transform: scale(calc(1 + var(--ng-ping, 1) * 0.85));
-  opacity: calc((1 - var(--ng-ping, 1)) * 0.9);
+  opacity: calc((1 - var(--ng-ping, 1)) * 0.85);
 }
 `.trim(),
   render: ({ params, partId, escapeHtml }) =>

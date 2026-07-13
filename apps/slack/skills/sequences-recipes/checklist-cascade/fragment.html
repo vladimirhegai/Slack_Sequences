@@ -1,0 +1,165 @@
+<!--
+  checklist-cascade — the completion-rhythm signature (agent-authored recipe).
+
+  Instantiation contract (host-owned — see recipeContract.ts): markup template
+  injected inside the declared scene with {{param}} slots filled; style
+  injected once into <head>; the motion body runs as (tl, root, start,
+  duration, uid) adding tweens to the ONE paused master timeline. Pure
+  function of timeline time — no clocks, no rAF, no randomness, no repeats.
+
+  Static-analyzability convention (keeps the lint gate warning-free): tween
+  targets are INLINE STRING LITERALS with {{uid}} filled by the host, and the
+  timing spine derives from {{start}}/{{settleSec}} numeric literal slots so
+  every position constant-folds in the pinned GSAP parser.
+-->
+<style data-recipe-style>
+  .rcp-chk {
+    position: relative;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 40px;
+    text-align: left;
+  }
+  .rcp-chk .rcp-chk-head {
+    position: relative;
+    display: inline-block;
+    padding-bottom: 16px;
+  }
+  .rcp-chk .rcp-chk-title {
+    font-size: var(--rcp-title-size, 58px);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .rcp-chk .rcp-chk-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--rcp-accent, #ffc24d);
+    transform: scaleX(0);
+    transform-origin: 0 50%;
+  }
+  .rcp-chk .rcp-chk-item {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    opacity: 0;
+  }
+  .rcp-chk .rcp-chk-dot {
+    position: relative;
+    width: 50px;
+    height: 50px;
+    flex: 0 0 50px;
+    border-radius: 50%;
+    border: 2.5px solid var(--rcp-accent, #ffc24d);
+  }
+  .rcp-chk .rcp-chk-fill {
+    position: absolute;
+    inset: -2.5px;
+    border-radius: 50%;
+    background: var(--rcp-accent, #ffc24d);
+    transform: scale(0);
+    will-change: transform;
+  }
+  .rcp-chk .rcp-chk-mark {
+    position: absolute;
+    inset: 8px;
+    width: 34px;
+    height: 34px;
+  }
+  .rcp-chk .rcp-chk-path {
+    fill: none;
+    stroke: #0b0e12;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-dasharray: 24;
+    stroke-dashoffset: 24;
+  }
+  .rcp-chk .rcp-chk-copy {
+    font-size: var(--rcp-item-size, 38px);
+    font-weight: 500;
+    opacity: 0.62;
+  }
+</style>
+<template data-recipe-markup>
+  <div class="rcp-chk" data-part="{{uid}}-checklist" data-layout-important
+    data-layout-anchor="frame:center" style="--rcp-accent: {{accent}}">
+    <div class="rcp-chk-head">
+      <span class="rcp-chk-title">{{title}}</span>
+      <span class="rcp-chk-bar" data-layout-ignore></span>
+    </div>
+    <div class="rcp-chk-item rcp-chk-item-1">
+      <span class="rcp-chk-dot"><span class="rcp-chk-fill"></span><svg class="rcp-chk-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="rcp-chk-path" d="M5 12.6l4.4 4.4L19 7.2"/></svg></span>
+      <span class="rcp-chk-copy">{{item1}}</span>
+    </div>
+    <div class="rcp-chk-item rcp-chk-item-2">
+      <span class="rcp-chk-dot"><span class="rcp-chk-fill"></span><svg class="rcp-chk-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="rcp-chk-path" d="M5 12.6l4.4 4.4L19 7.2"/></svg></span>
+      <span class="rcp-chk-copy">{{item2}}</span>
+    </div>
+    <div class="rcp-chk-item rcp-chk-item-3">
+      <span class="rcp-chk-dot"><span class="rcp-chk-fill"></span><svg class="rcp-chk-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="rcp-chk-path" d="M5 12.6l4.4 4.4L19 7.2"/></svg></span>
+      <span class="rcp-chk-copy">{{item3}}</span>
+    </div>
+    <div class="rcp-chk-item rcp-chk-item-4">
+      <span class="rcp-chk-dot"><span class="rcp-chk-fill"></span><svg class="rcp-chk-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="rcp-chk-path" d="M5 12.6l4.4 4.4L19 7.2"/></svg></span>
+      <span class="rcp-chk-copy">{{item4}}</span>
+    </div>
+  </div>
+</template>
+<script data-recipe-motion>
+  // Timing spine: {{start}}/{{settleSec}} are numeric literals, so every
+  // position below constant-folds at parse time (lint-placeable, identical
+  // at runtime). settle = the moment the LAST checkmark finishes drawing;
+  // ticks land every 0.55s before it.
+  var settle = {{start}} + {{settleSec}};
+
+  // Title, then the rows cascade in.
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-head', { y: 16, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, {{start}} + 0.12);
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-1', { x: -18, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, {{start}} + 0.26);
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-2', { x: -18, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, {{start}} + 0.38);
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-3', { x: -18, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, {{start}} + 0.50);
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-4', { x: -18, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, {{start}} + 0.62);
+
+  // Tick rhythm: per row — the accent disc pops (committed, seqPop), the
+  // checkmark stroke DRAWS on, and the row copy brightens. Each draw ends
+  // 0.55s after the previous; the last finishes exactly at settle.
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-1 .rcp-chk-fill', { scale: 0 },
+    { scale: 1, duration: 0.25, ease: "seqPop" }, settle - 2.01);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-1 .rcp-chk-path',
+    { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, settle - 1.95);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-1 .rcp-chk-copy',
+    { opacity: 1, duration: 0.25, ease: "power2.out" }, settle - 1.96);
+
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-2 .rcp-chk-fill', { scale: 0 },
+    { scale: 1, duration: 0.25, ease: "seqPop" }, settle - 1.46);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-2 .rcp-chk-path',
+    { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, settle - 1.40);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-2 .rcp-chk-copy',
+    { opacity: 1, duration: 0.25, ease: "power2.out" }, settle - 1.41);
+
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-3 .rcp-chk-fill', { scale: 0 },
+    { scale: 1, duration: 0.25, ease: "seqPop" }, settle - 0.91);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-3 .rcp-chk-path',
+    { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, settle - 0.85);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-3 .rcp-chk-copy',
+    { opacity: 1, duration: 0.25, ease: "power2.out" }, settle - 0.86);
+
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-4 .rcp-chk-fill', { scale: 0 },
+    { scale: 1, duration: 0.25, ease: "seqPop" }, settle - 0.36);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-4 .rcp-chk-path',
+    { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, settle - 0.30);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-4 .rcp-chk-copy',
+    { opacity: 1, duration: 0.25, ease: "power2.out" }, settle - 0.31);
+
+  // Completion: the bar sweeps under the title once everything is ticked.
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-bar', { scaleX: 0 },
+    { scaleX: 1, duration: 0.4, ease: "power3.out" }, settle + 0.10);
+</script>

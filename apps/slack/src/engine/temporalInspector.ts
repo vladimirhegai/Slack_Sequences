@@ -21,13 +21,27 @@ import path from "node:path";
 import { findBrowserExecutable } from "./render.ts";
 import { launchHeadlessBrowser } from "./browserLifecycle.ts";
 import { loadDirectComposition } from "./directComposition.ts";
-import { resolveCutPlan, type CutIntentV1 } from "./cutContract.ts";
-import { parseTimeRampPlan, warpInverseOf } from "./timeRamp.ts";
+import { resolveCutPlan } from "./cutContract.ts";
+import { parseTimeRampPlan } from "./timeRamp.ts";
+import { sourceTime, timeConversionService } from "./time.ts";
 import {
+  analyzeRenderedDeadFrames,
   captureContinuousMotionEvidence,
   continuousMotionEvidenceEnabled,
   type ContinuousMotionEvidenceV1,
+  type RenderedChangeCurvePointV1,
+  type RenderedDeadFrameEvidenceV1,
 } from "./continuousMotion.ts";
+import {
+  buildCameraBlockingEvidence,
+  parseCameraBlockingPlan,
+  type CameraBlockingEvidenceV1,
+} from "./cameraBlocking.ts";
+import { parseContinuityGraph } from "./continuityGraph.ts";
+import {
+  primaryBlockingTransitTimes,
+  temporalSceneSampleTimes,
+} from "./temporalSampling.ts";
 
 const FRAME_WIDTH = 320;
 const LABEL_HEIGHT = 26;
@@ -54,23 +68,64 @@ export interface TemporalReport {
   stripPath: string;
   jsonPath: string;
   cuts: TemporalCutEvidence[];
-  changeCurve: Array<{ time: number; delta: number }>;
+  cameraPaths: string[];
+  changeCurve: RenderedChangeCurvePointV1[];
   quietWindows: Array<{ start: number; end: number }>;
+  renderedDeadFrames: RenderedDeadFrameEvidenceV1;
   continuousMotion?: ContinuousMotionEvidenceV1;
+  blockingPath?: string;
+  cameraBlocking?: CameraBlockingEvidenceV1;
+}
+
+export interface TemporalDeclaredBoundary {
+  fromScene: string;
+  toScene: string;
+  strategy: string;
+  atSec: number;
+}
+
+export interface TemporalDeclaredCameraMove {
+  sceneId: string;
+  targetSelector: string;
+  startSec: number;
+  arrivalSec: number;
+  settleEndSec: number;
+  holdEndSec: number;
+}
+
+interface TemporalBoundarySpec {
+  fromScene: string;
+  toScene: string;
+  style: string;
+  atSec: number;
+  exitSec: number;
+  entrySec: number;
 }
 
 /** DOM target whose visible state should change on the outgoing cut leg. */
 export function temporalOutgoingCutSelector(
-  cut: Pick<CutIntentV1, "style" | "fromScene">,
+  cut: Pick<TemporalBoundarySpec, "style" | "fromScene" | "toScene">,
 ): string {
+  const attributeValue = (value: string): string =>
+    value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const fromScene = attributeValue(cut.fromScene);
+  const toScene = attributeValue(cut.toScene);
   // Resolved plans speak canonical `match`/`morph`; retain the legacy aliases
   // for exact replays of older persisted plans. Both bridge styles animate the
-  // host runtime clone, not the outgoing scene wrapper itself.
+  // host runtime clone, not the outgoing scene wrapper itself. Scope both
+  // bridge and flash overlays to this exact boundary: a film may carry several
+  // of either, and observing the first global clone made later cuts look static.
   if (["match", "morph", "object-match", "shape-match"].includes(cut.style)) {
-    return '[data-sequences-runtime-cut="bridge"]';
+    return `[data-sequences-runtime-cut="bridge"]` +
+      `[data-sequences-cut-from="${fromScene}"]` +
+      `[data-sequences-cut-to="${toScene}"]`;
   }
-  if (cut.style === "flash-white") return '[data-sequences-runtime-cut="flash"]';
-  return `[data-scene="${cut.fromScene}"]`;
+  if (cut.style === "flash-white") {
+    return `[data-sequences-runtime-cut="flash"]` +
+      `[data-sequences-cut-from="${fromScene}"]` +
+      `[data-sequences-cut-to="${toScene}"]`;
+  }
+  return `[data-scene="${fromScene}"]`;
 }
 
 function serveDir(dir: string): Promise<{ url: string; close: () => void }> {
@@ -168,7 +223,7 @@ function stateMoved(a: WrapperState | undefined, b: WrapperState | undefined): b
 
 /** Group consecutive low-delta curve points into named quiet windows. */
 export function quietWindowsFromCurve(
-  curve: Array<{ time: number; delta: number }>,
+  curve: Array<{ fromTime?: number; time: number; delta: number }>,
   threshold = QUIET_DELTA,
   minimumSpanSec = 0.8,
 ): Array<{ start: number; end: number }> {
@@ -177,7 +232,7 @@ export function quietWindowsFromCurve(
   for (let index = 0; index < curve.length; index += 1) {
     const point = curve[index]!;
     if (point.delta < threshold) {
-      start ??= curve[index - 1]?.time ?? point.time;
+      start ??= point.fromTime ?? curve[index - 1]?.time ?? point.time;
       continue;
     }
     // This sample saw change again, so the frozen span ended at the previous
@@ -197,27 +252,52 @@ export function quietWindowsFromCurve(
 
 export async function reportTemporalEvidence(
   projectDir: string,
-  options: { framesPerShot?: number; curveStepSec?: number } = {},
+  options: {
+    framesPerShot?: number;
+    curveStepSec?: number;
+    declaredBoundaries?: readonly TemporalDeclaredBoundary[];
+    declaredCameraMoves?: readonly TemporalDeclaredCameraMove[];
+  } = {},
 ): Promise<TemporalReport> {
   const browserPath = findBrowserExecutable();
   if (!browserPath) throw new Error("no Chrome/Edge found for temporal evidence capture");
   const current = loadDirectComposition(projectDir);
   const { manifest } = current;
-  const cuts = resolveCutPlan(manifest.scenes).cuts;
+  const typedCuts: TemporalBoundarySpec[] = resolveCutPlan(manifest.scenes).cuts;
+  const cuts = [...typedCuts];
+  for (const declared of options.declaredBoundaries ?? []) {
+    const duplicate = cuts.find((cut) =>
+      cut.fromScene === declared.fromScene && cut.toScene === declared.toScene &&
+      Math.abs(cut.atSec - declared.atSec) < 0.05
+    );
+    if (duplicate) {
+      duplicate.style = declared.strategy;
+      continue;
+    }
+    const outgoing = manifest.scenes.find((scene) => scene.id === declared.fromScene);
+    const incoming = manifest.scenes.find((scene) => scene.id === declared.toScene);
+    cuts.push({
+      fromScene: declared.fromScene,
+      toScene: declared.toScene,
+      style: declared.strategy,
+      atSec: declared.atSec,
+      exitSec: Math.min(0.4, Math.max(0.08, (outgoing?.durationSec ?? 1) * 0.2)),
+      entrySec: Math.min(0.5, Math.max(0.08, (incoming?.durationSec ?? 1) * 0.2)),
+    });
+  }
+  const blockingPlan = parseCameraBlockingPlan(current.html);
   const outDir = path.join(projectDir, "build", "qa", "temporal");
   fs.rmSync(outDir, { recursive: true, force: true });
   fs.mkdirSync(outDir, { recursive: true });
 
-  const framesPerShot = Math.max(3, Math.min(7, options.framesPerShot ?? 5));
-  const interiorFractions = Array.from(
-    { length: framesPerShot },
-    (_, index) => 0.08 + (0.84 * index) / (framesPerShot - 1),
-  );
   const shotFrames = manifest.scenes.map((scene) => ({
     scene,
-    times: interiorFractions.map((fraction) =>
-      roundTime(scene.startSec + scene.durationSec * fraction)
-    ),
+    times: temporalSceneSampleTimes(
+      scene.startSec,
+      scene.durationSec,
+      primaryBlockingTransitTimes(blockingPlan, scene.id),
+      options.framesPerShot ?? 5,
+    ).map(roundTime),
   }));
   const cutFrames = cuts.map((cut) => ({
     cut,
@@ -229,14 +309,22 @@ export async function reportTemporalEvidence(
       cut.atSec + cut.entrySec,
     ].map((time) => roundTime(Math.min(Math.max(time, 0), manifest.durationSec))),
   }));
+  const cameraFrames = (options.declaredCameraMoves ?? []).map((move) => ({
+    move,
+    times: [move.startSec, move.arrivalSec, move.settleEndSec, move.holdEndSec]
+      .map((time) => roundTime(Math.min(Math.max(time, 0), manifest.durationSec))),
+  }));
   const curveStep = Math.max(0.2, options.curveStepSec ?? manifest.durationSec / 56);
   const curveTimes: number[] = [];
   for (let time = 0; time <= manifest.durationSec + 0.001; time += curveStep) {
     curveTimes.push(roundTime(Math.min(time, manifest.durationSec)));
   }
+  const durationTime = roundTime(manifest.durationSec);
+  if (curveTimes.at(-1) !== durationTime) curveTimes.push(durationTime);
   const allTimes = [...new Set([
     ...shotFrames.flatMap((entry) => entry.times),
     ...cutFrames.flatMap((entry) => entry.times),
+    ...cameraFrames.flatMap((entry) => entry.times),
     ...curveTimes,
   ])].sort((a, b) => a - b);
 
@@ -244,7 +332,8 @@ export async function reportTemporalEvidence(
   // the warped master (output time) when the film ramps, so the physical
   // seek converts. Strip labels carry both bases when they differ.
   const timeRampPlan = parseTimeRampPlan(current.html).plan;
-  const toOutputTime = warpInverseOf(timeRampPlan);
+  const conversion = timeConversionService(timeRampPlan);
+  const toOutputTime = (value: number): number => conversion.toViewer(sourceTime(value));
   const frameLabel = (time: number): string => {
     const viewer = toOutputTime(time);
     return Math.abs(viewer - time) > 0.01
@@ -285,7 +374,11 @@ export async function reportTemporalEvidence(
 
     // Promised-versus-observed: measure each boundary's wrapper (or bridge)
     // state on both sides of its motion window before any screenshot pass.
-    const cutObservations: Array<{ cut: CutIntentV1; outgoingMoved: boolean; incomingMoved: boolean }> = [];
+    const cutObservations: Array<{
+      cut: TemporalBoundarySpec;
+      outgoingMoved: boolean;
+      incomingMoved: boolean;
+    }> = [];
     for (const cut of cuts) {
       const toSelector = `[data-scene="${cut.toScene}"]`;
       const outgoingSelector = temporalOutgoingCutSelector(cut);
@@ -301,6 +394,55 @@ export async function reportTemporalEvidence(
         cut,
         outgoingMoved: stateMoved(outgoingBefore, outgoingAfter),
         incomingMoved: stateMoved(incomingBefore, incomingAfter),
+      });
+    }
+
+    const cameraObservations: Array<{
+      sceneId: string;
+      targetSelector: string;
+      samples: Array<{
+        phase: string;
+        time: number;
+        found: boolean;
+        opacity?: number;
+        visibleFraction?: number;
+        rect?: { x: number; y: number; width: number; height: number };
+      }>;
+    }> = [];
+    for (const { move, times } of cameraFrames) {
+      const samples = [];
+      for (const [index, time] of times.entries()) {
+        await seekTo(page, toOutputTime(time));
+        const measured = await page.evaluate((selector: string) => {
+          const element = document.querySelector<HTMLElement>(selector);
+          if (!element) return { found: false };
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          const visibleWidth = Math.max(0, Math.min(innerWidth, rect.right) - Math.max(0, rect.left));
+          const visibleHeight = Math.max(0, Math.min(innerHeight, rect.bottom) - Math.max(0, rect.top));
+          const area = Math.max(1, rect.width * rect.height);
+          return {
+            found: true,
+            opacity: Number(style.opacity),
+            visibleFraction: Math.round((visibleWidth * visibleHeight / area) * 10_000) / 10_000,
+            rect: {
+              x: Math.round(rect.x * 100) / 100,
+              y: Math.round(rect.y * 100) / 100,
+              width: Math.round(rect.width * 100) / 100,
+              height: Math.round(rect.height * 100) / 100,
+            },
+          };
+        }, move.targetSelector);
+        samples.push({
+          phase: ["start", "arrival", "settled", "hold"][index]!,
+          time,
+          ...measured,
+        });
+      }
+      cameraObservations.push({
+        sceneId: move.sceneId,
+        targetSelector: move.targetSelector,
+        samples,
       });
     }
 
@@ -325,6 +467,10 @@ export async function reportTemporalEvidence(
         { sampleHz: 8, maxSamples: 220, mapSeekTime: toOutputTime },
       );
     }
+    const continuityGraph = parseContinuityGraph(current.html);
+    const cameraBlocking = continuousMotion && blockingPlan && continuityGraph
+      ? buildCameraBlockingEvidence(blockingPlan, continuityGraph, continuousMotion)
+      : undefined;
 
     // A blank compositor page assembles the sheets and computes pixel deltas;
     // the composition page itself stays untouched.
@@ -374,6 +520,92 @@ export async function reportTemporalEvidence(
         }
         return canvas.toDataURL("image/png");
       };
+      window.__composeBlockingSheet = async (payload) => {
+        const rows = payload.rows;
+        const columns = Math.max(...rows.map((row) => row.frames.length));
+        const canvas = document.createElement("canvas");
+        canvas.width = columns * (FRAME_W + 8) + 8;
+        canvas.height = rows.length * (FRAME_H + LABEL_H + 8) + 8;
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#0c1018";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.textBaseline = "middle";
+        const rowCenters = new Map();
+        for (let r = 0; r < rows.length; r += 1) {
+          const row = rows[r];
+          const y = 8 + r * (FRAME_H + LABEL_H + 8);
+          rowCenters.set(row.sceneId, y + FRAME_H / 2);
+          for (let c = 0; c < row.frames.length; c += 1) {
+            const frame = row.frames[c];
+            const x = 8 + c * (FRAME_W + 8);
+            const image = await load(frame.dataUrl);
+            context.drawImage(image, x, y, FRAME_W, FRAME_H);
+            context.fillStyle = "rgba(3,8,16,.18)";
+            context.fillRect(x, y, FRAME_W, FRAME_H);
+            if (row.trajectory.length > 1) {
+              context.beginPath();
+              context.strokeStyle = "rgba(70,240,211,.72)";
+              context.lineWidth = 1.5;
+              for (let p = 0; p < row.trajectory.length; p += 1) {
+                const point = row.trajectory[p];
+                const px = x + point.x * FRAME_W;
+                const py = y + point.y * FRAME_H;
+                if (p === 0) context.moveTo(px, py);
+                else context.lineTo(px, py);
+              }
+              context.stroke();
+            }
+            const block = [...row.blocks].sort((a, b) =>
+              Math.abs(a.arrivalSec - frame.time) - Math.abs(b.arrivalSec - frame.time)
+            )[0];
+            const landing = block && row.landings.find((entry) => entry.blockId === block.id);
+            if (block) {
+              const ax = x + block.arrivalPose.anchor.x * FRAME_W;
+              const ay = y + block.arrivalPose.anchor.y * FRAME_H;
+              context.strokeStyle = landing && landing.occupancyInRange ? "#55f0c5" : "#ffbf69";
+              context.lineWidth = 1.5;
+              context.beginPath();
+              context.moveTo(ax - 8, ay); context.lineTo(ax + 8, ay);
+              context.moveTo(ax, ay - 8); context.lineTo(ax, ay + 8);
+              context.stroke();
+              context.fillStyle = "rgba(5,10,18,.78)";
+              context.fillRect(x + 5, y + 5, FRAME_W - 10, 30);
+              context.font = "10px monospace";
+              context.fillStyle = "#dce8f5";
+              const occ = landing ? (landing.occupancyFraction * 100).toFixed(1) + "%" : "n/a";
+              const speed = landing ? landing.speed.toFixed(3) : "n/a";
+              context.fillText(
+                block.target.id + "  occ " + occ + "  v " + speed + "  dwell " + block.dwell.readableSec.toFixed(2) + "s",
+                x + 10,
+                y + 19,
+              );
+            }
+            context.fillStyle = "#8fa6bd";
+            context.font = "10px monospace";
+            context.fillText(frame.label, x + 2, y + FRAME_H + LABEL_H / 2);
+          }
+          context.fillStyle = "#f3f7fb";
+          context.font = "bold 10px monospace";
+          context.fillText(row.title, 8, y + FRAME_H + LABEL_H / 2 - 10);
+        }
+        for (const edge of payload.edges) {
+          const fromY = rowCenters.get(edge.fromScene);
+          const toY = rowCenters.get(edge.toScene);
+          if (fromY === undefined || toY === undefined) continue;
+          const fromX = canvas.width - 14;
+          const toX = 14;
+          context.strokeStyle = edge.mode === "shared-element" ? "rgba(123,97,255,.9)" : "rgba(123,97,255,.42)";
+          context.lineWidth = 2;
+          context.beginPath();
+          context.moveTo(fromX, fromY);
+          context.bezierCurveTo(canvas.width + 18, fromY, -18, toY, toX, toY);
+          context.stroke();
+          context.fillStyle = "#b7a8ff";
+          context.font = "9px monospace";
+          context.fillText(edge.entityId, 18, toY - 9);
+        }
+        return canvas.toDataURL("image/png");
+      };
       window.__frameDelta = async (aUrl, bUrl) => {
         const w = 160;
         const h = Math.round((FRAME_H / FRAME_W) * 160);
@@ -420,6 +652,31 @@ export async function reportTemporalEvidence(
       })),
       "strip.png",
     );
+    let blockingPath: string | undefined;
+    if (cameraBlocking && blockingPlan) {
+      const dataUrl = await compositor.evaluate(
+        (payload: unknown) => (window as unknown as {
+          __composeBlockingSheet: (payload: unknown) => Promise<string>;
+        }).__composeBlockingSheet(payload),
+        {
+          rows: shotFrames.map(({ scene, times }) => ({
+            sceneId: scene.id,
+            title: `${scene.id} · blocking + continuity`,
+            frames: times.map((time) => ({
+              time,
+              label: frameLabel(time),
+              dataUrl: frames.get(time)!,
+            })),
+            trajectory: cameraBlocking.trajectories.find((entry) => entry.sceneId === scene.id)?.points ?? [],
+            blocks: blockingPlan.scenes.find((entry) => entry.sceneId === scene.id)?.phrases ?? [],
+            landings: cameraBlocking.landings.filter((entry) => entry.sceneId === scene.id),
+          })),
+          edges: cameraBlocking.continuityEdges,
+        },
+      );
+      blockingPath = path.join(outDir, "blocking.png");
+      fs.writeFileSync(blockingPath, Buffer.from(dataUrl.split(",", 2)[1]!, "base64"));
+    }
 
     const cutEvidence: TemporalCutEvidence[] = [];
     for (const [index, { cut, times }] of cutFrames.entries()) {
@@ -447,7 +704,23 @@ export async function reportTemporalEvidence(
       });
     }
 
-    const changeCurve: Array<{ time: number; delta: number }> = [];
+    const cameraPaths: string[] = [];
+    for (const [index, { move, times }] of cameraFrames.entries()) {
+      const safeScene = move.sceneId.replace(/[^A-Za-z0-9._-]/g, "_");
+      const file = `camera-${String(index + 1).padStart(2, "0")}-${safeScene}.png`;
+      cameraPaths.push(await composeSheet(
+        [{
+          title: `${move.sceneId} · camera target ${move.targetSelector}`,
+          frames: times.map((time, column) => ({
+            label: `${["start", "arrival", "settled", "hold"][column]} ${time.toFixed(2)}s`,
+            dataUrl: frames.get(time)!,
+          })),
+        }],
+        file,
+      ));
+    }
+
+    const changeCurve: RenderedChangeCurvePointV1[] = [];
     for (let index = 1; index < curveTimes.length; index += 1) {
       const previous = curveTimes[index - 1]!;
       const time = curveTimes[index]!;
@@ -458,26 +731,50 @@ export async function reportTemporalEvidence(
         frames.get(previous)!,
         frames.get(time)!,
       );
-      changeCurve.push({ time, delta: Math.round(delta * 100000) / 100000 });
+      changeCurve.push({
+        fromTime: previous,
+        time,
+        delta: Math.round(delta * 100000) / 100000,
+      });
     }
     const quietWindows = quietWindowsFromCurve(changeCurve);
+    const renderedDeadFrames = analyzeRenderedDeadFrames(
+      changeCurve,
+      manifest.scenes,
+      manifest.durationSec,
+      { deltaThreshold: QUIET_DELTA },
+    );
+    if (continuousMotion) {
+      continuousMotion = { ...continuousMotion, renderedDeadFrames };
+    }
 
     const jsonPath = path.join(outDir, "temporal.json");
     fs.writeFileSync(jsonPath, JSON.stringify({
-      version: 2,
+      version: 4,
       compositionId: manifest.compositionId,
       revision: manifest.revision,
       durationSec: manifest.durationSec,
       cuts: cutEvidence.map(({ triptychPath: _path, ...cut }) => cut),
+      declaredCameraMoves: (options.declaredCameraMoves ?? []).map((move, index) => ({
+        ...move,
+        evidencePath: cameraPaths[index],
+        samples: cameraObservations[index]?.samples ?? [],
+      })),
       changeCurve,
       quietWindows,
+      renderedDeadFrames,
       ...(continuousMotion ? { continuousMotion } : {}),
+      ...(cameraBlocking ? { cameraBlocking } : {}),
     }, null, 2) + "\n");
     if (continuousMotion) {
       const motionPlanPath = path.join(projectDir, "composition", "motion-plan.json");
       try {
         const motionPlan = JSON.parse(fs.readFileSync(motionPlanPath, "utf8")) as Record<string, unknown>;
-        writeJsonAtomic(motionPlanPath, { ...motionPlan, continuousMotion });
+        writeJsonAtomic(motionPlanPath, {
+          ...motionPlan,
+          continuousMotion,
+          ...(cameraBlocking ? { cameraBlockingEvidence: cameraBlocking } : {}),
+        });
       } catch (error) {
         process.stderr.write(
           `[temporal] could not persist continuous motion evidence: ${
@@ -495,6 +792,12 @@ export async function reportTemporalEvidence(
     const quietLines = quietWindows.length
       ? quietWindows.map((window) => `  ${window.start}s–${window.end}s`)
       : ["  none"];
+    const deadFrameLines = renderedDeadFrames.windows.length
+      ? renderedDeadFrames.windows.map((window) =>
+          `  ${window.code} · ${window.sceneId} · ` +
+          `${window.startSec}s–${window.endSec}s (${window.durationSec.toFixed(2)}s)`
+        )
+      : ["  none"];
     const summary = [
       `temporal evidence · revision ${manifest.revision} · ${allTimes.length} frames sampled`,
       `strip: ${stripPath}`,
@@ -502,6 +805,12 @@ export async function reportTemporalEvidence(
       ...cutLines,
       "quiet windows (verify each is an intentional hold):",
       ...quietLines,
+      "rendered dead frames (advisory; declared camera holds excluded):",
+      `  ${(renderedDeadFrames.summary.deadFrameRatio * 100).toFixed(1)}% of ` +
+        `${renderedDeadFrames.summary.eligibleDurationSec.toFixed(2)}s eligible runtime · ` +
+        `${renderedDeadFrames.summary.windowCount} window(s) >` +
+        `${renderedDeadFrames.minimumWindowSec.toFixed(2)}s`,
+      ...deadFrameLines,
       ...(continuousMotion
         ? [
             "continuous motion (advisory):",
@@ -519,15 +828,30 @@ export async function reportTemporalEvidence(
             ...continuousMotion.advisories.map((entry) => `  advisory: ${entry}`),
           ]
         : []),
+      ...(cameraBlocking
+        ? [
+            "camera blocking + continuity (advisory):",
+            `  entities across 3+ shots ${cameraBlocking.summary.threeShotEntityCount} · ` +
+              `primary readable landings ${cameraBlocking.summary.primaryReadableCount}/` +
+              `${cameraBlocking.summary.primaryLandingCount} · occupancy in range ` +
+              `${cameraBlocking.summary.occupancyInRangeCount}/${cameraBlocking.summary.landingCount}`,
+            ...(blockingPath ? [`  overlay: ${blockingPath}`] : []),
+            ...cameraBlocking.advisories.map((entry) => `  advisory: ${entry}`),
+          ]
+        : []),
     ].join("\n");
     return {
       summary,
       stripPath,
       jsonPath,
       cuts: cutEvidence,
+      cameraPaths,
       changeCurve,
       quietWindows,
+      renderedDeadFrames,
       ...(continuousMotion ? { continuousMotion } : {}),
+      ...(blockingPath ? { blockingPath } : {}),
+      ...(cameraBlocking ? { cameraBlocking } : {}),
     };
   } finally {
     await browser?.close().catch(() => {});

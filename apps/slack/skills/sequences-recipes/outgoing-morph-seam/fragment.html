@@ -1,0 +1,213 @@
+<style data-recipe-style>
+  .rcp-seam {
+    position: relative;
+    box-sizing: border-box;
+    width: 1200px;
+    height: 590px;
+    overflow: hidden;
+    border-radius: 34px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: #151d28;
+    color: #f4f6f8;
+    box-shadow: 0 44px 110px rgba(0, 0, 0, 0.46);
+    transform-origin: 50% 50%;
+  }
+  .rcp-seam .rcp-seam-accent {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 8px;
+    background: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-seam .rcp-seam-main {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 64px;
+    padding: 70px 76px 66px 86px;
+  }
+  .rcp-seam .rcp-seam-copy {
+    align-self: center;
+  }
+  .rcp-seam .rcp-seam-eyebrow {
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    color: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-seam .rcp-seam-title {
+    margin-top: 24px;
+    font-size: 70px;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    font-weight: 760;
+  }
+  .rcp-seam .rcp-seam-body {
+    margin-top: 26px;
+    max-width: 580px;
+    font-size: 25px;
+    line-height: 1.45;
+    color: rgba(244, 246, 248, 0.68);
+  }
+  .rcp-seam .rcp-seam-proof {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 20px;
+  }
+  .rcp-seam .rcp-seam-proof-row {
+    display: grid;
+    grid-template-columns: 48px 1fr auto;
+    align-items: center;
+    gap: 16px;
+    min-height: 82px;
+    padding: 0 20px;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .rcp-seam .rcp-seam-avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.16);
+  }
+  .rcp-seam .rcp-seam-person {
+    font-size: 19px;
+    font-weight: 620;
+  }
+  .rcp-seam .rcp-seam-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    color: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-seam .rcp-seam-check {
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--rcp-accent, #ffc24d);
+    color: #0b0e12;
+    font-size: 15px;
+    font-weight: 900;
+  }
+  .rcp-seam .rcp-seam-handoff {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    opacity: 0;
+    white-space: nowrap;
+    font-size: 38px;
+    font-weight: 730;
+    letter-spacing: -0.015em;
+  }
+  .rcp-seam .rcp-seam-handoff-check {
+    display: inline-grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--rcp-accent, #ffc24d);
+    color: #0b0e12;
+    font-size: 27px;
+    font-weight: 900;
+  }
+  .rcp-seam .rcp-seam-line {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 720px;
+    height: 3px;
+    margin-left: -360px;
+    margin-top: -1px;
+    border-radius: 999px;
+    background: var(--rcp-accent, #ffc24d);
+    opacity: 0;
+    transform: scaleX(0.2);
+  }
+  .rcp-seam .rcp-seam-pulse {
+    position: absolute;
+    right: 72px;
+    top: 50%;
+    width: 340px;
+    height: 340px;
+    margin-top: -170px;
+    border: 2px solid var(--rcp-accent, #ffc24d);
+    border-radius: 50%;
+    opacity: 0;
+    pointer-events: none;
+  }
+</style>
+<template data-recipe-markup>
+  <div class="rcp-seam" data-part="{{bridgePart}}" data-layout-important
+    data-layout-anchor="frame:center" style="--rcp-accent: {{accent}}">
+    <div class="rcp-seam-accent"></div>
+    <div class="rcp-seam-main">
+      <div class="rcp-seam-copy">
+        <div class="rcp-seam-eyebrow">{{eyebrow}}</div>
+        <div class="rcp-seam-title">{{title}}</div>
+        <div class="rcp-seam-body">{{body}}</div>
+      </div>
+      <div class="rcp-seam-proof">
+        <div class="rcp-seam-proof-row"><span class="rcp-seam-avatar"></span><span class="rcp-seam-person">Maya Chen</span><span class="rcp-seam-state"><span class="rcp-seam-check">✓</span>Approved</span></div>
+        <div class="rcp-seam-proof-row"><span class="rcp-seam-avatar"></span><span class="rcp-seam-person">Theo Martin</span><span class="rcp-seam-state"><span class="rcp-seam-check">✓</span>Approved</span></div>
+        <div class="rcp-seam-proof-row"><span class="rcp-seam-avatar"></span><span class="rcp-seam-person">Priya Shah</span><span class="rcp-seam-state"><span class="rcp-seam-check">✓</span>Approved</span></div>
+      </div>
+    </div>
+    <div class="rcp-seam-handoff"><span class="rcp-seam-handoff-check">✓</span>{{handoffLabel}}</div>
+    <div class="rcp-seam-line" data-layout-ignore></div>
+    <div class="rcp-seam-pulse" data-layout-ignore></div>
+  </div>
+</template>
+<script data-recipe-motion>
+  var handoff = {{start}} + {{handoffSec}};
+
+  // Resolve the product result first: one surface, then three tightly
+  // overlapped approvals. The audience reads the state before it transforms.
+  // Paint the source surface immediately so the scene never opens on host
+  // furniture alone; its resolved claim is already readable while the
+  // approval rows follow into place.
+  tl.fromTo('[data-part="{{bridgePart}}"]', { y: 28, scale: 0.985 },
+    { y: 0, scale: 1, duration: 0.6, ease: "power3.out" }, {{start}});
+  tl.fromTo('[data-part="{{bridgePart}}"] .rcp-seam-copy', { x: -20, opacity: 0.68 },
+    { x: 0, opacity: 1, duration: 0.55, ease: "power3.out" }, {{start}} + 0.12);
+  tl.fromTo('[data-part="{{bridgePart}}"] .rcp-seam-proof-row', { x: 22, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.5, stagger: 0.09, ease: "seqSettle" }, {{start}} + 0.48);
+  tl.fromTo('[data-part="{{bridgePart}}"] .rcp-seam-check', { scale: 0.35, rotate: -18 },
+    { scale: 1.14, rotate: 0, duration: 0.24, stagger: 0.09, ease: "power4.out" }, {{start}} + 0.68);
+  tl.to('[data-part="{{bridgePart}}"] .rcp-seam-check',
+    { scale: 1, duration: 0.2, stagger: 0.09, ease: "seqSettle" }, {{start}} + 0.94);
+  tl.fromTo('[data-part="{{bridgePart}}"] .rcp-seam-pulse', { scale: 0.72, opacity: 0 },
+    { scale: 1.08, opacity: 0.3, duration: 0.42, ease: "power3.out", immediateRender: false }, {{start}} + 1.02);
+  tl.to('[data-part="{{bridgePart}}"] .rcp-seam-pulse',
+    { scale: 1.22, opacity: 0, duration: 0.28, ease: "power2.out" }, {{start}} + 1.44);
+
+  // The earned seam. Detail clears before geometry changes, the source
+  // compresses into a pill, then keeps a small amount of directional travel
+  // so the cut runtime inherits visible outgoing momentum.
+  tl.to('[data-part="{{bridgePart}}"] .rcp-seam-main',
+    { y: -10, opacity: 0, duration: 0.24, ease: "power2.in" }, handoff - 0.5);
+  tl.to('[data-part="{{bridgePart}}"] .rcp-seam-accent',
+    { opacity: 0, duration: 0.16, ease: "power1.out" }, handoff - 0.42);
+  tl.to('[data-part="{{bridgePart}}"]',
+    { x: -22, scale: 1.012, duration: 0.16, ease: "power2.out" }, handoff - 0.54);
+  tl.to('[data-part="{{bridgePart}}"]',
+    { width: 360, height: 112, x: 360, borderRadius: 999, duration: 0.42, ease: "power4.inOut" }, handoff - 0.38);
+  tl.fromTo('[data-part="{{bridgePart}}"] .rcp-seam-handoff', { opacity: 0, scale: 0.94 },
+    { opacity: 1, scale: 1, duration: 0.24, ease: "power3.out" }, handoff - 0.2);
+  tl.fromTo('[data-part="{{bridgePart}}"] .rcp-seam-line', { opacity: 0, scaleX: 0.2 },
+    { opacity: 0.34, scaleX: 1, duration: 0.22, ease: "power2.out" }, handoff - 0.16);
+  tl.to('[data-part="{{bridgePart}}"] .rcp-seam-line',
+    { opacity: 0, scaleX: 0.35, duration: 0.24, ease: "power2.in" }, handoff + 0.08);
+  tl.to('[data-part="{{bridgePart}}"]',
+    { x: 520, scale: 0.96, duration: 0.36, ease: "power3.in" }, handoff + 0.06);
+</script>

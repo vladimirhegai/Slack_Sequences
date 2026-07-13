@@ -15,13 +15,13 @@ Slack bot and the shared engine it depends on:
 - `packages/core/`, `packages/platform/` — the shared Sequences engine. Ours to
   modify/harden for the hackathon.
 
-`apps/sequences` and `apps/forge` are **not** in this repo — they live in the
-private dev monorepo. When the bot needs host glue (render, project IO, plan
-runner), we **copy it into `apps/slack/src/engine/`** and adapt it. The bot must
-never depend on code outside this repo.
+When the bot needs host glue (render, project IO, plan runner), we **copy it
+into `apps/slack/src/engine/`** and adapt it. The bot must never depend on code
+outside this repo.
 
-Hackathon roadmap: [apps/slack/ROADMAP.md](apps/slack/ROADMAP.md).
-Hackathon rules: [apps/slack/HACKATHON_RULES.md](apps/slack/HACKATHON_RULES.md).
+Current architecture handoff: [apps/slack/REFACTOR_HANDOFF.md](apps/slack/REFACTOR_HANDOFF.md).
+Default Luna route: [apps/slack/LUNA_WORKFLOW.md](apps/slack/LUNA_WORKFLOW.md).
+Operations: [apps/slack/OPERATIONS.md](apps/slack/OPERATIONS.md).
 
 ## Commands
 
@@ -29,4 +29,5 @@ Hackathon rules: [apps/slack/HACKATHON_RULES.md](apps/slack/HACKATHON_RULES.md).
 npm run dev          # run the Slack bot (Socket Mode)
 npm run typecheck    # tsc --noEmit over packages + apps/slack
 npm test             # vitest (engine suite)
+npm test --prefix apps/slack/codex-worker # private worker contract suite
 ```

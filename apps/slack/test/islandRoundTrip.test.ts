@@ -212,7 +212,7 @@ describe("island round-trip invariant — interactions (the reconstructing parse
   // type + emit normalizer means adding it here AND to parseInteraction.
   const OPTIONAL_INTERACTION_FIELDS = [
     "pressSec", "releaseSec", "holdUntilSec", "bend", "ease", "offsetX", "offsetY",
-    "hitInsetPx", "ripplePart", "dragTargetPart", "cursorScale", "targetScale", "waypoints",
+    "item", "hitInsetPx", "ripplePart", "dragTargetPart", "cursorScale", "targetScale", "waypoints",
   ] as const;
 
   // A maximal drag intent — drag needs press timing + dragTargetPart, press-ripple
@@ -225,6 +225,7 @@ describe("island round-trip invariant — interactions (the reconstructing parse
     sceneId: "s",
     cursorId: "pointer",
     targetPart: "card",
+    item: 2,
     action: "drag",
     startSec: 0.5,
     arriveSec: 1,

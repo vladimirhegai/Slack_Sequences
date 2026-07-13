@@ -1,0 +1,415 @@
+<script type="application/json" data-recipe-meta>
+{
+  "format": 2,
+  "id": "overlap-dashboard-entrance",
+  "title": "Dashboard assembly with overlapping follow-through",
+  "description": "A full product dashboard assembles in one rise grammar: shell, rail, metrics, chart, and activity follow one another at tight offsets and settle as a coherent system.",
+  "tags": [
+    "overlapping-entrance",
+    "assemble",
+    "follow-through",
+    "product-ui",
+    "cascade"
+  ],
+  "triggerPatterns": [
+    "overlapping (dashboard|entrance|assembly)",
+    "dashboard (assembles|assembly|cascade)",
+    "staggered dashboard",
+    "cards? follow .*dashboard",
+    "product ui .*assemble",
+    "dashboard .*follow[ -]?through",
+    "metrics? .*cascade"
+  ],
+  "durationWindow": { "minSec": 3.9, "maxSec": 9.5 },
+  "componentKinds": ["app-window", "stat-card", "chart-bars"],
+  "params": [
+    {
+      "name": "product",
+      "kind": "text",
+      "description": "Product or workspace name in the dashboard chrome.",
+      "default": "Northstar",
+      "maxChars": 22
+    },
+    {
+      "name": "title",
+      "kind": "text",
+      "description": "The dashboard's primary heading.",
+      "default": "Release overview",
+      "maxChars": 32
+    },
+    {
+      "name": "metric1",
+      "kind": "text",
+      "description": "First metric value.",
+      "default": "2.4k",
+      "maxChars": 10
+    },
+    {
+      "name": "metric2",
+      "kind": "text",
+      "description": "Second metric value.",
+      "default": "98%",
+      "maxChars": 10
+    },
+    {
+      "name": "metric3",
+      "kind": "text",
+      "description": "Third metric value.",
+      "default": "14m",
+      "maxChars": 10
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for selected navigation, chart, and status accents.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "settleSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the final chart bar lands.",
+      "default": 2.05,
+      "min": 1.7,
+      "max": 6
+    }
+  ],
+  "revision": 1,
+  "demo": {
+    "durationSec": 5.2,
+    "params": {
+      "product": "Northstar",
+      "title": "Release overview",
+      "metric1": "2.4k",
+      "metric2": "98%",
+      "metric3": "14m",
+      "accent": "var(--cinema-key)",
+      "settleSec": 2.05
+    }
+  },
+  "sanityBriefs": [
+    "Show an overlapping dashboard assembly: the product shell, metrics, chart, and activity cascade in with follow-through.",
+    "A staggered dashboard entrance where cards follow one another instead of fading in as disconnected islands."
+  ]
+}
+</script>
+<template data-recipe-doc>
+# overlap-dashboard-entrance — one assembly grammar, tightly overlapped
+
+**What it is.** A substantial product dashboard that arrives as one system,
+not a pile of independent fades. The shell rises first; its navigation rail
+follows 80ms later; three metric cards and the chart enter on a compact
+left-to-right chain; activity rows settle last. Every phrase begins before
+the lead finishes and uses the same rise/assemble grammar. Chart bars then
+grow as the final payoff, giving the shot development after the entrance.
+
+**When to declare it.** Use when a brief explicitly asks for an overlapping
+dashboard entrance, staggered product UI assembly, metrics cascading into a
+dashboard, or follow-through across a product surface. Prefer the
+`dashboard-grid` plugin when the request is merely “show a dashboard”; this
+recipe is for the *specific choreography* where the assembly itself is the
+shot.
+
+**How to stage the shot around it.** Let the recipe own the first 2–3 seconds
+of the scene. A calm push-in may land with the final chart bar, but avoid a
+whip during the overlap chain. The dashboard is already frame-filling; do not
+place a second hero beside it. Declare a PRIMARY moment at roughly
+`sceneStart + settleSec`, then leave at least one second to read the landed
+system.
+
+**Slots.** `product` names the workspace, `title` names the view,
+`metric1..3` are compact proof values, `accent` is a brand token, and
+`settleSec` is the final chart-bar landing.
+</template>
+<style data-recipe-style>
+  .rcp-dash {
+    position: relative;
+    width: 1480px;
+    height: 780px;
+    overflow: hidden;
+    border-radius: 34px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: #121923;
+    color: #f5f7fa;
+    box-shadow: 0 46px 120px rgba(0, 0, 0, 0.44);
+  }
+  .rcp-dash .rcp-dash-top {
+    height: 78px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 34px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.025);
+  }
+  .rcp-dash .rcp-dash-brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 25px;
+    font-weight: 720;
+  }
+  .rcp-dash .rcp-dash-mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    background: var(--rcp-accent, #ffc24d);
+    box-shadow: 0 0 24px rgba(255, 194, 77, 0.25);
+  }
+  .rcp-dash .rcp-dash-live {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.065);
+    font-size: 17px;
+    color: rgba(245, 247, 250, 0.76);
+  }
+  .rcp-dash .rcp-dash-live-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-dash .rcp-dash-live-ring {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--rcp-accent, #ffc24d);
+    border-radius: 50%;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .rcp-dash .rcp-dash-body {
+    display: grid;
+    grid-template-columns: 230px 1fr;
+    height: 702px;
+  }
+  .rcp-dash .rcp-dash-nav {
+    padding: 38px 26px;
+    border-right: 1px solid rgba(255, 255, 255, 0.09);
+    background: rgba(0, 0, 0, 0.08);
+  }
+  .rcp-dash .rcp-dash-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    height: 48px;
+    margin-bottom: 14px;
+    padding: 0 16px;
+    border-radius: 12px;
+    color: rgba(245, 247, 250, 0.56);
+    font-size: 18px;
+  }
+  .rcp-dash .rcp-dash-nav-item:first-child {
+    color: #f5f7fa;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .rcp-dash .rcp-dash-nav-icon {
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    border: 2px solid currentColor;
+  }
+  .rcp-dash .rcp-dash-main {
+    padding: 42px 44px 38px;
+  }
+  .rcp-dash .rcp-dash-heading {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
+  .rcp-dash .rcp-dash-title {
+    font-size: 42px;
+    line-height: 1;
+    font-weight: 740;
+    letter-spacing: -0.025em;
+  }
+  .rcp-dash .rcp-dash-period {
+    font-size: 17px;
+    color: rgba(245, 247, 250, 0.54);
+  }
+  .rcp-dash .rcp-dash-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin-top: 32px;
+  }
+  .rcp-dash .rcp-dash-card {
+    min-height: 145px;
+    padding: 24px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: #19222f;
+  }
+  .rcp-dash .rcp-dash-card-label {
+    font-size: 16px;
+    color: rgba(245, 247, 250, 0.55);
+  }
+  .rcp-dash .rcp-dash-card-value {
+    margin-top: 14px;
+    font-size: 46px;
+    font-weight: 740;
+    letter-spacing: -0.025em;
+  }
+  .rcp-dash .rcp-dash-card-delta {
+    margin-top: 10px;
+    font-size: 15px;
+    color: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-dash .rcp-dash-lower {
+    display: grid;
+    grid-template-columns: 1.6fr 0.9fr;
+    gap: 20px;
+    margin-top: 20px;
+  }
+  .rcp-dash .rcp-dash-chart,
+  .rcp-dash .rcp-dash-activity {
+    height: 300px;
+    padding: 24px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: #19222f;
+  }
+  .rcp-dash .rcp-dash-panel-title {
+    font-size: 17px;
+    font-weight: 650;
+  }
+  .rcp-dash .rcp-dash-bars {
+    height: 210px;
+    margin-top: 22px;
+    display: flex;
+    align-items: flex-end;
+    gap: 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  }
+  .rcp-dash .rcp-dash-bar {
+    flex: 1;
+    min-width: 0;
+    border-radius: 10px 10px 2px 2px;
+    background: rgba(255, 255, 255, 0.16);
+    transform-origin: 50% 100%;
+  }
+  .rcp-dash .rcp-dash-bar:nth-child(2),
+  .rcp-dash .rcp-dash-bar:nth-child(5) {
+    background: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-dash .rcp-dash-activity-row {
+    display: grid;
+    grid-template-columns: 34px 1fr auto;
+    align-items: center;
+    gap: 13px;
+    min-height: 62px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+    font-size: 15px;
+  }
+  .rcp-dash .rcp-dash-activity-row:last-child {
+    border-bottom: 0;
+  }
+  .rcp-dash .rcp-dash-avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.17);
+  }
+  .rcp-dash .rcp-dash-activity-time {
+    color: rgba(245, 247, 250, 0.46);
+  }
+</style>
+<template data-recipe-markup>
+  <div class="rcp-dash" data-part="{{uid}}-dashboard" data-layout-important
+    data-layout-anchor="frame:center" style="--rcp-accent: {{accent}}">
+    <div class="rcp-dash-top">
+      <div class="rcp-dash-brand"><span class="rcp-dash-mark"></span>{{product}}</div>
+      <div class="rcp-dash-live"><span class="rcp-dash-live-ring"></span><span class="rcp-dash-live-dot"></span>Live release</div>
+    </div>
+    <div class="rcp-dash-body">
+      <div class="rcp-dash-nav">
+        <div class="rcp-dash-nav-item"><span class="rcp-dash-nav-icon"></span>Overview</div>
+        <div class="rcp-dash-nav-item"><span class="rcp-dash-nav-icon"></span>Releases</div>
+        <div class="rcp-dash-nav-item"><span class="rcp-dash-nav-icon"></span>Audience</div>
+        <div class="rcp-dash-nav-item"><span class="rcp-dash-nav-icon"></span>Assets</div>
+      </div>
+      <div class="rcp-dash-main">
+        <div class="rcp-dash-heading">
+          <div class="rcp-dash-title">{{title}}</div>
+          <div class="rcp-dash-period">Last 30 days</div>
+        </div>
+        <div class="rcp-dash-metrics">
+          <div class="rcp-dash-card rcp-dash-card-1">
+            <div class="rcp-dash-card-label">Views</div><div class="rcp-dash-card-value">{{metric1}}</div><div class="rcp-dash-card-delta">↑ 18.4%</div>
+          </div>
+          <div class="rcp-dash-card rcp-dash-card-2">
+            <div class="rcp-dash-card-label">Completion</div><div class="rcp-dash-card-value">{{metric2}}</div><div class="rcp-dash-card-delta">↑ 6.2%</div>
+          </div>
+          <div class="rcp-dash-card rcp-dash-card-3">
+            <div class="rcp-dash-card-label">Time to publish</div><div class="rcp-dash-card-value">{{metric3}}</div><div class="rcp-dash-card-delta">↓ 42%</div>
+          </div>
+        </div>
+        <div class="rcp-dash-lower">
+          <div class="rcp-dash-chart">
+            <div class="rcp-dash-panel-title">Launch reach</div>
+            <div class="rcp-dash-bars" data-part="{{uid}}-chart">
+              <div class="rcp-dash-bar" style="height:42%"></div><div class="rcp-dash-bar" style="height:68%"></div><div class="rcp-dash-bar" style="height:55%"></div><div class="rcp-dash-bar" style="height:78%"></div><div class="rcp-dash-bar" style="height:92%"></div><div class="rcp-dash-bar" style="height:73%"></div>
+            </div>
+          </div>
+          <div class="rcp-dash-activity">
+            <div class="rcp-dash-panel-title">Recent activity</div>
+            <div class="rcp-dash-activity-row"><span class="rcp-dash-avatar"></span><span>Film approved</span><span class="rcp-dash-activity-time">now</span></div>
+            <div class="rcp-dash-activity-row"><span class="rcp-dash-avatar"></span><span>CTA updated</span><span class="rcp-dash-activity-time">4m</span></div>
+            <div class="rcp-dash-activity-row"><span class="rcp-dash-avatar"></span><span>Render shared</span><span class="rcp-dash-activity-time">9m</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+<script data-recipe-motion>
+  var settle = {{start}} + {{settleSec}};
+
+  // Coherent assemble-from-baseline family. Starts are 70–100ms apart while
+  // durations are 450–650ms, so the dashboard arrives as one overlapping
+  // phrase rather than a row of completed mini-animations.
+  // The shell is intentionally painted at scene start: hiding the whole
+  // product until its first tween would expose the host wallpaper as a blank
+  // cold-open frame. Geometry rises, while the chrome stays readable.
+  tl.fromTo('[data-part="{{uid}}-dashboard"]', { y: 28, scale: 0.98 },
+    { y: 0, scale: 1, duration: 0.62, ease: "power3.out" }, {{start}});
+  tl.fromTo('[data-part="{{uid}}-dashboard"] .rcp-dash-top', { y: -14, opacity: 0.72 },
+    { y: 0, opacity: 1, duration: 0.48, ease: "power3.out" }, {{start}} + 0.08);
+  tl.fromTo('[data-part="{{uid}}-dashboard"] .rcp-dash-nav', { x: -22, opacity: 0.5 },
+    { x: 0, opacity: 1, duration: 0.52, ease: "power3.out" }, {{start}} + 0.29);
+  tl.fromTo('[data-part="{{uid}}-dashboard"] .rcp-dash-nav-item', { x: -12, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.34, stagger: 0.055, ease: "power3.out" }, {{start}} + 0.38);
+  tl.fromTo('[data-part="{{uid}}-dashboard"] .rcp-dash-heading', { y: 18, opacity: 0.62 },
+    { y: 0, opacity: 1, duration: 0.46, ease: "power3.out" }, {{start}} + 0.37);
+  tl.fromTo('[data-part="{{uid}}-dashboard"] .rcp-dash-card-1', { y: 32, scale: 0.94, opacity: 0 },
+    { y: -5, scale: 1.018, opacity: 1, duration: 0.44, ease: "power4.out" }, {{start}} + 0.43);
+  tl.fromTo('[data-part="{{uid}}-dashboard"] .rcp-dash-card-2', { y: 32, scale: 0.94, opacity: 0 },
+    { y: -5, scale: 1.018, opacity: 1, duration: 0.46, ease: "power4.out" }, {{start}} + 0.5);
+  tl.fromTo('[data-part="{{uid}}-dashboard"] .rcp-dash-card-3', { y: 32, scale: 0.94, opacity: 0 },
+    { y: -5, scale: 1.018, opacity: 1, duration: 0.48, ease: "power4.out" }, {{start}} + 0.57);
+  tl.to('[data-part="{{uid}}-dashboard"] .rcp-dash-card',
+    { y: 0, scale: 1, duration: 0.26, stagger: 0.055, ease: "seqSettle" }, {{start}} + 0.9);
+  tl.fromTo('[data-part="{{uid}}-dashboard"] .rcp-dash-chart', { y: 24, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.58, ease: "seqSettle" }, {{start}} + 0.70);
+  tl.fromTo('[data-part="{{uid}}-dashboard"] .rcp-dash-activity', { y: 24, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.6, ease: "seqSettle" }, {{start}} + 0.79);
+  tl.fromTo('[data-part="{{uid}}-dashboard"] .rcp-dash-activity-row', { x: 14, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.34, stagger: 0.07, ease: "power3.out" }, {{start}} + 0.98);
+
+  // Development after entrance: the chart grows in a tight follower chain,
+  // then the live status acknowledges the landed dashboard once.
+  tl.fromTo('[data-part="{{uid}}-chart"] .rcp-dash-bar', { scaleY: 0 },
+    { scaleY: 1.08, duration: 0.42, stagger: 0.055, ease: "power4.out" }, settle - 0.74);
+  tl.to('[data-part="{{uid}}-chart"] .rcp-dash-bar',
+    { scaleY: 1, duration: 0.2, stagger: 0.055, ease: "seqSettle" }, settle - 0.18);
+  tl.fromTo('[data-part="{{uid}}-dashboard"] .rcp-dash-live-dot', { scale: 0.6, opacity: 0.45 },
+    { scale: 1.35, opacity: 1, duration: 0.18, ease: "power2.out" }, settle + 0.04);
+  tl.to('[data-part="{{uid}}-dashboard"] .rcp-dash-live-dot',
+    { scale: 1, duration: 0.3, ease: "seqSettle" }, settle + 0.23);
+  tl.fromTo('[data-part="{{uid}}-dashboard"] .rcp-dash-live-ring', { scale: 0.4, opacity: 0 },
+    { scale: 1.65, opacity: 0.55, duration: 0.34, ease: "power3.out", immediateRender: false }, settle + 0.03);
+  tl.to('[data-part="{{uid}}-dashboard"] .rcp-dash-live-ring',
+    { scale: 2.05, opacity: 0, duration: 0.24, ease: "power2.out" }, settle + 0.37);
+</script>

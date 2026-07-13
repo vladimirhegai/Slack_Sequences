@@ -7,6 +7,8 @@ import {
   CAMERA_RUNTIME_FILE,
   HIGH_ENERGY_PUSH_ZOOM,
   SEQUENCES_EASES,
+  alignCameraDestinationsWithLateEntrances,
+  ensureCameraBlockingChassis,
   auditCameraEnergy,
   cameraMotionWindows,
   cameraRuntimeSource,
@@ -17,10 +19,12 @@ import {
   resolveCameraPlan,
   topUpRequiredRackFocus,
   normalizeConnectiveCameraSchedule,
+  upgradeCrossStationDrifts,
   validateCameraContract,
 } from "../src/engine/cameraContract.ts";
 import { buildFallbackComposition } from "../src/engine/fallbackComposition.ts";
 import { analyzeMotionDensity } from "../src/engine/motionDensity.ts";
+import { delayConflictingCameraMoves } from "../src/engine/pacingAudit.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
 
 function scene(
@@ -65,6 +69,31 @@ describe("normalizeStoryboardCameraIntent", () => {
       version: 1,
       path: [{ version: 1, move: "track-to-anchor", toRegion: "hero", startSec: 0, durationSec: 2 }],
     }, window)).toBeUndefined();
+  });
+
+  it("binds a targetless authored route to an explicit typed focal fallback", () => {
+    const camera = normalizeStoryboardCameraIntent({
+      version: 1,
+      path: [
+        { version: 1, move: "hold", startSec: 0, durationSec: 1.6 },
+        { version: 1, move: "push-in", startSec: 1.6, durationSec: 2.4 },
+      ],
+    }, window, { toPart: "metric-ring" });
+    expect(camera?.path).toMatchObject([
+      { move: "hold", toPart: "metric-ring" },
+      { move: "push-in", toPart: "metric-ring" },
+    ]);
+    // The fallback never overrides a route that already names its station.
+    expect(normalizeStoryboardCameraIntent({
+      version: 1,
+      path: [{ version: 1, move: "pan", toRegion: "proof", startSec: 0, durationSec: 2 }],
+    }, window, { toPart: "metric-ring" })?.path[0]).toMatchObject({
+      toRegion: "proof",
+    });
+    expect(normalizeStoryboardCameraIntent({
+      version: 1,
+      path: [{ version: 1, move: "hold", startSec: 0, durationSec: 2 }],
+    }, window, { toPart: "Bad focal!" })).toBeUndefined();
   });
 
   it("rejects unknown eases and non-kebab station names", () => {
@@ -166,6 +195,130 @@ describe("normalizeStoryboardCameraIntent", () => {
       { move: "pan", toRegion: "trace", startSec: 8.4, durationSec: 0.8 },
       { move: "push-in", toRegion: "risk", startSec: 10.1, durationSec: 0.7 },
     ]);
+  });
+});
+
+describe("Sentinel — alignCameraDestinationsWithLateEntrances", () => {
+  it("delays an early cross-station move until its gated destination becomes readable", () => {
+    const storyboard = [scene({
+      id: "timeline",
+      startSec: 6,
+      durationSec: 5,
+      components: [
+        { version: 1, id: "timeline-list", kind: "list", region: "head", role: "hero" },
+        { version: 1, id: "publish-btn", kind: "button", region: "foot", role: "hero" },
+      ],
+      beats: [{
+        version: 1,
+        id: "publish-open",
+        sceneId: "timeline",
+        component: "publish-btn",
+        kind: "open",
+        atSec: 9.2,
+        durationSec: 0.5,
+      }],
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "whip",
+          fromRegion: "head",
+          toRegion: "foot",
+          startSec: 6,
+          durationSec: 1.2,
+        }],
+      },
+    })];
+    const result = alignCameraDestinationsWithLateEntrances(storyboard);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.storyboard[0]!.camera!.path[0]!.startSec).toBeCloseTo(8.54, 2);
+    expect(result.normalized[0]).toContain("on-frame when it becomes readable");
+    expect(alignCameraDestinationsWithLateEntrances(result.storyboard).normalized).toEqual([]);
+  });
+
+  it("preserves an establishing move when any destination surface is already visible", () => {
+    const established = scene({
+      id: "proof",
+      startSec: 0,
+      durationSec: 6,
+      components: [
+        { version: 1, id: "panel", kind: "app-window", region: "proof" },
+        { version: 1, id: "metric", kind: "stat-card", region: "proof" },
+      ],
+      beats: [{
+        version: 1,
+        id: "metric-open",
+        sceneId: "proof",
+        component: "metric",
+        kind: "open",
+        atSec: 4,
+        durationSec: 0.5,
+      }],
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "pan",
+          toRegion: "proof",
+          startSec: 0,
+          durationSec: 1,
+        }],
+      },
+    });
+    expect(alignCameraDestinationsWithLateEntrances([established])).toEqual({
+      storyboard: [established],
+      normalized: [],
+    });
+  });
+
+  it("rechecks payoff holds after destination alignment moves the lens", () => {
+    const storyboard = [scene({
+      id: "timeline",
+      startSec: 6,
+      durationSec: 5,
+      components: [
+        { version: 1, id: "timeline-list", kind: "list", region: "head", role: "hero" },
+        { version: 1, id: "publish-btn", kind: "button", region: "foot", role: "hero" },
+      ],
+      beats: [
+        { version: 1, id: "assign", sceneId: "timeline", component: "timeline-list", kind: "set-state", atSec: 8.1, durationSec: 0.5 },
+        { version: 1, id: "open", sceneId: "timeline", component: "publish-btn", kind: "open", atSec: 9.2, durationSec: 0.5 },
+        { version: 1, id: "press", sceneId: "timeline", component: "publish-btn", kind: "press", atSec: 9.7, durationSec: 0.4 },
+      ],
+      camera: {
+        version: 1,
+        path: [{ version: 1, move: "whip", fromRegion: "head", toRegion: "foot", startSec: 6, durationSec: 1.2 }],
+      },
+    })];
+    const aligned = alignCameraDestinationsWithLateEntrances(storyboard);
+    expect(aligned.storyboard[0]!.camera!.path[0]!.startSec).toBeCloseTo(8.54, 2);
+    const protectedResult = delayConflictingCameraMoves(aligned.storyboard);
+    expect(protectedResult.storyboard[0]!.camera!.path[0]!.startSec).toBeCloseTo(9.4, 2);
+    expect(protectedResult.storyboard[0]!.durationSec).toBe(5);
+    expect(protectedResult.normalized[0]).toContain("payoff/copy holds");
+  });
+});
+
+describe("Sentinel — ensureCameraBlockingChassis", () => {
+  it("adds only the neutral transform chassis needed by host blocking", () => {
+    const cameraLess = scene({
+      id: "proof",
+      startSec: 3,
+      durationSec: 4,
+      components: [{ version: 1, id: "metric", kind: "stat-card", role: "hero" }],
+      spatialIntent: { version: 1, focalPart: "metric", composition: "centered", relationships: [] },
+    });
+    const result = ensureCameraBlockingChassis([cameraLess]);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.storyboard[0]!.camera!.path).toEqual([{
+      version: 1,
+      move: "hold",
+      startSec: 3,
+      durationSec: 4,
+      toPart: "metric",
+      zoom: 1,
+    }]);
+    expect(ensureCameraBlockingChassis(result.storyboard).normalized).toEqual([]);
   });
 });
 
@@ -852,6 +1005,34 @@ describe("Sentinel — normalizeConnectiveCameraSchedule", () => {
   });
 });
 
+describe("Sentinel — cross-station connective travel", () => {
+  it("promotes a drift to a new component station but preserves same-station drift", () => {
+    const storyboard = [scene({
+      id: "close",
+      startSec: 0,
+      durationSec: 5,
+      components: [
+        { version: 1, id: "metric", kind: "stat-card", region: "metric-station" },
+        { version: 1, id: "cta", kind: "button", region: "cta-station" },
+      ],
+      camera: {
+        version: 1,
+        path: [
+          { version: 1, move: "push-in", toRegion: "metric-station", startSec: 0, durationSec: 2 },
+          { version: 1, move: "drift", toPart: "metric", startSec: 2, durationSec: 1 },
+          { version: 1, move: "drift", toRegion: "cta-station", startSec: 3, durationSec: 2 },
+        ],
+      },
+    })];
+    const result = upgradeCrossStationDrifts(storyboard);
+    expect(result.storyboard[0]!.camera!.path.map((move) => move.move)).toEqual([
+      "push-in", "drift", "pan",
+    ]);
+    expect(result.normalized[0]).toContain("declared destination can enter frame");
+    expect(upgradeCrossStationDrifts(result.storyboard).normalized).toEqual([]);
+  });
+});
+
 describe("Sentinel — reserveFinalCameraLanding", () => {
   it("reserves a destination dwell when a substantial final move lands on the cut", () => {
     const storyboard = [scene({
@@ -874,6 +1055,39 @@ describe("Sentinel — reserveFinalCameraLanding", () => {
     expect(result.storyboard[0]!.camera!.path[0]!.durationSec).toBe(1.08);
     expect(result.storyboard[0]!.sentinelNormalizations?.[0]).toContain("destination dwell");
     expect(reserveFinalCameraLanding(result.storyboard).normalized).toEqual([]);
+  });
+
+  it("reasserts the dwell after a later retime moves a reserved route back onto the cut", () => {
+    const note =
+      'reserved 0.42s of destination dwell after the push-in landing on "readiness-ring"';
+    const storyboard = [scene({
+      id: "threshold",
+      startSec: 7.2,
+      durationSec: 3.6,
+      sentinelNormalizations: [note],
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "push-in",
+          toPart: "readiness-ring",
+          startSec: 8.1,
+          durationSec: 2.68,
+        }],
+      },
+    })];
+    const result = reserveFinalCameraLanding(storyboard);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.storyboard[0]!.camera!.path[0]).toMatchObject({
+      startSec: 8.1,
+      durationSec: 2.28,
+    });
+    expect(
+      result.storyboard[0]!.camera!.path[0]!.startSec +
+      result.storyboard[0]!.camera!.path[0]!.durationSec,
+    ).toBeCloseTo(10.38, 5);
+    expect(result.storyboard[0]!.sentinelNormalizations?.filter((entry) => entry === note))
+      .toHaveLength(1);
   });
 
   it("preserves explicit holds, short impact moves, and dive envelopes", () => {

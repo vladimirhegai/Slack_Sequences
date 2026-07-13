@@ -1,0 +1,99 @@
+{
+  "format": 2,
+  "revision": 3,
+  "id": "overlap-dashboard-entrance",
+  "title": "Dashboard assembly with overlapping follow-through",
+  "description": "A full product dashboard assembles in one rise grammar: shell, rail, metrics, chart, and activity follow one another at tight offsets and settle as a coherent system.",
+  "tags": [
+    "overlapping-entrance",
+    "assemble",
+    "follow-through",
+    "product-ui",
+    "cascade"
+  ],
+  "triggerPatterns": [
+    "overlapping (dashboard|entrance|assembly)",
+    "dashboard (assembles|assembly|cascade)",
+    "staggered dashboard",
+    "cards? follow .*dashboard",
+    "product ui .*assemble",
+    "dashboard .*follow[ -]?through",
+    "metrics? .*cascade"
+  ],
+  "durationWindow": {
+    "minSec": 3.9,
+    "maxSec": 9.5
+  },
+  "componentKinds": [
+    "app-window",
+    "stat-card",
+    "chart-bars"
+  ],
+  "params": [
+    {
+      "name": "product",
+      "kind": "text",
+      "description": "Product or workspace name in the dashboard chrome.",
+      "default": "Northstar",
+      "maxChars": 22
+    },
+    {
+      "name": "title",
+      "kind": "text",
+      "description": "The dashboard's primary heading.",
+      "default": "Release overview",
+      "maxChars": 32
+    },
+    {
+      "name": "metric1",
+      "kind": "text",
+      "description": "First metric value.",
+      "default": "2.4k",
+      "maxChars": 10
+    },
+    {
+      "name": "metric2",
+      "kind": "text",
+      "description": "Second metric value.",
+      "default": "98%",
+      "maxChars": 10
+    },
+    {
+      "name": "metric3",
+      "kind": "text",
+      "description": "Third metric value.",
+      "default": "14m",
+      "maxChars": 10
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for selected navigation, chart, and status accents.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "settleSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the final chart bar lands.",
+      "default": 2.05,
+      "min": 1.7,
+      "max": 6
+    }
+  ],
+  "engine": {
+    "kitVersions": {
+      "componentKit": 1,
+      "componentRuntime": 1,
+      "cameraRuntime": 1,
+      "continuityRuntime": 1,
+      "environmentRuntime": 1,
+      "environmentKit": 1,
+      "cutRuntime": 1,
+      "interactionRuntime": 1,
+      "timeRuntime": 1,
+      "fxRuntime": 1,
+      "cinemaKit": 1
+    }
+  },
+  "fragmentHash": "76cdd5c05dc25f538b27c26ce9e01bfcb75813ecdc7e609cb5104c12db1be832"
+}

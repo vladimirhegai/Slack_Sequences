@@ -103,22 +103,23 @@ export const metricBar = defineAsset({
 .asset-metric-bar .mb-label {
   font-size: 0.72em;
   font-weight: 600;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted, #9aa5b4);
 }
 .asset-metric-bar .mb-value {
   font-size: 1.5em;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-weight: 680;
+  letter-spacing: -0.018em;
   font-variant-numeric: tabular-nums;
 }
 .asset-metric-bar .mb-track {
-  height: 0.75em;
+  position: relative;
+  height: 0.72em;
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface-2, #1d2430) 85%, var(--mb-accent, #6ea8ff) 6%);
   box-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.35),
+    inset 0 1px 2px rgba(0, 0, 0, 0.34),
     inset 0 0 0 1px var(--cinema-edge, rgba(255, 255, 255, 0.07));
   overflow: hidden;
 }
@@ -129,10 +130,13 @@ export const metricBar = defineAsset({
   transform: scaleX(calc(var(--mb-fill, 72) / 100));
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--mb-accent, #6ea8ff) 78%, var(--surface, #161b24)),
+    color-mix(in srgb, var(--mb-accent, #6ea8ff) 72%, var(--surface, #161b24)),
     var(--mb-accent, #6ea8ff)
   );
-  box-shadow: 0 0 0.9em color-mix(in srgb, var(--mb-accent, #6ea8ff) 45%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset -0.5em 0 0.6em color-mix(in srgb, var(--mb-accent, #6ea8ff) 60%, transparent),
+    0 0 0.7em color-mix(in srgb, var(--mb-accent, #6ea8ff) 38%, transparent);
 }
 `.trim(),
   render: ({ params, partId, escapeHtml }) =>

@@ -50,7 +50,10 @@ function byAttr(scope: DomElement, attribute: string, value: string): DomElement
 
 /** Mirrors the component runtime's childItems() lookup order exactly. */
 function childItems(el: DomElement): number {
-  for (const selector of [".cmp-row", ".cmp-item", ".cmp-card", ".cmp-msg"]) {
+  for (const selector of [
+    ".cmp-row", ".cmp-item", ".cmp-card", ".cmp-msg", "[data-cmp-item]",
+    '[class$="-row"],[class*="-row "]',
+  ]) {
     try {
       const found = el.querySelectorAll(selector);
       if (found.length) return found.length;

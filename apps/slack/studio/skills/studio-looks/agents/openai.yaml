@@ -1,0 +1,4 @@
+interface:
+  display_name: "Studio Looks"
+  short_description: "Add coherent design dialects"
+  default_prompt: "Use -looks to add and integrate a Studio design dialect."

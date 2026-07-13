@@ -18,6 +18,7 @@ import type {
   MomentImportance,
   StoryboardMomentV1,
 } from "./storyboardMoments.ts";
+import { slackSequencesEnvRawValue } from "./featureFlags.ts";
 
 // Mirrors the moment contract's evidence neighborhood without importing its
 // runtime module (motionDensity imports the camera resolver, so a value import
@@ -32,7 +33,7 @@ const DIRECTION_EVIDENCE_AFTER_SEC = 0.75;
  * ownership-aware automatic FX stand down.
  */
 export function directionScoreConsumersEnabled(): boolean {
-  return process.env.SLACK_SEQUENCES_DIRECTION_SCORE !== "0";
+  return slackSequencesEnvRawValue("SLACK_SEQUENCES_DIRECTION_SCORE") !== "0";
 }
 
 export type DirectionSystem =
@@ -237,6 +238,14 @@ function sceneActions(
     const duration = Math.max(0.1, beat.durationSec ?? COMPONENT_DEFAULT_SEC[beat.kind] ?? 0.6);
     const startSec = Math.max(scene.startSec, beat.atSec);
     const endSec = Math.min(sceneEnd, startSec + duration);
+    const component = scene.components?.find((entry) => entry.id === beat.component);
+    const plugin = component?.pluginUid
+      ? scene.plugins?.find((entry) => entry.uid === component.pluginUid)
+      : undefined;
+    // A lockup is one compositional subject. Its headline/sub/CTA still animate
+    // independently, but those internal beats must not make the camera zoom
+    // between siblings or frame a subtitle while cropping the wordmark.
+    const attentionPart = plugin?.kind === "lockup" ? plugin.id : beat.component;
     actions.push({
       system: "component",
       id: `component:${beat.id}`,
@@ -244,7 +253,7 @@ function sceneActions(
       endSec: round(endSec),
       atSec: round(endSec),
       energy: componentEnergy(beat.kind),
-      part: beat.component,
+      part: attentionPart,
     });
   }
 
@@ -343,6 +352,19 @@ function chooseMomentAction(
   const ordered = [...candidates].sort((a, b) => {
     const preferredDelta = Number(b.system === preferred) - Number(a.system === preferred);
     if (preferredDelta) return preferredDelta;
+    // A primary cue describes the shot's declared subject, not merely the
+    // closest local animation. Notification-stack beats often overlap a hero
+    // metric's count; choosing the nearest toast made the eye bounce away from
+    // the focal metric and then back again (GatePilot stress probe). Keep the
+    // planner's focal hierarchy authoritative when both candidates belong to
+    // the requested system. Supporting cues remain free to follow local beats.
+    const focalPart = moment.importance === "primary"
+      ? scene.spatialIntent?.focalPart
+      : undefined;
+    if (focalPart && a.system === preferred && b.system === preferred) {
+      const focalDelta = Number(b.part === focalPart) - Number(a.part === focalPart);
+      if (focalDelta) return focalDelta;
+    }
     // A camera cue often names what is happening DURING travel rather than
     // its later arrival. Prefer the preferred-system action actually carrying
     // the cue over the move that happened to finish nearest it; at a shared

@@ -1,10 +1,11 @@
 /**
  * Sentinel feature flags — the kill-switch surface for the
- * correctness-by-construction rework (SENTINEL_PLAN.md §4.5). Every new
+ * correctness-by-construction system (SENTINEL.md flag contract). Every new
  * behavior is gated here so the legacy path stays one env var away until the
  * Phase-5 probes flip the defaults. Read through these helpers, never
  * `process.env` directly, so SENTINEL.md has a single source of truth.
  */
+import { slackSequencesEnvRawValue } from "./featureFlags.ts";
 
 /**
  * Phase 1 — host emits scene skeletons carrying the camera-world plane,
@@ -16,7 +17,7 @@
  * release.
  */
 export function sentinelSkeletonEnabled(): boolean {
-  return process.env.SLACK_SEQUENCES_SENTINEL_SKELETON !== "0";
+  return slackSequencesEnvRawValue("SLACK_SEQUENCES_SENTINEL_SKELETON") !== "0";
 }
 
 /**
@@ -26,7 +27,7 @@ export function sentinelSkeletonEnabled(): boolean {
  * force-reverts to whole-doc for one release.
  */
 export function sentinelSlotsEnabled(): boolean {
-  return process.env.SLACK_SEQUENCES_SENTINEL_SLOTS !== "0";
+  return slackSequencesEnvRawValue("SLACK_SEQUENCES_SENTINEL_SLOTS") !== "0";
 }
 
 /**
@@ -37,7 +38,7 @@ export function sentinelSlotsEnabled(): boolean {
  * flag table stays the single source of truth.
  */
 export function criticSkipCleanEnabled(): boolean {
-  return process.env.SLACK_SEQUENCES_CRITIC_SKIP_CLEAN !== "0";
+  return slackSequencesEnvRawValue("SLACK_SEQUENCES_CRITIC_SKIP_CLEAN") !== "0";
 }
 
 /**
@@ -56,7 +57,7 @@ export function criticSkipCleanEnabled(): boolean {
  * patch in one env var.
  */
 export function criticSlotRepairEnabled(): boolean {
-  return process.env.SLACK_SEQUENCES_CRITIC_SLOT_REPAIR !== "0";
+  return slackSequencesEnvRawValue("SLACK_SEQUENCES_CRITIC_SLOT_REPAIR") !== "0";
 }
 
 /**
@@ -73,7 +74,7 @@ export function criticSlotRepairEnabled(): boolean {
  * change one flag from reverting).
  */
 export function storyboardSceneRepairEnabled(): boolean {
-  return process.env.SLACK_SEQUENCES_STORYBOARD_SCENE_REPAIR !== "0";
+  return slackSequencesEnvRawValue("SLACK_SEQUENCES_STORYBOARD_SCENE_REPAIR") !== "0";
 }
 
 /**
@@ -87,7 +88,7 @@ export function storyboardSceneRepairEnabled(): boolean {
  * var (an empty library behaves identically).
  */
 export function recipesEnabled(): boolean {
-  return process.env.SLACK_SEQUENCES_RECIPES !== "0";
+  return slackSequencesEnvRawValue("SLACK_SEQUENCES_RECIPES") !== "0";
 }
 
 /**
@@ -101,7 +102,7 @@ export function recipesEnabled(): boolean {
  * plugin-free pipeline in one env var (declarations then parse to nothing).
  */
 export function pluginsEnabled(): boolean {
-  return process.env.SLACK_SEQUENCES_PLUGINS !== "0";
+  return slackSequencesEnvRawValue("SLACK_SEQUENCES_PLUGINS") !== "0";
 }
 
 /**
@@ -115,5 +116,5 @@ export function pluginsEnabled(): boolean {
  * directly.
  */
 export function assetsEnabled(): boolean {
-  return process.env.SLACK_SEQUENCES_ASSETS !== "0";
+  return slackSequencesEnvRawValue("SLACK_SEQUENCES_ASSETS") !== "0";
 }

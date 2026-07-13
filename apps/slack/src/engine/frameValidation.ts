@@ -16,10 +16,35 @@ export interface ParsedFrame {
   accent?: string;
   /** The frame's tinted canvas hex (semantic token table row). */
   canvas?: string;
+  surface?: string;
+  text?: string;
+  muted?: string;
+  accentText?: string;
+  accentSoft?: string;
+  border?: string;
+  positive?: string;
+  negative?: string;
   palette: string[];
   display?: string;
   body?: string;
   mono?: string;
+}
+
+export type FrameBasis = "light" | "dark";
+
+/** Read the committed canvas polarity without treating prose as authority. */
+export function parseFrameBasis(frameMd: string): FrameBasis | undefined {
+  const metadata = frameMd.match(/<!--\s*sequences-frame:\s*(\{.*?\})\s*-->/s)?.[1];
+  if (metadata) {
+    try {
+      const basis = (JSON.parse(metadata) as { basis?: unknown }).basis;
+      if (basis === "light" || basis === "dark") return basis;
+    } catch {
+      // Fall through to the human-readable line for old/corrupt metadata.
+    }
+  }
+  const prose = frameMd.match(/^Basis:\s*\*\*(light|dark)\*\*/im)?.[1]?.toLowerCase();
+  return prose === "light" || prose === "dark" ? prose : undefined;
 }
 
 export function parseFrame(frameMd: string): ParsedFrame {
@@ -43,15 +68,28 @@ export function parseFrame(frameMd: string): ParsedFrame {
     .filter((value): value is string => Boolean(value));
   const font = (role: string): string | undefined =>
     frameMd.match(new RegExp(`\\*\\*${role}:\\*\\*\\s*([^\\r\\n]+)`, "i"))?.[1]?.trim();
+  const semanticColor = (role: string): string | undefined =>
+    normalizeHex(
+      frameMd.match(new RegExp(`\\|\\s*${role}\\s*\\|\\s*\`(#[0-9a-f]{6})\``, "i"))?.[1] ?? "",
+    );
+  const statusPair = frameMd.match(
+    /\|\s*Positive\s*\/\s*negative\s*\|\s*`(#[0-9a-f]{6})`\s*\/\s*`(#[0-9a-f]{6})`/i,
+  );
   return {
     brandMatched,
     accentCommitted,
     accent: normalizeHex(
       frameMd.match(/\|\s*Committed accent\s*\|\s*`(#[0-9a-f]{6})`/i)?.[1] ?? "",
     ),
-    canvas: normalizeHex(
-      frameMd.match(/\|\s*Canvas\s*\|\s*`(#[0-9a-f]{6})`/i)?.[1] ?? "",
-    ),
+    canvas: semanticColor("Canvas"),
+    surface: semanticColor("Surface"),
+    text: semanticColor("Text"),
+    muted: semanticColor("Muted text"),
+    accentText: semanticColor("Text on accent"),
+    accentSoft: semanticColor("Accent-soft"),
+    border: semanticColor("Border"),
+    positive: normalizeHex(statusPair?.[1] ?? ""),
+    negative: normalizeHex(statusPair?.[2] ?? ""),
     palette: [...new Set(palette)],
     display: font("Display / headlines"),
     body: font("Body / UI"),

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Studio Camera"
+  short_description: "Add typed camera patterns"
+  default_prompt: "Use -camera to add and prove a punchy Studio camera pattern."

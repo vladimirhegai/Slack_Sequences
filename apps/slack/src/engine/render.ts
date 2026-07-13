@@ -12,6 +12,7 @@ import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import type { Manifest, Project } from "@sequences/core";
 import { buildProject } from "./projectIo.ts";
+import { slackSequencesEnvRawValue } from "./featureFlags.ts";
 
 export type RenderFormat = "mp4" | "webm" | "mov" | "png-sequence";
 export type RenderQuality = "draft" | "standard" | "high";
@@ -114,7 +115,7 @@ export function resolveSupersamplePlan(
   height: number,
   quality: RenderQuality,
 ): SupersamplePlan | undefined {
-  const flag = (process.env.SLACK_SEQUENCES_RENDER_SUPERSAMPLE ?? "").trim();
+  const flag = (slackSequencesEnvRawValue("SLACK_SEQUENCES_RENDER_SUPERSAMPLE") ?? "").trim();
   if (flag === "0") return undefined;
   if (flag !== "1" && quality !== "high") return undefined;
   const outputResolution = SUPERSAMPLE_RESOLUTIONS[`${width}x${height}`];

@@ -1,5 +1,5 @@
 /**
- * Sentinel Phase 2 (SENTINEL_PLAN.md §3.2): scene-addressable authoring. The
+ * Sentinel L1/L5 contract (SENTINEL.md): scene-addressable authoring. The
  * author returns one shared `<film_style>` plus a `<scene_html id>` interior and
  * a `<scene_script id>` statement block per scene; the host assembles the
  * canonical document deterministically — the same chassis every whole-doc
@@ -108,6 +108,8 @@ export interface SlotScriptRepairs {
   bareFromTo: number;
   pseudoTimeline: number;
   arrowEnvelope: number;
+  /** A slot used the global GSAP clock instead of the host-owned timeline. */
+  globalTween: number;
   /** A model put GSAP's timeline position inside the vars object as `time`. */
   timePosition: number;
   /** A model tried to tween a `data-*` attribute as a CSS property. */
@@ -201,6 +203,27 @@ interface VarsNormalization {
   dataOnly: boolean;
 }
 
+interface DelayExtraction {
+  source: string;
+  expression?: string;
+}
+
+/** Remove a top-level delay from one vars object so it can become a timeline position. */
+function extractGsapDelay(source: string): DelayExtraction {
+  const trimmed = source.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return { source };
+  const entries = splitTopLevel(trimmed.slice(1, -1)).filter(Boolean);
+  const delayIndex = entries.findIndex((entry) => /^(?:["']?delay["']?)\s*:/.test(entry));
+  if (delayIndex < 0) return { source };
+  const expression = entries[delayIndex]!
+    .replace(/^(?:["']?delay["']?)\s*:\s*/, "")
+    .trim();
+  return {
+    source: `{ ${entries.filter((_entry, index) => index !== delayIndex).join(", ")} }`,
+    ...(expression ? { expression } : {}),
+  };
+}
+
 /** Normalize only top-level vars keys; nested callbacks/objects stay untouched. */
 function normalizeGsapVars(source: string): VarsNormalization {
   const trimmed = source.trim();
@@ -238,6 +261,52 @@ interface TimelineRewrite {
   timePosition: number;
   dataAttribute: number;
   positions: Array<{ expression: string }>;
+}
+
+interface GlobalTweenRewrite {
+  script: string;
+  repaired: number;
+}
+
+/**
+ * A scene slot is appended to a paused host timeline. Global `gsap.to(...)`
+ * calls run on GSAP's wall-clock root and therefore cannot be reproduced by a
+ * seek. Models commonly express the intended absolute cue as `delay`; move
+ * that cue into the host timeline's position argument. A call without delay
+ * starts at the scene boundary, which is the deterministic equivalent of a
+ * page-load call inside that scene slot.
+ */
+function rewriteGlobalGsapTweens(
+  script: string,
+  timing: SlotScriptTiming,
+): GlobalTweenRewrite {
+  const callStart = /\bgsap\s*\.\s*(fromTo|from|to|set)\s*\(/g;
+  let output = "";
+  let cursor = 0;
+  let repaired = 0;
+  for (const match of script.matchAll(callStart)) {
+    const start = match.index ?? 0;
+    if (start < cursor) continue;
+    const open = script.indexOf("(", start);
+    const close = open >= 0 ? balancedCallClose(script, open) : -1;
+    if (close < 0) continue;
+    const method = match[1] as "fromTo" | "from" | "to" | "set";
+    const args = splitTopLevel(script.slice(open + 1, close));
+    const varsIndex = method === "fromTo" ? 2 : 1;
+    const positionIndex = method === "fromTo" ? 3 : 2;
+    const delay = extractGsapDelay(args[varsIndex] ?? "");
+    if (args[varsIndex] !== undefined) args[varsIndex] = delay.source;
+    const position = args[positionIndex];
+    if (position === undefined) {
+      args[positionIndex] = delay.expression ?? String(timing.startSec);
+    } else if (delay.expression) {
+      args[positionIndex] = `(${position}) + (${delay.expression})`;
+    }
+    output += script.slice(cursor, start) + `tl.${method}(${args.join(", ")})`;
+    cursor = close + 1;
+    repaired += 1;
+  }
+  return { script: output + script.slice(cursor), repaired };
 }
 
 function rewriteTimelineCalls(
@@ -308,6 +377,8 @@ function rewriteTimelineCalls(
  * - `window.__tl_scene_<id>` / `window.__tl` are never created by the host;
  * - a complete `(tl) => { ... };` or `(tl, root) => { ... };` is an uninvoked
  *   function inside the host's own timeline IIFE;
+ * - a global `gsap.to/from/fromTo/set` runs on wall time rather than the
+ *   seekable host timeline; its top-level delay is the intended position;
  * - `time` inside a vars object is a misplaced GSAP position;
  * - a `data-*` vars key is an attribute transition, not a CSS property;
  * - every cue in a later slot near zero and within that scene's duration is an
@@ -333,17 +404,20 @@ export function normalizeSceneSlotScript(script: string, timing?: SlotScriptTimi
   let bareFromTo = 0;
   let pseudoTimeline = 0;
   let arrowEnvelope = 0;
+  let globalTween = 0;
   const arrow = normalized.match(
-    /^\s*(?:(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*)?\(\s*tl(?:\s*,\s*([A-Za-z_$][\w$]*))?\s*\)\s*=>\s*\{([\s\S]*)\}\s*;?\s*$/,
+    /^\s*((?:(?:\/\*[\s\S]*?\*\/|\/\/[^\r\n]*(?:\r?\n|$))\s*)*)(?:(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*)?\(\s*tl(?:\s*,\s*([A-Za-z_$][\w$]*))?\s*\)\s*=>\s*\{([\s\S]*)\}\s*;?\s*((?:(?:\/\*[\s\S]*?\*\/|\/\/[^\r\n]*(?:\r?\n|$))\s*)*)$/,
   );
   if (arrow) {
-    const rootName = arrow[1];
+    const rootName = arrow[2];
     normalized = [
+      arrow[1]!.trim(),
       ...(rootName
         ? [`const ${rootName} = document.querySelector("[data-composition-id]");`]
         : []),
-      arrow[2]!.trim(),
-    ].join("\n");
+      arrow[3]!.trim(),
+      arrow[4]!.trim(),
+    ].filter(Boolean).join("\n");
     arrowEnvelope = 1;
   }
   if (!/\b(?:function\s+fromTo|(?:const|let|var)\s+fromTo\b)/.test(normalized)) {
@@ -374,9 +448,36 @@ export function normalizeSceneSlotScript(script: string, timing?: SlotScriptTimi
     return "tl";
   });
 
+  if (timing) {
+    const globalTweens = rewriteGlobalGsapTweens(normalized, timing);
+    normalized = globalTweens.script;
+    globalTween = globalTweens.repaired;
+  }
+
+  let localPosition = 0;
+  if (timing) {
+    const helper = normalized.match(
+      /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*\(\s*([A-Za-z_$][\w$]*)\s*\)\s*=>\s*([A-Za-z_$][\w$]*)\s*\+\s*\2\s*;?/,
+    );
+    if (helper) {
+      const basePattern = new RegExp(
+        `\\b(?:const|let|var)\\s+${helper[3]}\\s*=\\s*(-?(?:\\d+(?:\\.\\d+)?|\\.\\d+))\\s*;?`,
+      );
+      const base = Number(basePattern.exec(normalized)?.[1]);
+      if (Number.isFinite(base) && Math.abs(base - timing.startSec) <= 0.01) {
+        const helperName = helper[1]!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        normalized = normalized.replace(
+          new RegExp(`\\b${helperName}\\(\\s*(-?(?:\\d+(?:\\.\\d+)?|\\.\\d+))\\s*\\)`, "g"),
+          (_match, offset: string) => {
+            localPosition += 1;
+            return String(Math.round((timing.startSec + Number(offset)) * 1000) / 1000);
+          },
+        );
+      }
+    }
+  }
   const calls = rewriteTimelineCalls(normalized);
   normalized = calls.script;
-  let localPosition = 0;
   if (timing && timing.startSec > 0.5 && calls.positions.length) {
     const values = calls.positions.map((entry) => simpleNumberExpression(entry.expression));
     const known = values.every((value): value is number => value !== undefined);
@@ -392,7 +493,7 @@ export function normalizeSceneSlotScript(script: string, timing?: SlotScriptTimi
     if (sceneLocal) {
       const shifted = rewriteTimelineCalls(normalized, timing.startSec);
       normalized = shifted.script;
-      localPosition = shifted.positions.length;
+      localPosition += shifted.positions.length;
     }
   }
   return {
@@ -401,6 +502,7 @@ export function normalizeSceneSlotScript(script: string, timing?: SlotScriptTimi
       bareFromTo,
       pseudoTimeline,
       arrowEnvelope,
+      globalTween,
       timePosition: calls.timePosition,
       dataAttribute: calls.dataAttribute,
       localPosition,
@@ -496,6 +598,7 @@ export function assembleSlotComposition(args: SlotAssemblyArgs): SlotAssemblyRes
     bareFromTo: 0,
     pseudoTimeline: 0,
     arrowEnvelope: 0,
+    globalTween: 0,
     timePosition: 0,
     dataAttribute: 0,
     localPosition: 0,
@@ -520,6 +623,7 @@ export function assembleSlotComposition(args: SlotAssemblyArgs): SlotAssemblyRes
       scriptRepairs.bareFromTo += normalized.repairs.bareFromTo;
       scriptRepairs.pseudoTimeline += normalized.repairs.pseudoTimeline;
       scriptRepairs.arrowEnvelope += normalized.repairs.arrowEnvelope;
+      scriptRepairs.globalTween += normalized.repairs.globalTween;
       scriptRepairs.timePosition += normalized.repairs.timePosition;
       scriptRepairs.dataAttribute += normalized.repairs.dataAttribute;
       scriptRepairs.localPosition += normalized.repairs.localPosition;

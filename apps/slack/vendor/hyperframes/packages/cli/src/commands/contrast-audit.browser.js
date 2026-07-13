@@ -141,21 +141,33 @@ window.__contrastAudit = async function (imgBase64, time) {
   }
 
   // Decode screenshot into canvas pixel data
-  var img = new Image();
-  await new Promise(function (resolve) {
-    img.onload = resolve;
-    img.onerror = function () {
-      resolve();
-    };
-    img.src = "data:image/png;base64," + imgBase64;
+  // Decode inert screenshot bytes directly. Navigating an <img> to a data URL
+  // violates compositions that correctly use `img-src 'self'` and turns this
+  // host-owned audit into a false runtime error.
+  var binary = atob(imgBase64);
+  var bytes = Uint8Array.from(binary, function (character) {
+    return character.charCodeAt(0);
   });
-  if (!img.naturalWidth) return [];
+  var img;
+  try {
+    img = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+  } catch (_error) {
+    return [];
+  }
+  if (!img.width) {
+    img.close();
+    return [];
+  }
   var canvas = document.createElement("canvas");
-  canvas.width = img.naturalWidth || 1920;
-  canvas.height = img.naturalHeight || 1080;
+  canvas.width = img.width || 1920;
+  canvas.height = img.height || 1080;
   var ctx = canvas.getContext("2d");
-  if (!ctx) return [];
+  if (!ctx) {
+    img.close();
+    return [];
+  }
   ctx.drawImage(img, 0, 0);
+  img.close();
   var px = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
   var w = canvas.width;
   var h = canvas.height;

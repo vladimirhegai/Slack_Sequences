@@ -27,8 +27,22 @@ afterEach(() => {
  */
 function discoveryFilm(): { storyboard: DirectScene[]; html: string } {
   const storyboard: DirectScene[] = [
-    { id: "one", title: "Search", purpose: "query", startSec: 0, durationSec: 3 },
-    { id: "two", title: "Status", purpose: "queued", startSec: 3, durationSec: 3 },
+    {
+      id: "one", title: "Search", purpose: "query", startSec: 0, durationSec: 3,
+      components: [{ version: 1, id: "query-pill", kind: "stat-card", entityId: "query-progress" }],
+      beats: [{
+        version: 1, id: "query-38", sceneId: "one", component: "query-pill",
+        kind: "count", atSec: 0.5, durationSec: 0.8, value: 38,
+      }],
+    },
+    {
+      id: "two", title: "Status", purpose: "queued", startSec: 3, durationSec: 3,
+      components: [{ version: 1, id: "status-bar", kind: "stat-card", entityId: "query-progress" }],
+      beats: [{
+        version: 1, id: "status-71", sceneId: "two", component: "status-bar",
+        kind: "count", atSec: 3.5, durationSec: 0.8, value: 71,
+      }],
+    },
     { id: "three", title: "Resolve", purpose: "landing", startSec: 6, durationSec: 3 },
   ];
   const html = `<!doctype html>
@@ -45,11 +59,11 @@ body{color:#eef2f8;font-family:Arial,sans-serif}
 </style></head><body>
 <main id="root" data-composition-id="discovery-smoke" data-width="1920" data-height="1080" data-duration="9">
 <section id="one" class="scene clip" data-scene="one" data-start="0" data-duration="3" data-track-index="1">
-<div class="pill" data-part="query-pill" data-layout-important>deploy checkout</div>
+<div class="pill" data-component="stat-card" data-part="query-pill" data-layout-important>38 deploy checkout</div>
 </section>
 <section id="two" class="scene clip" data-scene="two" data-start="3" data-duration="3" data-track-index="1">
 <div style="display:grid;gap:48px;justify-items:center">
-<div class="pillbar" data-part="status-bar" data-layout-important>deploy checkout &middot; queued</div>
+<div class="pillbar" data-component="stat-card" data-part="status-bar" data-layout-important>71 deploy checkout &middot; queued</div>
 <div class="banner" data-part="wide-banner">release banner</div>
 </div>
 </section>

@@ -1,0 +1,122 @@
+{
+  "disposition": "published-degraded",
+  "startedAt": "2026-07-11T22:48:54.283Z",
+  "durationMs": 1438784,
+  "skeletonEnabled": true,
+  "slotsEnabled": true,
+  "wallClock": {
+    "tier1Ms": 1401109,
+    "tier2Ms": 1438784
+  },
+  "stages": [
+    {
+      "stage": "frame-design",
+      "status": "succeeded",
+      "durationMs": 44746
+    },
+    {
+      "stage": "storyboard-plan",
+      "status": "succeeded",
+      "durationMs": 835719,
+      "attempts": 1
+    },
+    {
+      "stage": "source-author",
+      "status": "succeeded",
+      "durationMs": 514859,
+      "attempts": 3
+    }
+  ],
+  "modelCalls": {
+    "total": 10,
+    "successfulLogicalTotal": 10,
+    "byStage": {
+      "shape": 1,
+      "concept": 1,
+      "storyboard": 1,
+      "author source": 5,
+      "author patch": 1,
+      "critic": 1
+    },
+    "failed": {
+      "storyboard": 2
+    },
+    "failedTotal": 2,
+    "hedged": {
+      "storyboard": 1,
+      "author source": 1
+    },
+    "hedgedTotal": 2,
+    "physicalRequestTotal": 14
+  },
+  "slotCalls": {
+    "truncation-continuation": {
+      "calls": 0,
+      "scenes": 0
+    },
+    "scaffold-repair": {
+      "calls": 0,
+      "scenes": 0
+    },
+    "validation-repair": {
+      "calls": 3,
+      "scenes": 8
+    },
+    "storyboard-scene-repair": {
+      "calls": 0,
+      "scenes": 0
+    },
+    "critic-scene-repair": {
+      "calls": 1,
+      "scenes": 4
+    }
+  },
+  "degradations": [
+    "storyboard-redundant-beat-dropped:other:scene \"publish-action\": beat \"beat-press\" (press on cta-button) overlaps a cursor press on the same part — kept as set-s",
+    "least-bad-pick:penalty=21"
+  ],
+  "promptChars": {
+    "maxAuthor": 110924,
+    "totalPrompt": 325698,
+    "totalCompletion": 79210
+  },
+  "layers": {
+    "schema": 0,
+    "scaffold": 26,
+    "normalize": 130,
+    "static": 0,
+    "browser": 11,
+    "model-retry": 2
+  },
+  "scaffoldCoverage": {
+    "present": 26,
+    "planned": 26
+  },
+  "scaffoldRestorationEvents": {
+    "scene-repair": 0,
+    "l2-normalize": 5
+  },
+  "normalizations": {
+    "plugin-reconcile": 1,
+    "world-layout-derive": 5,
+    "dive-window": 1,
+    "entrance-retime": 3,
+    "camera-budget-clamp": 2,
+    "camera-landing-reserve": 1,
+    "move-spacing": 3,
+    "camera-connective-yield": 1,
+    "slot-script-envelope": 20,
+    "root-data-start": 4,
+    "brand-base": 4,
+    "layout-intent": 20,
+    "interaction-binding": 22,
+    "plugin-inject": 11,
+    "dead-tween-strip": 18,
+    "compile-order": 4,
+    "runtime-order": 4,
+    "camera-world-plane": 2,
+    "component-binding": 3,
+    "component-region-home": 1
+  },
+  "at": "2026-07-11T23:12:53.068Z"
+}

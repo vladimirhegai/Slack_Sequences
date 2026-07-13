@@ -1,442 +1,207 @@
-# Operations — Sequences for Slack
-
-Everything for running, deploying, and recovering the bot. One Slack developer
-sandbox and one Railway deployment serve all live development — there is no
-separate normal-workspace app. Edit and test source locally; exercise Slack
-commands only in the sandbox. Verification ladder: [CLAUDE.md](CLAUDE.md#verification--testing-ladder).
-
-- [1. Local setup & source loop](#1-local-setup--source-loop)
-- [2. First-time creation (Slack app + Railway)](#2-first-time-creation-slack-app--railway)
-- [3. Routine deploys (the runbook)](#3-routine-deploys-the-runbook)
-- [4. Failure taxonomy & recovery](#4-failure-taxonomy--recovery)
-- [5. References](#5-references)
+# Operations
 
 ## Production identity
 
-| Setting | Value |
+| Item | Value |
 | --- | --- |
+| Public repository | `vladimirhegai/Slack_Sequences` |
 | Railway project | `Sequences Slack Hackathon` |
-| Project ID | `89e9d2b7-5b63-4b09-8799-ccae5b2c707e` |
-| Environment / ID | `production` / `48c3d11b-1807-42d0-85a3-1e6c67ab9c3c` |
-| Service / ID | `sequences-slack` / `ce64ff82-0f2a-4193-b138-c62cc8784d8a` |
-| Slack GitHub repository | **`vladimirhegai/Slack_Sequences`** — the required GitHub destination for all Slack app changes |
-| Local development workspace | `vladimirhegai/Sequences` monorepo checkout — edit/test here, but do not treat its GitHub remote as the Slack publish target |
-| Deploy mechanism | **`railway up` — CLI upload of the committed monorepo tree.** GitHub autodeploy is intentionally OFF |
-| GitHub publish mechanism | `bash scripts/publish-public.sh "message"` commits the standalone subset to `Slack_Sequences/main` |
-| Public domain | `https://sequences-slack-production.up.railway.app` |
-| Persistent mount | `/data`, one volume, one replica |
+| Slack service | `sequences-slack` (public + private) |
+| Luna service | `codex-worker` (private only) |
+| Live URL | `https://sequences-slack-production.up.railway.app` |
+| Slack health | `/healthz` -> `200 ready` |
+| Codex volume | `/root/.codex` on `codex-worker` |
+| Publish (private monorepo only) | `bash scripts/publish-public.sh "message"` |
 
-IDs are not credentials, but confirm with `railway status` before changing
-infrastructure. Never print Railway variables or tokens into chat/logs.
+GitHub autodeploy is off. Publishing source and deploying Railway are separate.
+Deploy only the exact clean `.publish` snapshot produced from committed `HEAD`;
+never upload a dirty monorepo working tree.
 
-**GitHub publication and Railway deployment are separate.** Publish source to
-`vladimirhegai/Slack_Sequences` with `scripts/publish-public.sh`. Deploy the
-running bot via Railway CLI, not GitHub autodeploy. Railway has the `Slack_Sequences` repo
-linked as a source-of-record, but **autodeploy-on-push is deliberately disabled**
-(it kept picking the wrong branch). The live bot is deployed by `railway up`,
-which uploads the committed **monorepo** tree and builds it with the root
-Dockerfile. Pushing `Slack_Sequences` publishes the code but does **not** deploy
-it; pushing `vladimirhegai/Sequences` does neither for the Slack deliverable.
+The public `vladimirhegai/Slack_Sequences` mirror intentionally omits the
+private monorepo's publisher script. When reading this file in that mirror,
+the repository root is already the published snapshot; `scripts/publish-public.sh`
+and `.publish` apply only to release operators working from the private
+monorepo.
 
-## What Railway hosts
+Railway hosts:
 
-- the Bolt app + outbound Socket Mode connection;
-- `/healthz`, `/slack/install`, `/slack/oauth_redirect`;
-- the internal stdio Sequences MCP process;
-- Chromium + FFmpeg rendering;
-- the persistent `/data` volume.
+- `sequences-slack`: Bolt/Socket Mode, OAuth, fact/asset intake, deterministic
+  Sequences validation, Chromium/FFmpeg, render, and Slack delivery;
+- `codex-worker`: private authenticated HTTP service, persisted ChatGPT login,
+  serialized `gpt-5.6-luna`/high Codex CLI sessions.
 
-Slack — not Railway — hosts `https://mcp.slack.com/mcp` (the context bot calls it
-through the OpenAI Responses API with the invoking user's token). This deployment
-does **not** publish a `/mcp` endpoint for Slackbot; do not configure
-**Features → MCP Servers** or add `mcp:connect` (opposite integration direction).
+Neither service exposes a public MCP endpoint. The worker must not have a public
+domain.
 
----
+## Slack app manifest
 
-## 1. Local setup & source loop
+`apps/slack/manifest.json` is the source of truth. Slack slash-command names
+cannot contain spaces, so one `/sequences` command dispatches `assets`, `assets
+clear`, `demo`, `debug`, `mcp-test`, and normal create behavior.
 
-### Prerequisites
-
-- Node.js 22.18+, npm, the committed `package-lock.json`.
-- Docker Desktop (production-image checks).
-- Railway CLI 5.x, logged into the account that owns the project.
-- Chrome/Edge + FFmpeg only for local render checks.
-
-From the repository root:
-
-```powershell
-npm ci
-npm install --global @railway/cli
-railway login
-railway link    # select Sequences Slack Hackathon / production / sequences-slack
-railway status
-```
-
-**Do not** copy sandbox Slack or model credentials into `apps/slack/.env`, and do
-not run `npm run dev` with the sandbox `xoxb-`/`xapp-` tokens — Railway already
-owns that Socket Mode connection. A second process = duplicate Slack replies.
-
-### Source loop (while editing)
-
-The canonical command sequences live in **[CLAUDE.md → Verification & Testing
-Ladder](CLAUDE.md#verification--testing-ladder)** — §1 is the routine source
-gate, §2 the render/Docker gate for engine/render/Chromium/FFmpeg/HyperFrames
-changes. Run those; they are not repeated here.
-
-The deterministic demos and MCP smoke do not call a paid model. `film:demo`
-exercises typed cuts and writes compact temporal evidence under the ignored
-project data directory. `npm run test --workspace @sequences/slack` includes
-the static motion-density liveness guard that feeds live authoring repairs.
-`sequence:check -- --demo` runs the same create/preview plumbing as a local
-Slack-free simulator and writes a consolidated report under
-`<project>/build/qa/sequence-check.{json,md}`.
-
-For a paid model-authored check that practically simulates `/sequences` after
-Slack has collected the modal fields, keep credentials in the shell environment
-and run:
-
-```powershell
-npm run sequence:check --workspace @sequences/slack -- `
-  --product RADAR `
-  --brand RADAR `
-  --what "RADAR turns scattered product signals into one live operational view." `
-  --audience "product and operations teams" `
-  --tone crisp-saas `
-  --length 15 `
-  --provider openrouter-api `
-  --no-mcp `
-  --format both
-```
-
-Add `--temporal` when Chrome is available and you want pixel evidence, or
-`--render` when FFmpeg/Chrome MP4 output is part of the check. This command does
-not call Slack hosted MCP and does not post to Slack; use the sandbox flow for
-OAuth, hosted-MCP, Socket Mode, and Slack upload verification.
-
-> ⚠️ **A local paid probe MUST pass `--provider openrouter-api` explicitly.**
-> `apps/slack/.env` deliberately does **not** set `SLACK_SEQUENCES_PROVIDER`, so
-> the code default is `claude-code-cli`, which is not wired for headless probes
-> and **stalls** the storyboard/author stage (the run hangs, then times out).
-> The `--provider openrouter-api` flag (plus a valid `OPENROUTER_API_KEY`, which
-> `sequence:check` loads from `.env`) is what makes a local probe actually run.
-
-The regression fixture for the July 2 Relay incident preserves the exact modal
-brief and its component/camera direction:
-
-```powershell
-npm run sequence:check --workspace @sequences/slack -- `
-  --input ../../evals/relay-launch-film.json `
-  --provider openrouter-api `
-  --no-mcp `
-  --format both
-```
-
-Pass criteria: `authoringMode: hyperframes-direct`, no fallback stage, runtime
-reported for review (the target is guidance, not a publication gate), at least six requested component kinds/eight typed
-component beats, at least two full camera moves with one multi-station world,
-an object-match cut, and no motion/moment publication error.
-
----
-
-## 2. First-time creation (Slack app + Railway)
-
-Do this once. For later updates, jump to [§3](#3-routine-deploys-the-runbook).
-
-### 2.1 Create the sandbox Slack app
-
-1. Open <https://api.slack.com/apps> → **Create New App → From a manifest** →
-   select the Slack developer sandbox.
-2. Paste [`manifest.json`](manifest.json) and create the app.
-3. **Agents & AI Apps** → enable **Slack Model Context Protocol (MCP) Server**.
-4. **Basic Information → App-Level Tokens** → create a token with
-   `connections:write` → save the `xapp-...` as `SLACK_APP_TOKEN`.
-5. **OAuth & Permissions → Install to Workspace** → save the `xoxb-...` bot token
-   as `SLACK_BOT_TOKEN`.
-6. **Basic Information** → save Client ID / Client Secret as `SLACK_CLIENT_ID` /
-   `SLACK_CLIENT_SECRET`.
-
-Do not reuse the local development app's tokens.
-
-### 2.2 Create the Railway service
-
-1. **New Project → Empty Service** (or deploy-from-repo then disconnect the GitHub
-   source — autodeploy is intentionally off). The live bot is shipped with
-   `railway up` from the monorepo root, not a GitHub push.
-2. Keep service root `/`. Do not add build/start commands — root
-   [`railway.json`](../../railway.json) selects the Dockerfile, `/healthz`, one
-   replica, restart-on-failure.
-3. **Settings → Networking** → generate a public domain. Save the full HTTPS URL
-   (no trailing slash) as `PUBLIC_BASE_URL`.
-
-The first deploy may fail before credentials exist — finish configuration and
-deploy again. Judge the service by the newest intended deployment, not historical
-failure rows.
-
-### 2.3 Volume & resource limits
-
-1. Add a Railway volume mounted exactly at `/data`.
-2. Keep exactly **one replica** (jobs, tokens, job map are file-backed).
-3. **Deploy → Replica Limits** → start at 4 GB memory (2 GB can do draft renders;
-   4 GB is safer for 1080p Chromium).
-4. Set a Railway compute usage alert and a hard limit.
-5. Leave Serverless / App Sleeping **disabled** for stable Socket Mode + judging.
-
-The Dockerfile only creates the `/data` mount point — do not add a Docker `VOLUME`
-instruction (Railway volumes are configured on the service). The volume is not
-self-cleaning; watch its usage.
-
-### 2.4 Railway variables
-
-Generate two independent 32-byte values:
-
-```powershell
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-```
-
-First → `SLACK_STATE_SECRET`; second → `SLACK_TOKEN_ENCRYPTION_KEY`. Open
-**Variables → Raw Editor**, paste [`.env.railway.example`](.env.railway.example),
-and fill every uncommented value:
-
-```dotenv
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_APP_TOKEN=xapp-...
-SLACK_CLIENT_ID=...
-SLACK_CLIENT_SECRET=...
-PUBLIC_BASE_URL=https://YOUR-SERVICE.up.railway.app
-SLACK_REDIRECT_URI=https://YOUR-SERVICE.up.railway.app/slack/oauth_redirect
-SLACK_STATE_SECRET=...
-SLACK_TOKEN_ENCRYPTION_KEY=...
-OPENAI_API_KEY=sk-...            # context bot — REQUIRED, OpenAI only
-```
-
-Pick **one** planning-bot provider (this is only the planning bot; the context
-bot above always needs `OPENAI_API_KEY`):
-
-```dotenv
-# A — OpenRouter gateway (one key → DeepSeek/GLM, cheap) — current Railway choice
-SLACK_SEQUENCES_PROVIDER=openrouter-api
-OPENROUTER_API_KEY=sk-or-v1-...
-# SEQUENCES_OPENROUTER_MODEL=deepseek/deepseek-v4-pro
-# SLACK_SEQUENCES_CREATIVE_MODEL=z-ai/glm-5.2 # default reasoning-enabled taste model
-# SLACK_SEQUENCES_FRAME_MODEL=z-ai/glm-5.2 # optional frame-only override
-# SLACK_SEQUENCES_STORYBOARD_MODEL=z-ai/glm-5.2 # optional storyboard-only override
-#   Set a creative scope to "primary" to keep it on the production model.
-# SLACK_SEQUENCES_LIGHT_MODEL=deepseek/deepseek-v4-flash # bounded helper only
-# SLACK_SEQUENCES_REPAIR_MODEL=... # optional; unset keeps structural repair on Pro
-# SLACK_SEQUENCES_STORYBOARD_THINKING=medium # reasoning-effort override (storyboard)
-# SLACK_SEQUENCES_AUTHOR_THINKING=none # reasoning-effort override (source author)
-#   auto|none|minimal|low|medium|high|xhigh|max; unset keeps built-in defaults.
-# SLACK_SEQUENCES_INTERACTION_QA=enforce
-# When storyboard/source authoring is exhausted, the labeled model-free proof
-# film ships by DEFAULT (VideoResult.fallback + the Slack fallback banner +
-# `/sequences debug on` receipts keep it honest). Set to 0 to FAIL LOUD instead:
-# no video/storyboard, Slack shows the full diagnostic log + a FAILURE.md is
-# written to the project dir (see FALLBACKS.md). ⚠️ Prep-mode is currently 0
-# (fail-loud) so failures are visible — SET IT BACK TO 1 (or unset) ON RAILWAY
-# BEFORE JUDGES TEST so a stray failure degrades to the labeled film, not a raw log:
-# SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0
-
-# B — reuse OpenAI temporarily
-# SLACK_SEQUENCES_PROVIDER=openai-api
-# SEQUENCES_OPENAI_MODEL=gpt-5-mini
-
-# C — dedicated Anthropic key
-# SLACK_SEQUENCES_PROVIDER=anthropic-api
-# ANTHROPIC_API_KEY=sk-ant-...
-# SEQUENCES_ANTHROPIC_MODEL=claude-sonnet-4-6
-```
-
-**Do not add:** `PORT` (Railway injects it), `SLACK_SIGNING_SECRET` (Socket Mode),
-`NODE_ENV`/`HOST`/`SLACK_SEQUENCES_DATA_DIR`/`PUPPETEER_EXECUTABLE_PATH`/
-`PRODUCER_LOW_MEMORY_MODE` (the Dockerfile supplies them).
-`RAILWAY_DOCKERFILE_PATH=Dockerfile` is a harmless explicit fallback if Railway
-ignores the checked-in `railway.json`. After it works, seal the secrets in
-Railway and keep recovery copies in a password manager.
-
-### 2.5 Finish Slack OAuth
-
-1. **OAuth & Permissions → Redirect URLs** → add the exact `SLACK_REDIRECT_URI`
-   → Save.
-2. **App Manifest** → paste current [`manifest.json`](manifest.json) → save.
-3. **Reinstall to Workspace** → approve bot + user scopes.
-4. Copy the current `xoxb-...` into Railway again and redeploy.
-
-Editing a local manifest never changes the Slack app. Repeat manifest-save →
-reinstall → token-copy → redeploy whenever scopes/features change.
-
-### 2.6 Connect each user to Slack hosted MCP
-
-Everyone running the real `/sequences` flow authorizes once at
-`https://YOUR-SERVICE.up.railway.app/slack/install` (signed into the sandbox). The
-callback stores the user token encrypted on `/data`. `/sequences demo` does not
-need this. For judges, share the same install link; invite
-`slackhack@salesforce.com` and `testing@devpost.com` as sandbox **Members**.
-
-### 2.7 Docker check before first deploy
-
-```powershell
-docker build -t sequences-slack .
-docker run --rm sequences-slack npm run mcp:demo -w @sequences/slack
-docker run --rm -e VERIFY_RENDER=1 sequences-slack npm run film:demo -w @sequences/slack
-```
-
-Checks the production image without copying secrets locally. The image uses
-`/usr/local/bin/chromium-no-sandbox`, wrapping system Chromium with the flags
-required inside this root-run container.
-
----
-
-## 3. Routine deploys (the runbook)
-
-Railway service root = repo root. Root [`Dockerfile`](../../Dockerfile) installs
-Node, Chromium, FFmpeg; root [`railway.json`](../../railway.json) selects the
-Dockerfile builder, `/healthz` (300s timeout), one replica, restart-on-failure.
-A correct deployment shows:
+Socket Mode owns events/interactivity. OAuth still requires this exact redirect:
 
 ```text
-commit: the commit intended for the sandbox
-builder: DOCKERFILE   dockerfile: Dockerfile
-health check: /healthz   replicas: 1   volume mount: /data
+https://sequences-slack-production.up.railway.app/slack/oauth_redirect
 ```
 
-**Deploy with `railway up` from the monorepo root.** It uploads the committed
-local tree; Railway builds it with the root Dockerfile. Do **not** rely on a
-GitHub push to deploy (autodeploy is off). `link` the CLI once
-(`railway link` → `Sequences Slack Hackathon` / `production` / `sequences-slack`).
+After a scope change, update Slack's App Manifest, reinstall the app, and replace
+rotated tokens in Railway. A Railway deploy does not apply the manifest.
 
-### Deploy sequence
+## Local verification
 
-1. **Source gate** — run the ladder in
-   [CLAUDE.md → Verification & Testing Ladder](CLAUDE.md#verification--testing-ladder)
-   §1 (plus §3, the monorepo CI gate, before an important deploy). Check
-   `git status --short` first so nothing unintended ships.
-
-2. **Commit locally, then publish to the correct Slack GitHub repository:**
+Do not run a second Socket Mode process with production/sandbox tokens. From the
+monorepo root:
 
 ```powershell
-git add <intentional-files>
-git commit -m "type(scope): concise change"
-bash scripts/publish-public.sh "type(scope): concise change"
+npm run typecheck
+npm run typecheck --workspace @sequences/slack
+npm run test:unit --workspace @sequences/slack
+npm run test:browser --workspace @sequences/slack
+npm run replay:all --workspace @sequences/slack
+npm run mcp:demo --workspace @sequences/slack
+npm run sequence:check --workspace @sequences/slack -- --demo --no-mcp --format both
+npm test --prefix apps/slack/codex-worker
 ```
 
-The publish script commits and pushes the standalone subset to
-`https://github.com/vladimirhegai/Slack_Sequences.git` on `main`. **Do not use
-`git push origin HEAD` from this monorepo as the Slack publication step.**
+The demo, undo, render, debug, asset intake, and `mcp-test` paths are model-free.
+An authorized Luna probe is one ordinary `/sequences` job or one direct worker
+job with a new job ID. Preserve worker receipts, exact raw source, motion intent,
+browser QA, thumbnails, revisions, MP4, and hashes. Do not call OpenRouter and do
+not rerun merely to clear taste advisories.
 
-3. **Deploy the same committed tree to Railway** (from the repo root):
+Historical S6.9-S6.13 OpenRouter probe evidence remains in `REFACTOR_PLAN.md`,
+`REFACTOR_HANDOFF.md`, and the dirty operator-owned `PROBE_LOG.md`. It is not the
+current runbook.
 
-```powershell
-railway up --detach --service sequences-slack --environment production `
-  --message "Deploy committed local tree"
+## Required Railway variables
+
+Use `.env.railway.example`. Essential `sequences-slack` groups:
+
+- Slack Socket Mode/OAuth credentials and public redirect URL;
+- `OPENAI_API_KEY` for the independent Slack-hosted-MCP context bot;
+- `SLACK_SEQUENCES_AUTHOR_ROUTE=luna-direct`;
+- private worker URL, shared token, and timeout;
+- persistent `/data` volume supplied by the Dockerfile/service.
+
+Essential `codex-worker` groups:
+
+```text
+PORT=3000
+LUNA_WORKER_TOKEN=<same independent 32+ character secret>
+LUNA_MODEL=gpt-5.6-luna
+LUNA_REASONING_EFFORT=high
+LUNA_JOB_TIMEOUT_MS=1200000
+LUNA_MAX_QUEUE_DEPTH=4
+LUNA_MAX_WORKSPACE_BYTES=134217728
+LUNA_MIN_FREE_BYTES=536870912
+CODEX_HOME=/root/.codex
 ```
 
-`railway up` uploads the **local tree**, so: run only from the repo root; commit
-first (and ensure `git status --short` has no unintended files); never
-`--path-as-root` for this monorepo. Railway keeps the current deployment serving
-until the new build is healthy, so a broken build never takes the bot down. Plain
-`railway redeploy` just restarts the same source (use it after a variables-only
-change).
+Mount its persistent volume at `/root/.codex`. `auth.json` is plaintext and must
+be treated as a password. Startup runs `codex login status` and refuses readiness
+when login/config is unavailable. The worker's permission profile must prove a
+model-authored shell command cannot read `/root/.codex/auth.json` before the
+production route is accepted. Readiness also fails when the exact Luna/high
+identity is wrong or the volume falls below its free-space reserve.
 
-**⚠ Deploying kills in-flight requests — but the bot now self-heals.** When
-Railway swaps containers, any active video creation (model call, render,
-thumbnail capture) is terminated mid-flight. As of the orphaned-job recovery
-work, the new container runs `recoverInterruptedJobs` on boot
-([src/index.ts](src/index.ts)): every job still marked `building` in `jobs.json`
-is replaced with a clear "interrupted by a restart — please re-run" message
-instead of freezing on "Drafting a launch reel…" forever. So an interrupted job
-is no longer silently lost — but the user still has to re-run it. **Prefer not to
-deploy while a user is actively building a video**; if you must, expect their
-in-progress job to be cancelled and recovered (they re-run). This recovery also
-covers crashes and OOM, not just deploys. Note: the live "Building" message also
-shows a heartbeat (phase + elapsed seconds) during the model turn, so a long but
-healthy authoring/render is no longer mistaken for a freeze.
+Do not set `OPENROUTER_API_KEY` or `SLACK_SEQUENCES_PROVIDER` in ordinary
+production. Keep `OPENAI_API_KEY`; it belongs to context retrieval, not Luna.
 
-GitHub publish and Railway deploy are both required release steps:
-`publish-public.sh` updates `Slack_Sequences`; `railway up` updates the live bot.
+Emergency rollback is explicit and variables-only:
 
-### Verify every deployment
+```text
+SLACK_SEQUENCES_AUTHOR_ROUTE=legacy-provider
+SLACK_SEQUENCES_PROVIDER=openrouter-api
+OPENROUTER_API_KEY=...
+```
+
+A failed Luna job never crosses that seam automatically. Delete the temporary
+OpenRouter key again after rollback ends.
+
+## First deployment / route switch
+
+Only with explicit owner authorization:
+
+1. Verify the dirty boundary and commit only intended Luna files.
+2. Publish committed `HEAD` to the public snapshot.
+3. Set worker variables (including manual `PORT=3000`) with `--skip-deploys`.
+4. Set Slack worker URL/token/route with `--skip-deploys`.
+5. Deploy and verify `codex-worker` first.
+6. Run a bounded authenticated worker job and the credential-denial proof.
+7. Deploy `sequences-slack` from the same clean snapshot.
+8. Confirm its startup log contains `[luna] worker ready`, then check public
+   `/healthz`.
+9. Run `/sequences assets` and one ordinary `/sequences` flow through thumbnail,
+   self-review, render, and Slack upload.
+10. Remove `OPENROUTER_API_KEY` and the old provider variable only after the Luna
+    route has passed.
+
+Private-monorepo release commands (service IDs/names are already linked locally):
 
 ```powershell
-railway deployment list --limit 5
-railway logs --lines 100
+git status --short
+git rev-parse HEAD
+bash scripts/publish-public.sh "feat(luna): make Codex CLI the default author"
+
+railway up .publish/apps/slack/codex-worker --path-as-root --detach `
+  --service codex-worker --environment production
+railway deployment list --service codex-worker --environment production --limit 5
+railway logs --service codex-worker --environment production --lines 100
+
+railway up .publish --path-as-root --detach `
+  --service sequences-slack --environment production
+railway deployment list --service sequences-slack --environment production --limit 5
+railway logs --service sequences-slack --environment production --lines 100
+
 $baseUrl = "https://sequences-slack-production.up.railway.app"
 Invoke-WebRequest "$baseUrl/healthz" | Select-Object StatusCode, Content
 ```
 
-Expected: `HTTP server listening on 0.0.0.0:8080`,
-`Sequences for Slack is running (Socket Mode)`, and `/healthz` → `200` / `ready`.
-Then in Slack run `/sequences mcp-test`, `/sequences demo`, and the changed flow.
-For OAuth / hosted-MCP changes, re-run `/slack/install` before the real test.
+Set the shared bearer token through stdin or a non-echoing shell variable; never
+print it in command output, logs, docs, or receipts. Railway private networking
+uses HTTP at:
 
----
+```text
+http://${{codex-worker.RAILWAY_PRIVATE_DOMAIN}}:${{codex-worker.PORT}}
+```
 
-## 4. Failure taxonomy & recovery
+## Rehearsal
 
-Don't call every red mark a "Railway failure." GitHub Actions and Railway are
-independent: CI tests the whole monorepo (incl. paused Forge/Sequences); Railway
-only builds the Slack Docker image. A green Railway deploy and a red GitHub check
-can coexist — and vice versa.
+1. `/sequences debug on` for argument-free stage/tool receipts.
+2. `/sequences assets`, upload 1-5 product screenshots, optionally add notes,
+   and wait for the deterministic capture receipt.
+3. `/sequences` with facts, audience, value, and CTA; do not prescribe shots or
+   camera moves.
+4. Observe `Luna director` -> composition gate -> thumbnails -> `Luna
+   self-review` -> render.
+5. Confirm storyboard thumbnails and the final MP4 arrive in Slack. Human-review
+   motion and the code between representative frames; a green report alone is
+   insufficient.
+6. Run a structural revision and confirm the exact persisted thread resumes.
 
-| Where it appears | What it means | First action |
-| --- | --- | --- |
-| GitHub Checks, job `phase1` | Actions test/typecheck failure | Reproduce the named command locally |
-| Railway status `FAILED` during build | Docker/Railway build failed | Open build logs; confirm Dockerfile + commit |
-| Railway `CRASHED` / restart loop | Image built but process exited | Inspect deploy logs + variables |
-| `/healthz` → `503 starting` | HTTP alive; Socket Mode not ready | Check the matching `xapp`/`xoxb` pair |
-| `/healthz` → `200 ready`, Slack flow fails | Runtime config problem | `/sequences mcp-test`, then logs |
+`/sequences demo` remains the model-free backup. A live process health check
+does not prove OAuth, private networking, Codex auth/model access, browser
+validation, rendering, upload, or film quality; the end-to-end rehearsal does.
 
-### Slack runtime errors
+## Recovery
 
-- `not_in_channel`: `/invite @Sequences`.
-- `missing_scope`: update manifest, reinstall, refresh bot token, redeploy.
-- Connect prompt: complete `/slack/install` for that user.
-- Planning fails: confirm `SLACK_SEQUENCES_PROVIDER` + its API key.
-- `HTTP 403 key limit exceeded`: raise/reset the OpenRouter key's total limit;
-  the request did not reach GLM or DeepSeek.
-- A result whose scene ids are `fallback-hook`, `fallback-proof`, and
-  `fallback-close` is the model-free proof, not model-authored creative output.
-  Normal creates no longer publish it; check whether the emergency fallback
-  variable was enabled.
-- `storyboard-plan` truncation: verify the current code logs a 30,720-token GLM
-  budget and a lower-reasoning second attempt. A 16,384-token line means the
-  deployment is stale.
-- Hosted MCP fails: confirm app MCP enablement, user scopes, redirect URL,
-  `OPENAI_API_KEY`, per-user OAuth.
-- Thumbnails work but MP4 fails: inspect Chromium, FFmpeg, Railway memory.
-- Duplicate replies: another process is using the same Slack app tokens.
+- Worker not ready: inspect `codex-worker` logs, volume mount, `config.toml`, and
+  `codex login status`; never start an interactive login loop in production.
+- Slack startup fails on Luna health: verify private DNS URL, manual worker
+  `PORT`, and the shared token, then redeploy the same source.
+- Worker `401`: rotate/set the same token on both services without printing it.
+- Codex auth expired: reauthenticate on the worker's mounted `CODEX_HOME`; the
+  CLI refreshes `auth.json` in place, so serialize auth/session activity.
+- Authored source fails a hard gate: preserve the raw run directory and replay
+  model-free. Fix an engine defect at its lowest deterministic owner. A future
+  same-thread hard-defect repair prompt may address authored defects; do not send
+  the film through the legacy committee.
+- `200 ready` but commands fail: run `/sequences mcp-test`, inspect Slack logs,
+  and verify per-user OAuth plus `OPENAI_API_KEY`.
+- Wrong code: compare public repo commit, `.publish` commit, and Railway
+  deployment; redeploy the exact snapshot.
+- Exposed credential: rotate the affected secret, update Railway, redeploy, and
+  retest the relevant boundary.
 
-### Recovery
-
-Wrong/old code: `railway status` → confirm `git rev-parse HEAD` is the intended
-commit and `git status --short` is clean → re-run `railway up`. Wrong builder:
-keep service root `/`, set config path
-`/railway.json` + Dockerfile path `Dockerfile`, trigger a fresh deploy (don't
-trust a Railpack success — it may omit Chromium/FFmpeg). Variable-only change:
-`railway redeploy --service sequences-slack --environment production`. Exposed
-credential: rotate at the provider, update Railway, redeploy, retest OAuth/Socket
-Mode. Old failed deployment rows from setup (wrong branch, missing vars, trial
-limits, Railpack attempts) do **not** mean the current deploy is unhealthy —
-identify the newest by ID, source/commit, builder, status.
-
-### Guardrails
-
-One replica while state is file-backed; keep `/data` attached; sleeping/serverless
-disabled; watch volume usage (encrypted tokens, projects, thumbnails, MP4s
-persist and are not auto-cleaned); maintain Railway + provider usage alerts.
-
----
-
-## 5. References
-
-- [Slack hosted MCP overview](https://docs.slack.dev/ai/slack-mcp-server/) ·
-  [sample-app setup](https://docs.slack.dev/ai/slack-mcp-server/developing/)
-- [Slack Bolt Socket Mode](https://docs.slack.dev/tools/bolt-js/concepts/socket-mode/)
-- [Railway Dockerfiles](https://docs.railway.com/builds/dockerfiles) ·
-  [volumes](https://docs.railway.com/volumes) ·
-  [health checks](https://docs.railway.com/deployments/healthchecks)
-- [Railway variables & sealed secrets](https://docs.railway.com/variables) ·
-  [CLI deploying](https://docs.railway.com/cli/deploying) ·
-  [config as code](https://docs.railway.com/config-as-code)
-- [Railway plans](https://docs.railway.com/pricing/plans) ·
-  [cost control](https://docs.railway.com/pricing/cost-control)
+Never solve a runtime incident by starting a second Socket Mode process.

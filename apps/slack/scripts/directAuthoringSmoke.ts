@@ -2,7 +2,8 @@
  * Key-free end-to-end proof for the direct authoring execution plane:
  * authored HyperFrames source -> MCP validation/checkpoint -> thumbnails ->
  * optional MP4. This is deliberately separate from `/sequences demo`, whose
- * curated Sequences Plan remains the fallback path.
+ * curated Sequences Plan is a model-free demonstration path, not an automatic
+ * fallback from Luna.
  */
 import fs from "node:fs";
 import { initializeProject, projectDirFor } from "../src/engine/projectTemplates.ts";

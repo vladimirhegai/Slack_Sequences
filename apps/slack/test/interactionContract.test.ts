@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import fc from "fast-check";
 import type { AgentProvider, CompleteOptions } from "@sequences/platform/providers";
 import {
+  cohereInteractionFocusItems,
+  interactionRuntimeSource,
   normalizeStoryboardInteractionIntents,
   parseInteractionPlan,
   parseInteractionIntents,
@@ -79,6 +81,14 @@ function html(intent = interaction): string {
 }
 
 describe("interaction contract", () => {
+  it("gives cursor arrivals a bounded target focus lift and restores authored filters", () => {
+    const runtime = interactionRuntimeSource();
+    expect(runtime).toContain("function bindArrivalFocus");
+    expect(runtime).toContain('"brightness(1.08)"');
+    expect(runtime).toContain("filter: baseFilter");
+    expect(runtime).toContain("bindArrivalFocus(timeline, intent, target)");
+  });
+
   it("derives a stable ripple part when structured output omits ripplePart", () => {
     const { ripplePart: _omitted, ...withoutRipplePart } = interaction;
     const result = parseInteractionPlan(html(withoutRipplePart));
@@ -187,6 +197,45 @@ describe("interaction contract", () => {
       path: "human",
       aimX: 0.56,
     });
+  });
+
+  it("keeps cursor, selection, and underline on one semantic collection item", () => {
+    const focused: DirectScene = {
+      ...scene(),
+      components: [{ version: 1, id: "primary-action", kind: "list" }],
+      interactions: [{ ...interaction }],
+      beats: [
+        {
+          version: 1,
+          id: "select-trace",
+          sceneId: "cta",
+          component: "primary-action",
+          kind: "select",
+          item: 2,
+          atSec: 5.2,
+        },
+        {
+          version: 1,
+          id: "underline-trace",
+          sceneId: "cta",
+          component: "primary-action",
+          kind: "highlight",
+          style: "underline",
+          item: 3,
+          atSec: 5.3,
+        },
+      ],
+    };
+    const result = cohereInteractionFocusItems([focused]);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.scenes[0]?.interactions?.[0]?.item).toBe(2);
+    expect(result.scenes[0]?.beats?.map((beat) => beat.item)).toEqual([2, 2]);
+    expect(parseInteractionIntents(result.scenes[0]?.interactions ?? []).errors).toEqual([]);
+  });
+
+  it("rejects invalid semantic item indexes", () => {
+    expect(parseInteractionIntents([{ ...interaction, item: 1.5 }]).errors)
+      .toContain("interactions[0].item must be an integer from 1..48");
   });
 
   it("rejects timing outside the shot and missing stable parts", () => {

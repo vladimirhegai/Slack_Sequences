@@ -25,57 +25,42 @@ import {
 import { inspectDirectComposition } from "./layoutInspector.ts";
 import { launchHeadlessBrowser } from "./browserLifecycle.ts";
 import {
-  INTERACTION_RUNTIME_FILE,
-  INTERACTION_RUNTIME_VERSION,
-  interactionRuntimeHash,
-  interactionRuntimeSource,
-  validateInteractionContract,
   type InteractionIntentV1,
   type SpatialIntentV1,
 } from "./interactionContract.ts";
 import {
-  CUT_RUNTIME_FILE,
-  CUT_RUNTIME_VERSION,
-  cutRuntimeHash,
-  cutRuntimeSource,
   resolveCutPlan,
-  validateCutContract,
   type SceneCutIntentV1,
 } from "./cutContract.ts";
 import {
-  FX_RUNTIME_FILE,
-  fxRuntimeSource,
-  validateFxContract,
-} from "./fxContract.ts";
-import {
-  CAMERA_RUNTIME_FILE,
-  CAMERA_RUNTIME_VERSION,
-  cameraRuntimeHash,
-  cameraRuntimeSource,
   resolveCameraPlan,
-  validateCameraContract,
   type SceneCameraIntentV1,
 } from "./cameraContract.ts";
 import {
-  TIME_RUNTIME_FILE,
-  TIME_RUNTIME_VERSION,
+  continuityGraphEnabled,
+  resolveContinuityGraph,
+  type SceneContinuityAppearanceV1,
+} from "./continuityGraph.ts";
+import {
+  HOST_CONTRACTS,
+  hostContract,
+  runHostContractLifecycle,
+} from "./hostContract.ts";
+import { resolveCameraBlockingPlan } from "./cameraBlocking.ts";
+import {
+  parseEnvironmentPlan,
+} from "./environmentContract.ts";
+import {
   parseTimeRampPlan,
   resolveTimeRampPlan,
-  timeRampRuntimeHash,
-  timeRampRuntimeSource,
-  validateTimeRampContract,
-  warpInverseOf,
   type SceneTimeRampIntentV1,
 } from "./timeRamp.ts";
+import { sourceTime, timeConversionService } from "./time.ts";
 import type { SceneGradeShiftV1 } from "./gradeShift.ts";
 import {
-  COMPONENT_RUNTIME_FILE,
-  COMPONENT_RUNTIME_VERSION,
-  componentRuntimeHash,
-  componentRuntimeSource,
   resolveComponentPlan,
-  validateComponentContract,
   type ComponentBeatIntentV1,
+  type ComponentEntranceFamily,
   type SceneComponentSpecV1,
 } from "./componentContract.ts";
 import {
@@ -86,13 +71,9 @@ import {
   validatePluginContract,
   type PluginDeclarationV1,
 } from "./pluginContract.ts";
-import {
-  ASSET_RUNTIME_FILE,
-  assetRuntimeSource,
-  validateAssetContract,
-} from "./assetRuntime.ts";
 import { validateCompositionAgainstFrame } from "./frameValidation.ts";
 import { auditKitMarkupCompleteness } from "./kitMarkupAudit.ts";
+import { auditDeadGsapDataflow } from "./deadTweenRepair.ts";
 import {
   validateMotionDensity,
   type MotionDensityReport,
@@ -121,6 +102,13 @@ const MAX_SOURCE_CHARS = 500_000;
 export interface WorldLayoutCellV1 {
   region: string;
   cell: [number, number];
+  /**
+   * Host-derived station-box scale. Browser-measured sparse landings may
+   * tighten a viewport-sized cell around a small content union so the camera's
+   * ordinary fit operation lands composed. Kept bounded and optional for
+   * replay compatibility; authors never need to choose it.
+   */
+  fitScale?: number;
 }
 
 export interface LayoutRepairRectV1 {
@@ -142,7 +130,7 @@ export interface SceneLayoutRepairV1 {
   id: string;
   kind: "overflow-clamp";
   selector: string;
-  issueCode: "canvas_overflow" | "important_safe_area";
+  issueCode: "canvas_overflow" | "important_safe_area" | "load_bearing_containment";
   dx: number;
   dy: number;
   scale: number;
@@ -162,12 +150,23 @@ export interface DirectScene {
   background?: string;
   cameraIntent?: string;
   continuityAnchor?: string;
+  /** Stable product-object representations carried into the continuity graph. */
+  continuity?: SceneContinuityAppearanceV1[];
   startSec: number;
   durationSec: number;
   blueprint?: string;
   rules?: string[];
   capabilityIds?: string[];
   outgoingCut?: string;
+  /** One host-budgeted oversized display-type moment for the whole film. */
+  displayType?: {
+    version: 1;
+    kind: "ghost-word";
+    text: string;
+    atSec: number;
+    /** Optional part whose scale/hierarchy this display type supports. */
+    focalPart?: string;
+  };
   /** Typed, mechanically executable form of outgoingCut (this scene's boundary). */
   cut?: SceneCutIntentV1;
   /** Typed camera path over this scene's data-camera-world plane. */
@@ -180,6 +179,8 @@ export interface DirectScene {
   worldLayout?: WorldLayoutCellV1[];
   /** Declared motion-native components (each authored as one data-part element). */
   components?: SceneComponentSpecV1[];
+  /** One host-compiled root-entrance grammar for this scene's free components. */
+  componentEntranceFamily?: ComponentEntranceFamily;
   /** Typed state-change beats on declared components (times are absolute). */
   beats?: ComponentBeatIntentV1[];
   /**
@@ -408,17 +409,38 @@ function normalizeStoryboard(
       ...(proposed?.continuityAnchor
         ? { continuityAnchor: proposed.continuityAnchor }
         : {}),
+      ...(proposed?.continuity?.length ? { continuity: proposed.continuity } : {}),
       startSec: startSec ?? 0,
       durationSec: durationSec ?? 0,
       ...(proposed?.blueprint ? { blueprint: proposed.blueprint } : {}),
       ...(proposed?.rules?.length ? { rules: proposed.rules } : {}),
       ...(proposed?.capabilityIds?.length ? { capabilityIds: proposed.capabilityIds } : {}),
       ...(proposed?.outgoingCut ? { outgoingCut: proposed.outgoingCut } : {}),
+      ...(proposed?.displayType?.version === 1 &&
+          proposed.displayType.kind === "ghost-word" &&
+          typeof proposed.displayType.text === "string" &&
+          Number.isFinite(proposed.displayType.atSec)
+        ? {
+            displayType: {
+              version: 1 as const,
+              kind: "ghost-word" as const,
+              text: proposed.displayType.text.trim().slice(0, 40),
+              atSec: proposed.displayType.atSec,
+              ...(proposed.displayType.focalPart?.trim()
+                ? { focalPart: proposed.displayType.focalPart.trim() }
+                : {}),
+            },
+          }
+        : {}),
       ...(proposed?.cut ? { cut: proposed.cut } : {}),
       ...(proposed?.camera ? { camera: proposed.camera } : {}),
+      ...(proposed?.worldLayout?.length ? { worldLayout: proposed.worldLayout } : {}),
       ...(proposed?.timeRamp ? { timeRamp: proposed.timeRamp } : {}),
       ...(proposed?.gradeShift ? { gradeShift: proposed.gradeShift } : {}),
       ...(proposed?.components?.length ? { components: proposed.components } : {}),
+      ...(proposed?.componentEntranceFamily
+        ? { componentEntranceFamily: proposed.componentEntranceFamily }
+        : {}),
       ...(proposed?.beats?.length ? { beats: proposed.beats } : {}),
       ...(proposed?.recipes?.length ? { recipes: proposed.recipes } : {}),
       ...(proposed?.plugins?.length ? { plugins: proposed.plugins } : {}),
@@ -444,8 +466,8 @@ function normalizeStoryboard(
  * A prior gate used `gsap\.timeline\(\s*\{[^}]*paused\s*:\s*true`, whose
  * `[^}]*` terminates at the first `}` — so a valid config with a nested object
  * before `paused`, e.g. `gsap.timeline({ defaults: { ease: "none" }, paused:
- * true })`, false-rejected a correct composition (FALLBACKS.md "Known open
- * risks"). This scans the timeline's config object with brace balancing so
+ * true })`, false-rejected a correct composition (SENTINEL.md fallback
+ * incident). This scans the timeline's config object with brace balancing so
  * arbitrary nesting is handled; `paused: true` anywhere inside that object
  * (top-level in practice) satisfies the invariant.
  */
@@ -554,6 +576,42 @@ export function isFloatingPointClipOverlap(finding: HyperframeLintFinding): bool
     end - start < CLIP_OVERLAP_EPSILON_SEC;
 }
 
+/**
+ * The pinned GSAP linter also compares floating-point tween endpoints with no
+ * epsilon. Its message rounds both overlap timestamps to centiseconds, so a
+ * contiguous `13.3 + 0.4 -> 13.7` pair is reported as overlapping from
+ * `13.70s` to `13.70s`. Equal displayed endpoints prove the alleged overlap
+ * is below the linter's own 10ms reporting precision and therefore below one
+ * rendered frame; keep every warning with a measurable displayed interval.
+ */
+export function isFloatingPointGsapTweenOverlap(
+  finding: HyperframeLintFinding,
+): boolean {
+  if (finding.code !== "overlapping_gsap_tweens") return false;
+  const match = finding.message.match(/between ([\d.eE+-]+)s and ([\d.eE+-]+)s/);
+  if (!match) return false;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  return Number.isFinite(start) && Number.isFinite(end) && end === start;
+}
+
+/**
+ * True when a `font_family_without_font_face` finding names only var()-split
+ * artifacts. The pinned linter splits `font-family` stacks on commas, so the
+ * kit CSS's token indirection (`font-family: var(--font-display, inherit)`)
+ * fabricates "families" like `var(--font-display` and `inherit)` — never real
+ * font names (real families never carry parentheses). A finding that still
+ * names at least one paren-free family is a genuine missing font and is kept.
+ */
+export function isCssVarFontFamilyArtifact(finding: HyperframeLintFinding): boolean {
+  if (finding.code !== "font_family_without_font_face") return false;
+  const list = finding.message.match(/@font-face declaration:\s*(.+?)\.\s/)?.[1];
+  if (!list) return false;
+  const families = list.split(/,\s*/).map((token: string) => token.trim()).filter(Boolean);
+  return families.length > 0 &&
+    families.every((token: string) => token.includes("(") || token.includes(")"));
+}
+
 export async function validateDirectComposition(
   projectDir: string,
   draft: DirectCompositionDraft,
@@ -584,24 +642,28 @@ export async function validateDirectComposition(
       }
     }
   }
-  if (durationSec !== undefined) {
-    const interactionValidation = validateInteractionContract(
+  // WS-F3: every host-owned contract follows one parse/validate lifecycle.
+  // This id order preserves the legacy finding order byte-for-byte; runtime
+  // staging has its own registry order and remains independent.
+  const hostContractWarnings: string[] = [];
+  for (const id of [
+    "interaction",
+    "cut",
+    "camera",
+    "time",
+    "component",
+    "fx",
+  ] as const) {
+    const { validation } = runHostContractLifecycle(id, {
       html,
-      normalized.scenes,
-      durationSec,
-    );
-    errors.push(...interactionValidation.errors);
+      scenes: normalized.scenes,
+      ...(durationSec !== undefined ? { durationSec } : {}),
+    });
+    errors.push(...validation.findings);
+    if (id === "cut" || id === "camera" || id === "time" || id === "component") {
+      hostContractWarnings.push(...validation.warnings);
+    }
   }
-  const cutValidation = validateCutContract(html, normalized.scenes);
-  errors.push(...cutValidation.errors);
-  const cameraValidation = validateCameraContract(html, normalized.scenes);
-  errors.push(...cameraValidation.errors);
-  const timeRampValidation = validateTimeRampContract(html, normalized.scenes);
-  errors.push(...timeRampValidation.errors);
-  const componentValidation = validateComponentContract(html, normalized.scenes);
-  errors.push(...componentValidation.errors);
-  const fxValidation = validateFxContract(html, normalized.scenes);
-  errors.push(...fxValidation.errors);
   // Recipe islands are host-injected from the library (Level-1
   // instantiation); like fx, these errors are host-plumbing self-checks —
   // reachable only if the injection seam breaks.
@@ -611,16 +673,22 @@ export async function validateDirectComposition(
   // like recipes, these errors are host-plumbing self-checks.
   const pluginValidation = validatePluginContract(html, normalized.scenes);
   errors.push(...pluginValidation.errors);
-  // Asset spring-animation island/runtime self-check (assetRuntime.ts) —
-  // host plumbing exactly like recipes/plugins; stands down when the assets
-  // flag is off.
-  const assetValidation = validateAssetContract(html, normalized.scenes);
-  errors.push(...assetValidation.errors);
+  for (const id of ["asset", "environment", "continuity"] as const) {
+    const { validation } = runHostContractLifecycle(id, {
+      html,
+      scenes: normalized.scenes,
+      ...(durationSec !== undefined ? { durationSec } : {}),
+    });
+    errors.push(...validation.findings);
+  }
   // Bind failures abort the whole browser compile behind an opaque timeout;
   // re-run the runtimes' bind queries against a parsed DOM here so they
   // surface as named findings the repair loop can act on.
   const kitMarkupAudit = auditKitMarkupCompleteness(html, normalized.scenes);
   errors.push(...kitMarkupAudit.errors);
+  // L3 catches the shallow query-result -> GSAP-target dataflow before a
+  // browser ever evaluates a null target or an invalid pseudo-element target.
+  errors.push(...auditDeadGsapDataflow(html).findings);
   const motionValidation = validateMotionDensity(
     html,
     normalized.scenes,
@@ -651,13 +719,7 @@ export async function validateDirectComposition(
     }
     if (
       ref !== "gsap.min.js" &&
-      ref !== INTERACTION_RUNTIME_FILE &&
-      ref !== CUT_RUNTIME_FILE &&
-      ref !== CAMERA_RUNTIME_FILE &&
-      ref !== COMPONENT_RUNTIME_FILE &&
-      ref !== TIME_RUNTIME_FILE &&
-      ref !== FX_RUNTIME_FILE &&
-      ref !== ASSET_RUNTIME_FILE &&
+      !HOST_CONTRACTS.some((contract) => contract.file === ref) &&
       !fs.existsSync(resolved)
     ) {
       const staged = path.resolve(projectDir, ref);
@@ -675,7 +737,10 @@ export async function validateDirectComposition(
   try {
     const lint = await lintHyperframeHtml(html, { filePath: "index.html" });
     findings = lint.findings.filter(
-      (finding: HyperframeLintFinding) => !isFloatingPointClipOverlap(finding),
+      (finding: HyperframeLintFinding) =>
+        !isFloatingPointClipOverlap(finding) &&
+        !isFloatingPointGsapTweenOverlap(finding) &&
+        !isCssVarFontFamilyArtifact(finding),
     );
     errors.push(...findings
       .filter((finding: HyperframeLintFinding) => finding.severity === "error")
@@ -697,10 +762,7 @@ export async function validateDirectComposition(
       .filter((finding) => finding.severity === "warning")
       .map((finding) => `${finding.code}: ${finding.message}`),
       ...frameValidation.warnings,
-      ...cutValidation.warnings,
-      ...cameraValidation.warnings,
-      ...timeRampValidation.warnings,
-      ...componentValidation.warnings,
+      ...hostContractWarnings,
       ...recipeValidation.warnings,
       ...kitMarkupAudit.warnings,
       ...motionValidation.warnings,
@@ -726,41 +788,13 @@ function copyRuntimeAndAssets(projectDir: string, targetDir: string): void {
     require.resolve("gsap/dist/gsap.min.js"),
     path.join(targetDir, "gsap.min.js"),
   );
-  fs.writeFileSync(
-    path.join(targetDir, INTERACTION_RUNTIME_FILE),
-    interactionRuntimeSource(),
-    "utf8",
-  );
-  fs.writeFileSync(
-    path.join(targetDir, CUT_RUNTIME_FILE),
-    cutRuntimeSource(),
-    "utf8",
-  );
-  fs.writeFileSync(
-    path.join(targetDir, CAMERA_RUNTIME_FILE),
-    cameraRuntimeSource(),
-    "utf8",
-  );
-  fs.writeFileSync(
-    path.join(targetDir, COMPONENT_RUNTIME_FILE),
-    componentRuntimeSource(),
-    "utf8",
-  );
-  fs.writeFileSync(
-    path.join(targetDir, TIME_RUNTIME_FILE),
-    timeRampRuntimeSource(),
-    "utf8",
-  );
-  fs.writeFileSync(
-    path.join(targetDir, FX_RUNTIME_FILE),
-    fxRuntimeSource(),
-    "utf8",
-  );
-  fs.writeFileSync(
-    path.join(targetDir, ASSET_RUNTIME_FILE),
-    assetRuntimeSource(),
-    "utf8",
-  );
+  for (const contract of HOST_CONTRACTS) {
+    fs.writeFileSync(
+      path.join(targetDir, contract.file),
+      contract.source(),
+      "utf8",
+    );
+  }
   const sourceAssets = path.join(projectDir, "assets");
   if (fs.existsSync(sourceAssets)) {
     fs.cpSync(sourceAssets, path.join(targetDir, "assets"), { recursive: true });
@@ -854,7 +888,8 @@ export function storyboardMarkdown(title: string, scenes: DirectScene[]): string
         : "",
       ...(scene.interactions ?? []).map((interaction) =>
         `- Interaction: ${interaction.action} ${interaction.cursorId} â†’ ` +
-        `${interaction.targetPart} (${interaction.startSec.toFixed(2)}–${
+        `${interaction.targetPart}${interaction.item ? ` item ${interaction.item}` : ""} ` +
+        `(${interaction.startSec.toFixed(2)}–${
           (interaction.holdUntilSec ?? interaction.releaseSec ?? interaction.arriveSec).toFixed(2)
         }s, ${interaction.path})`
       ),
@@ -940,8 +975,8 @@ export async function commitDirectComposition(
         ? {
             interactionCount,
             interactionRuntime: {
-              version: INTERACTION_RUNTIME_VERSION,
-              sha256: interactionRuntimeHash(),
+              version: hostContract("interaction").version,
+              sha256: hostContract("interaction").hash(),
             },
           }
         : {}),
@@ -961,6 +996,13 @@ export async function commitDirectComposition(
       storyboardMarkdown(title, normalized.scenes),
       "utf8",
     );
+    const continuity = continuityGraphEnabled()
+      ? resolveContinuityGraph(normalized.scenes)
+      : undefined;
+    const cameraBlocking = continuity
+      ? resolveCameraBlockingPlan(normalized.scenes, continuity)
+      : undefined;
+    const environment = parseEnvironmentPlan(draft.html).plan;
     writeJson(path.join(staged, "motion-plan.json"), {
       version: 1,
       compositionId: manifest.compositionId,
@@ -971,34 +1013,62 @@ export async function commitDirectComposition(
       })),
       interactions: normalized.scenes.flatMap((scene) => scene.interactions ?? []),
       interactionRuntime: {
-        version: INTERACTION_RUNTIME_VERSION,
-        sha256: interactionRuntimeHash(),
+        version: hostContract("interaction").version,
+        sha256: hostContract("interaction").hash(),
       },
       cuts: resolveCutPlan(normalized.scenes).cuts,
       cutRuntime: {
-        version: CUT_RUNTIME_VERSION,
-        sha256: cutRuntimeHash(),
+        version: hostContract("cut").version,
+        sha256: hostContract("cut").hash(),
       },
       camera: resolveCameraPlan(normalized.scenes).scenes,
       cameraRuntime: {
-        version: CAMERA_RUNTIME_VERSION,
-        sha256: cameraRuntimeHash(),
+        version: hostContract("camera").version,
+        sha256: hostContract("camera").hash(),
       },
+      ...(continuity
+        ? {
+            continuity,
+            continuityRuntime: {
+              version: hostContract("continuity").version,
+              sha256: hostContract("continuity").hash(),
+            },
+            cameraBlocking,
+          }
+        : {}),
       timeRamps: resolveTimeRampPlan(normalized.scenes).ramps,
       timeRuntime: {
-        version: TIME_RUNTIME_VERSION,
-        sha256: timeRampRuntimeHash(),
+        version: hostContract("time").version,
+        sha256: hostContract("time").hash(),
       },
       components: normalized.scenes.flatMap((scene) => scene.components ?? []),
       componentBeats: resolveComponentPlan(normalized.scenes).scenes,
       componentRuntime: {
-        version: COMPONENT_RUNTIME_VERSION,
-        sha256: componentRuntimeHash(),
+        version: hostContract("component").version,
+        sha256: hostContract("component").hash(),
       },
       direction: resolveFilmDirectionScore(normalized.scenes),
       directionConsumersEnabled: directionScoreConsumersEnabled(),
+      ...(environment
+        ? {
+            environment,
+            environmentRuntime: {
+              version: hostContract("environment").version,
+              sha256: hostContract("environment").hash(),
+            },
+          }
+        : {}),
       ...(browserQa.continuousMotion
         ? { continuousMotion: browserQa.continuousMotion }
+        : {}),
+      ...(browserQa.cameraBlockingEvidence
+        ? { cameraBlockingEvidence: browserQa.cameraBlockingEvidence }
+        : {}),
+      ...(browserQa.transitionOutgoing?.length
+        ? { transitionOutgoing: browserQa.transitionOutgoing }
+        : {}),
+      ...(browserQa.washoutEvidence?.length
+        ? { washoutEvidence: browserQa.washoutEvidence }
         : {}),
       moments: validation.moments,
       ...(validation.motionReport
@@ -1023,10 +1093,19 @@ export async function commitDirectComposition(
       ...(browserQa.continuousMotion
         ? { continuousMotion: browserQa.continuousMotion }
         : {}),
+      ...(browserQa.cameraBlockingEvidence
+        ? { cameraBlockingEvidence: browserQa.cameraBlockingEvidence }
+        : {}),
+      ...(browserQa.transitionOutgoing?.length
+        ? { transitionOutgoing: browserQa.transitionOutgoing }
+        : {}),
+      ...(browserQa.washoutEvidence?.length
+        ? { washoutEvidence: browserQa.washoutEvidence }
+        : {}),
       ...(browserQa.infraError ? { infraError: browserQa.infraError } : {}),
       runtime: {
-        version: INTERACTION_RUNTIME_VERSION,
-        sha256: interactionRuntimeHash(),
+        version: hostContract("interaction").version,
+        sha256: hostContract("interaction").hash(),
       },
     });
     if (browserQa.guidePngBase64) {
@@ -1058,34 +1137,15 @@ export async function commitDirectComposition(
   writeJson(path.join(checkpoint, MANIFEST_FILE), manifest);
   fs.copyFileSync(path.join(target, "STORYBOARD.md"), path.join(checkpoint, "STORYBOARD.md"));
   fs.copyFileSync(path.join(target, "motion-plan.json"), path.join(checkpoint, "motion-plan.json"));
-  fs.copyFileSync(
-    path.join(target, INTERACTION_RUNTIME_FILE),
-    path.join(checkpoint, INTERACTION_RUNTIME_FILE),
-  );
-  fs.copyFileSync(
-    path.join(target, CUT_RUNTIME_FILE),
-    path.join(checkpoint, CUT_RUNTIME_FILE),
-  );
-  fs.copyFileSync(
-    path.join(target, CAMERA_RUNTIME_FILE),
-    path.join(checkpoint, CAMERA_RUNTIME_FILE),
-  );
-  fs.copyFileSync(
-    path.join(target, COMPONENT_RUNTIME_FILE),
-    path.join(checkpoint, COMPONENT_RUNTIME_FILE),
-  );
-  fs.copyFileSync(
-    path.join(target, TIME_RUNTIME_FILE),
-    path.join(checkpoint, TIME_RUNTIME_FILE),
-  );
-  fs.copyFileSync(
-    path.join(target, FX_RUNTIME_FILE),
-    path.join(checkpoint, FX_RUNTIME_FILE),
-  );
-  fs.copyFileSync(
-    path.join(target, ASSET_RUNTIME_FILE),
-    path.join(checkpoint, ASSET_RUNTIME_FILE),
-  );
+  for (const contract of HOST_CONTRACTS) {
+    fs.copyFileSync(
+      path.join(target, contract.file),
+      path.join(checkpoint, contract.file),
+    );
+  }
+  if (fs.existsSync(path.join(target, "assets"))) {
+    fs.cpSync(path.join(target, "assets"), path.join(checkpoint, "assets"), { recursive: true });
+  }
   fs.cpSync(path.join(target, "qa"), path.join(checkpoint, "qa"), { recursive: true });
   return { manifest, validation };
 }
@@ -1104,13 +1164,7 @@ export function undoDirectComposition(projectDir: string): boolean {
   for (const sidecar of [
     "STORYBOARD.md",
     "motion-plan.json",
-    INTERACTION_RUNTIME_FILE,
-    CUT_RUNTIME_FILE,
-    CAMERA_RUNTIME_FILE,
-    COMPONENT_RUNTIME_FILE,
-    TIME_RUNTIME_FILE,
-    FX_RUNTIME_FILE,
-    ASSET_RUNTIME_FILE,
+    ...HOST_CONTRACTS.map((contract) => contract.file),
   ]) {
     const source = path.join(checkpoint, sidecar);
     const destination = path.join(target, sidecar);
@@ -1119,6 +1173,14 @@ export function undoDirectComposition(projectDir: string): boolean {
     } else {
       fs.rmSync(destination, { force: true });
     }
+  }
+  const assetsSource = path.join(checkpoint, "assets");
+  const assetsTarget = path.join(target, "assets");
+  if (fs.existsSync(assetsSource)) {
+    fs.rmSync(assetsTarget, { recursive: true, force: true });
+    fs.cpSync(assetsSource, assetsTarget, { recursive: true });
+  } else {
+    fs.rmSync(assetsTarget, { recursive: true, force: true });
   }
   const qaSource = path.join(checkpoint, "qa");
   if (fs.existsSync(qaSource)) {
@@ -1385,7 +1447,8 @@ export async function generateDirectThumbnails(
     // convert before the physical seek. The scene-visibility toggle below is
     // safe with the converted time: the warp maps each scene window onto
     // itself monotonically, so the output time stays inside the same scene.
-    const toOutputTime = warpInverseOf(parseTimeRampPlan(current.html).plan);
+    const conversion = timeConversionService(parseTimeRampPlan(current.html).plan);
+    const toOutputTime = (value: number): number => conversion.toViewer(sourceTime(value));
     const compositionId = current.manifest.compositionId;
     const seekTo = (contentTime: number): Promise<void> =>
       page.evaluate(
@@ -1461,21 +1524,27 @@ export async function generateDirectThumbnails(
     // though its box is present the whole scene). Screenshot + canvas read.
     const paintedFraction = async (): Promise<number> => {
       const b64 = (await page.screenshot({ encoding: "base64", type: "png" })) as string;
-      return page.evaluate(async (dataUrl: string) => {
-        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-          const img = new Image();
-          img.addEventListener("load", () => resolve(img));
-          img.addEventListener("error", () => reject(new Error("thumb probe decode failed")));
-          img.src = "data:image/png;base64," + dataUrl;
-        });
-        const w = image.naturalWidth;
-        const h = image.naturalHeight;
-        if (!w || !h) return 0;
+      return page.evaluate(async (encodedPng: string) => {
+        // Decode the host-owned screenshot without navigating an <img>. Luna
+        // compositions deliberately use `img-src 'self'`; a temporary data URL
+        // would violate that policy and turn an internal QA probe into a false
+        // browser-runtime failure. createImageBitmap decodes inert bytes
+        // directly and does not expand the authored page's CSP.
+        const binary = atob(encodedPng);
+        const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+        const image = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+        const w = image.width;
+        const h = image.height;
+        if (!w || !h) {
+          image.close();
+          return 0;
+        }
         const canvas = document.createElement("canvas");
         canvas.width = w;
         canvas.height = h;
         const context = canvas.getContext("2d", { willReadFrequently: true })!;
         context.drawImage(image, 0, 0);
+        image.close();
         const data = context.getImageData(0, 0, w, h).data;
         const corners = [0, (w - 1) * 4, (h - 1) * w * 4, ((h - 1) * w + (w - 1)) * 4];
         let br = 0;

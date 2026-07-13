@@ -90,13 +90,14 @@ export const laurelBadge = defineAsset({
   overflow: hidden;
   color: var(--text, #edf0f6);
   background:
-    radial-gradient(120% 120% at 30% 16%, rgba(255, 255, 255, 0.09), transparent 55%),
+    radial-gradient(120% 120% at 32% 14%, rgba(255, 255, 255, 0.1), transparent 56%),
     color-mix(in srgb, var(--surface, #161b24) 88%, var(--lb-accent, #6ea8ff) 12%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    inset 0 0 0 1px color-mix(in srgb, var(--lb-accent, #6ea8ff) 30%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--lb-accent, #6ea8ff) 28%, transparent),
     inset 0 -1em 2em rgba(0, 0, 0, 0.3),
-    0 1em 2.4em rgba(0, 0, 0, 0.42);
+    0 0.28em 0.7em rgba(0, 0, 0, 0.3),
+    0 1.1em 2.5em rgba(0, 0, 0, 0.42);
 }
 .asset-laurel-badge .lb-laurel {
   position: absolute;
@@ -104,23 +105,23 @@ export const laurelBadge = defineAsset({
   width: 1.6em;
   height: 5.6em;
   transform: translateY(-52%);
-  color: color-mix(in srgb, var(--lb-accent, #6ea8ff) 80%, var(--text, #edf0f6));
-  opacity: 0.9;
+  color: color-mix(in srgb, var(--lb-accent, #6ea8ff) 78%, var(--text, #edf0f6));
+  opacity: 0.85;
 }
 .asset-laurel-badge .lb-left { left: 0.95em; }
 .asset-laurel-badge .lb-right { right: 0.95em; transform: translateY(-52%) scaleX(-1); }
 .asset-laurel-badge .lb-label {
   font-size: 0.62em;
   font-weight: 600;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--muted, #9aa5b4);
 }
 .asset-laurel-badge .lb-title {
   font-size: 1.15em;
-  font-weight: 700;
-  line-height: 1.05;
-  letter-spacing: 0;
+  font-weight: 680;
+  line-height: 1.06;
+  letter-spacing: -0.01em;
   max-width: 9em;
   text-wrap: balance;
 }

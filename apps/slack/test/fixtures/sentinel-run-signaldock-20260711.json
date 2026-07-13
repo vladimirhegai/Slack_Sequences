@@ -1,0 +1,117 @@
+{
+  "disposition": "published-degraded",
+  "startedAt": "2026-07-11T22:06:27.817Z",
+  "durationMs": 1498868,
+  "skeletonEnabled": true,
+  "slotsEnabled": true,
+  "wallClock": {
+    "tier1Ms": 1449380,
+    "tier2Ms": 1498868
+  },
+  "stages": [
+    {
+      "stage": "frame-design",
+      "status": "succeeded",
+      "durationMs": 84563
+    },
+    {
+      "stage": "storyboard-plan",
+      "status": "succeeded",
+      "durationMs": 941859,
+      "attempts": 1
+    },
+    {
+      "stage": "source-author",
+      "status": "succeeded",
+      "durationMs": 417525,
+      "attempts": 2
+    }
+  ],
+  "modelCalls": {
+    "total": 10,
+    "successfulLogicalTotal": 10,
+    "byStage": {
+      "shape": 1,
+      "concept": 1,
+      "storyboard": 2,
+      "author source": 3,
+      "author patch": 1,
+      "critic": 1,
+      "critique patch": 1
+    },
+    "failed": {
+      "storyboard": 2
+    },
+    "failedTotal": 2,
+    "hedged": {
+      "storyboard": 1,
+      "author source": 1
+    },
+    "hedgedTotal": 2,
+    "physicalRequestTotal": 14
+  },
+  "slotCalls": {
+    "truncation-continuation": {
+      "calls": 0,
+      "scenes": 0
+    },
+    "scaffold-repair": {
+      "calls": 0,
+      "scenes": 0
+    },
+    "validation-repair": {
+      "calls": 2,
+      "scenes": 6
+    },
+    "storyboard-scene-repair": {
+      "calls": 1,
+      "scenes": 1
+    },
+    "critic-scene-repair": {
+      "calls": 0,
+      "scenes": 0
+    }
+  },
+  "degradations": [
+    "stagnant-polish-early-ship:penalty=32",
+    "rows-neutral-children-shipped:moments",
+    "rows-neutral-children-shipped:foreground"
+  ],
+  "promptChars": {
+    "maxAuthor": 125024,
+    "totalPrompt": 500971,
+    "totalCompletion": 87141
+  },
+  "layers": {
+    "schema": 0,
+    "scaffold": 27,
+    "normalize": 56,
+    "static": 2,
+    "browser": 14,
+    "model-retry": 2
+  },
+  "scaffoldCoverage": {
+    "present": 27,
+    "planned": 27
+  },
+  "scaffoldRestorationEvents": {
+    "scene-repair": 0,
+    "l2-normalize": 0
+  },
+  "normalizations": {
+    "plugin-reconcile": 2,
+    "world-layout-derive": 4,
+    "auto-pop-style": 1,
+    "slot-script-envelope": 8,
+    "root-data-start": 2,
+    "gsap-display-visibility": 4,
+    "brand-base": 2,
+    "layout-intent": 8,
+    "interaction-binding": 15,
+    "plugin-inject": 5,
+    "compile-order": 2,
+    "runtime-order": 2,
+    "contrast-aa": 1
+  },
+  "at": "2026-07-11T22:31:26.686Z"
+}

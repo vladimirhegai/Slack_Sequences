@@ -67,7 +67,7 @@ function moment(sceneId: string, id: string, atSec: number): StoryboardMomentV1 
 }
 
 describe("auditPacing camera budget", () => {
-  it("caps full camera moves per scene at 1 + floor(duration/3.5)", () => {
+  it("does not confuse raw move count with the scene's compiled idea count", () => {
     const churn = [scene({
       id: "busy",
       startSec: 0,
@@ -82,10 +82,8 @@ describe("auditPacing camera budget", () => {
       },
     })];
     const findings = auditPacing(churn);
-    expect(findings.some((finding) =>
-      finding.startsWith("pacing/camera-budget:") && finding.includes('"busy"')
-    )).toBe(true);
-    // Two full moves in the same window are inside the budget.
+    expect(findings.some((finding) => finding.startsWith("pacing/camera-budget:"))).toBe(false);
+    // A second raw shape with fewer moves is equally free of numeric budgeting.
     const calm = [scene({
       id: "busy",
       startSec: 0,
@@ -168,6 +166,75 @@ describe("auditPacing opening subject", () => {
       ),
     ).toBe(false);
   });
+
+  it.each([
+    ["type", 0],
+    ["set-state", 0.4],
+  ] as const)(
+    "does not mistake a late development swap for a %s-established headline entrance",
+    (initialKind, initialAtSec) => {
+      const hook = scene({
+        id: "cold-hook-runway",
+        startSec: 0,
+        durationSec: 5.5,
+        components: [
+          { version: 1 as const, id: "hook-headline", kind: "headline" as const, role: "hero" },
+        ],
+        beats: [
+          beat("cold-hook-runway", {
+            id: "headline-initial",
+            component: "hook-headline",
+            kind: initialKind,
+            atSec: initialAtSec,
+            durationSec: 0.8,
+            ...(initialKind === "type"
+              ? { text: "MISSED HANDOFF" }
+              : { toState: "missed-handoff" }),
+          }),
+          beat("cold-hook-runway", {
+            id: "headline-swap",
+            component: "hook-headline",
+            kind: "swap",
+            atSec: 2.5,
+            durationSec: 0.6,
+            text: "RECOVERED BEFORE NOON",
+          }),
+        ],
+      });
+
+      expect(sceneIntroductionTimes(hook)).toEqual([0, 2.5]);
+      expect(auditPacing([hook]).filter((finding) =>
+        finding.startsWith("storyboard/opening-subject:")
+      )).toEqual([]);
+    },
+  );
+
+  it.each(["type", "stream"] as const)(
+    "still blocks a genuinely late %s entrance that leaves its text slot blank",
+    (kind) => {
+      const lateText = scene({
+        id: "late-copy",
+        startSec: 0,
+        durationSec: 4,
+        components: [
+          { version: 1 as const, id: "hero-copy", kind: "headline" as const, role: "hero" },
+        ],
+        beats: [beat("late-copy", {
+          id: "copy-arrives",
+          component: "hero-copy",
+          kind,
+          atSec: 2.8,
+          durationSec: 0.8,
+          text: "MISSED HANDOFF",
+        })],
+      });
+
+      expect(sceneIntroductionTimes(lateText)).toEqual([2.8]);
+      expect(auditPacing([lateText]).some((finding) =>
+        finding.startsWith("storyboard/opening-subject:") && finding.includes("2.8s")
+      )).toBe(true);
+    },
+  );
 });
 
 describe("auditPacing introduction development", () => {
@@ -190,6 +257,84 @@ describe("auditPacing introduction development", () => {
     });
     // search-box has no entrance beat → introduced at scene start (2s).
     expect(sceneIntroductionTimes(subject)).toEqual([2, 4, 5]);
+  });
+
+  it("counts static metric and CTA evidence inside one product chassis as one surface", () => {
+    const approval = scene({
+      id: "approval",
+      startSec: 11.1,
+      durationSec: 4,
+      components: [
+        {
+          version: 1,
+          id: "approval-shell",
+          kind: "app-window",
+          region: "approval-station",
+          role: "support",
+        },
+        {
+          version: 1,
+          id: "approval-metric",
+          kind: "stat-card",
+          region: "approval-station",
+          role: "hero",
+        },
+        {
+          version: 1,
+          id: "confirm-btn",
+          kind: "button",
+          region: "approval-station",
+          role: "support",
+        },
+      ],
+      beats: [beat("approval", {
+        id: "swap-ready",
+        component: "approval-metric",
+        kind: "swap",
+        atSec: 14.6,
+        text: "Ready",
+      })],
+    });
+    expect(sceneIntroductionTimes(approval)).toEqual([11.1, 14.6]);
+    const next = scene({ id: "lockup", startSec: 15.1, durationSec: 3.4 });
+    const repaired = stretchMarginalPacingMisses([approval, next]);
+    expect(repaired.normalized).toHaveLength(1);
+    expect(repaired.storyboard[0]!.durationSec).toBeCloseTo(5.3, 2);
+    expect(repaired.storyboard[1]!.startSec).toBeCloseTo(16.4, 2);
+    expect(auditPacing(repaired.storyboard).filter((finding) =>
+      finding.startsWith("pacing/holds:") || finding.startsWith("pacing/reading:")
+    )).toEqual([]);
+  });
+
+  it("keeps explicit child entrances and ambiguous chassis layouts independent", () => {
+    const explicitChild = scene({
+      id: "explicit-child",
+      startSec: 0,
+      durationSec: 5,
+      components: [
+        { version: 1, id: "shell", kind: "app-window", region: "station" },
+        { version: 1, id: "cta", kind: "button", region: "station" },
+      ],
+      beats: [beat("explicit-child", {
+        id: "cta-open",
+        component: "cta",
+        kind: "open",
+        atSec: 2,
+      })],
+    });
+    expect(sceneIntroductionTimes(explicitChild)).toEqual([0, 2]);
+
+    const ambiguous = scene({
+      id: "ambiguous",
+      startSec: 0,
+      durationSec: 5,
+      components: [
+        { version: 1, id: "shell-a", kind: "app-window", region: "station-a" },
+        { version: 1, id: "shell-b", kind: "app-window", region: "station-b" },
+        { version: 1, id: "metric", kind: "stat-card", region: "station-a" },
+      ],
+    });
+    expect(sceneIntroductionTimes(ambiguous)).toEqual([0, 0, 0]);
   });
 
   it("flags a scene that keeps introducing surfaces until its cut", () => {
@@ -668,8 +813,8 @@ describe("auditPacing on the deterministic proof films", () => {
   });
 });
 
-describe("Sentinel Phase 3 — normalizeCameraBudget (normalize-before-retry)", () => {
-  it("drops the lowest-energy extra move to fit the per-scene budget, keeping the peak", () => {
+describe("Sentinel Phase 3 — normalizeCameraBudget (whip-only compatibility)", () => {
+  it("preserves per-scene moves because choosing an idea requires a findings-retry", () => {
     // 3s scene → moveCap = 1 + floor(3/3.5) = 1. A quiet pan/track-to-anchor
     // pair plus one whip: the whip (high energy) must survive; both quiet
     // moves are cut.
@@ -687,13 +832,10 @@ describe("Sentinel Phase 3 — normalizeCameraBudget (normalize-before-retry)", 
       },
     });
     const result = normalizeCameraBudget([churn]);
-    expect(result.normalized).toHaveLength(1);
-    expect(result.normalized[0]).toContain('"busy"');
+    expect(result.normalized).toEqual([]);
     const survivingMoves = result.storyboard[0]!.camera!.path;
-    expect(survivingMoves).toHaveLength(1);
-    expect(survivingMoves[0]!.move).toBe("whip");
-    // The clamped storyboard no longer trips the camera-budget finding.
-    expect(auditPacing(result.storyboard).some((f) => f.startsWith("pacing/camera-budget:"))).toBe(false);
+    expect(survivingMoves).toHaveLength(3);
+    expect(survivingMoves.map((entry) => entry.move)).toEqual(["pan", "track-to-anchor", "whip"]);
   });
 
   it("is a no-op when a scene is already inside its budget", () => {
@@ -742,7 +884,7 @@ describe("Sentinel Phase 3 — normalizeCameraBudget (normalize-before-retry)", 
     expect(droppedScene.camera).toBeUndefined();
   });
 
-  it("never drops a load-bearing move (a declared moment binds inside its window)", () => {
+  it("never deletes either load-bearing or supporting moves per scene", () => {
     // 3s scene → cap 1, two quiet moves. The pan carries a declared moment at
     // its arrival, so the clamp must drop the OTHER move even though both are
     // equally low-energy — orphaning moment evidence is never a normalization.
@@ -760,15 +902,34 @@ describe("Sentinel Phase 3 — normalizeCameraBudget (normalize-before-retry)", 
       moments: [moment("guarded", "m-arrival", 1.0)],
     });
     const result = normalizeCameraBudget([guarded]);
-    expect(result.normalized).toHaveLength(1);
+    expect(result.normalized).toEqual([]);
     const surviving = result.storyboard[0]!.camera!.path;
-    expect(surviving).toHaveLength(1);
-    expect(surviving[0]!.move).toBe("pan");
-    // The note is carried on the scene for STORYBOARD.md visibility.
-    expect(result.storyboard[0]!.sentinelNormalizations?.length).toBe(1);
+    expect(surviving).toHaveLength(2);
+    expect(result.storyboard[0]!.sentinelNormalizations).toBeUndefined();
   });
 
-  it("refuses to clamp when the budget cannot be met without load-bearing moves", () => {
+  it("leaves overlapping move evidence intact for the idea gate", () => {
+    const overlap = scene({
+      id: "overlap",
+      startSec: 3.4,
+      durationSec: 3.8,
+      camera: {
+        version: 1,
+        path: [
+          move({ move: "pan", startSec: 3.4, durationSec: 1.4 }),
+          move({ move: "track-to-anchor", toPart: "node", startSec: 4.8, durationSec: 1.2 }),
+          move({ move: "whip", startSec: 6, durationSec: 0.6 }),
+        ],
+      },
+      moments: [moment("overlap", "whip-arrival", 6)],
+    });
+    const result = normalizeCameraBudget([overlap]);
+    expect(result.normalized).toEqual([]);
+    expect(result.storyboard[0]!.camera!.path).toHaveLength(3);
+    expect(result.storyboard[0]!.camera!.path.some((entry) => entry.move === "whip")).toBe(true);
+  });
+
+  it("never emits the retired raw per-scene camera budget", () => {
     // Both moves carry moment evidence: the clamp leaves the scene alone so
     // the blocking finding goes back to the model (and the parse-side
     // convergence check keeps everything atomic).
@@ -788,7 +949,7 @@ describe("Sentinel Phase 3 — normalizeCameraBudget (normalize-before-retry)", 
     const result = normalizeCameraBudget([pinned]);
     expect(result.normalized).toEqual([]);
     expect(result.storyboard[0]!.camera!.path).toHaveLength(2);
-    expect(auditPacing(result.storyboard).some((f) => f.startsWith("pacing/camera-budget:"))).toBe(true);
+    expect(auditPacing(result.storyboard).some((f) => f.startsWith("pacing/camera-budget:"))).toBe(false);
   });
 
   it("never drops a load-bearing 3rd whip — the film-budget finding stays for the model", () => {
@@ -885,7 +1046,118 @@ describe("Sentinel Phase 5 — delayConflictingCameraMoves (normalize-before-ret
       .toBe(false);
   });
 
-  it("keeps a load-bearing move when the delay would break its moment binding", () => {
+  it("lands one same-station camera phrase with its payoff when a delay cannot fit", () => {
+    const settling = scene({
+      id: "metric-settle",
+      startSec: 0,
+      durationSec: 3.6,
+      components: [{ version: 1, id: "metric", kind: "progress-ring" }],
+      beats: [beat("metric-settle", {
+        id: "settle",
+        component: "metric",
+        kind: "set-state",
+        atSec: 2.3,
+        durationSec: 0.4,
+        toState: "settled",
+      })],
+      camera: {
+        version: 1,
+        path: [move({
+          move: "push-in",
+          startSec: 0.8,
+          durationSec: 2.38,
+          toRegion: "station",
+        })],
+      },
+      spatialIntent: {
+        version: 1,
+        focalPart: "metric",
+        composition: "layout-center-stack",
+        relationships: ["metric is the only station"],
+      },
+      worldLayout: [{ region: "station", cell: [0, 0] }],
+      moments: [moment("metric-settle", "camera-push-settle", 2.3)],
+    });
+    expect(auditPacing([settling]).some((finding) => finding.startsWith("pacing/outcome:")))
+      .toBe(true);
+
+    const result = delayConflictingCameraMoves([settling]);
+    const landed = result.storyboard[0]!.camera!.path[0]!;
+    expect(landed.startSec).toBe(0.8);
+    expect(landed.durationSec).toBe(1.84);
+    expect(result.normalized[0]).toContain("lands with the payoff");
+    expect(auditPacing(result.storyboard).some((finding) => finding.startsWith("pacing/outcome:")))
+      .toBe(false);
+    expect(delayConflictingCameraMoves(result.storyboard).normalized).toEqual([]);
+
+    const { worldLayout: _worldLayout, ...withoutWorldLayout } = settling;
+    const directTarget: DirectScene = {
+      ...withoutWorldLayout,
+      id: "metric-direct",
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "push-in",
+          startSec: 0.8,
+          durationSec: 2.38,
+          toPart: "metric",
+        }],
+      },
+      beats: settling.beats!.map((entry) => ({ ...entry, sceneId: "metric-direct" })),
+      moments: settling.moments!.map((entry) => ({ ...entry, sceneId: "metric-direct" })),
+    };
+    const directResult = delayConflictingCameraMoves([directTarget]);
+    expect(directResult.storyboard[0]!.camera!.path[0]!.durationSec).toBe(1.84);
+    expect(auditPacing(directResult.storyboard).some((finding) =>
+      finding.startsWith("pacing/outcome:")
+    )).toBe(false);
+  });
+
+  it("never shortens cross-station travel to manufacture a payoff hold", () => {
+    const travel = scene({
+      id: "metric-travel",
+      startSec: 0,
+      durationSec: 3.6,
+      components: [{ version: 1, id: "metric", kind: "progress-ring" }],
+      beats: [beat("metric-travel", {
+        id: "settle",
+        component: "metric",
+        kind: "set-state",
+        atSec: 2.3,
+        durationSec: 0.4,
+        toState: "settled",
+      })],
+      camera: {
+        version: 1,
+        path: [move({
+          move: "push-in",
+          startSec: 0.8,
+          durationSec: 2.38,
+          fromRegion: "origin",
+          toRegion: "station",
+        })],
+      },
+      spatialIntent: {
+        version: 1,
+        focalPart: "metric",
+        composition: "layout-center-stack",
+        relationships: ["camera travels from origin to station"],
+      },
+      worldLayout: [
+        { region: "origin", cell: [-1, 0] },
+        { region: "station", cell: [0, 0] },
+      ],
+      moments: [moment("metric-travel", "camera-travel-settle", 2.3)],
+    });
+    const result = delayConflictingCameraMoves([travel]);
+    expect(result.normalized).toEqual([]);
+    expect(result.storyboard).toEqual([travel]);
+    expect(auditPacing(result.storyboard).some((finding) => finding.startsWith("pacing/outcome:")))
+      .toBe(true);
+  });
+
+  it("carries a single camera phrase's moment when delaying that phrase", () => {
     const loadBearing = scene({
       id: "pinned",
       startSec: 0,
@@ -902,7 +1174,39 @@ describe("Sentinel Phase 5 — delayConflictingCameraMoves (normalize-before-ret
       camera: { version: 1, path: [move({ move: "pan", startSec: 2.1, durationSec: 1.0 })] },
       moments: [moment("pinned", "m-arrival", 1.8)],
     });
-    expect(delayConflictingCameraMoves([loadBearing]).normalized).toEqual([]);
+    const result = delayConflictingCameraMoves([loadBearing]);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.storyboard[0]!.camera!.path[0]!.startSec).toBe(2.8);
+    expect(result.storyboard[0]!.moments![0]!.atSec).toBe(2.5);
+    expect(auditPacing(result.storyboard).some((finding) => finding.startsWith("pacing/outcome:")))
+      .toBe(false);
+  });
+
+  it("does not move camera moments in a multi-phrase scene", () => {
+    const ambiguous = scene({
+      id: "pinned-multi",
+      startSec: 0,
+      durationSec: 6,
+      components: [{ version: 1 as const, id: "deploy-button", kind: "button" as const }],
+      beats: [beat("pinned-multi", {
+        id: "b-press",
+        component: "deploy-button",
+        kind: "set-state",
+        atSec: 1.2,
+        durationSec: 0.8,
+        toState: "success",
+      })],
+      camera: {
+        version: 1,
+        path: [
+          move({ move: "pan", startSec: 2.1, durationSec: 1 }),
+          move({ move: "push-in", startSec: 4.5, durationSec: 0.8 }),
+        ],
+      },
+      moments: [moment("pinned-multi", "m-arrival", 1.8)],
+    });
+    expect(delayConflictingCameraMoves([ambiguous]).normalized).toEqual([]);
+    expect(delayConflictingCameraMoves([ambiguous]).storyboard[0]!.moments![0]!.atSec).toBe(1.8);
   });
 
   it("drops a non-load-bearing move that crosses multiple holds when no clean slot fits", () => {
@@ -992,6 +1296,159 @@ describe("Sentinel Phase 5 — delayConflictingCameraMoves (normalize-before-ret
     expect(auditPacing(result.storyboard).some((f) => f.startsWith("pacing/outcome:"))).toBe(false);
   });
 
+  it("drops a crowded non-camera reframe instead of stretching an empty tail (LedgerFlow live attempt 1)", () => {
+    const payout = scene({
+      id: "payout",
+      startSec: 10,
+      durationSec: 4.5,
+      components: [
+        { version: 1 as const, id: "approve", kind: "button" as const },
+        { version: 1 as const, id: "toast", kind: "toast" as const },
+      ],
+      beats: [
+        beat("payout", {
+          id: "press", component: "approve", kind: "press", atSec: 10.3, durationSec: 0.5,
+        }),
+        beat("payout", {
+          id: "success", component: "approve", kind: "set-state", atSec: 11,
+          durationSec: 0.4, toState: "success",
+        }),
+        beat("payout", {
+          id: "toast-open", component: "toast", kind: "open", atSec: 11.5, durationSec: 0.8,
+        }),
+      ],
+      camera: {
+        version: 1,
+        path: [move({
+          move: "push-in", toRegion: "payout-station", startSec: 11,
+          durationSec: 2.5, zoom: 1.3,
+        })],
+      },
+      moments: [{
+        version: 1, id: "toast-lands", sceneId: "payout", atSec: 11.5,
+        title: "Approval toast lands", visualState: "Payout approved",
+        change: "Result resolves", motionIntent: "resolve", importance: "primary",
+      }],
+    });
+    const result = delayConflictingCameraMoves([payout]);
+    expect(result.storyboard[0]!.durationSec).toBe(4.5);
+    expect(result.storyboard[0]!.camera).toBeUndefined();
+    expect(result.normalized[0]).toContain("crossed 3 reading/payoff holds");
+    expect(auditPacing(result.storyboard).filter((finding) =>
+      finding.startsWith("pacing/outcome:")
+    )).toEqual([]);
+  });
+
+  it("drops a same-station reframe that strands long plugin copy after a host auto moment", () => {
+    const lockup = scene({
+      id: "ship-resolve",
+      startSec: 22.4,
+      durationSec: 4.89,
+      components: [{
+        version: 1 as const,
+        id: "ship-lockup-sub",
+        kind: "headline" as const,
+        region: "cta-center",
+        pluginUid: "ship-resolve-ship-lockup",
+      }],
+      beats: [beat("ship-resolve", {
+        id: "ship-lockup-b2",
+        component: "ship-lockup-sub",
+        kind: "type",
+        atSec: 23.437,
+        durationSec: 1.45,
+        text: "One board. One timeline. One confident ship.",
+      })],
+      camera: {
+        version: 1,
+        path: [move({
+          move: "pull-back",
+          startSec: 24.79,
+          durationSec: 2.08,
+          toRegion: "cta-center",
+          zoom: 0.85,
+        })],
+      },
+      moments: [{
+        version: 1,
+        id: "ship-resolve-auto-2",
+        sceneId: "ship-resolve",
+        atSec: 26.04,
+        title: "Camera pull-back develops toward cta-center",
+        visualState: "camera traveling toward cta-center",
+        change: "camera pull-back travel develops the framing",
+        motionIntent: "camera",
+        importance: "supporting",
+      }],
+    });
+
+    expect(auditPacing([lockup]).some((finding) => finding.startsWith("pacing/reading:")))
+      .toBe(true);
+    const result = delayConflictingCameraMoves([lockup]);
+    expect(result.storyboard[0]!.camera).toBeUndefined();
+    expect(result.normalized[0]).toContain("crossed 1 reading/payoff holds");
+    expect(auditPacing(result.storyboard).filter((finding) =>
+      finding.startsWith("pacing/reading:")
+    )).toEqual([]);
+  });
+
+  it("trims a marginally long approach so stacked toast outcomes can hold (RelayGuard live attempt 2)", () => {
+    const coldOpen = scene({
+      id: "cold-noise-open",
+      startSec: 0,
+      durationSec: 4.5,
+      components: [
+        { version: 1 as const, id: "toast-1", kind: "toast" as const },
+        { version: 1 as const, id: "toast-2", kind: "toast" as const },
+        { version: 1 as const, id: "toast-3", kind: "toast" as const },
+        {
+          version: 1 as const,
+          id: "readiness",
+          kind: "stat-card" as const,
+          region: "readiness-station",
+        },
+      ],
+      beats: [
+        beat("cold-noise-open", {
+          id: "toast-1-open", component: "toast-1", kind: "open", atSec: 0.54,
+          durationSec: 0.5,
+        }),
+        beat("cold-noise-open", {
+          id: "toast-2-open", component: "toast-2", kind: "open", atSec: 1.35,
+          durationSec: 0.5,
+        }),
+        beat("cold-noise-open", {
+          id: "toast-3-open", component: "toast-3", kind: "open", atSec: 2.16,
+          durationSec: 0.5,
+        }),
+      ],
+      camera: {
+        version: 1,
+        path: [move({
+          move: "push-in",
+          toRegion: "readiness-station",
+          startSec: 1.5,
+          durationSec: 2.8,
+          zoom: 1.3,
+        })],
+      },
+      moments: [moment("cold-noise-open", "readiness-arrival", 3.5)],
+    });
+
+    expect(auditPacing([coldOpen]).filter((finding) =>
+      finding.startsWith("pacing/outcome:")
+    )).toHaveLength(2);
+    const result = delayConflictingCameraMoves([coldOpen]);
+    const approach = result.storyboard[0]!.camera!.path[0]!;
+    expect(approach.startSec).toBeCloseTo(3.46, 2);
+    expect(approach.durationSec).toBeCloseTo(2.54, 2);
+    expect(result.storyboard[0]!.durationSec).toBeCloseTo(6, 2);
+    expect(result.normalized[0]).toContain("trimmed duration 2.80s to 2.54s");
+    expect(auditPacing(result.storyboard).filter((finding) =>
+      finding.startsWith("pacing/outcome:")
+    )).toEqual([]);
+  });
+
   it("still skips when the overflow exceeds the stretch cap", () => {
     // Delayed to 2.8s a 2.6s pan would end at 5.4s in a 3.2s scene — a 2.2s
     // overflow is past MAX_PACING_STRETCH_SEC, a genuine layout call for the
@@ -1046,6 +1503,51 @@ describe("Sentinel Phase 3 — stretchMarginalPacingMisses (normalize-before-ret
     expect(stretchedOpener!.sentinelNormalizations?.length).toBe(1);
   });
 
+  it("stretches a bounded late-introduction and outcome miss at the scene cut", () => {
+    // RouteBoardQC5: two coherent surfaces, but the publish button landed at
+    // 3.9s in a 5s scene and its press payoff ended only 0.3s before the cut.
+    // Extending the cut by 0.7s satisfies both obligations without a creative
+    // storyboard rewrite.
+    const timeline = scene({
+      id: "timeline",
+      startSec: 0,
+      durationSec: 5,
+      components: [
+        { version: 1 as const, id: "timeline-list", kind: "list" as const },
+        { version: 1 as const, id: "publish-btn", kind: "button" as const },
+      ],
+      beats: [
+        beat("timeline", {
+          id: "publish-open",
+          component: "publish-btn",
+          kind: "open",
+          atSec: 3.9,
+          durationSec: 0.5,
+        }),
+        beat("timeline", {
+          id: "publish-press",
+          component: "publish-btn",
+          kind: "press",
+          atSec: 4.3,
+          durationSec: 0.4,
+        }),
+      ],
+    });
+    const proof = scene({ id: "proof", startSec: 5, durationSec: 3 });
+    expect(auditPacing([timeline, proof])).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^pacing\/holds:/),
+      expect.stringMatching(/^pacing\/outcome:/),
+    ]));
+
+    const result = stretchMarginalPacingMisses([timeline, proof]);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.storyboard[0]!.durationSec).toBeCloseTo(5.7, 5);
+    expect(result.storyboard[1]!.startSec).toBeCloseTo(5.7, 5);
+    expect(auditPacing(result.storyboard).filter((finding) =>
+      finding.startsWith("pacing/holds:") || finding.startsWith("pacing/outcome:")
+    )).toEqual([]);
+  });
+
   it("cascade-shifts a later scene's gradeShift with its scene (MD4 desync guard)", () => {
     // Same stretchable opener as above; the later scene carries a mid-scene
     // grade shift whose atSec must ride the cascade — a shift left behind
@@ -1095,24 +1597,37 @@ describe("Sentinel Phase 3 — stretchMarginalPacingMisses (normalize-before-ret
     expect(auditPacing(result.storyboard).some((f) => f.startsWith("pacing/reading:"))).toBe(true);
   });
 
-  it("never touches a scene inside a declared (resolvable) timeRamp hold", () => {
-    // A ramp only resolves when it is not scene 1 and fits its window — mirror
-    // the known-good resolvable ramp shape. The late type beat WOULD be a
-    // marginal miss the stretch pass closes, but the ramp guard skips it.
+  it("stretches a ramped scene in viewer time when its late surfaces need a bounded hold", () => {
+    // architecture-stress-2 attempt 1: a net-zero slow-motion scene introduced
+    // its third surface 2.0s before the cut, but three surfaces need 2.7s of
+    // development. Scene boundaries are identity points in the ramp contract,
+    // so a 0.7s cut extension buys the missing 0.7 viewer seconds exactly.
     const opener = scene({ id: "opener", startSec: 0, durationSec: 5 });
     const ramped = scene({
       id: "ramped",
       startSec: 5,
-      durationSec: 8,
-      timeRamp: { version: 1, atSec: 9.4, slowTo: 0.2, holdSec: 0.9, recoverSec: 1.2 },
-      components: [{ version: 1 as const, id: "query", kind: "search" as const }],
-      beats: [beat("ramped", { id: "b1", component: "query", kind: "type", atSec: 12.4, text: "ship it now" })],
+      durationSec: 5.5,
+      timeRamp: { version: 1, atSec: 6.5, slowTo: 0.35, holdSec: 0.7, recoverSec: 0.8 },
+      components: [
+        { version: 1 as const, id: "metric", kind: "stat-card" as const },
+        { version: 1 as const, id: "approve", kind: "button" as const },
+        { version: 1 as const, id: "confirmed", kind: "toast" as const },
+      ],
+      beats: [beat("ramped", {
+        id: "toast-confirms",
+        component: "confirmed",
+        kind: "open",
+        atSec: 8.5,
+        durationSec: 0.5,
+      })],
     });
     // Precondition: the ramp actually resolves (else this proves nothing).
     expect(resolveTimeRampPlan([opener, ramped]).ramps.some((r) => r.sceneId === "ramped")).toBe(true);
+    expect(auditPacing([opener, ramped]).some((finding) => finding.startsWith("pacing/holds:"))).toBe(true);
     const result = stretchMarginalPacingMisses([opener, ramped]);
-    expect(result.normalized).toEqual([]);
-    expect(result.storyboard.find((s) => s.id === "ramped")!.durationSec).toBe(8);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.storyboard.find((s) => s.id === "ramped")!.durationSec).toBeCloseTo(6.2, 2);
+    expect(auditPacing(result.storyboard).some((finding) => finding.startsWith("pacing/holds:"))).toBe(false);
   });
 });
 
@@ -1146,10 +1661,50 @@ describe("Sentinel — topUpFramingFloor (normalize-before-retry)", () => {
     expect(result.storyboard.length + fullMoveCount(result.storyboard)).toBe(requiredFramingCount(14));
   });
 
-  it("leaves a film short by two as a finding (a real content deficit)", () => {
+  it("adds two bounded establishing moves when two held shots can meet the floor", () => {
     // total 17.5 → required round(17.5/3.5) = 5; 3 shots, no moves → short by 2.
     const storyboard = [held("a", 0, 5.5), held("b", 5.5, 6), held("c", 11.5, 6)];
     expect(requiredFramingCount(17.5)).toBe(5);
+    const result = topUpFramingFloor(storyboard);
+    expect(result.normalized).toHaveLength(2);
+    expect(result.storyboard.length + fullMoveCount(result.storyboard)).toBe(5);
+    expect(result.storyboard.find((entry) => entry.id === "b")?.camera?.path).toHaveLength(1);
+    expect(result.storyboard.find((entry) => entry.id === "c")?.camera?.path).toHaveLength(1);
+  });
+
+  it("upgrades continuity-owned neutral holds without inventing a second idea", () => {
+    const withChassis = (id: string, startSec: number, durationSec: number): DirectScene => ({
+      ...held(id, startSec, durationSec),
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "hold",
+          startSec,
+          durationSec,
+          toPart: `${id}-card`,
+          zoom: 1,
+        }],
+      },
+    });
+    const storyboard = [
+      withChassis("a", 0, 5.5),
+      withChassis("b", 5.5, 6),
+      withChassis("c", 11.5, 6),
+    ];
+    const result = topUpFramingFloor(storyboard);
+    expect(result.normalized).toHaveLength(2);
+    expect(result.storyboard.length + fullMoveCount(result.storyboard)).toBe(5);
+    for (const id of ["b", "c"]) {
+      expect(result.storyboard.find((entry) => entry.id === id)?.camera?.path).toEqual([
+        expect.objectContaining({ move: "push-in", toPart: `${id}-card` }),
+      ]);
+    }
+  });
+
+  it("leaves a film short by three as a finding (a real content deficit)", () => {
+    const storyboard = [held("a", 0, 7), held("b", 7, 7), held("c", 14, 7)];
+    expect(requiredFramingCount(21)).toBe(6);
     expect(topUpFramingFloor(storyboard).normalized).toEqual([]);
   });
 
@@ -1349,6 +1904,105 @@ describe("2026-07-08 probe set — interaction holds (audit + retimeCameraOverIn
     expect(auditPacing([loadBearing]).some((finding) =>
       finding.startsWith("pacing/interaction-hold:")
     )).toBe(true);
+  });
+
+  it("drops an interaction-owned reframe even when the planner mislabeled cursor arrival as camera-arrival", () => {
+    const review = scene({
+      id: "exception-review",
+      startSec: 5.5,
+      durationSec: 4.5,
+      camera: {
+        version: 1,
+        path: [move({
+          move: "track-to-anchor", toPart: "exception-row", startSec: 6.7,
+          durationSec: 2.3,
+        })],
+      },
+      interactions: [interaction("exception-review", {
+        id: "resolve-exception",
+        startSec: 7.6,
+        arriveSec: 7.9,
+        pressSec: 8,
+        releaseSec: 8.2,
+        holdUntilSec: 8.2,
+      })],
+      moments: [{
+        version: 1, id: "cursor-resolves", sceneId: "exception-review", atSec: 8,
+        title: "Cursor resolves exception", visualState: "Cursor lands on the approve button",
+        change: "The click clears the policy exception", motionIntent: "camera-arrival", importance: "primary",
+      }],
+    });
+    const result = retimeCameraOverInteractions([review]);
+    expect(result.storyboard[0]!.durationSec).toBe(4.5);
+    expect(result.storyboard[0]!.camera?.path).toEqual([]);
+    expect(result.normalized[0]).toContain("dropped the track-to-anchor");
+    expect(auditPacing(result.storyboard).filter((finding) =>
+      finding.startsWith("pacing/interaction-hold:")
+    )).toEqual([]);
+  });
+
+  it("drops a clashing reframe when a resolved beat also owns its camera-labeled moment", () => {
+    const ship = scene({
+      id: "click-ship-clear",
+      startSec: 0,
+      durationSec: 6.5,
+      components: [
+        { version: 1 as const, id: "ship", kind: "button" as const, region: "action" },
+        {
+          version: 1 as const,
+          id: "readiness",
+          kind: "stat-card" as const,
+          region: "readiness",
+        },
+      ],
+      beats: [beat("click-ship-clear", {
+        id: "readiness-count",
+        component: "readiness",
+        kind: "count",
+        atSec: 4,
+        durationSec: 1,
+        value: 100,
+      })],
+      camera: {
+        version: 1,
+        path: [
+          move({
+            move: "track-to-anchor", toPart: "ship", startSec: 1, durationSec: 1.5,
+          }),
+          move({ move: "whip", toPart: "readiness", startSec: 3, durationSec: 0.8 }),
+        ],
+      },
+      interactions: [interaction("click-ship-clear", {
+        id: "ship-click",
+        startSec: 1,
+        arriveSec: 2.5,
+        pressSec: 3,
+        releaseSec: 3.3,
+        holdUntilSec: 3.6,
+      })],
+      moments: [{
+        version: 1,
+        id: "readiness-clear",
+        sceneId: "click-ship-clear",
+        atSec: 4,
+        title: "Whip lands on readiness",
+        visualState: "Whip lands as readiness reaches 100",
+        change: "Camera reframes the cleared state",
+        motionIntent: "camera-whip",
+        importance: "primary",
+      }],
+    });
+
+    expect(auditPacing([ship]).some((finding) =>
+      finding.startsWith("pacing/interaction-hold:")
+    )).toBe(true);
+    const result = retimeCameraOverInteractions([ship]);
+    expect(result.storyboard[0]!.camera!.path.map((entry) => entry.move))
+      .toEqual(["track-to-anchor"]);
+    expect(result.normalized[0]).toContain("dropped the whip");
+    expect(auditPacing(result.storyboard).filter((finding) =>
+      finding.startsWith("pacing/interaction-hold:")
+    )).toEqual([]);
   });
 });
 

@@ -102,16 +102,17 @@ export const logoTile = defineAsset({
   place-items: center;
   overflow: hidden;
   background:
-    radial-gradient(130% 130% at 24% 12%, rgba(255, 255, 255, 0.13), transparent 55%),
+    radial-gradient(135% 135% at 26% 8%, rgba(255, 255, 255, 0.15), transparent 56%),
     linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--lt-accent, #6ea8ff) 42%, var(--surface, #161b24)),
-      color-mix(in srgb, var(--lt-accent, #6ea8ff) 14%, var(--surface, #161b24)) 70%
+      145deg,
+      color-mix(in srgb, var(--lt-accent, #6ea8ff) 44%, var(--surface, #161b24)),
+      color-mix(in srgb, var(--lt-accent, #6ea8ff) 12%, var(--surface, #161b24)) 72%
     );
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    inset 0 0 0 1px color-mix(in srgb, var(--lt-accent, #6ea8ff) 26%, transparent),
-    0 1em 2.4em rgba(0, 0, 0, 0.42);
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 0 0 1px color-mix(in srgb, var(--lt-accent, #6ea8ff) 24%, transparent),
+    0 0.28em 0.7em rgba(0, 0, 0, 0.32),
+    0 1.1em 2.5em rgba(0, 0, 0, 0.42);
 }
 .asset-logo-tile[data-tone="solid"] .lt-face {
   background: linear-gradient(
@@ -122,10 +123,10 @@ export const logoTile = defineAsset({
 }
 .asset-logo-tile .lt-mark {
   font-size: 3.1em;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-weight: 700;
+  letter-spacing: -0.035em;
   color: color-mix(in srgb, var(--text, #edf0f6) 92%, var(--lt-accent, #6ea8ff));
-  text-shadow: 0 0.06em 0.3em rgba(0, 0, 0, 0.35);
+  text-shadow: 0 0.05em 0.25em rgba(0, 0, 0, 0.32);
 }
 .asset-logo-tile[data-tone="solid"] .lt-mark { color: var(--accent-text, #0b0d11); text-shadow: none; }
 .asset-logo-tile .lt-gloss {

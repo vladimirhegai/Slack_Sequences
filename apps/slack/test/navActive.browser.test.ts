@@ -218,4 +218,58 @@ window.__timelines["nav-cursor"]=tl;tl.seek(0);
       expect(consoleErrors).toEqual([]);
     });
   }, 45_000);
+
+  it("compiles a select beat whose list contains inline SVG decorations (quillsign regression)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-nav-svg-"));
+    roots.push(dir);
+    // motion-quality-verify-2-quillsign burned a paid author attempt when a
+    // decorative inline <svg> sibling reached listSiblings: SVG className is an
+    // SVGAnimatedString, `.trim` threw, and the whole compile died before the
+    // timeline registered. The ornament must be ignored, not crash the film.
+    const storyboard: DirectScene[] = [{
+      id: "board",
+      title: "Nav selects around an icon",
+      purpose: "A selection list with a decorative inline SVG still compiles",
+      startSec: 0,
+      durationSec: 4,
+      components: [{ version: 1, id: "nav-tabs", kind: "tabs" }],
+      beats: [{ version: 1, id: "pick", sceneId: "board", component: "nav-tabs", kind: "select", atSec: 1, durationSec: 0.5, item: 2 }],
+    }];
+    const island = JSON.stringify(resolveComponentPlan(storyboard));
+    const html = `<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><title>Nav select with SVG sibling</title>
+<script src="gsap.min.js"></script>
+<script src="${CAMERA_RUNTIME_FILE}"></script>
+<script src="${COMPONENT_RUNTIME_FILE}"></script>${componentKitStyleTag()}<style>
+*{box-sizing:border-box}html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#0a0f16}
+body{color:#eef2f8;font-family:Arial,sans-serif}
+#root{position:relative;width:1920px;height:1080px}
+.scene{position:absolute;inset:0;display:grid;place-items:center;opacity:0}
+</style></head><body>
+<main id="root" data-composition-id="nav-svg" data-width="1920" data-height="1080" data-duration="4">
+<section id="board" class="scene clip" data-scene="board" data-start="0" data-duration="4" data-track-index="1">
+<div class="cmp cmp-tabs" data-component="tabs" data-part="nav-tabs">
+<svg class="tab-glyph" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>
+<div class="cmp-item" data-nav-item data-active="true">Home</div>
+<div class="cmp-item" data-nav-item>Platform</div>
+<div class="cmp-item" data-nav-item>Web</div>
+</div>
+</section>
+</main>
+<script type="application/json" id="sequences-components">${island}</script>
+<script>
+window.__timelines=window.__timelines||{};const tl=gsap.timeline({paused:true});
+tl.set("#board",{opacity:1},0).set("#board",{opacity:0},4);
+SequencesComponents.compile(tl,document.getElementById("root"));
+window.__timelines["nav-svg"]=tl;tl.seek(0);
+</script></body></html>`;
+    await withActiveStates(dir, html, async (read, consoleErrors) => {
+      const after = await read(1.5);
+      expect(after.filter((state) => state === "active")).toHaveLength(1);
+      expect(after).toEqual(["inactive", "active", "inactive"]);
+      const before = await read(0.5);
+      expect(before[0]).toBe("active");
+      expect(consoleErrors).toEqual([]);
+    });
+  }, 45_000);
 });

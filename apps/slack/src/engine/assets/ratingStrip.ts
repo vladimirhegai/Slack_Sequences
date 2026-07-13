@@ -94,17 +94,18 @@ export const ratingStrip = defineAsset({
   border-radius: 999px;
   color: var(--text, #edf0f6);
   background:
-    radial-gradient(130% 150% at 22% 0%, rgba(255, 255, 255, 0.06), transparent 55%),
+    radial-gradient(130% 160% at 20% -10%, rgba(255, 255, 255, 0.07), transparent 58%),
     color-mix(in srgb, var(--surface, #161b24) 94%, var(--rs-accent, #6ea8ff) 6%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.11),
     0 0 0 1px var(--cinema-edge, rgba(255, 255, 255, 0.09)),
-    0 0.8em 2em rgba(0, 0, 0, 0.38);
+    0 0.18em 0.5em rgba(0, 0, 0, 0.26),
+    0 0.8em 1.9em rgba(0, 0, 0, 0.36);
 }
 .asset-rating-strip .rs-score {
   font-size: 1.7em;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-weight: 680;
+  letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -116,14 +117,14 @@ export const ratingStrip = defineAsset({
 }
 .asset-rating-strip .rs-row { display: inline-flex; gap: 0.18em; }
 .asset-rating-strip .rs-row svg { width: 1.15em; height: 1.15em; }
-.asset-rating-strip .rs-base { color: color-mix(in srgb, var(--muted, #9aa5b4) 42%, transparent); }
+.asset-rating-strip .rs-base { color: color-mix(in srgb, var(--muted, #9aa5b4) 38%, transparent); }
 .asset-rating-strip .rs-lit {
   position: absolute;
   inset: 0;
   overflow: hidden;
   color: var(--rs-accent, #6ea8ff);
   width: calc(var(--rs-fill, 5) / 5 * 100%);
-  filter: drop-shadow(0 0 0.3em color-mix(in srgb, var(--rs-accent, #6ea8ff) 45%, transparent));
+  filter: drop-shadow(0 0 0.24em color-mix(in srgb, var(--rs-accent, #6ea8ff) 38%, transparent));
 }
 .asset-rating-strip .rs-lit .rs-row { width: max-content; }
 .asset-rating-strip .rs-caption {

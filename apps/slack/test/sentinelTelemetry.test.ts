@@ -10,10 +10,12 @@ import {
   recordSentinelHedge,
   recordSentinelModelCall,
   recordSentinelModelCallFailure,
+  recordSentinelQualityStatus,
   recordSentinelScaffold,
   recordSentinelScaffoldRestoration,
   recordSentinelSlotCall,
   recordSentinelTierFromRunStart,
+  reserveSentinelModelCall,
 } from "../src/engine/sentinelTelemetry.ts";
 
 const roots: string[] = [];
@@ -61,9 +63,70 @@ describe("sentinel telemetry — disposition honesty", () => {
     finalizeSentinelRun("fallback");
     expect(readRun(dir).disposition).toBe("fallback");
   });
+
+  it("persists runtime validity, quality residue, and degraded axes from the ledger", () => {
+    const dir = tempDir();
+    beginSentinelRun(dir);
+    recordSentinelQualityStatus({
+      runtimeValid: true,
+      qualityResidue: 8,
+      findingSignatures: [
+        "camera_framed_sparse:one",
+        "composition_washed_out:one",
+        "important_safe_area:one",
+        "moment_static_frame:one",
+        "cut_degraded:one",
+        "text_box_overflow:one",
+        "eye_trace_jump:one",
+        "cursor_path:one",
+      ],
+    });
+    finalizeSentinelRun("published-degraded");
+    const run = readRun(dir);
+    expect(run.runtimeValid).toBe(true);
+    expect(run.qualityResidue).toBe(8);
+    expect(run.degradedAxes).toEqual(["qualityResidue"]);
+  });
 });
 
 describe("sentinel telemetry — cost honesty", () => {
+  it("atomically caps global and stage logical requests before launch", () => {
+    const dir = tempDir();
+    beginSentinelRun(dir);
+    reserveSentinelModelCall("storyboard");
+    reserveSentinelModelCall("storyboard");
+    expect(() => reserveSentinelModelCall("storyboard rescue")).toThrow(
+      /storyboard budget exhausted/,
+    );
+
+    const second = tempDir();
+    beginSentinelRun(second);
+    for (const stage of ["frame-design", "concept", "shape", "critic", "asset", "delivery"]) {
+      reserveSentinelModelCall(stage);
+    }
+    expect(() => reserveSentinelModelCall("seventh")).toThrow(/6 logical calls/);
+  });
+
+  it("counts launch reservations once and holds physical requests at eight", () => {
+    const dir = tempDir();
+    beginSentinelRun(dir);
+    for (const stage of ["frame-design", "concept", "shape", "critic", "asset", "delivery"]) {
+      reserveSentinelModelCall(stage);
+    }
+    recordSentinelModelCall({ stage: "frame-design", promptChars: 100, completionChars: 50 });
+    recordSentinelModelCallFailure("concept");
+    expect(claimSentinelHedge("shape", 10)).toBe(true);
+    expect(claimSentinelHedge("critic", 10)).toBe(true);
+    expect(claimSentinelHedge("asset", 10)).toBe(false);
+    expect(claimSentinelHedge("shape retry", 10)).toBe(false);
+    finalizeSentinelRun("published");
+    const calls = readRun(dir).modelCalls as Record<string, unknown>;
+    expect(calls.total).toBe(1);
+    expect(calls.failedTotal).toBe(1);
+    expect(calls.hedgedTotal).toBe(2);
+    expect(calls.physicalRequestTotal).toBe(8);
+  });
+
   it("records failed and hedged model calls beside the success ledger", () => {
     const dir = tempDir();
     beginSentinelRun(dir);

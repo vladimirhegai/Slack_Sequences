@@ -1,0 +1,4 @@
+interface:
+  display_name: "Studio Assets"
+  short_description: "Add animated parametric assets"
+  default_prompt: "Use -assets to add and prove a parametric Studio asset."

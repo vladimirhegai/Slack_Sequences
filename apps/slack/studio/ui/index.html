@@ -216,15 +216,100 @@
     font-size: 12px;
   }
   .empty code { color: var(--lab-text); background: var(--lab-panel); padding: 1px 6px; border-radius: 6px; }
+  /* Discovery catalog cards */
+  .catalog-board {
+    width: min(900px, calc(100% - 40px));
+    min-height: min(560px, calc(100% - 40px));
+    border-radius: 24px;
+    overflow: hidden;
+    border: 1px solid var(--lab-edge);
+    box-shadow: 0 28px 70px rgba(0, 0, 0, 0.28);
+  }
+  .look-board { padding: 42px; display: grid; grid-template-rows: auto 1fr auto; gap: 34px; }
+  .look-eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.62; }
+  .look-title { margin: 4px 0 0; font-size: clamp(42px, 5vw, 76px); line-height: 0.94; max-width: 760px; }
+  .look-artifact {
+    min-height: 220px;
+    border-radius: 18px;
+    display: grid;
+    grid-template-columns: 1.3fr 0.7fr;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  }
+  .look-artifact-copy { padding: 30px; display: flex; flex-direction: column; justify-content: space-between; gap: 18px; }
+  .look-artifact-copy strong { font-size: 34px; line-height: 1; max-width: 360px; }
+  .look-artifact-mark { min-height: 220px; position: relative; overflow: hidden; }
+  .look-artifact-mark::before, .look-artifact-mark::after {
+    content: ""; position: absolute; border-radius: 999px; border: 2px solid currentColor; opacity: 0.7;
+  }
+  .look-artifact-mark::before { width: 210px; height: 210px; right: -28px; top: 24px; }
+  .look-artifact-mark::after { width: 86px; height: 86px; left: 24px; bottom: 22px; }
+  .look-footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; font-size: 12px; }
+  .swatches { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+  .swatch { min-width: 0; }
+  .swatch i { display: block; height: 34px; border-radius: 8px; border: 1px solid var(--lab-edge); }
+  .swatch span { display: block; color: var(--lab-muted); font-size: 10px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; }
+  .motion-stack { display: grid; gap: 8px; }
+  .motion-row { display: grid; grid-template-columns: 70px 1fr; gap: 10px; font-size: 12px; }
+  .motion-row b { color: var(--lab-muted); font-weight: 500; }
+  .rule-list { margin: 0; padding-left: 18px; color: var(--lab-muted); font-size: 12px; }
+  .rule-list li + li { margin-top: 5px; }
+  .camera-board { padding: 0; background: #090c12; position: relative; }
+  .camera-board svg { width: 100%; height: 100%; min-height: 520px; display: block; }
+  .camera-station { fill: rgba(255,255,255,0.035); stroke: rgba(255,255,255,0.2); stroke-width: 5; }
+  .camera-station.active { fill: rgba(110,168,255,0.12); stroke: #6ea8ff; }
+  .camera-path { fill: none; stroke: rgba(110,168,255,0.55); stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 16 16; }
+  .camera-frame { fill: rgba(110,168,255,0.045); stroke: #f4f7ff; stroke-width: 8; filter: drop-shadow(0 8px 18px rgba(0,0,0,0.5)); }
+  .camera-label { fill: #dbe6f8; font: 600 44px "Segoe UI", sans-serif; letter-spacing: 0.06em; }
+  .camera-role { fill: #8290a6; font: 30px Consolas, monospace; text-transform: uppercase; }
+  .camera-moves { display: grid; gap: 5px; }
+  .camera-move { display: grid; grid-template-columns: 74px 1fr auto; gap: 8px; align-items: baseline; font-size: 11px; }
+  .camera-move code { color: var(--lab-accent); }
+  .camera-move span { color: var(--lab-muted); }
+  .plugin-board { padding: 42px; display: flex; flex-direction: column; justify-content: space-between; gap: 30px; background: #11151d; }
+  .plugin-board .plugin-kind { font: 700 clamp(38px, 5vw, 72px)/1 Consolas, monospace; letter-spacing: -0.04em; }
+  .plugin-board .plugin-purpose { max-width: 680px; color: var(--lab-muted); font-size: 17px; }
+  .plugin-form { display: flex; flex-wrap: wrap; gap: 10px; }
+  .plugin-param { padding: 12px 14px; border: 1px solid var(--lab-edge); border-radius: 12px; min-width: 150px; background: rgba(255,255,255,0.025); }
+  .plugin-param b, .plugin-param span { display: block; }
+  .plugin-param span { color: var(--lab-muted); font-size: 11px; margin-top: 2px; }
+  .background-list { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .background-card { border: 1px solid var(--lab-edge); border-radius: 10px; overflow: hidden; cursor: pointer; background: var(--lab-panel); }
+  .background-card:hover, .background-card.active { border-color: var(--lab-accent); }
+  .background-card img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; }
+  .background-card-copy { padding: 6px 8px 7px; display: flex; justify-content: space-between; gap: 6px; align-items: baseline; }
+  .background-card-copy b { font-size: 11px; }
+  .background-card-copy span { color: var(--lab-muted); font-size: 10px; }
+  .background-board { position: relative; min-height: 560px; background: #06080c; }
+  .background-board > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .background-preview-overlay { position: absolute; inset: 0; pointer-events: none; }
+  .background-safe-zone { position: absolute; border: 2px dashed rgba(255,255,255,0.86); border-radius: 14px; box-shadow: 0 0 0 1px rgba(0,0,0,0.35); }
+  .background-safe-zone span { position: absolute; top: 8px; left: 10px; color: #fff; font: 10px Consolas, monospace; text-transform: uppercase; text-shadow: 0 1px 3px #000; }
+  .moodboard-ribbon { position: absolute; right: 14px; bottom: 14px; padding: 5px 9px; border-radius: 999px; background: rgba(5,7,11,0.76); color: #ffd479; border: 1px solid rgba(255,212,121,0.45); font-size: 10px; letter-spacing: 0.08em; }
+  .license-status { color: var(--lab-ok); border: 1px solid rgba(67,194,122,0.35); background: rgba(67,194,122,0.07); padding: 8px 10px; border-radius: 8px; font-size: 11px; }
+  .probe-stage { display: flex; flex-direction: column; gap: 14px; padding: 14px; overflow-y: auto; min-height: 0; flex: 1; }
+  .probe-stage video { width: 100%; max-height: 62vh; background: #000; border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); }
+  .probe-strip-block h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--lab-muted); margin: 0 0 6px; }
+  .probe-strip-block img { width: 100%; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); background: #06080c; }
+  .probe-render-row { display: flex; justify-content: space-between; gap: 8px; padding: 5px 6px; border-radius: 6px; cursor: pointer; font-size: 11px; }
+  .probe-render-row:hover { background: rgba(255,255,255,0.05); }
+  .probe-render-row.active { background: rgba(110,168,255,0.14); }
+  .probe-render-row span { color: var(--lab-muted); }
+  .probe-badge-clean { color: #5ce6a8; }
+  .probe-badge-degraded { color: var(--lab-warn); }
 </style>
 </head>
 <body>
 <header>
-  <h1>Sequences Studio <span id="header-sub">· components · assets · recipes</span></h1>
+  <h1>Sequences Studio <span id="header-sub">· engine catalogs</span></h1>
   <div class="tabs">
     <button class="tab active" data-view="components">Components</button>
     <button class="tab" data-view="assets">Assets</button>
     <button class="tab" data-view="recipes">Recipes</button>
+    <button class="tab" data-view="looks">Looks</button>
+    <button class="tab" data-view="camera">Camera</button>
+    <button class="tab" data-view="plugins">Plugins</button>
+    <button class="tab" data-view="probes">Probes</button>
   </div>
   <div class="theme-row">
     <label>Brand theme</label>
@@ -348,6 +433,162 @@
       </div>
     </aside>
   </section>
+
+  <!-- ============================== LOOKS ============================== -->
+  <section class="view" id="view-looks">
+    <nav>
+      <h2>Design dialects</h2>
+      <div id="look-list"></div>
+      <h2>Production wallpapers <span class="badge">MIT cleared</span></h2>
+      <div id="background-list" class="background-list"></div>
+    </nav>
+    <div class="stage-wrap">
+      <div class="stage" id="look-stage"></div>
+      <div class="stage-note" id="look-note"></div>
+    </div>
+    <aside>
+      <div class="panel look-dialect-detail">
+        <h2>Dialect <span class="badge" id="look-basis"></span></h2>
+        <p class="desc" id="look-grammar"></p>
+      </div>
+      <div class="panel look-dialect-detail">
+        <h2>Palette</h2>
+        <div class="swatches" id="look-palette"></div>
+      </div>
+      <div class="panel look-dialect-detail">
+        <h2>Type + material</h2>
+        <div class="kv" id="look-type"></div>
+      </div>
+      <div class="panel look-dialect-detail">
+        <h2>Motion signature</h2>
+        <div class="motion-stack" id="look-motion"></div>
+      </div>
+      <div class="panel look-dialect-detail">
+        <h2>Rules</h2>
+        <ul class="rule-list" id="look-rules"></ul>
+      </div>
+      <div class="panel" id="background-detail" style="display:none">
+        <h2>Background crop <span class="badge">production-cleared</span></h2>
+        <div class="license-status">MIT license manifest verified. The selected wallpaper and notice may be staged into customer projects.</div>
+        <div class="kv" id="background-kv"></div>
+        <h2>Overlay</h2>
+        <p class="desc" id="background-overlay"></p>
+        <h2>Motion</h2>
+        <p class="desc" id="background-motion"></p>
+        <h2>Crop guidance</h2>
+        <p class="desc" id="background-crop"></p>
+        <h2>Provenance</h2>
+        <p class="desc" id="background-provenance"></p>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ============================== CAMERA ============================== -->
+  <section class="view" id="view-camera">
+    <nav>
+      <h2>Camera patterns</h2>
+      <div id="camera-list"></div>
+    </nav>
+    <div class="stage-wrap">
+      <div class="stage" id="camera-stage"></div>
+      <div class="transport">
+        <button class="small" id="camera-play">Play</button>
+        <input type="range" id="camera-scrub" min="0" max="1000" value="0" />
+        <span class="time" id="camera-time">0.00s</span>
+      </div>
+      <div class="stage-note" id="camera-note"></div>
+    </div>
+    <aside>
+      <div class="panel">
+        <h2>Pattern</h2>
+        <p class="desc" id="camera-purpose"></p>
+        <div class="badges" id="camera-best-for"></div>
+      </div>
+      <div class="panel">
+        <h2>Motion</h2>
+        <p class="desc" id="camera-motion"></p>
+      </div>
+      <div class="panel">
+        <h2>Eye trace</h2>
+        <p class="desc" id="camera-eye-trace"></p>
+      </div>
+      <div class="panel">
+        <h2>Typed path</h2>
+        <div class="camera-moves" id="camera-moves"></div>
+        <pre class="code" id="camera-plan"></pre>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ============================== PLUGINS ============================== -->
+  <section class="view" id="view-plugins">
+    <nav>
+      <h2>Plugin catalog</h2>
+      <div id="plugin-list"></div>
+    </nav>
+    <div class="stage-wrap">
+      <div class="stage" id="plugin-stage"></div>
+      <div class="stage-note" id="plugin-note"></div>
+    </div>
+    <aside>
+      <div class="panel">
+        <h2>Purpose</h2>
+        <p class="desc" id="plugin-purpose"></p>
+      </div>
+      <div class="panel">
+        <h2>Params <span class="badge">typed generator form</span></h2>
+        <table class="params" id="plugin-params"></table>
+      </div>
+      <div class="panel">
+        <h2>Planning description</h2>
+        <pre class="code" id="plugin-planning"></pre>
+      </div>
+      <div class="panel">
+        <h2>Declaration example <span class="badge">copy-ready JSON</span></h2>
+        <pre class="code" id="plugin-example"></pre>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ============================== PROBES ============================== -->
+  <section class="view" id="view-probes">
+    <nav>
+      <h2>Rendered live probes</h2>
+      <div id="probe-list"></div>
+    </nav>
+    <div class="stage-wrap">
+      <div class="probe-stage" id="probe-stage">
+        <video id="probe-video" controls preload="metadata" playsinline></video>
+        <div class="probe-strip-block" id="probe-strip-block">
+          <h3>Temporal contact strip</h3>
+          <img id="probe-strip" alt="temporal contact strip" />
+        </div>
+        <div class="probe-strip-block" id="probe-blocking-block">
+          <h3>Camera blocking overlay</h3>
+          <img id="probe-blocking" alt="camera blocking overlay" />
+        </div>
+      </div>
+      <div class="stage-note" id="probe-note">Only probes with a rendered MP4 appear here — rejected attempts and fail-loud runs never render.</div>
+    </div>
+    <aside>
+      <div class="panel">
+        <h2>Run <span class="badge" id="probe-disposition"></span></h2>
+        <p class="desc" id="probe-summary"></p>
+      </div>
+      <div class="panel">
+        <h2>Stages <span class="badge">attempts · duration</span></h2>
+        <table class="params" id="probe-stages"></table>
+      </div>
+      <div class="panel">
+        <h2>Degradations</h2>
+        <div id="probe-degradations" class="desc"></div>
+      </div>
+      <div class="panel">
+        <h2>Renders</h2>
+        <div id="probe-renders"></div>
+      </div>
+    </aside>
+  </section>
 </main>
 <script>
 "use strict";
@@ -362,10 +603,13 @@ const FAMILY_GROUP = { pill: "pill-bar", bar: "pill-bar", card: "ccw", circle: "
 
 const state = {
   components: [], assets: [], morph: null, recipes: { entries: [], issues: [] },
+  looks: { entries: [] }, camera: { entries: [] }, plugins: { entries: [] },
   component: null,
   asset: null, assetParams: {}, assetInstance: null, animating: false,
   morphSpring: "settle", morphDurationMs: null,
   recipe: null, busy: false,
+  look: null, background: null, cameraPattern: null, plugin: null,
+  probes: { entries: [] }, probe: null,
   theme: "Midnight",
 };
 window.__labState = state; // read-only debug handle for scripted proof drives
@@ -411,6 +655,7 @@ for (const tab of document.querySelectorAll(".tab")) {
       view.classList.toggle("active", view.id === "view-" + tab.dataset.view);
     }
     stopRecipePlayback();
+    stopCameraPlayback();
     location.hash = tab.dataset.view;
   };
 }
@@ -635,6 +880,7 @@ function buildMorphControls() {
     state.morphDurationMs = null;
     syncMorphControls();
   };
+  el("morph-go").onclick = () => morphTo(el("morph-target").value);
   syncMorphControls();
 }
 
@@ -724,6 +970,400 @@ function buildAssetList() {
     item.onclick = () => selectAsset(asset).catch(showAssetError);
     list.appendChild(item);
   }
+}
+
+/* ------------------------------------------------------------ looks */
+
+function catalogColor(value, fallback) {
+  return typeof value === "string" && /^(?:#[0-9a-f]{3,8}|rgb|hsl|var\()/i.test(value)
+    ? value
+    : fallback;
+}
+
+function lookColors(look) {
+  const palette = look.palette || {};
+  return {
+    bg: catalogColor(palette.bg, look.preferredBasis === "dark" ? "#0c0f14" : "#ffffff"),
+    surface: catalogColor(palette.surface, look.preferredBasis === "dark" ? "#171c24" : "#f2f3f5"),
+    text: catalogColor(palette.text, look.preferredBasis === "dark" ? "#f4f6fa" : "#17191d"),
+    muted: catalogColor(palette.textMuted, look.preferredBasis === "dark" ? "#9ba5b6" : "#676d78"),
+    accent: catalogColor(palette.accent, "#6ea8ff"),
+    accentSoft: catalogColor(palette.accentSoft, palette.surface || "#e7eefc"),
+    border: catalogColor(palette.border, "rgba(127,127,127,0.25)"),
+  };
+}
+
+function buildLookList() {
+  const list = el("look-list");
+  list.innerHTML = "";
+  for (const look of state.looks.entries) {
+    const item = document.createElement("div");
+    item.className = "nav-item";
+    item.dataset.id = look.id;
+    item.innerHTML = `<div class="t">${esc(look.label)}</div>` +
+      `<div class="f">${esc(look.preferredBasis)} · ${esc(look.materialProfile)}</div>`;
+    item.onclick = () => selectLook(look);
+    list.appendChild(item);
+  }
+}
+
+function buildBackgroundList() {
+  const list = el("background-list");
+  list.innerHTML = "";
+  for (const background of state.looks.backgrounds || []) {
+    const item = document.createElement("div");
+    item.className = "background-card";
+    item.dataset.id = background.id;
+    item.innerHTML = `<img src="${background.previewUrl}" alt="${esc(background.id)} crop preview" ` +
+      `loading="lazy" style="object-position:${esc(background.crop.objectPosition)}"/>` +
+      `<div class="background-card-copy"><b>${esc(background.id)}</b><span>${esc(background.energy)}</span></div>`;
+    item.onclick = () => selectBackground(background);
+    list.appendChild(item);
+  }
+}
+
+function showLookDetail(kind) {
+  for (const panel of document.querySelectorAll(".look-dialect-detail")) {
+    panel.style.display = kind === "dialect" ? "flex" : "none";
+  }
+  el("background-detail").style.display = kind === "background" ? "flex" : "none";
+}
+
+function backgroundSafeZoneStyle(side) {
+  const positions = {
+    left: "left:6%;top:24%;width:40%;height:52%",
+    right: "right:6%;top:24%;width:40%;height:52%",
+    "top-left": "left:6%;top:7%;width:42%;height:38%",
+    "top-center": "left:29%;top:7%;width:42%;height:36%",
+    "top-right": "right:6%;top:7%;width:42%;height:38%",
+    "bottom-left": "left:6%;bottom:7%;width:42%;height:38%",
+    center: "left:29%;top:29%;width:42%;height:42%",
+  };
+  return positions[side] || positions.center;
+}
+
+function backgroundOverlayStyle(background) {
+  if (background.overlay.mode === "none" || !background.overlay.opacity) return "background:transparent";
+  const alpha = Math.max(0, Math.min(0.6, background.overlay.opacity));
+  const dark = `rgba(5,8,14,${alpha})`;
+  const side = background.textSafeSide;
+  if (side === "left" || side === "top-left" || side === "bottom-left") {
+    return `background:linear-gradient(90deg,${dark},transparent 62%)`;
+  }
+  if (side === "right" || side === "top-right") {
+    return `background:linear-gradient(270deg,${dark},transparent 62%)`;
+  }
+  if (side === "top-center") {
+    return `background:linear-gradient(180deg,${dark},transparent 58%)`;
+  }
+  return `background:radial-gradient(ellipse at center,${dark},transparent 68%)`;
+}
+
+function selectBackground(background) {
+  state.background = background;
+  for (const item of el("look-list").children) item.classList.remove("active");
+  for (const item of el("background-list").children) {
+    item.classList.toggle("active", item.dataset.id === background.id);
+  }
+  showLookDetail("background");
+  el("look-stage").innerHTML = `
+    <div class="catalog-board background-board">
+      <img src="${background.previewUrl}" alt="${esc(background.id)} production crop" style="object-position:${esc(background.crop.objectPosition)}"/>
+      <div class="background-preview-overlay" style="${backgroundOverlayStyle(background)}"></div>
+      <div class="background-safe-zone" style="${backgroundSafeZoneStyle(background.textSafeSide)}"><span>${esc(background.textSafeSide)} text-safe</span></div>
+      <div class="moodboard-ribbon">PRODUCTION CLEARED · MIT</div>
+    </div>`;
+  el("look-note").textContent =
+    `${background.id}: ${background.crop.recommendation} Production staging uses one selected wallpaper per film.`;
+  el("background-kv").innerHTML = [
+    ["file", background.file],
+    ["dimensions", `${background.dimensions.width} × ${background.dimensions.height}`],
+    ["aspect", `${background.aspect.label} (${background.aspect.ratio})`],
+    ["focal", `${Math.round(background.focalPoint.x * 100)}%, ${Math.round(background.focalPoint.y * 100)}%`],
+    ["safe side", background.textSafeSide],
+    ["energy", background.energy],
+    ["object-position", background.crop.objectPosition],
+  ].map(([key, value]) => `<span class="k">${esc(key)}</span><span class="v">${esc(value)}</span>`).join("");
+  el("background-overlay").textContent = `${background.overlay.mode}: ${background.overlay.recommendation}`;
+  el("background-motion").textContent =
+    `${background.motion.mode} · max ${background.motion.maxTravelPercent}% travel · max ${background.motion.maxScale}× scale. ${background.motion.description}`;
+  el("background-crop").textContent = `${background.focalPoint.description} ${background.crop.recommendation}`;
+  el("background-provenance").textContent =
+    `${background.provenance.status}; customer project use ${background.provenance.customerProjectUse}. ${background.provenance.note}`;
+}
+
+function selectLook(look) {
+  state.look = look;
+  showLookDetail("dialect");
+  for (const item of el("look-list").children) {
+    item.classList.toggle("active", item.dataset.id === look.id);
+  }
+  for (const item of el("background-list").children) item.classList.remove("active");
+  const c = lookColors(look);
+  const displayWeight = parseInt(look.type.displayWeight, 10) || 600;
+  el("look-stage").innerHTML = `
+    <div class="catalog-board look-board" style="background:${c.bg};color:${c.text};font-weight:${Math.min(900, displayWeight)}">
+      <div>
+        <div class="look-eyebrow">${esc(look.id)} / ${esc(look.colorTopology)}</div>
+        <h3 class="look-title">${esc(look.label)}</h3>
+      </div>
+      <div class="look-artifact" style="background:${c.surface};border-color:${c.border}">
+        <div class="look-artifact-copy">
+          <span style="color:${c.muted};font-weight:400">${esc(look.type.systemId)} type system</span>
+          <strong>One frame.<br/>One clear idea.</strong>
+          <span style="color:${c.accent};font-weight:600">Motion has a reason →</span>
+        </div>
+        <div class="look-artifact-mark" style="background:${c.accent};color:${c.bg}"></div>
+      </div>
+      <div class="look-footer">
+        <span style="color:${c.muted};font-weight:400">${esc(look.materialProfile)} · ${esc(look.defaultBackgroundPolicyId)}</span>
+        <span>${esc(look.type.tracking)}</span>
+      </div>
+    </div>`;
+  el("look-note").textContent =
+    `${look.canvas.description} Background choices: ${look.backgroundPolicyIds.join(" · ")}.`;
+  el("look-basis").textContent = look.preferredBasis;
+  el("look-grammar").textContent = look.visualGrammar;
+
+  const paletteEntries = Object.entries(look.palette || {}).filter(([, value]) => value);
+  el("look-palette").innerHTML = paletteEntries.map(([name, value]) =>
+    `<div class="swatch"><i style="background:${catalogColor(value, "transparent")}"></i>` +
+    `<span>${esc(name)}<br/>${esc(value)}</span></div>`).join("");
+  el("look-type").innerHTML = [
+    ["system", look.type.systemId], ["pairing", look.type.pairingMode],
+    ["display", look.type.displayWeight], ["body", look.type.bodyWeight],
+    ["tracking", look.type.tracking], ["casing", look.type.casing],
+    ["material", look.materialProfile],
+  ].map(([key, value]) => `<span class="k">${esc(key)}</span><span class="v">${esc(value)}</span>`).join("");
+  el("look-motion").innerHTML = Object.entries(look.motion).map(([key, value]) =>
+    `<div class="motion-row"><b>${esc(key)}</b><span>${esc(value)}</span></div>`).join("");
+  el("look-rules").innerHTML = look.rules.map((rule) => `<li>${esc(rule)}</li>`).join("");
+}
+
+/* ------------------------------------------------------------ camera */
+
+const cameraPlayback = { raf: 0, playing: false, time: 0 };
+
+function stopCameraPlayback() {
+  cameraPlayback.playing = false;
+  if (cameraPlayback.raf) cancelAnimationFrame(cameraPlayback.raf);
+  cameraPlayback.raf = 0;
+  const button = el("camera-play");
+  if (button) button.textContent = "Play";
+}
+
+function buildCameraList() {
+  const list = el("camera-list");
+  list.innerHTML = "";
+  for (const pattern of state.camera.entries) {
+    const item = document.createElement("div");
+    item.className = "nav-item";
+    item.dataset.id = pattern.id;
+    item.innerHTML = `<div class="t">${esc(pattern.title)}</div>` +
+      `<div class="f">${pattern.durationSec.toFixed(1)}s · ${pattern.camera.path.length} moves</div>`;
+    item.onclick = () => selectCameraPattern(pattern);
+    list.appendChild(item);
+  }
+}
+
+function cameraStation(pattern, id) {
+  return pattern.stations.find((station) => station.id === id) || null;
+}
+
+function cameraEase(name, p) {
+  const t = Math.max(0, Math.min(1, p));
+  if (name === "none" || name === "linear") return t;
+  if (name === "seqWhip" || name === "seqImpulse") return 1 - Math.pow(1 - t, 4);
+  if (name === "seqGlide") return 1 - Math.pow(1 - t, 2.4);
+  if (name === "seqDrift") return t * t * (3 - 2 * t);
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+function cameraPoseAt(pattern, time) {
+  const path = pattern.camera.path;
+  const first = path[0];
+  let station = cameraStation(pattern, (first && (first.fromRegion || first.toRegion)) || "") || pattern.stations[0];
+  let pose = { x: station.x + station.width / 2, y: station.y + station.height / 2, zoom: 1, stationId: station.id };
+  for (const move of path) {
+    const target = cameraStation(pattern, move.toRegion || move.toPart) || station;
+    const targetPose = {
+      x: target.x + target.width / 2,
+      y: target.y + target.height / 2,
+      zoom: move.zoom || pose.zoom,
+      stationId: target.id,
+    };
+    if (time < move.startSec) return pose;
+    const end = move.startSec + move.durationSec;
+    if (time <= end) {
+      if (move.move === "hold") return pose;
+      const raw = move.durationSec ? (time - move.startSec) / move.durationSec : 1;
+      const p = cameraEase(move.ease, raw);
+      const sameTarget = target.id === station.id;
+      const drift = move.move === "drift" && sameTarget ? 22 * Math.sin(raw * Math.PI * 0.7) : 0;
+      return {
+        x: pose.x + (targetPose.x - pose.x) * p + drift,
+        y: pose.y + (targetPose.y - pose.y) * p - drift * 0.24,
+        zoom: pose.zoom + (targetPose.zoom - pose.zoom) * p,
+        stationId: p >= 0.5 ? target.id : station.id,
+      };
+    }
+    pose = targetPose;
+    station = target;
+  }
+  return pose;
+}
+
+function cameraPathStations(pattern) {
+  const path = pattern.camera.path;
+  const ids = [];
+  const first = path[0] && (path[0].fromRegion || path[0].toRegion);
+  if (first) ids.push(first);
+  for (const move of path) {
+    const id = move.toRegion || move.toPart;
+    if (id && ids[ids.length - 1] !== id) ids.push(id);
+  }
+  return ids.map((id) => cameraStation(pattern, id)).filter(Boolean);
+}
+
+function renderCameraBoard(pattern) {
+  const points = cameraPathStations(pattern)
+    .map((station) => `${station.x + station.width / 2},${station.y + station.height / 2}`)
+    .join(" ");
+  const stations = pattern.stations.map((station) => `
+    <g data-camera-station="${esc(station.id)}">
+      <rect class="camera-station" x="${station.x}" y="${station.y}" width="${station.width}" height="${station.height}" rx="36"/>
+      <text class="camera-role" x="${station.x + 42}" y="${station.y + 68}">${esc(station.role)}</text>
+      <text class="camera-label" x="${station.x + 42}" y="${station.y + 132}">${esc(station.label)}</text>
+    </g>`).join("");
+  el("camera-stage").innerHTML = `
+    <div class="catalog-board camera-board">
+      <svg viewBox="0 0 ${pattern.world.width} ${pattern.world.height}" role="img" aria-label="${esc(pattern.title)} station path">
+        <defs><pattern id="camera-grid" width="80" height="80" patternUnits="userSpaceOnUse"><path d="M80 0H0V80" fill="none" stroke="rgba(255,255,255,.035)" stroke-width="2"/></pattern></defs>
+        <rect width="100%" height="100%" fill="url(#camera-grid)"/>
+        <polyline class="camera-path" points="${points}"/>
+        ${stations}
+        <rect class="camera-frame" id="camera-frame" rx="30"/>
+      </svg>
+    </div>`;
+}
+
+function seekCamera(time) {
+  const pattern = state.cameraPattern;
+  if (!pattern) return;
+  cameraPlayback.time = Math.max(0, Math.min(pattern.durationSec, time));
+  const pose = cameraPoseAt(pattern, cameraPlayback.time);
+  const width = pattern.world.viewportWidth / pose.zoom;
+  const height = pattern.world.viewportHeight / pose.zoom;
+  const frame = el("camera-frame");
+  if (frame) {
+    frame.setAttribute("x", pose.x - width / 2);
+    frame.setAttribute("y", pose.y - height / 2);
+    frame.setAttribute("width", width);
+    frame.setAttribute("height", height);
+  }
+  for (const group of el("camera-stage").querySelectorAll("[data-camera-station]")) {
+    group.querySelector(".camera-station").classList.toggle("active", group.dataset.cameraStation === pose.stationId);
+  }
+  el("camera-scrub").value = pattern.durationSec
+    ? Math.round((cameraPlayback.time / pattern.durationSec) * 1000)
+    : 0;
+  el("camera-time").textContent = `${cameraPlayback.time.toFixed(2)}s / ${pattern.durationSec.toFixed(2)}s`;
+}
+
+function selectCameraPattern(pattern) {
+  stopCameraPlayback();
+  state.cameraPattern = pattern;
+  for (const item of el("camera-list").children) {
+    item.classList.toggle("active", item.dataset.id === pattern.id);
+  }
+  renderCameraBoard(pattern);
+  seekCamera(0);
+  el("camera-note").textContent =
+    "The white rectangle is the camera viewport; the dashed rail and stations come from this typed pattern's region targets.";
+  el("camera-purpose").textContent = pattern.purpose;
+  el("camera-best-for").innerHTML = pattern.bestFor.map((entry) => `<span class="badge">${esc(entry)}</span>`).join("");
+  el("camera-motion").textContent = pattern.motionDescription;
+  el("camera-eye-trace").textContent = pattern.eyeTrace;
+  el("camera-moves").innerHTML = pattern.camera.path.map((move) => {
+    const target = move.toRegion || move.toPart || "current";
+    return `<div class="camera-move"><code>${esc(move.move)}</code><span>→ ${esc(target)}</span>` +
+      `<span>${move.startSec.toFixed(2)}–${(move.startSec + move.durationSec).toFixed(2)}s</span></div>`;
+  }).join("");
+  el("camera-plan").textContent = JSON.stringify(pattern.camera, null, 2);
+}
+
+el("camera-scrub").oninput = () => {
+  stopCameraPlayback();
+  const pattern = state.cameraPattern;
+  if (pattern) seekCamera((Number(el("camera-scrub").value) / 1000) * pattern.durationSec);
+};
+el("camera-play").onclick = () => {
+  const pattern = state.cameraPattern;
+  if (!pattern) return;
+  if (cameraPlayback.playing) { stopCameraPlayback(); return; }
+  cameraPlayback.playing = true;
+  el("camera-play").textContent = "Pause";
+  let last = performance.now();
+  const step = (now) => {
+    if (!cameraPlayback.playing) return;
+    let next = cameraPlayback.time + (now - last) / 1000;
+    last = now;
+    if (next >= pattern.durationSec) next = 0;
+    seekCamera(next);
+    cameraPlayback.raf = requestAnimationFrame(step);
+  };
+  cameraPlayback.raf = requestAnimationFrame(step);
+};
+
+/* ------------------------------------------------------------ plugins */
+
+function buildPluginList() {
+  const list = el("plugin-list");
+  list.innerHTML = "";
+  for (const plugin of state.plugins.entries) {
+    const item = document.createElement("div");
+    item.className = "nav-item";
+    item.dataset.id = plugin.kind;
+    item.innerHTML = `<div class="t">${esc(plugin.kind)}</div><div class="f">${plugin.params.length} params</div>`;
+    item.onclick = () => selectPlugin(plugin);
+    list.appendChild(item);
+  }
+}
+
+function pluginDefault(param) {
+  if (param.default !== undefined) return String(param.default);
+  if (param.options && param.options.length) return param.options[0];
+  return "required";
+}
+
+function selectPlugin(plugin) {
+  state.plugin = plugin;
+  for (const item of el("plugin-list").children) {
+    item.classList.toggle("active", item.dataset.id === plugin.kind);
+  }
+  const form = plugin.params.map((param) => `
+    <div class="plugin-param"><b>${esc(param.name)}</b><span>${esc(param.kind)} · ${esc(pluginDefault(param))}</span></div>`).join("");
+  el("plugin-stage").innerHTML = `
+    <div class="catalog-board plugin-board">
+      <div><div class="look-eyebrow">host-owned generator</div><div class="plugin-kind">${esc(plugin.kind)}</div></div>
+      <div class="plugin-purpose">${esc(plugin.purpose)}</div>
+      <div class="plugin-form">${form || "<span class='badge'>no params</span>"}</div>
+    </div>`;
+  el("plugin-note").textContent = "Read directly from PLUGIN_CATALOG; the Studio does not fork lowering or generated markup.";
+  el("plugin-purpose").textContent = plugin.purpose;
+  el("plugin-params").innerHTML = `<colgroup><col class="c-n"/><col class="c-k"/><col class="c-v"/></colgroup>` +
+    `<tr><th>name</th><th>contract</th><th>default</th></tr>` +
+    plugin.params.map((param) => {
+      const limits = [
+        param.options ? param.options.join(" | ") : "",
+        param.min !== undefined || param.max !== undefined ? `${param.min ?? "…"}–${param.max ?? "…"}` : "",
+        param.maxChars ? `≤${param.maxChars} chars` : "",
+      ].filter(Boolean).join(" · ");
+      return `<tr><td class="n">${esc(param.name)}<span class="d">${esc(param.description || "")}</span></td>` +
+        `<td>${esc(param.kind)}<span class="d">${esc(limits)}</span></td><td>${esc(pluginDefault(param))}</td></tr>`;
+    }).join("");
+  el("plugin-planning").textContent = plugin.planningLine;
+  el("plugin-example").textContent = JSON.stringify(plugin.example, null, 2);
 }
 
 /* ------------------------------------------------------------ recipes */
@@ -963,6 +1603,95 @@ el("recipe-export").onclick = () => runRecipeAction("export");
 
 /* ------------------------------------------------------------ boot */
 
+/* ------------------------------------------------------------ probes */
+
+function formatMs(ms) {
+  if (!Number.isFinite(ms)) return "—";
+  return ms >= 60000 ? (ms / 60000).toFixed(1) + "m" : (ms / 1000).toFixed(1) + "s";
+}
+
+function buildProbeList() {
+  const list = el("probe-list");
+  list.innerHTML = "";
+  for (const probe of state.probes.entries) {
+    const item = document.createElement("div");
+    item.className = "nav-item";
+    item.dataset.id = probe.id;
+    const attempts = probe.stages.reduce((sum, stage) => sum + Math.max(0, (stage.attempts || 1) - 1), 0);
+    const when = new Date(probe.renderedAt);
+    const flag = probe.disposition === "published-degraded" ? " · degraded" : "";
+    item.innerHTML = `<div class="t">${esc(probe.id)}</div>` +
+      `<div class="f">${esc(when.toLocaleString())} · ${attempts ? attempts + " retr" + (attempts === 1 ? "y" : "ies") : "clean attempts"}${esc(flag)}</div>`;
+    item.onclick = () => selectProbe(probe);
+    list.appendChild(item);
+  }
+  if (!state.probes.entries.length) {
+    list.innerHTML = '<div class="f" style="padding:8px">No rendered probes under .data/projects yet.</div>';
+  }
+}
+
+function selectProbe(probe, renderUrl) {
+  state.probe = probe;
+  for (const item of el("probe-list").children) {
+    if (item.dataset) item.classList.toggle("active", item.dataset.id === probe.id);
+  }
+  const video = el("probe-video");
+  video.src = renderUrl || probe.mp4;
+  video.load();
+  const strip = el("probe-strip");
+  el("probe-strip-block").style.display = probe.strip ? "" : "none";
+  if (probe.strip) strip.src = probe.strip;
+  const blocking = el("probe-blocking");
+  el("probe-blocking-block").style.display = probe.blocking ? "" : "none";
+  if (probe.blocking) blocking.src = probe.blocking;
+  const badge = el("probe-disposition");
+  badge.textContent = probe.disposition || "no sentinel receipt";
+  badge.className = "badge " + (probe.disposition === "published-degraded" ? "probe-badge-degraded" : "probe-badge-clean");
+  el("probe-summary").textContent =
+    `${(probe.mp4Bytes / 1048576).toFixed(1)} MB MP4 · wall clock ${formatMs(probe.wallClockMs)} · ` +
+    `${probe.thumbnails.length} moment thumbnails`;
+  const stages = el("probe-stages");
+  stages.innerHTML = "";
+  for (const stage of probe.stages) {
+    const row = document.createElement("tr");
+    row.innerHTML = `<td>${esc(stage.stage)}</td><td>${esc(String(stage.attempts))}</td>` +
+      `<td>${esc(formatMs(stage.durationMs))}</td>`;
+    stages.appendChild(row);
+  }
+  el("probe-degradations").innerHTML = probe.degradations.length
+    ? probe.degradations.map((entry) => `<div>· ${esc(entry)}</div>`).join("")
+    : "none — clean publish";
+  const renders = el("probe-renders");
+  renders.innerHTML = "";
+  const activeUrl = renderUrl || probe.mp4;
+  for (const render of probe.renders) {
+    const row = document.createElement("div");
+    row.className = "probe-render-row" + (render.url === activeUrl ? " active" : "");
+    row.innerHTML = `<b>${esc(render.name)}</b><span>${(render.bytes / 1048576).toFixed(1)} MB</span>`;
+    row.onclick = () => selectProbe(probe, render.url);
+    renders.appendChild(row);
+  }
+}
+
+async function refreshProbes() {
+  const data = await api("/api/probes");
+  state.probes = data.probes;
+  const selected = state.probe?.id;
+  buildProbeList();
+  const keep = selected && state.probes.entries.find((entry) => entry.id === selected);
+  if (keep) selectProbe(keep);
+  else if (state.probes.entries.length) selectProbe(state.probes.entries[0]);
+}
+
+// Refresh the list every time the tab is shown (probes finish while the
+// studio is open) and pause playback when leaving it.
+for (const tab of document.querySelectorAll(".tab")) {
+  tab.addEventListener("click", () => {
+    if (tab.dataset.view === "probes") refreshProbes().catch(() => undefined);
+    else el("probe-video")?.pause();
+  });
+}
+
 async function boot() {
   const themeSelect = el("theme-select");
   for (const name of Object.keys(THEMES)) {
@@ -981,6 +1710,9 @@ async function boot() {
   state.morph = data.morph;
   state.morphSpring = data.morph.default;
   state.recipes = data.recipes;
+  state.looks = data.looks;
+  state.camera = data.camera;
+  state.plugins = data.plugins;
 
   // Kit CSS injected ONCE, live from the catalog contract (never forked).
   const holder = document.createElement("div");
@@ -994,6 +1726,14 @@ async function boot() {
   if (state.assets.length) await selectAsset(state.assets[0]);
   buildRecipeList();
   if (state.recipes.entries.length) selectRecipe(state.recipes.entries[0].id);
+  buildLookList();
+  buildBackgroundList();
+  if (state.looks.entries.length) selectLook(state.looks.entries[0]);
+  buildCameraList();
+  if (state.camera.entries.length) selectCameraPattern(state.camera.entries[0]);
+  buildPluginList();
+  if (state.plugins.entries.length) selectPlugin(state.plugins.entries[0]);
+  await refreshProbes().catch(() => undefined);
 
   const wanted = location.hash.replace("#", "");
   const tab = document.querySelector(`.tab[data-view="${wanted}"]`);

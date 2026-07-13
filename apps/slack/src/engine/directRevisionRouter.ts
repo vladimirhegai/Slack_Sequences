@@ -31,6 +31,7 @@ interface InteractionPatch {
     | "hitInsetPx"
     | "cursorScale"
     | "targetScale"
+    | "item"
   >>;
 }
 
@@ -72,6 +73,7 @@ function parseRoute(raw: string): DirectRevisionRoute {
     "hitInsetPx",
     "cursorScale",
     "targetScale",
+    "item",
   ] as const) {
     if (typeof input[key] === "number" && Number.isFinite(input[key])) {
       changes[key] = input[key];
@@ -132,6 +134,8 @@ function safePatchedInteraction(
     value.aimX > 1 ||
     value.aimY < 0 ||
     value.aimY > 1 ||
+    (value.item !== undefined &&
+      (!Number.isInteger(value.item) || value.item < 1 || value.item > 48)) ||
     (value.pressSec !== undefined && value.pressSec - value.arriveSec < 0.08) ||
     (value.releaseSec !== undefined &&
       (value.pressSec === undefined || value.releaseSec <= value.pressSec))

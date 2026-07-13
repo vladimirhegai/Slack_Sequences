@@ -1,6 +1,6 @@
 /**
- * Slack-free smoke test of the whole pipeline:
- *   brief → plan (real provider) → applied project → thumbnails → MP4.
+ * Slack-free smoke test of the default creative pipeline:
+ *   brief → Luna direct composition → mechanical gate → thumbnails → MP4.
  *
  *   npm run smoke --workspace @sequences/slack -- "Relay v2: sub-100ms traces"
  *
@@ -24,7 +24,12 @@ const result = await createVideo({
   render: process.env.SMOKE_RENDER === "1",
 });
 
-console.log("\n=== Plan applied (%s, %s) ===", result.provider, result.usedMcp ? "via MCP" : "in-process");
+console.log(
+  "\n=== Composition applied (%s, %s, %s) ===",
+  result.authorRoute ?? "unknown-route",
+  result.provider,
+  result.usedMcp ? "via MCP" : "in-process",
+);
 for (const receipt of result.toolCalls) {
   console.log(`MCP ${receipt.tool.padEnd(16)} ${receipt.status} (${receipt.durationMs}ms)`);
 }

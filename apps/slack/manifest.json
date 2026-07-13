@@ -4,7 +4,7 @@
   },
   "display_information": {
     "name": "Sequences",
-    "description": "From shipped to shown — turn a launch into an on-brand video, in Slack.",
+    "description": "From shipped to shown — turn a launch into an on-brand video in Slack.",
     "background_color": "#161616"
   },
   "features": {
@@ -16,7 +16,7 @@
       {
         "command": "/sequences",
         "description": "Turn a launch into an on-brand video",
-        "usage_hint": "[asset | demo | mcp-test | help]",
+        "usage_hint": "[assets | assets clear | demo | mcp-test | debug on|off | help]",
         "should_escape": false
       }
     ],
@@ -30,6 +30,9 @@
     ]
   },
   "oauth_config": {
+    "redirect_urls": [
+      "https://sequences-slack-production.up.railway.app/slack/oauth_redirect"
+    ],
     "scopes": {
       "user": [
         "search:read.public",

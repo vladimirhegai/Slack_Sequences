@@ -41,7 +41,7 @@ export const ctaButton = defineAsset({
       name: "glow",
       kind: "number",
       description: "Bloom intensity 0–100",
-      default: 55,
+      default: 50,
       min: 0,
       max: 100,
       cssVar: "--cb-glow",
@@ -86,29 +86,31 @@ export const ctaButton = defineAsset({
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 1.7em;
+  padding: 0 1.75em;
   border-radius: 999px;
-  font-weight: 700;
-  letter-spacing: 0.005em;
+  font-weight: 650;
+  letter-spacing: -0.005em;
   white-space: nowrap;
   color: var(--accent-text, #0b0d11);
   background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--cb-accent, #6ea8ff) 88%, #ffffff),
-    var(--cb-accent, #6ea8ff) 62%
+    177deg,
+    color-mix(in srgb, var(--cb-accent, #6ea8ff) 84%, #ffffff),
+    var(--cb-accent, #6ea8ff) 58%
   );
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    inset 0 -0.35em 0.7em color-mix(in srgb, var(--cb-accent, #6ea8ff) 55%, rgba(0, 0, 0, 0.35)),
-    0 0.7em 1.8em rgba(0, 0, 0, 0.38),
-    0 0 calc((var(--cb-glow, 55) / 100) * (1.4em + var(--cb-pulse, 0) * 1.2em))
-      color-mix(in srgb, var(--cb-accent, #6ea8ff) calc(38% + var(--cb-pulse, 0) * 22%), transparent);
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -0.4em 0.7em color-mix(in srgb, var(--cb-accent, #6ea8ff) 52%, rgba(0, 0, 0, 0.32)),
+    0 0.16em 0.4em rgba(0, 0, 0, 0.24),
+    0 0.7em 1.7em rgba(0, 0, 0, 0.36),
+    0 0 calc((var(--cb-glow, 50) / 100) * (1.25em + var(--cb-pulse, 0) * 1.15em))
+      color-mix(in srgb, var(--cb-accent, #6ea8ff) calc(32% + var(--cb-pulse, 0) * 22%), transparent);
 }
 .asset-cta-button .cb-label { font-size: 1.05em; }
 .asset-cta-button .cb-arrow {
-  margin-left: 0.55em;
-  font-size: 1.02em;
-  transform: translateY(-0.03em);
+  margin-left: 0.5em;
+  font-size: 1em;
+  transform: translateX(calc(var(--cb-pulse, 0) * 0.12em)) translateY(-0.03em);
+  opacity: 0.92;
 }
 `.trim(),
   render: ({ params, partId, escapeHtml }) =>

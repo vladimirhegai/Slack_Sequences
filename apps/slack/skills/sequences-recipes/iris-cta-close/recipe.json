@@ -1,0 +1,84 @@
+{
+  "format": 2,
+  "revision": 2,
+  "id": "iris-cta-close",
+  "title": "Iris-flood CTA end card with ignition pop",
+  "description": "An accent iris floods out from behind a ghost CTA pill, the pill ignites to solid accent with a committed pop, and the supporting line settles beneath — a big, confident close.",
+  "tags": [
+    "cta",
+    "end-card",
+    "close",
+    "iris",
+    "button",
+    "resolve",
+    "conversion"
+  ],
+  "triggerPatterns": [
+    "iris",
+    "call[ -]?to[ -]?action",
+    "\\bcta\\b",
+    "(start|get) (your )?(free )?(trial|demo)",
+    "get started",
+    "sign[ -]?up",
+    "end[ -]?card",
+    "closing (card|shot|cta|button)",
+    "final (cta|button|card)",
+    "button .*(fills|ignites|pops|lands)"
+  ],
+  "durationWindow": {
+    "minSec": 3,
+    "maxSec": 10
+  },
+  "componentKinds": [
+    "button"
+  ],
+  "params": [
+    {
+      "name": "kicker",
+      "kind": "text",
+      "description": "Short line above the button that frames the ask.",
+      "default": "Ready when you are",
+      "maxChars": 32
+    },
+    {
+      "name": "label",
+      "kind": "text",
+      "description": "The button copy — the one action the film asks for.",
+      "maxChars": 22
+    },
+    {
+      "name": "sub",
+      "kind": "text",
+      "description": "Reassurance line under the button (pricing, friction-remover, URL).",
+      "default": "Free to start · no credit card",
+      "maxChars": 44
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for the iris flood, ring, and ignited button.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "settleSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the iris lands and the button ignites (leave >=1s of scene after it).",
+      "default": 2.2,
+      "min": 1.6,
+      "max": 8
+    }
+  ],
+  "engine": {
+    "kitVersions": {
+      "componentKit": 1,
+      "componentRuntime": 1,
+      "cameraRuntime": 1,
+      "cutRuntime": 1,
+      "interactionRuntime": 1,
+      "timeRuntime": 1,
+      "fxRuntime": 1,
+      "cinemaKit": 1
+    }
+  },
+  "fragmentHash": "5dd3472df75bde10ead5b7262447c0ae9bb6160b2ca27f1b52780ac01c8e450c"
+}

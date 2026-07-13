@@ -4,10 +4,16 @@ import {
   COMPONENT_CATALOG,
   COMPONENT_KIT_STYLE_ID,
   COMPONENT_RUNTIME_FILE,
+  DEFAULT_COMPONENT_FOLLOW_LAG_MS,
+  MAX_COMPONENT_EXIT_RECEDE_PERCENT,
+  MAX_COMPONENT_FOLLOW_CHAIN_DEPTH,
+  MAX_COMPONENT_FOLLOW_LAG_MS,
+  MIN_COMPONENT_FOLLOW_LAG_MS,
   MAX_POP_OPENS_PER_SCENE,
   auditComponentComplexity,
   auditSurfaceExits,
   componentAuthoringReference,
+  componentKindsMorphCompatible,
   dedupeRedundantBeats,
   degradeOpenPopStyles,
   componentKitSource,
@@ -18,9 +24,13 @@ import {
   injectComponentKit,
   injectComponentRuntimeTag,
   normalizeStoryboardComponentBeats,
+  normalizeStoryboardComponentEntranceFamily,
   normalizeStoryboardComponents,
   parseComponentPlan,
+  reconcileMetricComponentKinds,
+  retimeLateLoadBearingEntrances,
   resolveComponentPlan,
+  topUpHeldInteractionResultDevelopment,
   trimOverBudgetComponents,
   validateComponentContract,
   type ComponentBeatIntentV1,
@@ -43,6 +53,17 @@ function scene(
 
 const window = { sceneId: "s1", startSec: 0, durationSec: 8 };
 
+describe("component morph families", () => {
+  it("treats two declared instances of one kind as semantic peers", () => {
+    expect(componentKindsMorphCompatible("button", "button")).toBe(true);
+    expect(componentKindsMorphCompatible("stat-card", "stat-card")).toBe(true);
+    expect(componentKindsMorphCompatible("search", "command-palette")).toBe(true);
+    expect(componentKindsMorphCompatible("button", "progress-ring")).toBe(false);
+    expect(componentPlanningVocabulary()).toContain("button:");
+    expect(componentPlanningVocabulary()).toContain("morphs↔same-kind");
+  });
+});
+
 function declared(...kinds: Array<[string, SceneComponentSpecV1["kind"]]>): SceneComponentSpecV1[] {
   return kinds.map(([id, kind]) => ({ version: 1, id, kind }));
 }
@@ -58,6 +79,32 @@ describe("normalizeStoryboardComponents", () => {
     expect(components).toEqual([
       { version: 1, id: "search-bar", kind: "search", region: "hero", role: "hero" },
     ]);
+  });
+});
+
+describe("reconcileMetricComponentKinds", () => {
+  it("upgrades only a counted metric headline to a stat card", () => {
+    const components: SceneComponentSpecV1[] = [
+      { version: 1, id: "score", kind: "headline", entityId: "metric" },
+      { version: 1, id: "title", kind: "headline", entityId: "metric" },
+      { version: 1, id: "copy", kind: "headline" },
+    ];
+    const beats: ComponentBeatIntentV1[] = [{
+      version: 1,
+      id: "score-count",
+      sceneId: "proof",
+      component: "score",
+      kind: "count",
+      atSec: 1,
+      value: 66,
+    }];
+    const result = reconcileMetricComponentKinds(components, beats);
+    expect(result.components.map((component) => component.kind)).toEqual([
+      "stat-card",
+      "headline",
+      "headline",
+    ]);
+    expect(result.normalized).toHaveLength(1);
   });
 });
 
@@ -110,9 +157,247 @@ describe("normalizeStoryboardComponentBeats", () => {
     ], window, declared(["bar", "progress"]));
     expect(progress[0]!.value).toBe(1);
   });
+
+  it("normalizes follows references and clamps optional lag to 60..120ms", () => {
+    const beats = normalizeStoryboardComponentBeats([
+      { id: "lead", component: "search-bar", kind: "open", atSec: 1 },
+      { id: "fast", component: "search-bar", kind: "highlight", atSec: 2, follows: "lead", lagMs: 5 },
+      { id: "slow", component: "search-bar", kind: "highlight", atSec: 3, follows: "palette", lagMs: 900 },
+      { id: "bad", component: "search-bar", kind: "highlight", atSec: 4, follows: "Bad ref!", lagMs: 90 },
+    ], window, components);
+    expect(beats[1]).toMatchObject({ follows: "lead", lagMs: MIN_COMPONENT_FOLLOW_LAG_MS });
+    expect(beats[2]).toMatchObject({ follows: "palette", lagMs: MAX_COMPONENT_FOLLOW_LAG_MS });
+    expect(beats[3]!.follows).toBeUndefined();
+    expect(beats[3]!.lagMs).toBeUndefined();
+  });
+
+  it("accepts only the three scene entrance families", () => {
+    expect(normalizeStoryboardComponentEntranceFamily(" RISE ")).toBe("rise");
+    expect(normalizeStoryboardComponentEntranceFamily("assemble")).toBe("assemble");
+    expect(normalizeStoryboardComponentEntranceFamily("materialize")).toBe("materialize");
+    expect(normalizeStoryboardComponentEntranceFamily("scatter")).toBeUndefined();
+  });
+});
+
+describe("retimeLateLoadBearingEntrances", () => {
+  it("moves an existing hero rows entrance into the opening runway and carries its moment", () => {
+    const result = retimeLateLoadBearingEntrances([
+      scene({
+        id: "review",
+        startSec: 0,
+        durationSec: 4,
+        cut: {
+          version: 1,
+          style: "morph",
+          focalPartOut: "confirm-pill",
+          focalPartIn: "confirmed-row",
+        },
+      }),
+      scene({
+        id: "confirmation",
+        startSec: 4,
+        durationSec: 6,
+        components: [{
+          version: 1,
+          id: "confirmation-list",
+          kind: "list",
+          role: "hero",
+          region: "confirmation-stage",
+        }],
+        beats: [{
+          version: 1,
+          id: "rows-arrive",
+          sceneId: "confirmation",
+          component: "confirmation-list",
+          kind: "rows",
+          atSec: 5.8,
+          durationSec: 1.2,
+        }],
+        moments: [{
+          version: 1,
+          id: "rows-readable",
+          sceneId: "confirmation",
+          atSec: 5.8,
+          title: "Confirmed rows arrive",
+          visualState: "The confirmed list is readable",
+          change: "The existing rows resolve",
+          motionIntent: "reveal",
+          importance: "primary",
+        }],
+        camera: {
+          version: 1,
+          path: [{
+            version: 1,
+            move: "pull-back",
+            startSec: 4,
+            durationSec: 2,
+            toRegion: "confirmation-stage",
+          }],
+        },
+        spatialIntent: {
+          version: 1,
+          focalPart: "confirmation-list",
+          composition: "centered confirmation",
+          relationships: [],
+        },
+      }),
+    ]);
+
+    expect(result.scenes[1]!.beats![0]!.atSec).toBe(4.48);
+    expect(result.scenes[1]!.moments![0]!.atSec).toBe(4.48);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.normalized[0]).toContain("cannot leave the opening station blank");
+    expect(result.scenes[1]!.sentinelNormalizations?.[0]).toContain("entrance-retime:");
+  });
+
+  it("does not pull a deliberate late CTA open forward", () => {
+    const late = scene({
+      id: "close",
+      startSec: 0,
+      durationSec: 6,
+      components: [{ version: 1, id: "cta", kind: "button", role: "hero", region: "cta-stage" }],
+      beats: [{
+        version: 1,
+        id: "cta-opens",
+        sceneId: "close",
+        component: "cta",
+        kind: "open",
+        atSec: 4.2,
+      }],
+      camera: {
+        version: 1,
+        path: [{ version: 1, move: "hold", startSec: 0, durationSec: 3, toRegion: "metric-stage" }],
+      },
+      spatialIntent: { version: 1, focalPart: "metric", composition: "metric then CTA", relationships: [] },
+    });
+    const result = retimeLateLoadBearingEntrances([late]);
+    expect(result.scenes[0]!.beats![0]!.atSec).toBe(4.2);
+    expect(result.normalized).toEqual([]);
+  });
+
+  it("leaves a later rows refresh in place when the component already entered", () => {
+    const refresh = scene({
+      id: "feed",
+      startSec: 0,
+      durationSec: 6,
+      components: [{ version: 1, id: "activity", kind: "list", role: "hero" }],
+      beats: [
+        { version: 1, id: "initial", sceneId: "feed", component: "activity", kind: "rows", atSec: 0.4 },
+        { version: 1, id: "new-page", sceneId: "feed", component: "activity", kind: "rows", atSec: 4.2 },
+      ],
+      spatialIntent: { version: 1, focalPart: "activity", composition: "live feed", relationships: [] },
+    });
+    const result = retimeLateLoadBearingEntrances([refresh]);
+    expect(result.scenes[0]!.beats!.map((beat) => beat.atSec)).toEqual([0.4, 4.2]);
+    expect(result.normalized).toEqual([]);
+  });
+
+  it("keeps supporting rows as mid-shot development when they only share the hero region", () => {
+    const review = scene({
+      id: "review",
+      startSec: 4,
+      durationSec: 5.6,
+      components: [
+        { version: 1, id: "date-card", kind: "app-window", role: "support", region: "review-stage" },
+        { version: 1, id: "confirm", kind: "button", role: "hero", region: "review-stage" },
+      ],
+      beats: [{
+        version: 1,
+        id: "metadata-shift",
+        sceneId: "review",
+        component: "date-card",
+        kind: "rows",
+        atSec: 5.8,
+      }],
+      camera: {
+        version: 1,
+        path: [{
+          version: 1,
+          move: "push-in",
+          startSec: 4,
+          durationSec: 2,
+          toRegion: "review-stage",
+        }],
+      },
+      spatialIntent: {
+        version: 1,
+        focalPart: "confirm",
+        composition: "support develops under the hero",
+        relationships: [],
+      },
+    });
+    const result = retimeLateLoadBearingEntrances([review]);
+    expect(result.scenes[0]!.beats![0]!.atSec).toBe(5.8);
+    expect(result.normalized).toEqual([]);
+  });
 });
 
 describe("resolveComponentPlan", () => {
+  it("starts a repeated metric from the prior resolved continuity value", () => {
+    const metric = (id: string, startSec: number, part: string, value: number): DirectScene => ({
+      id,
+      title: id,
+      purpose: "advance a persistent metric",
+      startSec,
+      durationSec: 3,
+      components: [{ version: 1, id: part, kind: "stat-card", entityId: "score" }],
+      beats: [{
+        version: 1, id: `${part}-count`, sceneId: id, component: part,
+        kind: "count", atSec: startSec + 0.5, durationSec: 1, value,
+      }],
+    });
+    const plan = resolveComponentPlan([
+      { ...metric("one", 0, "score-a", 38), cut: { version: 1, style: "swipe", axis: "left" } },
+      metric("two", 3, "score-b", 71),
+    ]);
+    expect(plan.scenes[1]?.initialStates).toEqual([
+      { component: "score-b", state: { kind: "metric", value: 38 } },
+    ]);
+    expect(plan.scenes[1]?.beats[0]).toMatchObject({ value: 71, fromValue: 38 });
+    expect(parseComponentPlan(
+      `<script type="application/json" id="sequences-components">${JSON.stringify(plan)}</script>`,
+    )).toEqual({ plan, errors: [] });
+  });
+
+  it("initializes a metric after an intervening continuity hold", () => {
+    const metric = (
+      id: string,
+      startSec: number,
+      part: string,
+      value?: number,
+    ): DirectScene => ({
+      id,
+      title: id,
+      purpose: "hold one persistent score",
+      startSec,
+      durationSec: 3,
+      components: [{ version: 1, id: part, kind: "stat-card", entityId: "score" }],
+      ...(value === undefined
+        ? {}
+        : {
+            beats: [{
+              version: 1 as const,
+              id: `${part}-count`,
+              sceneId: id,
+              component: part,
+              kind: "count" as const,
+              atSec: startSec + 0.5,
+              durationSec: 1,
+              value,
+            }],
+          }),
+    });
+    const plan = resolveComponentPlan([
+      metric("one", 0, "score-a", 38),
+      metric("hold", 3, "score-b"),
+      metric("three", 6, "score-c", 94),
+    ]);
+
+    expect(plan.scenes.find((scene) => scene.sceneId === "hold")?.initialStates)
+      .toEqual([{ component: "score-b", state: { kind: "metric", value: 38 } }]);
+    expect(plan.scenes.find((scene) => scene.sceneId === "three")?.beats[0])
+      .toMatchObject({ value: 94, fromValue: 38 });
+  });
   function planScene(beats: ComponentBeatIntentV1[], components?: SceneComponentSpecV1[]): DirectScene {
     return scene({
       id: "s1",
@@ -144,6 +429,137 @@ describe("resolveComponentPlan", () => {
     const beats = plan.scenes[0]!.beats;
     expect(beats.map((beat) => beat.id)).toEqual(["late"]);
     expect(beats[0]!.endSec).toBeLessThanOrEqual(8);
+  });
+
+  it("compiles beat-id/component follows with bounded lag, subtle ease, and last settle", () => {
+    const plan = resolveComponentPlan([planScene([
+      {
+        version: 1, id: "lead", sceneId: "s1", component: "metric", kind: "count",
+        atSec: 1, durationSec: 1,
+      },
+      {
+        version: 1, id: "chart", sceneId: "s1", component: "growth", kind: "chart",
+        atSec: 5, durationSec: 0.6, follows: "lead", lagMs: 60,
+      },
+      {
+        version: 1, id: "rows", sceneId: "s1", component: "orders", kind: "rows",
+        atSec: 6, durationSec: 0.5, follows: "growth",
+      },
+    ], declared(["metric", "stat-card"], ["growth", "chart-bars"], ["orders", "table"]))]);
+    const [lead, chart, rows] = plan.scenes[0]!.beats;
+    expect(chart).toMatchObject({
+      follows: "lead", lagMs: 60, followDepth: 1, startSec: 1.06, ease: "sine.out",
+    });
+    expect(chart!.endSec).toBeGreaterThan(lead!.endSec);
+    expect(rows).toMatchObject({
+      follows: "growth", lagMs: DEFAULT_COMPONENT_FOLLOW_LAG_MS,
+      followDepth: 2, startSec: 1.15, ease: "sine.out",
+    });
+    expect(rows!.endSec).toBeGreaterThan(chart!.endSec);
+  });
+
+  it("degrades a follow that would overlap one component's same property channel", () => {
+    const plan = resolveComponentPlan([planScene([
+      { version: 1, id: "ring-a", sceneId: "s1", component: "cta", kind: "highlight", atSec: 1 },
+      {
+        version: 1, id: "ring-b", sceneId: "s1", component: "cta", kind: "highlight",
+        atSec: 3, follows: "ring-a",
+      },
+    ], declared(["cta", "button"]))]);
+    expect(plan.scenes[0]!.beats[1]).toMatchObject({ id: "ring-b", startSec: 3 });
+    expect(plan.scenes[0]!.beats[1]!.follows).toBeUndefined();
+  });
+
+  it("degrades cycles, missing leads, and relationships beyond the depth cap", () => {
+    const beat = (
+      id: string,
+      atSec: number,
+      follows?: string,
+    ): ComponentBeatIntentV1 => ({
+      version: 1, id, sceneId: "s1", component: `${id}-cmp`, kind: "highlight", atSec,
+      ...(follows ? { follows } : {}),
+    });
+    const ids = ["a", "b", "c", "d", "over-depth", "cycle-a", "cycle-b", "missing"];
+    const components: SceneComponentSpecV1[] = ids.map((id) => ({
+      version: 1, id: `${id}-cmp`, kind: "button",
+    }));
+    const plan = resolveComponentPlan([planScene([
+      beat("a", 1),
+      beat("b", 2, "a"),
+      beat("c", 3, "b"),
+      beat("d", 4, "c"),
+      beat("over-depth", 5, "d"),
+      beat("cycle-a", 6, "cycle-b"),
+      beat("cycle-b", 6.5, "cycle-a"),
+      beat("missing", 7, "ghost"),
+    ], components)]);
+    const byId = new Map(plan.scenes[0]!.beats.map((entry) => [entry.id, entry]));
+    expect(byId.get("d")?.followDepth).toBe(MAX_COMPONENT_FOLLOW_CHAIN_DEPTH);
+    expect(byId.get("over-depth")).toMatchObject({ startSec: 5 });
+    expect(byId.get("over-depth")?.follows).toBeUndefined();
+    expect(byId.get("cycle-a")).toMatchObject({ startSec: 6 });
+    expect(byId.get("cycle-b")).toMatchObject({ startSec: 6.5 });
+    expect(byId.get("cycle-a")?.follows).toBeUndefined();
+    expect(byId.get("cycle-b")?.follows).toBeUndefined();
+    expect(byId.get("missing")).toMatchObject({ startSec: 7 });
+    expect(byId.get("missing")?.follows).toBeUndefined();
+  });
+
+  it("resolves one scene entrance family into offset free-component windows", () => {
+    const storyboard = scene({
+      id: "family",
+      startSec: 0,
+      durationSec: 6,
+      componentEntranceFamily: "assemble",
+      components: [
+        { version: 1, id: "early", kind: "button" },
+        { version: 1, id: "matrix", kind: "table" },
+        { version: 1, id: "plugin-tile", kind: "stat-card", pluginUid: "family-plugin" },
+        { version: 1, id: "source", kind: "search" },
+        { version: 1, id: "target", kind: "command-palette" },
+      ],
+      beats: [
+        { version: 1, id: "early-open", sceneId: "family", component: "early", kind: "open", atSec: 0.4 },
+        { version: 1, id: "later-morph", sceneId: "family", component: "source", kind: "morph", morphTo: "target", atSec: 3 },
+      ],
+    });
+    const scenePlan = resolveComponentPlan([storyboard]).scenes[0]!;
+    expect(scenePlan.entranceFamily).toBe("assemble");
+    expect(scenePlan.entrances?.map((entry) => entry.component)).toEqual(["matrix", "source"]);
+    expect(scenePlan.entrances?.[1]!.startSec).toBeGreaterThan(scenePlan.entrances?.[0]!.startSec ?? 0);
+    expect(scenePlan.entrances?.every((entry) => entry.ease === "power3.out")).toBe(true);
+
+    const familyOnly = resolveComponentPlan([scene({
+      id: "material",
+      startSec: 6,
+      durationSec: 3,
+      componentEntranceFamily: "materialize",
+      components: declared(["matrix", "table"]),
+    })]).scenes[0]!;
+    expect(familyOnly.beats).toEqual([]);
+    expect(familyOnly.entrances?.[0]).toMatchObject({ component: "matrix", ease: "sine.out" });
+  });
+
+  it("derives subtle directional close metadata from the outgoing swipe", () => {
+    const plan = resolveComponentPlan([scene({
+      id: "exit",
+      startSec: 0,
+      durationSec: 5,
+      components: declared(["search", "search"]),
+      beats: [{
+        version: 1, id: "retire", sceneId: "exit", component: "search", kind: "close",
+        atSec: 4, ease: "expo.out",
+      }],
+      cut: { version: 1, style: "swipe", axis: "up" },
+    })]);
+    expect(plan.scenes[0]!.beats[0]).toMatchObject({
+      kind: "close",
+      ease: "power2.in",
+      exitAxis: "up",
+      exitRecedePercent: 18,
+    });
+    expect(plan.scenes[0]!.beats[0]!.exitRecedePercent)
+      .toBeLessThanOrEqual(MAX_COMPONENT_EXIT_RECEDE_PERCENT);
   });
 
   it("returns an empty plan when no scene declares beats", () => {
@@ -271,6 +687,36 @@ describe("validateComponentContract", () => {
     expect(validateComponentContract(html, [styledScene]).errors).toEqual([]);
   });
 
+  it("round-trips entrance, follows, and directional-exit additions in the v1 island", () => {
+    const choreographyScene = scene({
+      id: "choreo",
+      startSec: 0,
+      durationSec: 5,
+      componentEntranceFamily: "rise",
+      components: declared(["matrix", "table"], ["search", "search"]),
+      beats: [
+        { version: 1, id: "rows", sceneId: "choreo", component: "matrix", kind: "rows", atSec: 1 },
+        {
+          version: 1, id: "retire", sceneId: "choreo", component: "search", kind: "close",
+          atSec: 4, follows: "rows", lagMs: 120,
+        },
+      ],
+      cut: { version: 1, style: "swipe", axis: "right" },
+    });
+    const resolved = resolveComponentPlan([choreographyScene]);
+    const island = JSON.stringify(resolved);
+    const parsed = parseComponentPlan(
+      `<script type="application/json" id="sequences-components">${island}</script>`,
+    );
+    expect(parsed.errors).toEqual([]);
+    expect(JSON.stringify(parsed.plan)).toBe(island);
+    expect(parsed.plan?.scenes[0]?.entranceFamily).toBe("rise");
+    expect(parsed.plan?.scenes[0]?.beats[1]).toMatchObject({
+      follows: "rows", lagMs: 120, followDepth: 1,
+      exitAxis: "right", exitRecedePercent: 18,
+    });
+  });
+
   it("requires every declared component to bind to exactly one kind-marked element", () => {
     const scenes = [componentScene()];
     const missingPart = validateComponentContract(
@@ -325,6 +771,23 @@ describe("component motion windows and density evidence", () => {
     const windows = componentMotionWindows(resolveComponentPlan([componentScene()]));
     expect(windows).toHaveLength(1); // the morph; plain typewriter type does not suppress QA
     expect(windows[0]!.start).toBeCloseTo(3.95, 2);
+  });
+
+  it("exposes host entrance-family windows for layout-QA suppression", () => {
+    const plan = resolveComponentPlan([scene({
+      id: "family-window",
+      startSec: 2,
+      durationSec: 4,
+      componentEntranceFamily: "materialize",
+      components: declared(["stat", "stat-card"], ["table", "table"]),
+    })]);
+    const entrances = plan.scenes[0]!.entrances!;
+    const windows = componentMotionWindows(plan);
+    expect(windows).toHaveLength(entrances.length);
+    expect(windows[0]).toEqual({
+      start: entrances[0]!.startSec - 0.05,
+      end: entrances[0]!.endSec + 0.1,
+    });
   });
 
   it("suppresses layout QA during a split-style headline entrance (MD3 scatter)", () => {
@@ -429,6 +892,14 @@ describe("catalog / kit / runtime coherence", () => {
       );
     }
     expect(js).toContain("compileMorph");
+    expect(js).toContain("compileSceneEntrances");
+    expect(js).toContain("exitRecedePercent");
+    expect(js).toContain("assembleEntranceOffset");
+    expect(js).toContain("compileSettleBlooms");
+    expect(js).toContain("cmp-settle-bloom");
+    expect(js).toContain('beat.kind === "close"');
+    expect(js).not.toContain("el.style.filter");
+    expect(js).toContain('return ":scope > " + entry.trim()');
     expect(js).not.toMatch(/Math\.random|Date\.now|setTimeout|requestAnimationFrame/);
   });
 
@@ -497,6 +968,152 @@ describe("deterministic fallback proof", () => {
     const parsed = parseComponentPlan(draft.html);
     expect(parsed.errors).toEqual([]);
     expect(parsed.plan).toEqual(resolveComponentPlan(draft.storyboard));
+  });
+});
+
+describe("topUpHeldInteractionResultDevelopment", () => {
+  const heldApproval = (): DirectScene => scene({
+    id: "approval",
+    startSec: 10,
+    durationSec: 6,
+    camera: {
+      version: 1,
+      path: [{ version: 1, move: "hold", startSec: 10, durationSec: 6, toRegion: "approval" }],
+    },
+    components: [{ version: 1, id: "confirm", kind: "button", region: "approval" }],
+    beats: [{
+      version: 1,
+      id: "confirm-ready",
+      sceneId: "approval",
+      component: "confirm",
+      kind: "set-state",
+      atSec: 12,
+      toState: "succeeded",
+    }],
+    interactions: [{
+      version: 1,
+      id: "confirm-click",
+      sceneId: "approval",
+      cursorId: "cursor-1",
+      targetPart: "confirm",
+      action: "click",
+      startSec: 11,
+      arriveSec: 11.5,
+      pressSec: 11.7,
+      releaseSec: 11.9,
+      from: "frame:bottom-right",
+      path: "arc",
+      aimX: 0.5,
+      aimY: 0.5,
+      feedback: "press-ripple",
+    }],
+    moments: [
+      {
+        version: 1,
+        id: "cursor-arrives",
+        sceneId: "approval",
+        atSec: 11.5,
+        title: "Cursor arrives",
+        visualState: "Cursor is on confirm",
+        change: "Confirmation begins",
+        motionIntent: "interaction",
+        importance: "primary",
+      },
+      {
+        version: 1,
+        id: "ready",
+        sceneId: "approval",
+        atSec: 12,
+        title: "Ready",
+        visualState: "Confirmation succeeded",
+        change: "Result is ready",
+        motionIntent: "resolve",
+        importance: "primary",
+      },
+    ],
+  });
+
+  it("adds one late typed highlight to a successful result held under a camera lock", () => {
+    const result = topUpHeldInteractionResultDevelopment([heldApproval()]);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.scenes[0]!.beats).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "approval-held-result-highlight",
+        component: "confirm",
+        kind: "highlight",
+        atSec: 14.4,
+        durationSec: 0.8,
+        style: "ring",
+      }),
+    ]));
+    expect(topUpHeldInteractionResultDevelopment(result.scenes)).toEqual({
+      scenes: result.scenes,
+      normalized: [],
+    });
+  });
+
+  it("binds an unsupported late held-result moment after an early push and drift", () => {
+    const candidate = heldApproval();
+    candidate.camera = {
+      version: 1,
+      path: [
+        {
+          version: 1,
+          move: "push-in",
+          startSec: 10,
+          durationSec: 1,
+          toRegion: "approval",
+        },
+        {
+          version: 1,
+          move: "drift",
+          startSec: 11,
+          durationSec: 5,
+        },
+      ],
+    };
+    candidate.beats![0] = { ...candidate.beats![0]!, toState: "succeed" };
+    candidate.moments!.push({
+      version: 1,
+      id: "ready-holds",
+      sceneId: "approval",
+      atSec: 15.5,
+      title: "Ready state holds",
+      visualState: "Confirmation remains ready under the held frame",
+      change: "The successful result settles without a new surface",
+      motionIntent: "resolve",
+      importance: "supporting",
+    });
+
+    const result = topUpHeldInteractionResultDevelopment([candidate]);
+    expect(result.normalized).toHaveLength(1);
+    expect(result.scenes[0]!.beats).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "approval-held-result-highlight",
+        component: "confirm",
+        kind: "highlight",
+        atSec: 14.4,
+        durationSec: 0.8,
+      }),
+    ]));
+  });
+
+  it("does not manufacture a late accent for travel, a non-final state, or a cramped tail", () => {
+    const moving = heldApproval();
+    moving.camera = {
+      version: 1,
+      path: [{ version: 1, move: "push-in", startSec: 12.8, durationSec: 2, toRegion: "approval" }],
+    };
+    const pending = heldApproval();
+    pending.beats![0] = { ...pending.beats![0]!, toState: "pending" };
+    const cramped = heldApproval();
+    cramped.beats![0] = { ...cramped.beats![0]!, atSec: 13.9 };
+    for (const candidate of [moving, pending, cramped]) {
+      expect(topUpHeldInteractionResultDevelopment([candidate])).toEqual({
+        scenes: [candidate],
+        normalized: [],
+      });
+    }
   });
 });
 
@@ -801,6 +1418,76 @@ describe("auditComponentComplexity", () => {
         components: declared(["metric", "stat-card"], ["chart", "chart-line"]),
       }),
     ])).toEqual([]);
+  });
+
+  it("charges one stable continuity entity once across the film", () => {
+    const shots = ["token", "active-pill", "approve", "final-cta"].map((id, index) =>
+      scene({
+        id: `s${index}`,
+        startSec: index * 4,
+        durationSec: 4,
+        components: [
+          { version: 1, id, kind: "button", entityId: "cta" },
+          { version: 1, id: `surface-${index}`, kind: "stat-card" },
+        ],
+      })
+    );
+    // Eight declarations in 16s fit the cap either way; the extra two surfaces
+    // prove that the four CTA appearances cost one film-wide unit, not four.
+    shots[1]!.components!.push({ version: 1, id: "nav", kind: "sidebar" });
+    shots[2]!.components!.push({ version: 1, id: "toast", kind: "toast" });
+    expect(shots.reduce((count, shot) => count + shot.components!.length, 0)).toBe(10);
+    expect(auditComponentComplexity(shots)).toEqual([]);
+  });
+
+  it("still charges same-scene duplicates and unrelated entities independently", () => {
+    const shots = [
+      scene({
+        id: "a",
+        startSec: 0,
+        durationSec: 4,
+        components: [
+          { version: 1, id: "cta-a", kind: "button", entityId: "cta" },
+          { version: 1, id: "cta-a-copy", kind: "button", entityId: "cta" },
+          { version: 1, id: "card-a", kind: "stat-card" },
+        ],
+      }),
+      scene({
+        id: "b",
+        startSec: 4,
+        durationSec: 4,
+        components: [
+          { version: 1, id: "cta-b", kind: "button", entityId: "cta" },
+          { version: 1, id: "card-b", kind: "stat-card" },
+          { version: 1, id: "toast-b", kind: "toast" },
+        ],
+      }),
+    ];
+    expect(auditComponentComplexity(shots).some((finding) => finding.includes("across"))).toBe(true);
+  });
+
+  it("counts one app-window chassis and its same-station child as one surface", () => {
+    const bridge = scene({
+      id: "lateral-collapse",
+      startSec: 3,
+      durationSec: 2,
+      components: [
+        { version: 1, id: "action-bar", kind: "button", region: "dashboard-station" },
+        { version: 1, id: "product-shell", kind: "app-window", region: "dashboard-station" },
+      ],
+    });
+    expect(auditComponentComplexity([bridge])).toEqual([]);
+
+    const withOverlay = {
+      ...bridge,
+      components: [
+        ...bridge.components!,
+        { version: 1 as const, id: "notice", kind: "toast" as const, region: "dashboard-station" },
+      ],
+    };
+    expect(auditComponentComplexity([withOverlay]).some((finding) =>
+      finding.includes('scene "lateral-collapse"')
+    )).toBe(true);
   });
 });
 

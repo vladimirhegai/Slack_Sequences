@@ -16,6 +16,35 @@
     return scene.querySelector('[data-part="' + CSS.escape(name) + '"]');
   }
 
+  function childItems(element) {
+    function scoped(selector) {
+      var direct = element.querySelectorAll(":scope > " + selector);
+      return direct.length ? direct : element.querySelectorAll(selector);
+    }
+    var selectors = [
+      ".cmp-row", ".cmp-item", ".cmp-card", ".cmp-msg", "[data-cmp-item]",
+      '[class$="-row"],[class*="-row "]', "i",
+    ];
+    for (var i = 0; i < selectors.length; i += 1) {
+      var found = scoped(selectors[i]);
+      if (found.length) return Array.prototype.slice.call(found);
+    }
+    return [];
+  }
+
+  function interactionTarget(scene, intent, targetName) {
+    var name = targetName || intent.targetPart;
+    var element = part(scene, name);
+    if (!element || name !== intent.targetPart ||
+        typeof intent.item !== "number" || !isFinite(intent.item)) {
+      return element;
+    }
+    var items = childItems(element);
+    if (!items.length) return element;
+    var index = Math.max(0, Math.min(items.length - 1, Math.round(intent.item) - 1));
+    return items[index];
+  }
+
   function cursor(root, id) {
     return root.querySelector('[data-cursor-id="' + CSS.escape(id) + '"]');
   }
@@ -59,7 +88,7 @@
   }
 
   function targetPoint(scene, intent, targetName) {
-    var element = part(scene, targetName || intent.targetPart);
+    var element = interactionTarget(scene, intent, targetName);
     if (!element) return null;
     var rect = element.getBoundingClientRect();
     var requested = pointInRect(rect, intent.aimX, intent.aimY, intent.offsetX, intent.offsetY);
@@ -76,7 +105,12 @@
 
   function localize(root, point) {
     var rootRect = root.getBoundingClientRect();
-    return { x: point.x - rootRect.left, y: point.y - rootRect.top };
+    var scaleX = root.offsetWidth ? rootRect.width / root.offsetWidth : 1;
+    var scaleY = root.offsetHeight ? rootRect.height / root.offsetHeight : 1;
+    return {
+      x: (point.x - rootRect.left) / Math.max(0.0001, scaleX),
+      y: (point.y - rootRect.top) / Math.max(0.0001, scaleY),
+    };
   }
 
   function cursorHotspot(element) {
@@ -137,10 +171,45 @@
     };
   }
 
+  // Re-parameterize authored direct/quadratic/custom paths by approximate arc
+  // length. Equal Bezier `t` does not mean equal distance, so cursors otherwise
+  // accelerate around a bend for no semantic reason and kink at custom segment
+  // boundaries. The outer ease still supplies anticipation/settle character;
+  // this function only makes its progress correspond to travelled distance.
+  function arcLengthProgress(root, start, end, intent, distanceProgress) {
+    var steps = intent.path === "direct" ? 2 : 18;
+    var points = [];
+    var cumulative = [0];
+    var total = 0;
+    for (var i = 0; i <= steps; i += 1) {
+      var point = pathPoint(root, start, end, intent, i / steps);
+      points.push(point);
+      if (i > 0) {
+        total += Math.hypot(point.x - points[i - 1].x, point.y - points[i - 1].y);
+        cumulative.push(total);
+      }
+    }
+    if (total <= 0.001) return Math.max(0, Math.min(1, distanceProgress));
+    var target = Math.max(0, Math.min(1, distanceProgress)) * total;
+    for (var index = 1; index < cumulative.length; index += 1) {
+      if (cumulative[index] < target) continue;
+      var span = Math.max(0.001, cumulative[index] - cumulative[index - 1]);
+      var local = (target - cumulative[index - 1]) / span;
+      return ((index - 1) + local) / steps;
+    }
+    return 1;
+  }
+
   function place(root, element, point, hotspot) {
     var local = localize(root, point);
-    var width = element.offsetWidth || element.getBoundingClientRect().width;
-    var height = element.offsetHeight || element.getBoundingClientRect().height;
+    var style = getComputedStyle(element);
+    // SVG cursors have no HTMLElement offsetWidth/offsetHeight. Their client
+    // rect is transform-scaled during press feedback, so using it as the base
+    // box drifts the hotspot by the scale delta. Prefer the untransformed CSS
+    // box and keep the rendered rect only as a final fallback.
+    var rendered = element.getBoundingClientRect();
+    var width = element.offsetWidth || parseFloat(style.width) || rendered.width;
+    var height = element.offsetHeight || parseFloat(style.height) || rendered.height;
     global.gsap.set(element, {
       x: local.x - width * hotspot.x,
       y: local.y - height * hotspot.y,
@@ -153,6 +222,11 @@
     var duration = Math.max(0.3, (intent.holdUntilSec || intent.releaseSec || intent.pressSec + 0.6) -
       intent.pressSec);
     var tracker = { p: 0 };
+    // Seek renderers may open the document at t=0 before visiting pressSec.
+    // Hide authored/id-only ripple markup both immediately and on the master
+    // timeline so a default-position ring can never flash at frame-left.
+    global.gsap.set(ripple, { opacity: 0, scale: 0.2 });
+    timeline.set(ripple, { opacity: 0, scale: 0.2 }, 0);
     timeline.set(ripple, { opacity: 0, scale: 0.2 }, intent.pressSec);
     timeline.to(tracker, {
       p: 1,
@@ -161,7 +235,11 @@
       onUpdate: function () {
         var point = targetPoint(scene, intent);
         if (!point) return;
-        var local = localize(root, point);
+        // Ripples live beside/inside their target and therefore inherit the
+        // camera-world transform. Localize into their actual positioning
+        // parent (including inverse camera scale), while the global cursor
+        // continues to use the composition root.
+        var local = localize(ripple.offsetParent || root, point);
         global.gsap.set(ripple, {
           x: local.x - (ripple.offsetWidth || 0) / 2,
           y: local.y - (ripple.offsetHeight || 0) / 2,
@@ -207,6 +285,36 @@
     }
   }
 
+  function bindArrivalFocus(timeline, intent, target) {
+    var travelSec = intent.arriveSec - intent.startSec;
+    if (!(travelSec >= 0.12)) return;
+    var computed = global.getComputedStyle(target);
+    var baseFilter = computed.filter && computed.filter !== "" ? computed.filter : "none";
+    var focusFilter = baseFilter === "none"
+      ? "brightness(1.08)"
+      : baseFilter + " brightness(1.08)";
+    var focusStart = Math.max(
+      intent.startSec,
+      intent.arriveSec - Math.min(0.18, travelSec * 0.4)
+    );
+    timeline.fromTo(target, { filter: baseFilter }, {
+      filter: focusFilter,
+      duration: Math.max(0.08, intent.arriveSec - focusStart),
+      ease: "power2.out",
+      immediateRender: false,
+    }, focusStart);
+    var restoreAt = intent.pressSec != null
+      ? intent.pressSec
+      : (intent.holdUntilSec || intent.releaseSec || intent.arriveSec + 0.18);
+    if (restoreAt > intent.arriveSec) {
+      timeline.to(target, {
+        filter: baseFilter,
+        duration: Math.min(0.12, Math.max(0.06, restoreAt - intent.arriveSec)),
+        ease: "power2.out",
+      }, restoreAt);
+    }
+  }
+
   function followTarget(timeline, root, scene, intent, cursorElement, hotspot, start, end, targetName) {
     if (!(end > start)) return;
     var tracker = { p: 0 };
@@ -221,6 +329,18 @@
     }, start);
   }
 
+  function pinTargetAt(timeline, root, scene, intent, cursorElement, hotspot, at, targetName) {
+    if (at == null || !isFinite(at)) return;
+    // A long-running follower sorts before tweens that BEGIN on its endpoint.
+    // Re-measure in a zero-duration endpoint callback so a button's release
+    // bounce, component state seam, or camera landing cannot move underneath
+    // the cursor on the exact QA/viewer action frame.
+    timeline.call(function () {
+      var point = targetPoint(scene, intent, targetName);
+      if (point) place(root, cursorElement, point, hotspot);
+    }, null, at);
+  }
+
   function compile(timeline, root) {
     if (!timeline || !root) throw new Error("SequencesInteractions.compile requires timeline + root");
     var island = document.getElementById("sequences-interactions");
@@ -233,7 +353,7 @@
     plan.interactions.forEach(function (intent) {
       var scene = root.querySelector('[data-scene="' + CSS.escape(intent.sceneId) + '"]');
       var cursorElement = cursor(root, intent.cursorId);
-      var target = scene && part(scene, intent.targetPart);
+      var target = scene && interactionTarget(scene, intent);
       if (!scene || !cursorElement || !target) {
         throw new Error('could not bind interaction "' + intent.id + '"');
       }
@@ -273,11 +393,23 @@
           var start = anchorPoint(root, scene, intent.from);
           var end = targetPoint(scene, intent);
           if (!end) return;
-          var progress = ease(proxy.p);
+          var progress = arcLengthProgress(root, start, end, intent, ease(proxy.p));
           place(root, cursorElement, pathPoint(root, start, end, intent, progress), hotspot);
         },
       }, intent.startSec);
+      // A 32px cursor moving across a 1920px frame is valid mechanical
+      // evidence but too small to read as a primary arrival moment. Give the
+      // measured target one restrained hover/focus lift on arrival, restore its
+      // exact authored filter at press/hold, then let press feedback own the
+      // result. This makes the intent visible without minting another actor.
+      bindArrivalFocus(timeline, intent, target);
       bindPress(timeline, intent, cursorElement, target);
+      var visibleUntil = intent.holdUntilSec || intent.releaseSec || intent.arriveSec;
+      var sceneEnd = (parseFloat(scene.dataset.start || "0") || 0) +
+        (parseFloat(scene.dataset.duration || "0") || 0);
+      var hideAt = sceneEnd > visibleUntil
+        ? Math.min(visibleUntil + 0.08, sceneEnd - 0.001)
+        : visibleUntil;
       // Nav/list single-active (probe-audit-01): a cursor click that selects a
       // list item must clear the active state on its siblings, or a
       // default-active item stays highlighted beside the clicked one. The
@@ -315,7 +447,7 @@
           cursorElement,
           hotspot,
           intent.arriveSec,
-          intent.holdUntilSec || intent.releaseSec || intent.arriveSec,
+          hideAt,
           intent.targetPart,
         );
       }
@@ -344,16 +476,36 @@
           cursorElement,
           hotspot,
           intent.releaseSec,
-          intent.holdUntilSec || intent.releaseSec,
+          hideAt,
           intent.dragTargetPart,
         );
       }
-      var visibleUntil = intent.holdUntilSec || intent.releaseSec || intent.arriveSec;
-      var sceneEnd = (parseFloat(scene.dataset.start || "0") || 0) +
-        (parseFloat(scene.dataset.duration || "0") || 0);
-      var hideAt = sceneEnd > visibleUntil
-        ? Math.min(visibleUntil + 0.08, sceneEnd - 0.001)
-        : visibleUntil;
+      pinTargetAt(
+        timeline, root, scene, intent, cursorElement, hotspot, intent.arriveSec, intent.targetPart,
+      );
+      pinTargetAt(
+        timeline, root, scene, intent, cursorElement, hotspot, intent.pressSec, intent.targetPart,
+      );
+      pinTargetAt(
+        timeline,
+        root,
+        scene,
+        intent,
+        cursorElement,
+        hotspot,
+        intent.releaseSec,
+        intent.action === "drag" && intent.dragTargetPart ? intent.dragTargetPart : intent.targetPart,
+      );
+      pinTargetAt(
+        timeline,
+        root,
+        scene,
+        intent,
+        cursorElement,
+        hotspot,
+        intent.holdUntilSec,
+        intent.action === "drag" && intent.dragTargetPart ? intent.dragTargetPart : intent.targetPart,
+      );
       timeline.set(cursorElement, { opacity: 0 }, hideAt);
       bindings.push({ intent: intent, scene: scene, cursor: cursorElement, target: target, ripple: ripple });
     });

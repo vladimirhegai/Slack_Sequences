@@ -137,6 +137,33 @@ export function resolveAssetPlan(scenes: DirectScene[]): AssetPlanV1 {
 
 /* ------------------------------------------------------------- validation */
 
+export function parseAssetPlan(
+  html: string,
+): { plan?: AssetPlanV1; errors: string[] } {
+  const island = html.match(
+    /<script\b[^>]*\bid\s*=\s*(["'])sequences-assets\1[^>]*>([\s\S]*?)<\/script>/i,
+  );
+  if (!island) return { errors: [] };
+  let value: unknown;
+  try {
+    value = JSON.parse(island[2]!.trim());
+  } catch (error) {
+    return {
+      errors: [
+        `sequences-assets JSON is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      ],
+    };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { errors: ["sequences-assets must be an object"] };
+  }
+  const object = value as Record<string, unknown>;
+  if (object.version !== 1 || !Array.isArray(object.scenes)) {
+    return { errors: ["sequences-assets must carry version 1 and a scenes array"] };
+  }
+  return { plan: object as unknown as AssetPlanV1, errors: [] };
+}
+
 /**
  * Host-plumbing self-check (the validatePluginContract disposition): these
  * codes are reachable only if the injection seam breaks — the lowering is

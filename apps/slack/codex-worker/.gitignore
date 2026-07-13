@@ -1,0 +1,11 @@
+# Codex creates these beside its config when CODEX_HOME is pointed here during
+# local diagnostics. The production login/state belongs only on Railway's
+# mounted /root/.codex volume and must never enter source control.
+auth.json
+installation_id
+*.sqlite
+*.sqlite-*
+sessions/
+skills/
+.tmp/
+sequences-jobs/

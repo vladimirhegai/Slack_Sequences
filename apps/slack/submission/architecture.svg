@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Sequences for Slack architecture</title>
+  <desc id="desc">A Slack release thread flows through a Railway-hosted Bolt app, Slack-hosted MCP context retrieval, a private Codex worker running one persistent Luna director thread, deterministic Sequences tools, Chromium and FFmpeg, then returns a storyboard and MP4 to Slack.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#121018"/><stop offset="1" stop-color="#21172c"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="12" stdDeviation="16" flood-opacity=".28"/></filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0 0l12 6-12 6z" fill="#ffc24d"/></marker>
+    <style>
+      .box{fill:#211d2b;stroke:#554866;stroke-width:2;rx:22;filter:url(#shadow)}
+      .host{fill:#2a2036;stroke:#8b6cac;stroke-width:2;rx:26;filter:url(#shadow)}
+      .title{font:700 30px Inter,Arial,sans-serif;fill:#fff}
+      .label{font:700 21px Inter,Arial,sans-serif;fill:#fff}
+      .body{font:400 17px Inter,Arial,sans-serif;fill:#c9bfD2}
+      .small{font:600 15px Inter,Arial,sans-serif;fill:#a99bb7;letter-spacing:.06em}
+      .flow{fill:none;stroke:#ffc24d;stroke-width:4;marker-end:url(#arrow)}
+      .return{fill:none;stroke:#36c5f0;stroke-width:4;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <text x="80" y="74" class="title">Sequences for Slack — submission architecture</text>
+  <text x="80" y="110" class="body">A permission-scoped release thread becomes a storyboard and launch film without leaving Slack.</text>
+
+  <rect x="70" y="210" width="310" height="220" class="box"/>
+  <text x="105" y="258" class="small">SLACK DEVELOPER SANDBOX</text>
+  <text x="105" y="302" class="label">Release thread</text>
+  <text x="105" y="338" class="body">/sequences command</text>
+  <text x="105" y="370" class="body">message shortcut + modal brief</text>
+  <text x="105" y="402" class="body">storyboard, thumbnails, MP4</text>
+
+  <rect x="485" y="155" width="620" height="570" class="host"/>
+  <text x="525" y="205" class="small">RAILWAY · ONE REPLICA · /DATA VOLUME</text>
+  <text x="525" y="248" class="label">Bolt + Socket Mode orchestrator</text>
+  <text x="525" y="280" class="body">OAuth · job state · staged create/revise delivery</text>
+
+  <rect x="535" y="325" width="245" height="135" class="box"/>
+  <text x="563" y="365" class="label">Context bot</text>
+  <text x="563" y="397" class="body">OpenAI Responses API</text>
+  <text x="563" y="426" class="body">invoking-user OAuth</text>
+
+  <rect x="815" y="325" width="240" height="135" class="box"/>
+  <text x="843" y="365" class="label">Luna route</text>
+  <text x="843" y="397" class="body">facts + approved assets</text>
+  <text x="843" y="426" class="body">exact-thread client</text>
+
+  <rect x="535" y="505" width="520" height="160" class="box"/>
+  <text x="563" y="545" class="label">Deterministic Sequences engine</text>
+  <text x="563" y="578" class="body">internal stdio MCP · host contracts · browser QA</text>
+  <text x="563" y="609" class="body">Chromium measurement + thumbnails</text>
+  <text x="563" y="638" class="body">FFmpeg draft/HD rendering</text>
+
+  <rect x="1210" y="210" width="320" height="170" class="box"/>
+  <text x="1245" y="252" class="small">SLACK-HOSTED SERVICE</text>
+  <text x="1245" y="294" class="label">Slack MCP Server</text>
+  <text x="1245" y="326" class="body">permission-scoped messages</text>
+  <text x="1245" y="355" class="body">and files for the invoking user</text>
+
+  <rect x="1210" y="470" width="320" height="170" class="box"/>
+  <text x="1245" y="512" class="small">RAILWAY PRIVATE SERVICE</text>
+  <text x="1245" y="554" class="label">Codex worker</text>
+  <text x="1245" y="586" class="body">gpt-5.6-luna · high</text>
+  <text x="1245" y="615" class="body">persisted exact thread</text>
+
+  <path d="M380 320H485" class="flow"/>
+  <path d="M780 392H815" class="flow"/>
+  <path d="M780 365C1080 365 1080 295 1210 295" class="flow"/>
+  <path d="M1055 410C1140 410 1140 555 1210 555" class="flow"/>
+  <path d="M935 460V505" class="flow"/>
+  <path d="M1210 600C1135 600 1135 455 1055 455" class="return"/>
+  <path d="M535 620C410 620 410 390 380 390" class="return"/>
+
+  <text x="80" y="812" class="body">Public HTTP surface: /healthz · /slack/install · /slack/oauth_redirect</text>
+  <text x="80" y="846" class="body">Slack events use outbound Socket Mode. The Codex worker is private; Railway exposes no public /mcp endpoint.</text>
+</svg>

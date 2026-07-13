@@ -96,12 +96,13 @@ export const flowNode = defineAsset({
   border-radius: var(--cinema-radius, 14px);
   color: var(--text, #edf0f6);
   background:
-    radial-gradient(120% 140% at 20% 0%, rgba(255, 255, 255, 0.05), transparent 55%),
+    radial-gradient(120% 150% at 18% -10%, rgba(255, 255, 255, 0.05), transparent 56%),
     var(--surface, #161b24);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.1),
     0 0 0 1px var(--cinema-edge, rgba(255, 255, 255, 0.09)),
-    0 0.8em 2em rgba(0, 0, 0, 0.38);
+    0 0.22em 0.55em rgba(0, 0, 0, 0.26),
+    0 0.8em 1.9em rgba(0, 0, 0, 0.38);
 }
 .asset-flow-node .fn-ring {
   position: absolute;
@@ -110,8 +111,8 @@ export const flowNode = defineAsset({
   pointer-events: none;
   opacity: var(--fn-active, 1);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--fn-accent, #6ea8ff) 55%, transparent),
-    0 0 1.1em color-mix(in srgb, var(--fn-accent, #6ea8ff) 30%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--fn-accent, #6ea8ff) 52%, transparent),
+    0 0 0.9em color-mix(in srgb, var(--fn-accent, #6ea8ff) 26%, transparent);
 }
 .asset-flow-node .fn-dot {
   flex: none;

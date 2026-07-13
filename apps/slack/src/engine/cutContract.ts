@@ -274,8 +274,12 @@ export interface CutPlanV1 {
 
 const STYLE_DEFAULTS: Record<Exclude<CutStyle, "hard">, { exitSec: number; entrySec: number }> = {
   swipe: { exitSec: 0.3, entrySec: 0.42 },
-  morph: { exitSec: 0.22, entrySec: 0.5 },
-  match: { exitSec: 0.22, entrySec: 0.5 },
+  // Bridged cuts begin transforming the outgoing shell before the boundary,
+  // so the change reads as caused rather than as a post-cut effect. The
+  // resolver below still clamps this to 40% of a short outgoing scene, and an
+  // explicit shorter exit remains authoritative.
+  morph: { exitSec: 0.4, entrySec: 0.5 },
+  match: { exitSec: 0.4, entrySec: 0.5 },
   "cut-left": { exitSec: 0.3, entrySec: 0.42 },
   "cut-right": { exitSec: 0.3, entrySec: 0.42 },
   "cut-up": { exitSec: 0.3, entrySec: 0.42 },
@@ -283,8 +287,8 @@ const STYLE_DEFAULTS: Record<Exclude<CutStyle, "hard">, { exitSec: number; entry
   "zoom-through": { exitSec: 0.24, entrySec: 0.5 },
   "inverse-zoom": { exitSec: 0.24, entrySec: 0.5 },
   "flash-white": { exitSec: 0.18, entrySec: 0.4 },
-  "object-match": { exitSec: 0.22, entrySec: 0.5 },
-  "shape-match": { exitSec: 0.22, entrySec: 0.5 },
+  "object-match": { exitSec: 0.4, entrySec: 0.5 },
+  "shape-match": { exitSec: 0.4, entrySec: 0.5 },
 };
 
 /**

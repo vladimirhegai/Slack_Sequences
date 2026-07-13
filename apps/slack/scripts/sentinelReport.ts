@@ -1,6 +1,6 @@
 /**
  * `npm run sentinel:report` — the before/after instrument for the
- * correctness-by-construction rework (SENTINEL_PLAN.md §3 Phase 0 / §8).
+ * correctness-by-construction system (SENTINEL.md telemetry contract).
  *
  * Aggregates every `planning/sentinel-run.json` (+ the sibling
  * `author-run.json`) under a directory into the mission metric table. Point it

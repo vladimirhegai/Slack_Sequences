@@ -2,6 +2,10 @@ import type {
   AgentProvider,
   CompleteOptions,
 } from "@sequences/platform/providers";
+import {
+  slackSequencesEnvRawValue,
+  type SlackSequencesEnvName,
+} from "./featureFlags.ts";
 
 /*
  * Model-experiment findings (2026-07-03, 9-config matrix, one fixed 18s
@@ -35,6 +39,72 @@ export const OPENROUTER_PRODUCTION_MODEL = "deepseek/deepseek-v4-pro";
 export const OPENROUTER_LIGHT_MODEL = "deepseek/deepseek-v4-flash";
 
 /**
+ * Frozen image-input routes for the visual continuity critic. These are kept
+ * separate from the creative/source overrides because those stages are
+ * intentionally allowed to select text-only models. In particular, an
+ * OpenRouter request with images must never fall through to
+ * `SEQUENCES_OPENROUTER_MODEL` or the GLM storyboard default.
+ *
+ * OpenRouter documents Gemini 3.1 Flash Lite as accepting text, image, video,
+ * audio, and PDF inputs. The other two entries pin the multimodal defaults
+ * already used by their platform providers. Unknown API providers are denied
+ * rather than inheriting an unverified source model; the caller's existing
+ * critic fail-safe then keeps the pre-critique draft.
+ */
+export const OPENROUTER_VISION_CRITIC_MODEL = "google/gemini-3.1-flash-lite";
+export const OPENAI_VISION_CRITIC_MODEL = "gpt-5.1-mini";
+export const ANTHROPIC_VISION_CRITIC_MODEL = "claude-sonnet-4-6";
+
+export type VisionCriticModelRoute =
+  | {
+      available: true;
+      model: string;
+      thinkingMode: CompleteOptions["thinkingMode"];
+    }
+  | {
+      available: false;
+      reason: string;
+    };
+
+/**
+ * Select an explicitly audited image-input model for a native-image critic
+ * request. This function deliberately reads no shared model configuration:
+ * operator-selected storyboard and source models have no implied multimodal
+ * capability.
+ */
+export function visionCriticModelRoute(
+  provider: Pick<AgentProvider, "id">,
+): VisionCriticModelRoute {
+  if (provider.id === "openrouter-api") {
+    return {
+      available: true,
+      model: OPENROUTER_VISION_CRITIC_MODEL,
+      // This model's documented thinking floor is minimal.
+      thinkingMode: "minimal",
+    };
+  }
+  if (provider.id === "openai-api") {
+    return {
+      available: true,
+      model: OPENAI_VISION_CRITIC_MODEL,
+      // The OpenAI adapter supports low/medium/high; "minimal" would clamp up.
+      thinkingMode: "low",
+    };
+  }
+  if (provider.id === "anthropic-api") {
+    return {
+      available: true,
+      model: ANTHROPIC_VISION_CRITIC_MODEL,
+      thinkingMode: "none",
+    };
+  }
+  return {
+    available: false,
+    reason: `provider ${provider.id} has no audited native image-input critic model`,
+  };
+}
+
+/**
  * Small decisions with disproportionate visual impact belong to the creative
  * director. A call-specific override wins, then the shared creative override;
  * `primary` deliberately returns control to the provider's production model.
@@ -43,7 +113,8 @@ export function creativeModel(
   provider: AgentProvider,
   callOverride?: string,
 ): string | undefined {
-  const requested = callOverride?.trim() || process.env.SLACK_SEQUENCES_CREATIVE_MODEL?.trim();
+  const requested = callOverride?.trim() ||
+    slackSequencesEnvRawValue("SLACK_SEQUENCES_CREATIVE_MODEL")?.trim();
   if (requested?.toLowerCase() === "primary") return undefined;
   if (requested) return requested;
   return provider.id === "openrouter-api" ? OPENROUTER_CREATIVE_MODEL : undefined;
@@ -68,9 +139,9 @@ const THINKING_MODES: ReadonlySet<string> = new Set([
  * built-in default, so the knob can never break a deploy.
  */
 export function thinkingOverride(
-  envName: string,
+  envName: SlackSequencesEnvName,
 ): CompleteOptions["thinkingMode"] | undefined {
-  const raw = process.env[envName]?.trim().toLowerCase();
+  const raw = slackSequencesEnvRawValue(envName)?.trim().toLowerCase();
   return raw && THINKING_MODES.has(raw)
     ? (raw as CompleteOptions["thinkingMode"])
     : undefined;
@@ -94,7 +165,7 @@ export function storyboardRescueModel(
   provider: AgentProvider,
   primaryModel: string | undefined,
 ): string | undefined {
-  const raw = process.env.SLACK_SEQUENCES_STORYBOARD_RESCUE_MODEL?.trim();
+  const raw = slackSequencesEnvRawValue("SLACK_SEQUENCES_STORYBOARD_RESCUE_MODEL")?.trim();
   if (raw && ["0", "none", "off"].includes(raw.toLowerCase())) return undefined;
   const chosen = raw ||
     (provider.id === "openrouter-api" ? OPENROUTER_STORYBOARD_RESCUE_MODEL : undefined);
@@ -117,7 +188,7 @@ export function sourceRescueModel(
   provider: AgentProvider,
   primaryModel: string | undefined,
 ): string | undefined {
-  const raw = process.env.SLACK_SEQUENCES_SOURCE_RESCUE_MODEL?.trim();
+  const raw = slackSequencesEnvRawValue("SLACK_SEQUENCES_SOURCE_RESCUE_MODEL")?.trim();
   if (raw && ["0", "none", "off"].includes(raw.toLowerCase())) return undefined;
   const chosen = raw ||
     (provider.id === "openrouter-api" ? OPENROUTER_SOURCE_RESCUE_MODEL : undefined);
@@ -146,7 +217,7 @@ export function productionModel(provider: AgentProvider): string | undefined {
  * deterministically rejectable. It is never selected for taste or full source.
  */
 export function lightModel(provider: AgentProvider): string | undefined {
-  const configured = process.env.SLACK_SEQUENCES_LIGHT_MODEL?.trim();
+  const configured = slackSequencesEnvRawValue("SLACK_SEQUENCES_LIGHT_MODEL")?.trim();
   if (configured?.toLowerCase() === "primary") return undefined;
   if (configured) return configured;
   return provider.id === "openrouter-api"

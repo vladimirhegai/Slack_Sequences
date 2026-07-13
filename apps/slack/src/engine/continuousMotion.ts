@@ -14,10 +14,21 @@ import {
   type DirectionPhraseV1,
   type DirectionSettleWindowV1,
 } from "./directionScore.ts";
+import { slackSequencesEnvRawValue } from "./featureFlags.ts";
 
 const DEFAULT_SAMPLE_HZ = 5;
 const DEFAULT_MAX_SAMPLES = 150;
 const MOVING_SPEED = 0.008;
+/** Host wallpaper/light/furniture is intentionally subtler than component motion. */
+const AMBIENT_MOVING_SPEED = 1e-9;
+/** Low-amplitude operated camera movement still keeps a held frame alive. */
+const LIVENESS_SPEED = 0.002;
+/** Longer rendered stillness reads as a stopped slide, even between valid beats. */
+const QUIET_WINDOW_MIN_SEC = 0.8;
+export const QUIET_WINDOW_REVIEW_SEC = 1.4;
+/** A rendered freeze must exceed this span; an exact 1.5s hold is not a finding. */
+export const RENDERED_DEAD_FRAME_MIN_SEC = 1.5;
+export const RENDERED_DEAD_FRAME_CODE = "motion_dead_frame" as const;
 const SETTLED_SPEED = 0.018;
 const REVERSAL_SPEED = 0.025;
 const REVERSAL_COSINE = -0.35;
@@ -44,6 +55,8 @@ export interface ContinuousMotionLocalStateV1 {
   opacity: number;
   width: number;
   height: number;
+  /** SVG/trim-path progress, when the subject exposes it. */
+  strokeDashoffset?: number;
 }
 
 export interface ContinuousMotionRawSnapshotV1 {
@@ -68,6 +81,12 @@ export interface ContinuousMotionSampleV1 {
     acceleration?: number;
     jerk?: number;
   };
+  /**
+   * Camera-world transform speed, kept separate from focal DOM motion. A
+   * headline reveal or count reflow may move the focal box while the lens is
+   * correctly holding; camera-blocking rest evidence must not confuse them.
+   */
+  cameraSpeed?: number;
   independentMotionCount: number;
 }
 
@@ -76,6 +95,62 @@ export interface ContinuousMotionMarkerV1 {
   sceneId: string;
   phraseId?: string;
   value: number;
+}
+
+export interface ContinuousMotionQuietWindowV1 {
+  sceneId: string;
+  startSec: number;
+  endSec: number;
+  durationSec: number;
+}
+
+/** One rendered pixel-delta sample describes the whole preceding interval. */
+export interface RenderedChangeCurvePointV1 {
+  fromTime: number;
+  time: number;
+  delta: number;
+}
+
+export interface AuthoredHoldIntervalV1 {
+  sceneId: string;
+  startSec: number;
+  endSec: number;
+  durationSec: number;
+}
+
+export interface RenderedDeadFrameWindowV1 {
+  code: typeof RENDERED_DEAD_FRAME_CODE;
+  /** First owning scene, retained as the repair-routing key. */
+  sceneId: string;
+  /** Every scene crossed while the rendered frame remained near-identical. */
+  sceneIds: string[];
+  startSec: number;
+  endSec: number;
+  durationSec: number;
+  peakDelta: number;
+}
+
+/**
+ * Advisory liveness evidence derived from rendered pixels, not authored tween
+ * declarations. Declared camera holds remain visible in excludedHoldIntervals
+ * so a reviewer can audit exactly which quiet spans were excused.
+ */
+export interface RenderedDeadFrameEvidenceV1 {
+  version: 1;
+  advisory: true;
+  code: typeof RENDERED_DEAD_FRAME_CODE;
+  deltaThreshold: number;
+  /** Windows are emitted only when durationSec is strictly greater than this. */
+  minimumWindowSec: number;
+  excludedHoldIntervals: AuthoredHoldIntervalV1[];
+  windows: RenderedDeadFrameWindowV1[];
+  summary: {
+    eligibleDurationSec: number;
+    deadDurationSec: number;
+    deadFrameRatio: number;
+    windowCount: number;
+    maxWindowSec: number;
+  };
 }
 
 export interface ContinuousSettleEvidenceV1 {
@@ -109,8 +184,11 @@ export interface ContinuousMotionEvidenceV1 {
   samples: ContinuousMotionSampleV1[];
   reversals: ContinuousMotionMarkerV1[];
   jerkMarkers: ContinuousMotionMarkerV1[];
+  quietWindows: ContinuousMotionQuietWindowV1[];
   settleWindows: ContinuousSettleEvidenceV1[];
   scenes: ContinuousSceneSummaryV1[];
+  /** Present when the temporal pixel-change pass has enriched this evidence. */
+  renderedDeadFrames?: RenderedDeadFrameEvidenceV1;
   summary: {
     sampleCount: number;
     focalFoundSamples: number;
@@ -130,8 +208,23 @@ export interface ContinuousMotionEvidenceV1 {
     settleWindowCount: number;
     measuredSettleWindowCount: number;
     settledByWindowEndCount: number;
+    quietWindowCount: number;
+    maxQuietWindowSec: number;
   };
   advisories: string[];
+}
+
+export type ContinuousMotionQualityCode =
+  | "motion_jerk_excess"
+  | "motion_reversal_excess"
+  | "motion_settle_late";
+
+export interface ContinuousMotionQualityFindingV1 {
+  code: ContinuousMotionQualityCode;
+  sceneId: string;
+  time: number;
+  message: string;
+  fixHint: string;
 }
 
 interface Vector {
@@ -245,6 +338,7 @@ function localVector(
     (after.opacity - before.opacity) * 0.18 / dt,
     (after.width - before.width) / diagonal / dt,
     (after.height - before.height) / diagonal / dt,
+    ((after.strokeDashoffset ?? 0) - (before.strokeDashoffset ?? 0)) * 0.01 / dt,
   ];
 }
 
@@ -269,7 +363,8 @@ function independentMotionCount(
       const b = later[id];
       if (!a || !b) continue;
       const vector = localVector(a, b, dt, diagonal);
-      if (magnitude(vector) >= MOVING_SPEED) voices.push(vector);
+      const threshold = id.startsWith("ambient:") ? AMBIENT_MOVING_SPEED : MOVING_SPEED;
+      if (magnitude(vector) > threshold) voices.push(vector);
     }
   };
   addMoving(before.layers, after.layers);
@@ -292,19 +387,257 @@ function average(values: number[]): number {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 }
 
+interface RenderedInterval {
+  sceneId: string;
+  startSec: number;
+  endSec: number;
+}
+
+interface RenderedDeltaInterval extends RenderedInterval {
+  delta: number;
+}
+
+interface ActiveRenderedDeadFrame {
+  sceneIds: string[];
+  startSec: number;
+  endSec: number;
+  delta: number;
+}
+
+function mergeRenderedIntervals(intervals: RenderedInterval[]): RenderedInterval[] {
+  const merged: RenderedInterval[] = [];
+  for (const interval of [...intervals].sort((a, b) =>
+    a.sceneId.localeCompare(b.sceneId) || a.startSec - b.startSec || a.endSec - b.endSec
+  )) {
+    const previous = merged[merged.length - 1];
+    if (
+      previous && previous.sceneId === interval.sceneId &&
+      interval.startSec <= previous.endSec + 1e-6
+    ) {
+      previous.endSec = Math.max(previous.endSec, interval.endSec);
+    } else {
+      merged.push({ ...interval });
+    }
+  }
+  return merged;
+}
+
+/** Explicit storyboard holds, clamped to their owning scene and film. */
+export function authoredHoldIntervals(
+  scenes: DirectScene[],
+  durationSec = Math.max(0, ...scenes.map((scene) => scene.startSec + scene.durationSec)),
+): AuthoredHoldIntervalV1[] {
+  const intervals = scenes.flatMap((scene): RenderedInterval[] => {
+    const sceneStart = Math.max(0, scene.startSec);
+    const sceneEnd = Math.min(durationSec, scene.startSec + scene.durationSec);
+    if (sceneEnd <= sceneStart) return [];
+    return (scene.camera?.path ?? []).flatMap((move): RenderedInterval[] => {
+      if (move.move !== "hold") return [];
+      const startSec = Math.max(sceneStart, move.startSec);
+      const endSec = Math.min(sceneEnd, move.startSec + move.durationSec);
+      return endSec > startSec ? [{ sceneId: scene.id, startSec, endSec }] : [];
+    });
+  });
+  return mergeRenderedIntervals(intervals).map((interval) => ({
+    sceneId: interval.sceneId,
+    startSec: round(interval.startSec, 3),
+    endSec: round(interval.endSec, 3),
+    durationSec: round(interval.endSec - interval.startSec, 3),
+  }));
+}
+
+function subtractHolds(
+  interval: RenderedDeltaInterval,
+  holds: AuthoredHoldIntervalV1[],
+): RenderedDeltaInterval[] {
+  const pieces: RenderedDeltaInterval[] = [];
+  let cursor = interval.startSec;
+  for (const hold of holds) {
+    if (hold.sceneId !== interval.sceneId || hold.endSec <= cursor + 1e-6) continue;
+    if (hold.startSec >= interval.endSec - 1e-6) break;
+    if (hold.startSec > cursor + 1e-6) {
+      pieces.push({
+        ...interval,
+        startSec: cursor,
+        endSec: Math.min(interval.endSec, hold.startSec),
+      });
+    }
+    cursor = Math.max(cursor, hold.endSec);
+    if (cursor >= interval.endSec - 1e-6) break;
+  }
+  if (cursor < interval.endSec - 1e-6) {
+    pieces.push({ ...interval, startSec: cursor });
+  }
+  return pieces;
+}
+
+/**
+ * Finds rendered freezes outside explicit camera holds. The input point's
+ * fromTime makes the measured span exact instead of inferring a first interval
+ * from sample cadence. Declared holds split a candidate; a visually unchanged
+ * scene boundary remains consecutive evidence and records both scene ids.
+ */
+export function analyzeRenderedDeadFrames(
+  curve: RenderedChangeCurvePointV1[],
+  scenes: DirectScene[],
+  durationSec: number,
+  options: { deltaThreshold?: number; minimumWindowSec?: number } = {},
+): RenderedDeadFrameEvidenceV1 {
+  const deltaThreshold = Math.max(0, options.deltaThreshold ?? 0.0002);
+  const minimumWindowSec = Math.max(0, options.minimumWindowSec ?? RENDERED_DEAD_FRAME_MIN_SEC);
+  const holds = authoredHoldIntervals(scenes, durationSec);
+  const orderedScenes = [...scenes].sort((a, b) => a.startSec - b.startSec);
+  const eligible: RenderedDeltaInterval[] = [];
+
+  for (const point of [...curve].sort((a, b) => a.fromTime - b.fromTime || a.time - b.time)) {
+    if (!Number.isFinite(point.fromTime) || !Number.isFinite(point.time) ||
+        !Number.isFinite(point.delta) || point.time <= point.fromTime) continue;
+    const sampleStart = Math.max(0, point.fromTime);
+    const sampleEnd = Math.min(durationSec, point.time);
+    if (sampleEnd <= sampleStart) continue;
+    for (const scene of orderedScenes) {
+      const startSec = Math.max(sampleStart, scene.startSec);
+      const endSec = Math.min(sampleEnd, scene.startSec + scene.durationSec);
+      if (endSec <= startSec) continue;
+      eligible.push(...subtractHolds(
+        { sceneId: scene.id, startSec, endSec, delta: point.delta },
+        holds,
+      ));
+    }
+  }
+
+  eligible.sort((a, b) =>
+    a.startSec - b.startSec || a.endSec - b.endSec || a.sceneId.localeCompare(b.sceneId)
+  );
+  const windows: RenderedDeadFrameWindowV1[] = [];
+  let active: ActiveRenderedDeadFrame | undefined;
+  const flush = (): void => {
+    if (!active) return;
+    const duration = active.endSec - active.startSec;
+    if (duration > minimumWindowSec + 1e-6) {
+      windows.push({
+        code: RENDERED_DEAD_FRAME_CODE,
+        sceneId: active.sceneIds[0]!,
+        sceneIds: active.sceneIds,
+        startSec: round(active.startSec, 3),
+        endSec: round(active.endSec, 3),
+        durationSec: round(duration, 3),
+        peakDelta: round(active.delta, 6),
+      });
+    }
+    active = undefined;
+  };
+  for (const interval of eligible) {
+    if (interval.delta >= deltaThreshold) {
+      flush();
+      continue;
+    }
+    if (
+      active && Math.abs(active.endSec - interval.startSec) <= 1e-6
+    ) {
+      active.endSec = interval.endSec;
+      active.delta = Math.max(active.delta, interval.delta);
+      if (!active.sceneIds.includes(interval.sceneId)) active.sceneIds.push(interval.sceneId);
+    } else {
+      flush();
+      active = {
+        sceneIds: [interval.sceneId],
+        startSec: interval.startSec,
+        endSec: interval.endSec,
+        delta: interval.delta,
+      };
+    }
+  }
+  flush();
+
+  const sampledIntervals = mergeRenderedIntervals(eligible);
+  const eligibleDurationSec = sampledIntervals.reduce(
+    (sum, interval) => sum + interval.endSec - interval.startSec,
+    0,
+  );
+  const deadDurationSec = windows.reduce((sum, window) => sum + window.durationSec, 0);
+  return {
+    version: 1,
+    advisory: true,
+    code: RENDERED_DEAD_FRAME_CODE,
+    deltaThreshold: round(deltaThreshold, 6),
+    minimumWindowSec: round(minimumWindowSec, 3),
+    excludedHoldIntervals: holds,
+    windows,
+    summary: {
+      eligibleDurationSec: round(eligibleDurationSec, 3),
+      deadDurationSec: round(deadDurationSec, 3),
+      deadFrameRatio: round(eligibleDurationSec > 0 ? deadDurationSec / eligibleDurationSec : 0, 4),
+      windowCount: windows.length,
+      maxWindowSec: round(Math.max(0, ...windows.map((window) => window.durationSec)), 3),
+    },
+  };
+}
+
+function renderedQuietWindows(samples: ContinuousMotionSampleV1[]): ContinuousMotionQuietWindowV1[] {
+  const windows: ContinuousMotionQuietWindowV1[] = [];
+  let active: { sceneId: string; startSec: number; endSec: number } | undefined;
+  const flush = (): void => {
+    if (active && active.endSec - active.startSec >= QUIET_WINDOW_MIN_SEC - 1e-6) {
+      windows.push({
+        sceneId: active.sceneId,
+        startSec: round(active.startSec, 3),
+        endSec: round(active.endSec, 3),
+        durationSec: round(active.endSec - active.startSec, 3),
+      });
+    }
+    active = undefined;
+  };
+  for (let index = 1; index < samples.length; index += 1) {
+    const before = samples[index - 1]!;
+    const after = samples[index]!;
+    const sameScene = before.sceneId === after.sceneId;
+    const alive = after.independentMotionCount > 0 || (after.focal.speed ?? 0) >= LIVENESS_SPEED;
+    if (!sameScene || alive) {
+      flush();
+      continue;
+    }
+    if (!active) active = { sceneId: after.sceneId, startSec: before.time, endSec: after.time };
+    else active.endSec = after.time;
+  }
+  flush();
+  return windows;
+}
+
 function settleEvidence(
   scoreWindows: Array<DirectionSettleWindowV1 & { sceneId: string }>,
   samples: ContinuousMotionSampleV1[],
 ): ContinuousSettleEvidenceV1[] {
   return scoreWindows.map((window) => {
-    const candidates = samples.filter((sample) =>
+    const samePhrase = samples.filter((sample) =>
       sample.sceneId === window.sceneId &&
       sample.phraseId === window.phraseId &&
       sample.time >= window.startSec - 0.001 &&
       sample.time <= window.endSec + 0.45
     );
+    // An exact phrase boundary belongs to the NEXT direction phrase. Carry
+    // one same-target endpoint sample across that boundary so a component or
+    // camera that visibly rests at the end is not marked late merely because
+    // the semantic phrase id advanced between two 5 Hz samples. Never borrow
+    // a different target: that is real handoff motion, not settle evidence.
+    const last = samePhrase[samePhrase.length - 1];
+    const endpoint = last
+      ? samples.find((sample) =>
+          sample.sceneId === window.sceneId &&
+          sample.time > last.time + 0.001 &&
+          sample.time <= window.endSec + 0.45 &&
+          sample.attention?.kind === last.attention?.kind &&
+          sample.attention?.id === last.attention?.id
+        )
+      : undefined;
+    const candidates = endpoint ? [...samePhrase, endpoint] : samePhrase;
     let settledAt: number | undefined;
-    const measured = candidates.some((sample) => sample.focal.found);
+    // A cut's 80-200ms settle window often has only one side of a target
+    // handoff, so it cannot supply two same-target velocity samples. D1/0e
+    // judges outgoing cut motion directly; exclude cut windows from the
+    // continuous settle denominator instead of recording a false miss at
+    // peakSpeed 0.
+    const measured = window.owner !== "cut" && candidates.some((sample) => sample.focal.found);
     for (let index = 0; index < candidates.length; index += 1) {
       const run = candidates.slice(index, index + 2);
       if (
@@ -314,6 +647,17 @@ function settleEvidence(
         settledAt = run[0]!.time;
         break;
       }
+    }
+    if (
+      settledAt === undefined && measured && candidates.length === 1 &&
+      candidates[0]!.time >= window.endSec - 0.05 &&
+      candidates[0]!.focal.speed !== undefined &&
+      candidates[0]!.focal.speed! <= SETTLED_SPEED
+    ) {
+      // The one endpoint velocity already summarizes the interval leading
+      // into the window end; accepting it avoids demanding a sample after a
+      // scene/cut boundary where the target no longer exists.
+      settledAt = candidates[0]!.time;
     }
     return {
       sceneId: window.sceneId,
@@ -329,6 +673,112 @@ function settleEvidence(
       peakSpeed: round(Math.max(0, ...candidates.map((sample) => sample.focal.speed ?? 0))),
     };
   });
+}
+
+/**
+ * Cross-film calibrated polish thresholds for 5 Hz browser-QA evidence.
+ * These findings pressure strictOk/least-bad selection but never change the
+ * hard runtime `ok` boundary. One finding per class keeps scene-slot repair
+ * focused and prevents marker-count spam.
+ */
+export function continuousMotionQualityFindings(
+  evidence: ContinuousMotionEvidenceV1,
+  durationSec: number,
+): ContinuousMotionQualityFindingV1[] {
+  const findings: ContinuousMotionQualityFindingV1[] = [];
+  const duration = Math.max(0.1, durationSec);
+  const markersByScene = <T extends { sceneId: string; time: number }>(markers: T[]) => {
+    const counts = new Map<string, { count: number; first: number }>();
+    for (const marker of markers) {
+      const current = counts.get(marker.sceneId) ?? { count: 0, first: marker.time };
+      current.count += 1;
+      current.first = Math.min(current.first, marker.time);
+      counts.set(marker.sceneId, current);
+    }
+    return [...counts].sort((a, b) => b[1].count - a[1].count || a[1].first - b[1].first)[0];
+  };
+
+  // A single eased gesture commonly remains above the derivative marker for
+  // two or three adjacent samples. Counting each sample made the verdict vary
+  // with sample density and charged one minimum-jerk route as several defects.
+  // Collapse cadence-adjacent markers into physical gesture clusters; repeated
+  // jolts separated in time still accumulate and trigger the quality finding.
+  const jerkClusterGapSec = Math.max(0.3, 2.25 / Math.max(1, evidence.sampleHz));
+  const jerkClusters: ContinuousMotionMarkerV1[] = [];
+  let lastJerkMarker: ContinuousMotionMarkerV1 | undefined;
+  for (const marker of [...evidence.jerkMarkers].sort((a, b) =>
+    a.time - b.time || a.sceneId.localeCompare(b.sceneId)
+  )) {
+    const previous = jerkClusters[jerkClusters.length - 1];
+    if (
+      previous && lastJerkMarker?.sceneId === marker.sceneId &&
+      marker.time - lastJerkMarker.time <= jerkClusterGapSec
+    ) {
+      // Retain the cluster's earliest routing time but its worst measured value.
+      previous.value = Math.max(previous.value, marker.value);
+      lastJerkMarker = marker;
+      continue;
+    }
+    jerkClusters.push({ ...marker });
+    lastJerkMarker = marker;
+  }
+  const jerkDensity = jerkClusters.length / duration;
+  if (jerkClusters.length >= 4 && jerkDensity > 0.15) {
+    const worst = markersByScene(jerkClusters);
+    findings.push({
+      code: "motion_jerk_excess",
+      sceneId: worst?.[0] ?? evidence.scenes[0]?.sceneId ?? "unknown",
+      time: worst?.[1].first ?? jerkClusters[0]?.time ?? 0,
+      message:
+        `${jerkClusters.length} distinct high-jerk focal gestures over ` +
+        `${duration.toFixed(1)}s (${jerkDensity.toFixed(2)}/s) exceed the calibrated motion profile.`,
+      fixHint:
+        "Remove the corrective camera move or competing transform nearest the marker cluster; " +
+        "keep one minimum-jerk route and a readable landing.",
+    });
+  }
+
+  const reversalLimit = Math.max(1, Math.floor(duration / 20));
+  if (evidence.summary.reversalCount > reversalLimit) {
+    const worst = markersByScene(evidence.reversals);
+    findings.push({
+      code: "motion_reversal_excess",
+      sceneId: worst?.[0] ?? evidence.scenes[0]?.sceneId ?? "unknown",
+      time: worst?.[1].first ?? evidence.reversals[0]?.time ?? 0,
+      message:
+        `${evidence.summary.reversalCount} focal direction reversals exceed the ` +
+        `${reversalLimit}-reversal allowance for a ${duration.toFixed(1)}s film.`,
+      fixHint:
+        "Merge same-target reframes and let connective drift yield to the decisive move; " +
+        "do not pan away and correct back during a readable phrase.",
+    });
+  }
+
+  const measured = evidence.settleWindows.filter((window) => window.measured);
+  const settled = measured.filter((window) => window.settledByWindowEnd);
+  if (measured.length >= 4 && settled.length / measured.length < 0.55) {
+    const missed = measured.filter((window) => !window.settledByWindowEnd);
+    const byScene = new Map<string, { count: number; first: number }>();
+    for (const window of missed) {
+      const current = byScene.get(window.sceneId) ?? { count: 0, first: window.startSec };
+      current.count += 1;
+      current.first = Math.min(current.first, window.startSec);
+      byScene.set(window.sceneId, current);
+    }
+    const worst = [...byScene].sort((a, b) => b[1].count - a[1].count || a[1].first - b[1].first)[0];
+    findings.push({
+      code: "motion_settle_late",
+      sceneId: worst?.[0] ?? measured[0]?.sceneId ?? "unknown",
+      time: worst?.[1].first ?? measured[0]?.startSec ?? 0,
+      message:
+        `Only ${settled.length}/${measured.length} measured direction phrases settled by ` +
+        `their readable-window end (${Math.round(settled.length / measured.length * 100)}%).`,
+      fixHint:
+        "Shorten or remove overlapping late motion so the focal reaches its rest pose before " +
+        "the reading window ends; keep follow-through on a separate ambient layer.",
+    });
+  }
+  return findings;
 }
 
 /** Pure derivation used by browser QA, the temporal inspector, and unit tests. */
@@ -360,6 +810,23 @@ export function analyzeContinuousMotionSnapshots(
     const sample = samples[index]!;
     const dt = after.time - before.time;
     sample.independentMotionCount = independentMotionCount(before, after, dt, diagonal);
+    const beforeCamera = before.layers.camera;
+    const afterCamera = after.layers.camera;
+    if (dt > 0 && before.sceneId === after.sceneId && beforeCamera && afterCamera) {
+      const scaleBefore = Math.max(
+        1e-6,
+        Math.sqrt(Math.abs(beforeCamera.scaleX * beforeCamera.scaleY)),
+      );
+      const scaleAfter = Math.max(
+        1e-6,
+        Math.sqrt(Math.abs(afterCamera.scaleX * afterCamera.scaleY)),
+      );
+      sample.cameraSpeed = round(Math.hypot(
+        (afterCamera.x - beforeCamera.x) / diagonal / dt,
+        (afterCamera.y - beforeCamera.y) / diagonal / dt,
+        Math.log(scaleAfter / scaleBefore) * FOCAL_SCALE_WEIGHT / dt,
+      ));
+    }
     const sameTarget = before.sceneId === after.sceneId &&
       before.attention?.kind === after.attention?.kind &&
       before.attention?.id === after.attention?.id;
@@ -380,11 +847,12 @@ export function analyzeContinuousMotionSnapshots(
     sample.focal.speed = round(Math.hypot(velocity.x, velocity.y, velocity.z));
     const previousVelocity = velocities[index - 1];
     if (!previousVelocity) continue;
-    // Exact cue/settle/cut boundaries can sit only 10ms apart. First and
-    // second derivatives across those nonuniform micro-steps explode even for
-    // smooth GSAP travel, so keep velocity evidence but require at least half
-    // an ordinary sampling interval for acceleration/jerk.
-    const minimumDerivativeStep = 0.5 / Math.max(1, sampleHz);
+    // Exact cue/settle/cut boundaries can sit only 10–150ms from the regular
+    // cadence. This simple finite difference is calibrated on uniform samples;
+    // applying it across those nonuniform inserts fabricates derivative spikes
+    // even for smooth GSAP travel. Keep velocity evidence, but derive
+    // acceleration/jerk only from near-cadence intervals.
+    const minimumDerivativeStep = 0.9 / Math.max(1, sampleHz);
     if (
       dt < minimumDerivativeStep ||
       (velocitySteps[index - 1] ?? 0) < minimumDerivativeStep
@@ -445,6 +913,7 @@ export function analyzeContinuousMotionSnapshots(
   const accelerationsValues = samples.map((sample) => sample.focal.acceleration ?? 0);
   const jerks = samples.map((sample) => sample.focal.jerk ?? 0);
   const motionCounts = samples.map((sample) => sample.independentMotionCount);
+  const quietWindows = renderedQuietWindows(samples);
   const sceneSummaries = scenes.map((scene): ContinuousSceneSummaryV1 => {
     const scoped = samples.filter((sample) => sample.sceneId === scene.id);
     const scopedFound = scoped.filter((sample) => sample.focal.found);
@@ -478,6 +947,8 @@ export function analyzeContinuousMotionSnapshots(
     settleWindowCount: settleWindows.length,
     measuredSettleWindowCount: settleWindows.filter((window) => window.measured).length,
     settledByWindowEndCount: settleWindows.filter((window) => window.settledByWindowEnd).length,
+    quietWindowCount: quietWindows.length,
+    maxQuietWindowSec: round(Math.max(0, ...quietWindows.map((window) => window.durationSec)), 3),
   };
   const advisories: string[] = [];
   if (summary.offframeSamples > 0) {
@@ -497,6 +968,12 @@ export function analyzeContinuousMotionSnapshots(
   if (jerkMarkers.length) {
     advisories.push(`${jerkMarkers.length} high-jerk focal sample(s) need review`);
   }
+  if (summary.maxQuietWindowSec >= QUIET_WINDOW_REVIEW_SEC) {
+    advisories.push(
+      `${summary.quietWindowCount} rendered quiet window(s); longest ` +
+        `${summary.maxQuietWindowSec.toFixed(2)}s without camera, content, or micro motion`,
+    );
+  }
   // Keep p95 calculations exercised and available for future threshold work
   // without treating a single seek-boundary spike as the typical profile.
   const p95Acceleration = percentile(accelerationsValues, 0.95);
@@ -511,6 +988,7 @@ export function analyzeContinuousMotionSnapshots(
     samples,
     reversals,
     jerkMarkers,
+    quietWindows,
     settleWindows,
     scenes: sceneSummaries,
     summary,
@@ -601,7 +1079,7 @@ export async function captureContinuousMotionEvidence(
             .find((element: HTMLElement) => element.getAttribute("data-scene") === payload.sceneId)
           : undefined;
         const rootRect = root?.getBoundingClientRect();
-        const localState = (element: HTMLElement): Local => {
+        const localState = (element: Element): Local => {
           const style = getComputedStyle(element);
           const transform = style.transform;
           const values = transform === "none"
@@ -618,8 +1096,11 @@ export async function captureContinuousMotionEvidence(
             scaleX: Math.hypot(a, b),
             scaleY: Math.hypot(c, d),
             opacity: Number.parseFloat(style.opacity) || 0,
-            width: element.offsetWidth,
-            height: element.offsetHeight,
+            width: element instanceof HTMLElement ? element.offsetWidth : element.getBoundingClientRect().width,
+            height: element instanceof HTMLElement ? element.offsetHeight : element.getBoundingClientRect().height,
+            ...(Number.isFinite(Number.parseFloat(style.strokeDashoffset))
+              ? { strokeDashoffset: Number.parseFloat(style.strokeDashoffset) }
+              : {}),
           };
         };
         const effectiveOpacity = (element: HTMLElement): number => {
@@ -683,6 +1164,16 @@ export async function captureContinuousMotionEvidence(
           layers.scene = localState(scene);
           const cameraWorld = scene.querySelector("[data-camera-world]") as HTMLElement | null;
           if (cameraWorld) layers.camera = localState(cameraWorld);
+          // The living-canvas contract keeps readable product copy still while
+          // wallpaper, furniture, and light carry ambient life. Sample those
+          // host-owned layers or a visibly moving hold is mislabeled quiet.
+          const ambientElements = Array.from(
+            scene.querySelectorAll("[data-sequences-ambient]"),
+          ) as HTMLElement[];
+          for (const [index, element] of ambientElements.slice(0, 16).entries()) {
+            layers[`ambient:${element.getAttribute("data-sequences-ambient") ?? index}:${index}`] =
+              localState(element);
+          }
           const partElements = (Array.from(scene.querySelectorAll("[data-part]")) as HTMLElement[])
             .filter((element: HTMLElement) => {
               if (element.closest("[data-layout-ignore],[data-sequences-runtime-cut]")) return false;
@@ -699,6 +1190,16 @@ export async function captureContinuousMotionEvidence(
           for (const [index, element] of fxElements.slice(0, 12).entries()) {
             subjects[`fx:${element.getAttribute("data-sequences-fx") ?? index}:${index}`] =
               localState(element);
+          }
+          // Internal component motion is story motion too. Sampling only the
+          // outer data-part root made row cascades, count slots, progress fills,
+          // and SVG draw-ons look falsely static.
+          const internal = Array.from(scene.querySelectorAll(
+            "[data-cmp-item],.cmp-row,.cmp-item,.cmp-card,.cmp-msg," +
+            "[data-cmp-value],[data-cmp-fill],svg path,svg line,svg polyline,svg circle",
+          ));
+          for (const [index, element] of internal.slice(0, 100).entries()) {
+            subjects[`internal:${index}`] = localState(element);
           }
         }
         return {
@@ -725,5 +1226,5 @@ export async function captureContinuousMotionEvidence(
 }
 
 export function continuousMotionEvidenceEnabled(): boolean {
-  return process.env.SLACK_SEQUENCES_CONTINUOUS_MOTION !== "0";
+  return slackSequencesEnvRawValue("SLACK_SEQUENCES_CONTINUOUS_MOTION") !== "0";
 }

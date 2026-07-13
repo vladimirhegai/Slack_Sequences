@@ -69,15 +69,15 @@
     {
       "name": "settleSec",
       "kind": "number",
-      "description": "Seconds after scene start when the payoff locks (leave >=1s of scene after it).",
+      "description": "Seconds after scene start when the payoff locks (leave >=1s of scene after it, and keep it at least 1s before the scene ends).",
       "default": 2.6,
-      "min": 1.6,
-      "max": 12
+      "min": 1.8,
+      "max": 8
     }
   ],
   "revision": 1,
   "demo": {
-    "durationSec": 6,
+    "durationSec": 5,
     "params": {
       "lead": "Your launch becomes",
       "word1": "a thread",
@@ -85,7 +85,7 @@
       "word3": "a demo",
       "payoff": "a film.",
       "accent": "var(--cinema-key)",
-      "settleSec": 3.2
+      "settleSec": 2.8
     }
   },
   "sanityBriefs": [
@@ -98,9 +98,11 @@
 # last-word-roulette — locked sentence, final-word wheel, payoff snap
 
 **What it is.** A hero headline whose sentence is locked while its final word
-is a masked vertical roulette: three candidate words tick past in committed
-steps, then the payoff word snaps in on a settle ease, an accent underline
-draws beneath it, and a soft glow acknowledges the landing before releasing.
+is a masked vertical roulette: the candidate words spin past twice in quick,
+committed ticks that ease off, then the payoff word snaps in on a settle ease
+with a small slot pop, an accent underline draws beneath it, and a soft glow
+acknowledges the landing before releasing. The spin occupies ~1.3s before the
+payoff locks at `settleSec`.
 
 **When to declare it.** The brief positions the product against alternatives,
 cycles through options, or builds to one decisive word — "everything becomes
@@ -139,6 +141,12 @@ payoff locks — leave ≥1s of scene after it).
   - the <script data-recipe-motion> body runs as (tl, root, start, duration,
     uid) — statements add tweens to the ONE paused master timeline. Pure
     function of timeline time: no clocks, no rAF, no randomness, no repeats.
+
+  Static-analyzability convention (keeps the lint gate warning-free): tween
+  targets are INLINE STRING LITERALS with {{uid}} filled by the host (the
+  pinned GSAP parser resolves literals, never string concatenation), and the
+  timing spine derives from {{start}}/{{settleSec}} numeric literal slots so
+  every position constant-folds at parse time.
 -->
 <style data-recipe-style>
   .rcp-roulette {
@@ -227,6 +235,9 @@ payoff locks — leave ≥1s of scene after it).
             <span class="rcp-word">{{word1}}</span>
             <span class="rcp-word">{{word2}}</span>
             <span class="rcp-word">{{word3}}</span>
+            <span class="rcp-word">{{word1}}</span>
+            <span class="rcp-word">{{word2}}</span>
+            <span class="rcp-word">{{word3}}</span>
             <span class="rcp-word rcp-payoff">{{payoff}}</span>
           </span>
         </span>
@@ -236,31 +247,38 @@ payoff locks — leave ≥1s of scene after it).
   </div>
 </template>
 <script data-recipe-motion>
-  // Timing spine: everything is derived from the scene window and the single
-  // settleSec knob (seconds after scene start when the payoff locks), so a
-  // re-timed scene keeps the choreography's shape. Clamped so the full
-  // gesture always fits the scene with a reading hold after the payoff.
-  var settle = start + Math.min(Math.max({{settleSec}}, 1.6), Math.max(1.6, duration - 1.0));
-  var rootSel = '[data-part="' + uid + '-roulette"]';
-  var wheelSel = '[data-part="' + uid + '-wheel"]';
-  var ruleSel = rootSel + " .rcp-rule";
-  var glowSel = rootSel + " .rcp-glow";
+  // Timing spine: {{start}}/{{settleSec}} fill as numeric literals, so `settle`
+  // and every position below constant-fold in the static GSAP parser — the
+  // whole gesture is placeable at lint time (no phantom-overlap warnings) and
+  // identical at runtime. Selectors are inline string literals for the same
+  // reason: the linter resolves literals, never concatenations.
+  var settle = {{start}} + {{settleSec}};
 
   // Entrance: the locked sentence rises in as one object.
-  tl.fromTo(rootSel, { y: 26, opacity: 0 },
-    { y: 0, opacity: 1, duration: 0.5, ease: "power3.out" }, start + 0.2);
+  tl.fromTo('[data-part="{{uid}}-roulette"]', { y: 24, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.45, ease: "power3.out" }, {{start}} + 0.15);
 
-  // The wheel: three candidate ticks, then the payoff snap. Each word is 25%
-  // of the wheel column; ticks are committed inOut steps (never a blur), the
-  // payoff lands on seqSettle — overshoot-free arrival (house style).
-  var tick = 0.3;
-  tl.set(wheelSel, { yPercent: 0 }, start);
-  tl.to(wheelSel, { yPercent: -25, duration: tick, ease: "power2.inOut" }, settle - 1.42);
-  tl.to(wheelSel, { yPercent: -50, duration: tick, ease: "power2.inOut" }, settle - 0.96);
-  tl.to(wheelSel, { yPercent: -75, duration: 0.4, ease: "seqSettle" }, settle - 0.4);
+  // The wheel is a 7-row strip (candidates twice, then the payoff), so the
+  // spin reads as a real roulette: five quick committed ticks that ease off,
+  // then the payoff lands on seqSettle — overshoot-free arrival (house style).
+  // One row is 100/7% of the strip.
+  tl.set('[data-part="{{uid}}-wheel"]', { yPercent: 0 }, {{start}});
+  tl.to('[data-part="{{uid}}-wheel"]', { yPercent: -100 * 1 / 7, duration: 0.13, ease: "power1.in" }, settle - 1.30);
+  tl.to('[data-part="{{uid}}-wheel"]', { yPercent: -100 * 2 / 7, duration: 0.12, ease: "power1.inOut" }, settle - 1.12);
+  tl.to('[data-part="{{uid}}-wheel"]', { yPercent: -100 * 3 / 7, duration: 0.12, ease: "power1.inOut" }, settle - 0.95);
+  tl.to('[data-part="{{uid}}-wheel"]', { yPercent: -100 * 4 / 7, duration: 0.12, ease: "power1.inOut" }, settle - 0.78);
+  tl.to('[data-part="{{uid}}-wheel"]', { yPercent: -100 * 5 / 7, duration: 0.13, ease: "power1.out" }, settle - 0.60);
+  tl.to('[data-part="{{uid}}-wheel"]', { yPercent: -100 * 6 / 7, duration: 0.38, ease: "seqSettle" }, settle - 0.38);
 
-  // Acknowledgment: underline draws, glow breathes once and releases.
-  tl.fromTo(ruleSel, { scaleX: 0 }, { scaleX: 1, duration: 0.45, ease: "power2.inOut" }, settle + 0.05);
-  tl.fromTo(glowSel, { opacity: 0 }, { opacity: 0.5, duration: 0.3, ease: "power2.out" }, settle);
-  tl.to(glowSel, { opacity: 0.22, duration: 0.6, ease: "power2.inOut" }, settle + 0.3);
+  // Landing impact: the slot pops once (committed, no wobble)…
+  tl.fromTo('[data-part="{{uid}}-roulette"] .rcp-slot', { scale: 1 },
+    { scale: 1.035, duration: 0.12, ease: "power2.out" }, settle - 0.05);
+  tl.to('[data-part="{{uid}}-roulette"] .rcp-slot', { scale: 1, duration: 0.28, ease: "seqSettle" }, settle + 0.09);
+
+  // …the underline draws fast, and the glow breathes once and releases.
+  tl.fromTo('[data-part="{{uid}}-roulette"] .rcp-rule', { scaleX: 0 },
+    { scaleX: 1, duration: 0.32, ease: "power3.out" }, settle + 0.02);
+  tl.fromTo('[data-part="{{uid}}-roulette"] .rcp-glow', { opacity: 0 },
+    { opacity: 0.5, duration: 0.22, ease: "power2.out" }, settle - 0.02);
+  tl.to('[data-part="{{uid}}-roulette"] .rcp-glow', { opacity: 0.18, duration: 0.5, ease: "power2.inOut" }, settle + 0.24);
 </script>

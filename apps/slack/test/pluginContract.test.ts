@@ -16,7 +16,7 @@ import {
   componentUnitCount,
   trimOverBudgetComponents,
 } from "../src/engine/componentContract.ts";
-import { sceneIntroductionTimes } from "../src/engine/pacingAudit.ts";
+import { auditPacing, sceneIntroductionTimes } from "../src/engine/pacingAudit.ts";
 import { authorStoryboardProjection } from "../src/engine/compositionRunner.ts";
 import { createSeededRandom } from "../src/engine/pluginKernel.ts";
 import { deriveTopic, seedMetrics, seedToasts } from "../src/engine/seedContent.ts";
@@ -64,11 +64,16 @@ describe("plugin declarations — parse-time normalization", () => {
   it("defaults the unit id from the kind and keeps unknown kinds for the reconciler", () => {
     const declarations = normalizeStoryboardPluginDeclarations([
       { kind: "notification-stack" },
+      { kind: "flow-diagram" },
+      { kind: "comparison-table" },
+      { kind: "pricing-reveal" },
       { kind: "made-up-plugin" },
       { bogus: true },
       "junk",
     ]);
-    expect(declarations.map((entry) => entry.id)).toEqual(["notices", "made-up-plugin"]);
+    expect(declarations.map((entry) => entry.id)).toEqual([
+      "notices", "flow", "comparison", "pricing", "made-up-plugin",
+    ]);
   });
 });
 
@@ -191,6 +196,91 @@ describe("plugin reconciliation + lowering (Sentinel L2, degrade-never-veto)", (
     expect((lowered.components ?? []).map((entry) => entry.id)).toContain("hero-toast");
   });
 
+  it("retires a team-strip when a typed load-bearing avatar stack owns the station", () => {
+    const result = reconcileAndLowerPlugins([
+      scene({
+        components: [{
+          version: 1,
+          id: "owner-avatar",
+          kind: "avatar-stack",
+          region: "team-strip",
+          role: "support",
+        }],
+        camera: {
+          version: 1,
+          path: [{
+            version: 1,
+            move: "track-to-anchor",
+            startSec: 1,
+            durationSec: 1,
+            toPart: "owner-avatar",
+          }],
+        },
+        spatialIntent: {
+          version: 1,
+          focalPart: "owner-avatar",
+          composition: "owner led",
+          relationships: [],
+        },
+        plugins: normalizeStoryboardPluginDeclarations([{
+          kind: "team-strip",
+          id: "owner-strip",
+          region: "team-strip",
+          params: { people: 3, more: 2 },
+        }]),
+      }),
+    ]);
+    const lowered = result.scenes[0]!;
+    expect(lowered.plugins).toBeUndefined();
+    expect((lowered.components ?? []).map((entry) => entry.id)).toEqual(["owner-avatar"]);
+    expect(result.notes.join(" ")).toContain(
+      'team-strip" retired because load-bearing avatar stack "owner-avatar"',
+    );
+  });
+
+  it("lets a load-bearing station CTA complete a lockup without generating a second button", () => {
+    const raw = scene({
+      components: [{
+        version: 1, id: "cta-pill", kind: "button", region: "cta-station", role: "hero",
+      }],
+      beats: [{
+        version: 1, id: "cta-press", sceneId: "s1", component: "cta-pill",
+        kind: "set-state", atSec: 4.5, durationSec: 0.6, toState: "open",
+      }],
+      interactions: [{
+        version: 1, id: "press-cta", sceneId: "s1", cursorId: "cursor",
+        targetPart: "cta-pill", action: "click", startSec: 4, arriveSec: 4.5,
+      } as never],
+      plugins: normalizeStoryboardPluginDeclarations([{
+        kind: "lockup", id: "cta-lockup", region: "cta-station",
+        params: { headline: "Book with Roamly", sub: "One calm click.", cta: "Start shipping" },
+      }]),
+    });
+    const first = reconcileAndLowerPlugins([raw]);
+    const lowered = first.scenes[0]!;
+    expect((lowered.components ?? []).map((entry) => entry.id)).toContain("cta-pill");
+    expect((lowered.components ?? []).map((entry) => entry.id)).not.toContain("cta-lockup-cta");
+    expect((lowered.beats ?? []).some((entry) => entry.component === "cta-lockup-cta")).toBe(false);
+    expect(lowered.plugins?.[0]?.params.cta).toBe("");
+    expect(first.notes.join(" ")).toContain("reuses load-bearing station CTA");
+
+    // Reconcile an older persisted lowering as well: its generated child and
+    // entrance beat are retired while the authored interaction target stays.
+    const legacy = reconcileAndLowerPlugins([raw]).scenes[0]!;
+    legacy.components = [
+      ...(legacy.components ?? []),
+      { version: 1, id: "cta-lockup-cta", kind: "button", pluginUid: "s1-cta-lockup" },
+    ];
+    legacy.beats = [
+      ...(legacy.beats ?? []),
+      { version: 1, id: "cta-lockup-b3", sceneId: "s1", component: "cta-lockup-cta", kind: "open", atSec: 1 },
+    ];
+    legacy.plugins![0]!.params.cta = "Start shipping";
+    const replayed = reconcileAndLowerPlugins([legacy]).scenes[0]!;
+    expect((replayed.components ?? []).map((entry) => entry.id)).not.toContain("cta-lockup-cta");
+    expect((replayed.beats ?? []).some((entry) => entry.component === "cta-lockup-cta")).toBe(false);
+  });
+
   it("re-parses an already-lowered plan idempotently (the plugin-probe-1 notices-2 echo)", () => {
     // A scene-repair merge / findings-retry echo re-parses a plan that already
     // carries the lowered children — but normalizeStoryboardComponents strips
@@ -210,6 +300,56 @@ describe("plugin reconciliation + lowering (Sentinel L2, degrade-never-veto)", (
     expect(relowered.plugins?.[0]?.uid).toBe("s1-metrics");
     expect((relowered.beats ?? []).length).toBe((first.beats ?? []).length);
     expect(componentUnitCount(relowered.components)).toBe(1);
+  });
+
+  it("keeps every plugin child in its declared camera station across re-parses", () => {
+    const first = reconcileAndLowerPlugins([scene({
+      plugins: normalizeStoryboardPluginDeclarations([{
+        kind: "lockup",
+        id: "ship-lockup",
+        region: "cta-center",
+        params: {
+          headline: "Start shipping",
+          sub: "One board. One timeline. One confident ship.",
+          cta: "Get started",
+        },
+      }]),
+    })]).scenes[0]!;
+    expect((first.components ?? []).every((entry) => entry.region === "cta-center")).toBe(true);
+
+    const echoed: DirectScene = {
+      ...first,
+      components: (first.components ?? []).map(
+        ({ pluginUid: _uid, region: _region, ...entry }) => entry,
+      ),
+    };
+    const replayed = reconcileAndLowerPlugins([echoed]).scenes[0]!;
+    expect((replayed.components ?? []).every((entry) => entry.pluginUid === "s1-ship-lockup")).toBe(true);
+    expect((replayed.components ?? []).every((entry) => entry.region === "cta-center")).toBe(true);
+  });
+
+  it("refreshes host beat timing when an existing plugin's camera arrival changes", () => {
+    const first = reconcileAndLowerPlugins([scene({
+      plugins: normalizeStoryboardPluginDeclarations([{
+        kind: "lockup", id: "proof-lockup", region: "proof-station",
+        params: { headline: "Proof lands here" },
+      }]),
+    })]).scenes[0]!;
+    const early = first.beats?.find((entry) => entry.id === "proof-lockup-b1")?.atSec;
+    const replayed = reconcileAndLowerPlugins([{
+      ...first,
+      camera: {
+        version: 1,
+        path: [{
+          version: 1, move: "pan", fromRegion: "overview", toRegion: "proof-station",
+          startSec: 3, durationSec: 2,
+        }],
+      },
+    }]).scenes[0]!;
+    const refreshed = replayed.beats?.filter((entry) => entry.id === "proof-lockup-b1") ?? [];
+    expect(early).toBeLessThan(1);
+    expect(refreshed).toHaveLength(1);
+    expect(refreshed[0]!.atSec).toBeGreaterThan(3);
   });
 
   it("keeps a lockup's typed copy pacing-feasible (static fallback in a tight scene)", () => {
@@ -238,6 +378,24 @@ describe("plugin reconciliation + lowering (Sentinel L2, degrade-never-veto)", (
     // No room to type + read: the copy ships static, no beat to reject.
     expect((tight.beats ?? []).filter((beat) => beat.kind === "type")).toHaveLength(0);
     expect((tight.components ?? []).length).toBeGreaterThan(0);
+  });
+
+  it("ships lockups at display scale instead of inheriting compact component type", () => {
+    const scenes = reconcileAndLowerPlugins([
+      scene({
+        plugins: normalizeStoryboardPluginDeclarations([{
+          kind: "lockup",
+          params: { headline: "Book with Roamly", sub: "One calm click.", cta: "Start now" },
+        }]),
+      }),
+    ]).scenes;
+    const html = injectPluginContract(
+      `<html><head></head><body><section id="s1" class="scene" data-scene="s1"></section></body></html>`,
+      scenes,
+    ).html;
+    expect(html).toContain("font-size:clamp(72px,7.2vw,138px)");
+    expect(html).toContain("font-size:clamp(24px,2.2vw,42px)");
+    expect(html).toContain("width:min(100%,1200px)");
   });
 
   it("is deterministic: identical input lowers to identical bytes", () => {
@@ -349,6 +507,56 @@ describe("plugin markup injection (strip + reinject, recipe seam discipline)", (
     expect(html).not.toMatch(/Item \d/);
     expect(html).toContain("cmp-value");
     expect(html).toMatch(/data-cmp-value>[^<]*\d/);
+  });
+
+  it("keeps a regionless lockup above opaque authored surfaces in a safe station", () => {
+    const scenes = reconcileAndLowerPlugins([
+      scene({
+        plugins: normalizeStoryboardPluginDeclarations([{
+          version: 1,
+          kind: "lockup",
+          id: "cta-lockup",
+          params: { headline: "Resolve in minutes", cta: "Start now" },
+        }]),
+      }),
+    ]).scenes;
+    const html = injectPluginContract(
+      `<html><head></head><body><section id="s1" class="scene" data-scene="s1">` +
+        `<div class="cmp-window" style="position:absolute;inset:64px;z-index:10"></div>` +
+        `</section></body></html>`,
+      scenes,
+    ).html;
+    expect(html).toContain('data-sequences-plugin-placement="scene-center-overlay"');
+    expect(html).toContain("position:absolute;left:50%;top:50%;z-index:30");
+  });
+
+  it("lands a regionless lockup in an authored semantic CTA slot instead of floating over the UI", () => {
+    const scenes = reconcileAndLowerPlugins([
+      scene({
+        plugins: normalizeStoryboardPluginDeclarations([{
+          version: 1,
+          kind: "lockup",
+          id: "cta-lockup",
+          params: { headline: "Resolve in minutes", cta: "Start now" },
+        }]),
+      }),
+    ]).scenes;
+    const html = injectPluginContract(
+      `<html><head></head><body><section id="s1" class="scene" data-scene="s1">` +
+        `<div class="cmp-window"><div class="cmp-body">` +
+        `<div class="cta-area"><!-- host lockup --></div>` +
+        `</div></div></section></body></html>`,
+      scenes,
+    ).html;
+    const slotIndex = html.indexOf('class="cta-area"');
+    const pluginIndex = html.indexOf('data-sequences-plugin="lockup"');
+    const slotCloseIndex = html.indexOf("</div>", slotIndex);
+    expect(pluginIndex).toBeGreaterThan(slotIndex);
+    expect(pluginIndex).toBeLessThan(slotCloseIndex);
+    expect(html).toContain('data-sequences-plugin-placement="semantic-slot"');
+    expect(html).not.toContain('data-sequences-plugin-placement="scene-center-overlay"');
+    expect(html).not.toContain("position:absolute;left:50%;top:50%");
+    expect(injectPluginContract(html, scenes).html).toBe(html);
   });
 });
 
@@ -477,6 +685,198 @@ describe("team-strip plugin (seedNames avatar stack)", () => {
     const value = Number(match![1]);
     expect(value).toBeGreaterThanOrEqual(5);
     expect(value).toBeLessThanOrEqual(40);
+  });
+});
+
+describe("flow-diagram plugin (endpoint-bound topology)", () => {
+  const DECL = [{
+    kind: "flow-diagram",
+    params: { nodes: 5, topology: "fan-out", topic: "deploy approval workflow" },
+  }];
+
+  it("lowers seeded nodes and connector paths into typed component beats", () => {
+    const first = reconcileAndLowerPlugins([declared(DECL)]);
+    const second = reconcileAndLowerPlugins([declared(DECL)]);
+    expect(JSON.stringify(first.scenes)).toBe(JSON.stringify(second.scenes));
+    expect(resolvePluginPlan(first.scenes)).toEqual(resolvePluginPlan(second.scenes));
+    const lowered = first.scenes[0]!;
+    const components = lowered.components ?? [];
+    const nodes = components.filter((entry) => entry.kind === "stat-card");
+    const edges = components.filter((entry) => entry.kind === "chart-line");
+    expect(nodes).toHaveLength(5);
+    expect(edges).toHaveLength(6);
+    expect(new Set(components.map((entry) => entry.pluginUid))).toEqual(new Set(["s1-flow"]));
+    expect((lowered.beats ?? []).filter((entry) => entry.kind === "open")).toHaveLength(5);
+    expect((lowered.beats ?? []).filter((entry) => entry.kind === "chart")).toHaveLength(6);
+    for (const entry of lowered.beats ?? []) {
+      expect(entry.atSec).toBeGreaterThanOrEqual(0);
+      expect(entry.atSec).toBeLessThanOrEqual(6);
+    }
+  });
+
+  it("binds every edge to emitted node parts and their exact anchor sides", () => {
+    const scenes = reconcileAndLowerPlugins([declared(DECL)]).scenes;
+    const markup = resolvePluginPlan(scenes)[0]!.markup;
+    const nodeParts = new Set(
+      [...markup.matchAll(/data-flow-node="\d+" data-part="([^"]+)"/g)]
+        .map((match) => match[1]!),
+    );
+    const edges = [...markup.matchAll(
+      /data-flow-edge="[^"]+" data-part="[^"]+" data-edge-from="([^"]+)" data-edge-from-anchor="([^"]+)" data-edge-to="([^"]+)" data-edge-to-anchor="([^"]+)"/g,
+    )];
+    expect(nodeParts.size).toBe(5);
+    expect(edges).toHaveLength(6);
+    for (const edge of edges) {
+      expect(nodeParts.has(edge[1]!)).toBe(true);
+      expect(edge[2]).toBe("right");
+      expect(nodeParts.has(edge[3]!)).toBe(true);
+      expect(edge[4]).toBe("left");
+    }
+    expect((markup.match(/<path class="cmp-stroke"/g) ?? [])).toHaveLength(6);
+    expect(markup).not.toMatch(/Item \d/);
+  });
+});
+
+describe("comparison-table plugin (seeded aligned matrix)", () => {
+  const DECL = [{
+    kind: "comparison-table",
+    params: { choices: 3, features: 5, topic: "agent evaluation controls" },
+  }];
+
+  it("lowers to one table and one rows beat with deterministic real content", () => {
+    const first = reconcileAndLowerPlugins([declared(DECL)]);
+    const second = reconcileAndLowerPlugins([declared(DECL)]);
+    expect(JSON.stringify(first.scenes)).toBe(JSON.stringify(second.scenes));
+    expect(resolvePluginPlan(first.scenes)).toEqual(resolvePluginPlan(second.scenes));
+    const lowered = first.scenes[0]!;
+    expect(lowered.components).toEqual([
+      { version: 1, id: "comparison-matrix", kind: "table", pluginUid: "s1-comparison" },
+    ]);
+    expect(lowered.beats).toHaveLength(2);
+    expect(lowered.beats?.map((entry) => entry.kind)).toEqual(["rows", "highlight"]);
+    const markup = resolvePluginPlan(first.scenes)[0]!.markup;
+    expect((markup.match(/data-comparison-row=/g) ?? [])).toHaveLength(5);
+    expect((markup.match(/data-comparison-choice=/g) ?? [])).toHaveLength(15);
+    expect(markup).toContain("--seq-comparison-choices:3");
+    expect(markup).not.toMatch(/Item \d/);
+  });
+});
+
+describe("pricing-reveal plugin (seeded tier count-ups)", () => {
+  const DECL = [{
+    kind: "pricing-reveal",
+    params: { tiers: 4, billing: "annual", currency: "eur", featured: 3, topic: "analytics" },
+  }];
+
+  it("lowers every card to an open plus count beat and one featured tier", () => {
+    const first = reconcileAndLowerPlugins([declared(DECL)]);
+    const second = reconcileAndLowerPlugins([declared(DECL)]);
+    expect(JSON.stringify(first.scenes)).toBe(JSON.stringify(second.scenes));
+    expect(resolvePluginPlan(first.scenes)).toEqual(resolvePluginPlan(second.scenes));
+    const lowered = first.scenes[0]!;
+    expect(lowered.components).toHaveLength(4);
+    expect(lowered.components?.every((entry) => entry.kind === "stat-card")).toBe(true);
+    expect((lowered.beats ?? []).filter((entry) => entry.kind === "open")).toHaveLength(4);
+    const countBeats = (lowered.beats ?? []).filter((entry) => entry.kind === "count");
+    expect(countBeats).toHaveLength(4);
+    expect(countBeats.every((entry) => Number(entry.value) > 0)).toBe(true);
+    const markup = resolvePluginPlan(first.scenes)[0]!.markup;
+    expect((markup.match(/data-price-tier=/g) ?? [])).toHaveLength(4);
+    expect((markup.match(/data-featured="true"/g) ?? [])).toHaveLength(1);
+    expect(markup).toMatch(/€\d+\/yr/);
+  });
+
+  it("retargets an unresolved morph carrier to the one featured plugin card", () => {
+    const result = reconcileAndLowerPlugins([
+      scene({
+        id: "plans",
+        cut: {
+          version: 1,
+          style: "morph",
+          focalPartOut: "growth-card",
+          focalPartIn: "invoice-panel",
+        },
+        spatialIntent: {
+          version: 1,
+          focalPart: "growth-card",
+          composition: "layout-split",
+          relationships: ["Featured plan resolves before the invoice"],
+        },
+        plugins: normalizeStoryboardPluginDeclarations([{
+          kind: "pricing-reveal",
+          id: "plan-cards",
+          params: { tiers: 3, featured: 2 },
+        }]),
+      }),
+      scene({
+        id: "invoice",
+        startSec: 6,
+        components: [{ version: 1, id: "invoice-panel", kind: "app-window" }],
+      }),
+    ]);
+    const plans = result.scenes[0]!;
+    expect(plans.spatialIntent?.focalPart).toBe("plan-cards-tier-2");
+    expect(plans.cut?.style).toBe("swipe");
+    expect(plans.sentinelNormalizations?.join(" ")).toContain(
+      'retargeted unresolved focal "growth-card" to selected plugin child "plan-cards-tier-2"',
+    );
+    expect(plans.sentinelNormalizations?.join(" ")).toContain(
+      "downgraded impossible metric->product-surface morph to swipe-right",
+    );
+  });
+});
+
+describe("generated plugin defaults", () => {
+  it("ships complete no-paperwork defaults for all three generated set-pieces", () => {
+    const result = reconcileAndLowerPlugins([
+      declared([
+        { kind: "flow-diagram", params: {} },
+        { kind: "comparison-table", params: {} },
+        { kind: "pricing-reveal", params: {} },
+      ]),
+    ]);
+    expect(result.notes).toEqual([]);
+    expect(result.scenes[0]!.plugins?.map((entry) => [entry.kind, entry.params])).toEqual([
+      ["flow-diagram", { nodes: 4, topology: "pipeline", topic: "" }],
+      ["comparison-table", { choices: 3, features: 4, topic: "" }],
+      ["pricing-reveal", {
+        tiers: 3, billing: "monthly", currency: "usd", featured: 2, topic: "",
+      }],
+    ]);
+  });
+});
+
+describe("asset metric ownership", () => {
+  it("retires a glass metric that duplicates a counted hero stat in its station", () => {
+    const result = reconcileAndLowerPlugins([scene({
+      components: [{
+        version: 1,
+        id: "savings-card",
+        kind: "stat-card",
+        region: "savings-station",
+        role: "hero",
+      }],
+      beats: [{
+        version: 1,
+        id: "savings-count",
+        sceneId: "s1",
+        component: "savings-card",
+        kind: "count",
+        atSec: 1,
+        value: 18,
+      }],
+      plugins: normalizeStoryboardPluginDeclarations([{
+        kind: "asset-glass-metric",
+        id: "savings-medallion",
+        region: "savings-station",
+        params: { value: "18%", label: "Team savings" },
+      }]),
+    })]);
+    expect(result.scenes[0]!.plugins).toBeUndefined();
+    expect(result.scenes[0]!.components?.map((entry) => entry.id)).toEqual(["savings-card"]);
+    expect(result.notes.join(" ")).toContain(
+      'load-bearing hero metric "savings-card" already owns region "savings-station"',
+    );
   });
 });
 
@@ -653,6 +1053,34 @@ describe("camera-arrival entrance timing (plugin-live-1: count-ups off-screen)",
     expect(firstBeatAt(result.scenes)).toBeCloseTo(0.6, 2);
   });
 
+  it("keeps the default entrance when a target-less drift opens a single-station scene (quillsign)", () => {
+    // motion-quality-verify-2-quillsign ship-it shape: "drift, push-in→cta-stage".
+    // The drift has no target, but the camera path never names any OTHER
+    // station — the world IS the unit's station, so the push-in is a re-frame.
+    // Reading it as a late arrival anchored the final CTA lockup's entrance at
+    // 24.85s of a 25.7s film and stranded the declared assemble moment.
+    const result = reconcileAndLowerPlugins([
+      scene({
+        plugins: normalizeStoryboardPluginDeclarations(DECL),
+        camera: {
+          version: 1,
+          path: [
+            { version: 1, move: "drift", startSec: 0, durationSec: 2 },
+            {
+              version: 1,
+              move: "push-in",
+              toRegion: "metric-station",
+              zoom: 1.15,
+              startSec: 3.2,
+              durationSec: 1.6,
+            },
+          ],
+        },
+      }),
+    ]);
+    expect(firstBeatAt(result.scenes)).toBeCloseTo(0.6, 2);
+  });
+
   it("honors a from-target entry: a pan FROM elsewhere TO the unit still delays", () => {
     const result = reconcileAndLowerPlugins([
       scene({
@@ -693,7 +1121,7 @@ describe("camera-arrival entrance timing (plugin-live-1: count-ups off-screen)",
     expect(firstBeatAt(result.scenes)).toBeCloseTo(3.6, 2);
   });
 
-  it("ignores hold/drift moves — they never re-frame", () => {
+  it("treats a first drift to the unit as its opening frame", () => {
     const result = reconcileAndLowerPlugins([
       scene({
         plugins: normalizeStoryboardPluginDeclarations(DECL),
@@ -706,6 +1134,93 @@ describe("camera-arrival entrance timing (plugin-live-1: count-ups off-screen)",
       }),
     ]);
     expect(firstBeatAt(result.scenes)).toBeCloseTo(0.6, 2);
+  });
+
+  it("anchors a plugin near a later cross-station drift instead of animating it offscreen", () => {
+    const result = reconcileAndLowerPlugins([
+      scene({
+        plugins: normalizeStoryboardPluginDeclarations(DECL),
+        camera: {
+          version: 1,
+          path: [
+            { version: 1, move: "hold", toRegion: "intro-stage", startSec: 0, durationSec: 3 },
+            { version: 1, move: "drift", toRegion: "metric-station", startSec: 3, durationSec: 2 },
+          ],
+        },
+      }),
+    ]);
+    // Arrival is 5.0s; the shared 60%-introduction cap keeps the entrance at
+    // 3.6s instead of letting the unit animate unseen at 0.6s.
+    expect(firstBeatAt(result.scenes)).toBeCloseTo(3.6, 2);
+  });
+
+  it("compresses a source-station toast cascade before the camera departs (LaunchRelay)", () => {
+    const result = reconcileAndLowerPlugins([
+      scene({
+        durationSec: 4.9,
+        plugins: normalizeStoryboardPluginDeclarations([{
+          version: 1,
+          kind: "notification-stack",
+          id: "scatter-notifs",
+          region: "chaos-zone",
+          params: { count: 4, tone: "mixed" },
+        }]),
+        camera: {
+          version: 1,
+          path: [
+            { version: 1, move: "hold", toRegion: "chaos-zone", startSec: 0, durationSec: 2.6 },
+            {
+              version: 1,
+              move: "whip",
+              fromRegion: "chaos-zone",
+              toRegion: "rail-zone",
+              startSec: 2.6,
+              durationSec: 0.8,
+            },
+          ],
+        },
+      }),
+    ]);
+    const lowered = result.scenes[0]!;
+    const opens = lowered.beats!.filter((entry) => entry.id.startsWith("scatter-notifs-b"));
+    expect(opens.map((entry) => entry.atSec)).toEqual([0.588, 0.825, 1.063, 1.3]);
+    expect(Math.max(...opens.map((entry) => entry.atSec + (entry.durationSec ?? 0) + 0.8)))
+      .toBeLessThanOrEqual(2.6);
+    expect(auditPacing([lowered]).filter((finding) =>
+      finding.startsWith("pacing/outcome:")
+    )).toEqual([]);
+  });
+
+  it("honors an explicit from-region after a targetless opening drift", () => {
+    const result = reconcileAndLowerPlugins([
+      scene({
+        durationSec: 4.9,
+        plugins: normalizeStoryboardPluginDeclarations([{
+          version: 1,
+          kind: "notification-stack",
+          id: "alerts",
+          region: "source-zone",
+          params: { count: 4 },
+        }]),
+        camera: {
+          version: 1,
+          path: [
+            { version: 1, move: "drift", startSec: 0, durationSec: 0.4 },
+            {
+              version: 1,
+              move: "pan",
+              fromRegion: "source-zone",
+              toRegion: "proof-zone",
+              startSec: 2.6,
+              durationSec: 0.8,
+            },
+          ],
+        },
+      }),
+    ]);
+    const opens = result.scenes[0]!.beats!.filter((entry) => entry.id.startsWith("alerts-b"));
+    expect(Math.max(...opens.map((entry) => entry.atSec + (entry.durationSec ?? 0) + 0.8)))
+      .toBeLessThanOrEqual(2.6);
   });
 });
 
@@ -750,6 +1265,7 @@ describe("wrapper placement self-defense", () => {
     const html = injectPluginContract(sceneHtml("s1"), scenes).html;
     const wrapper = html.match(/<div class="seq-plugin[^>]*>/)?.[0] ?? "";
     expect(wrapper).toContain('data-layout-important="1"');
+    expect(wrapper).toContain('data-layout-important-from="');
     expect(wrapper).toContain("grid-column:1/-1");
     expect(wrapper).toContain("min-width:0");
     expect(wrapper).toContain("max-width:100%");
@@ -765,7 +1281,11 @@ describe("exact-copy duplicate stamping (fix-probe-1 doubled lockup)", () => {
             version: 1,
             kind: "lockup",
             id: "brand-lockup",
-            params: { headline: "Every deploy, verified.", cta: "Start deploying" },
+            params: {
+              headline: "Every deploy, verified.",
+              sub: "One release command center.",
+              cta: "Start deploying",
+            },
           },
         ]),
       }),
@@ -794,6 +1314,13 @@ describe("exact-copy duplicate stamping (fix-probe-1 doubled lockup)", () => {
     expect(twice).toBe(once);
   });
 
+  it("lands the CTA inside the lockup entrance ensemble", () => {
+    const lowered = lockupScenes()[0]!;
+    const headline = lowered.beats!.find((beat) => beat.component === "brand-lockup-headline")!;
+    const cta = lowered.beats!.find((beat) => beat.component === "brand-lockup-cta")!;
+    expect(cta.atSec - headline.atSec).toBeCloseTo(0.2, 3);
+  });
+
   it("never stamps copy in OTHER scenes (cross-scene echoes are design)", () => {
     const scenes = lockupScenes();
     const html = AUTHOR_DUPE_HTML.replace(
@@ -803,5 +1330,57 @@ describe("exact-copy duplicate stamping (fix-probe-1 doubled lockup)", () => {
     );
     const result = injectPluginContract(html, scenes).html;
     expect(result).toContain('<div class="callback">Every deploy, verified.</div>');
+  });
+
+  it("clears a stale CTA duplicate stamp when a lockup starts reusing authored control copy", () => {
+    const first = injectPluginContract(AUTHOR_DUPE_HTML, lockupScenes()).html;
+    const withoutGeneratedCta = lockupScenes();
+    withoutGeneratedCta[0]!.plugins![0]!.params.cta = "";
+    const replayed = injectPluginContract(first, withoutGeneratedCta).html;
+    expect(replayed).toContain("<span>Start deploying</span>");
+    expect(replayed).not.toContain(
+      '<span data-sequences-plugin-duplicate="">Start deploying</span>',
+    );
+    // Headline duplication is still current and remains hidden.
+    expect(replayed).toContain(
+      '<div class="brand-headline" data-sequences-plugin-duplicate="">',
+    );
+  });
+});
+
+describe("anonymous dashboard-grid duplicate stamping (LumaFlowQC1 clipped metric wall)", () => {
+  const scenes = reconcileAndLowerPlugins([
+    scene({
+      plugins: normalizeStoryboardPluginDeclarations([
+        {
+          version: 1,
+          kind: "dashboard-grid",
+          id: "metrics",
+          region: "dashboard-overview",
+          params: { tiles: 4, emphasis: "mixed", topic: "release readiness" },
+        },
+      ]),
+      components: [{ version: 1, id: "risk-card", kind: "stat-card", region: "dashboard-overview" }],
+    }),
+  ]).scenes;
+  const html = sceneHtml("s1").replace(
+    "</section>",
+    `<div data-region="dashboard-overview">` +
+      `<div class="row" data-part="metric-row">` +
+      `<div class="metric-tile" data-part="tile-1">Latency</div>` +
+      `<div class="metric-tile" data-part="tile-2">Errors</div>` +
+      `<div class="metric-tile" data-part="tile-3">Deploys</div>` +
+      `<div class="metric-tile" data-part="tile-4">MTTR</div></div>` +
+      `<div data-component="stat-card" data-part="risk-card">87</div></div></section>`,
+  );
+
+  it("hides the anonymous duplicate row but preserves the declared focal component", () => {
+    const once = injectPluginContract(html, scenes).html;
+    expect(once).toContain(
+      '<div class="row" data-part="metric-row" data-sequences-plugin-duplicate="">',
+    );
+    expect(once).toContain('<div data-component="stat-card" data-part="risk-card">87</div>');
+    expect(once).toContain("[data-sequences-plugin-duplicate]{display:none!important}");
+    expect(injectPluginContract(once, scenes).html).toBe(once);
   });
 });

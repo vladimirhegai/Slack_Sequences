@@ -45,6 +45,12 @@ import {
   creativeModel,
   creativeThinkingMode,
 } from "./modelPolicy.ts";
+import { slackSequencesEnvRawValue } from "./featureFlags.ts";
+import {
+  recordSentinelModelCall,
+  recordSentinelModelCallFailure,
+  reserveSentinelModelCall,
+} from "./sentinelTelemetry.ts";
 import {
   TYPE_SYSTEMS,
   pickTypeSystems,
@@ -52,11 +58,27 @@ import {
   typeSystemLine,
   typeSystemToFrameType,
 } from "./typeSystems.ts";
+import {
+  BACKGROUND_POLICIES,
+  DESIGN_DIALECTS,
+  backgroundPolicyById,
+  backgroundPolicyForDialect,
+  defaultDialectForPreset,
+  designDialectById,
+  dialectCatalogLine,
+  rankDesignDialects,
+  type BackgroundPolicy,
+  type ColorTopology,
+  type DesignDialect,
+  type MaterialProfile,
+} from "./designDialects.ts";
 
 export type FrameTone = "crisp-saas" | "warm-startup" | "bold-launch";
 
 export interface FrameChoice {
   presetId: string;
+  /** Motion-ready visual grammar chosen independently of the broad mood preset. */
+  dialectId?: string;
   thesis?: string;
   basis?: "light" | "dark";
   harmony?: ColorHarmony;
@@ -71,7 +93,8 @@ export interface FrameChoice {
   spacing?: SpacingRhythm;
   corners?: CornerCharacter;
   depth?: DepthCharacter;
-  background?: string;
+  /** Structured policy id; concrete construction prose comes from the catalog. */
+  backgroundPolicyId?: string;
   rules?: string[];
   exceptions: string[];
 }
@@ -79,6 +102,8 @@ export interface FrameChoice {
 export interface FrameDesign {
   presetId: string;
   label: string;
+  dialectId: string;
+  dialectLabel: string;
   basis: "light" | "dark";
   thesis: string;
   colors: GeneratedPalette;
@@ -87,7 +112,14 @@ export interface FrameDesign {
   spatial: SpatialTokens;
   radius: string;
   shadow: string;
-  background: string;
+  background: BackgroundPolicy;
+  canvas: DesignDialect["canvas"];
+  colorTopology: ColorTopology;
+  chapterColors: string[];
+  materialProfile: MaterialProfile;
+  visualGrammar: string;
+  typographyCharacter: DesignDialect["typography"];
+  motion: DesignDialect["motion"];
   rules: string[];
   exceptions: string[];
   brandMatched: boolean;
@@ -117,6 +149,7 @@ export interface BuildJobFrameArgs {
 export interface BuildJobFrameResult {
   frameMd: string;
   presetId: string;
+  dialectId: string;
   label: string;
   thesis: string;
   basis: "light" | "dark";
@@ -180,6 +213,7 @@ function frameChoiceResponseFormat(): NonNullable<CompleteOptions["responseForma
         type: "object",
         properties: {
           presetId: { type: "string", enum: FRAME_PRESETS.map((preset) => preset.id) },
+          dialectId: { type: "string", enum: DESIGN_DIALECTS.map((dialect) => dialect.id) },
           thesis: { type: "string" },
           basis: { type: "string", enum: ["light", "dark"] },
           harmony: { type: "string", enum: HARMONIES },
@@ -209,14 +243,17 @@ function frameChoiceResponseFormat(): NonNullable<CompleteOptions["responseForma
           spacing: { type: "string", enum: SPACINGS },
           corners: { type: "string", enum: CORNERS },
           depth: { type: "string", enum: DEPTHS },
-          background: { type: "string" },
+          backgroundPolicyId: {
+            type: "string",
+            enum: BACKGROUND_POLICIES.map((policy) => policy.id),
+          },
           rules: { type: "array", maxItems: 5, items: { type: "string" } },
           exceptions: { type: "array", maxItems: 3, items: { type: "string" } },
         },
         required: [
-          "presetId", "thesis", "basis", "harmony", "temperature", "contrast",
+          "presetId", "dialectId", "thesis", "basis", "harmony", "temperature", "contrast",
           "accentUsage", "typeSystemId", "palette", "typography", "density", "spacing",
-          "corners", "depth", "background", "rules", "exceptions",
+          "corners", "depth", "backgroundPolicyId", "rules", "exceptions",
         ],
         additionalProperties: false,
       },
@@ -263,15 +300,19 @@ async function chooseFrame(
   if (!provider) return null;
   const model = creativeModel(
     provider,
-    process.env.SLACK_SEQUENCES_FRAME_MODEL,
+    slackSequencesEnvRawValue("SLACK_SEQUENCES_FRAME_MODEL"),
   );
   const thinkingMode = creativeThinkingMode(provider, model);
   const catalog = FRAME_PRESETS.map((preset) =>
     `- ${preset.id} (${preset.basis}, ${preset.tones.join("/")}): ${preset.thesis}`,
   ).join("\n");
+  const dialectMenu = DESIGN_DIALECTS.map(dialectCatalogLine).join("\n");
+  const backgroundMenu = BACKGROUND_POLICIES.map((policy) =>
+    `- ${policy.id}: ${policy.direction}`,
+  ).join("\n");
   const typeMenu = pickTypeSystems(brief, 5).map(typeSystemLine).join("\n");
   const shape = [
-    '{"presetId":"one id","thesis":"one sentence","basis":"light|dark",',
+    '{"presetId":"one id","dialectId":"one dialect id","thesis":"one sentence","basis":"light|dark",',
     '"harmony":"monochromatic|analogous|complementary|split-complementary",',
     '"temperature":"cool|neutral|warm","contrast":"soft|balanced|crisp",',
     '"accentUsage":"restrained|balanced|bold","typeSystemId":"one type-system id",',
@@ -280,7 +321,7 @@ async function chooseFrame(
     '"typography":{"display":"embedded family","body":"embedded family","mono":"embedded family","note":"rationale"},',
     '"density":"airy|balanced|dense","spacing":"compact|balanced|cinematic",',
     '"corners":"square|crisp|soft|pill-accented","depth":"flat|bordered|elevated|atmospheric",',
-    '"background":"operational background family","rules":["up to five coherent restraints"],',
+    '"backgroundPolicyId":"one compatible policy id","rules":["up to five coherent restraints"],',
     '"exceptions":["short brand fact"]}',
   ].join("");
   const prompt = [
@@ -293,6 +334,14 @@ async function chooseFrame(
     "",
     "## Mood boards",
     catalog,
+    "",
+    "## Motion-ready visual dialects (pick one id for dialectId)",
+    "The dialect owns canvas polarity, material behavior, typography character,",
+    "and motion signature. Select a dialect independently from the broad mood preset.",
+    dialectMenu,
+    "",
+    "## Structured background policies (pick one id compatible with the dialect)",
+    backgroundMenu,
     "",
     "## Type systems (pick one id for typeSystemId; every family is embedded)",
     "These are curated display/body/mono trios. Choose the one whose voice fits",
@@ -312,19 +361,23 @@ async function chooseFrame(
     "Use the preset for attitude, restraint, and compositional instinct—not literal",
     "hex values. Brand accent hue and mapped brand fonts are committed when present.",
     "You control harmony, temperature, contrast, accent intensity, the type system,",
-    "uncommitted type roles, spatial rhythm, corners, depth, and background treatment.",
+    "uncommitted type roles, spatial rhythm, corners, depth, dialect, and background policy.",
     "Optional exact palette values let you push the derivation; omit roles where",
-    "derivation is better. Learn from how great product brands restrain themselves:",
-    "one committed accent, a tinted (never pure-black, never pure-white) canvas, a",
-    "clear surface + hairline depth step instead of drop shadows, and tabular-crisp",
-    "numerals where metrics matter.",
+    "derivation is better. Honor the selected dialect's documented canvas policy:",
+    "true white, true black, and flat solid fields are valid when that dialect approves",
+    "them. Use depth, color topology, and typography pairing exactly as the dialect",
+    "defines instead of forcing every job into tinted dark SaaS chrome.",
   ].filter(Boolean).join("\n");
 
+  let frameRequestReserved = false;
+  let frameRequestCompleted = false;
   try {
     process.stderr.write(
       `[frame] creative direction · ${model ? `model ${model}` : "provider primary model"} · ` +
         `reasoning ${thinkingMode}\n`,
     );
+    reserveSentinelModelCall("frame-design");
+    frameRequestReserved = true;
     const raw = await provider.complete(prompt, {
       ...options,
       timeoutMs: 180_000,
@@ -335,11 +388,22 @@ async function chooseFrame(
         : {}),
       ...(model ? { model } : {}),
     });
+    frameRequestCompleted = true;
+    recordSentinelModelCall({
+      stage: "frame-design",
+      promptChars: prompt.length,
+      completionChars: raw.length,
+    });
     const match = raw.match(/\{[\s\S]*\}/);
     if (!match) return null;
     const parsed = JSON.parse(match[0]) as Record<string, unknown>;
     const presetId = typeof parsed.presetId === "string" ? parsed.presetId.trim() : "";
     if (!presetById(presetId)) return null;
+    const dialectId = typeof parsed.dialectId === "string" ? parsed.dialectId.trim() : "";
+    const backgroundPolicyId = typeof parsed.backgroundPolicyId === "string"
+      ? parsed.backgroundPolicyId.trim()
+      : "";
+    if (!designDialectById(dialectId) || !backgroundPolicyById(backgroundPolicyId)) return null;
     const exceptions = Array.isArray(parsed.exceptions)
       ? parsed.exceptions
         .filter((item): item is string => typeof item === "string")
@@ -356,6 +420,7 @@ async function chooseFrame(
       : undefined;
     return {
       presetId,
+      dialectId,
       ...(typeof parsed.thesis === "string" ? { thesis: parsed.thesis.trim().slice(0, 320) } : {}),
       basis: oneOf(parsed.basis, ["light", "dark"]),
       harmony: oneOf(parsed.harmony, HARMONIES),
@@ -371,13 +436,14 @@ async function chooseFrame(
       spacing: oneOf(parsed.spacing, SPACINGS),
       corners: oneOf(parsed.corners, CORNERS),
       depth: oneOf(parsed.depth, DEPTHS),
-      ...(typeof parsed.background === "string"
-        ? { background: parsed.background.trim().slice(0, 360) }
-        : {}),
+      backgroundPolicyId,
       ...(rules?.length ? { rules } : {}),
       exceptions,
     };
   } catch (error) {
+    if (frameRequestReserved && !frameRequestCompleted) {
+      recordSentinelModelCallFailure("frame-design");
+    }
     process.stderr.write(`[frame] art-direction decision fell back to deterministic: ${String(error)}\n`);
     return null;
   }
@@ -393,7 +459,11 @@ export function remapPreset(
   captured: CapturedBrand | null,
   exceptions: string[],
   choice?: FrameChoice | null,
+  dialect?: DesignDialect,
 ): FrameDesign {
+  const selectedDialect = dialect
+    ?? designDialectById(choice?.dialectId ?? "")
+    ?? defaultDialectForPreset(preset.id);
   const brandAccent = captured?.accent ?? tokens.accent;
   const displayKinds = ["Playfair Display", "EB Garamond", "Archivo Black", "League Gothic", "Oswald"];
   // Capture orders heading samples before body samples. Preserve that role
@@ -407,49 +477,141 @@ export function remapPreset(
     : captured?.fonts.find((font) => font !== capturedDisplay && !displayKinds.includes(font));
   const brandDisplay = capturedDisplay ?? tokens.displayFont;
   const brandBody = capturedBody ?? tokens.bodyFont;
-  const basis = choice?.basis ?? preset.basis;
+  const proposedBasis = choice?.basis ?? preset.basis;
+  const basis = selectedDialect.preferredBasis === "either"
+    ? proposedBasis
+    : selectedDialect.preferredBasis;
+  const dialectRepairs: string[] = [];
+  if (choice?.basis && choice.basis !== basis) {
+    dialectRepairs.push(
+      `repaired requested ${choice.basis} basis to ${basis}; dialect ${selectedDialect.id} fixes canvas polarity`,
+    );
+  }
   const harmony = choice?.harmony ?? "monochromatic";
   const temperature = choice?.temperature ?? (preset.id === "crisp-dev" ? "cool" : "warm");
   const contrast = choice?.contrast ?? (preset.id === "editorial" ? "soft" : "crisp");
   const accentUsage = choice?.accentUsage ?? (preset.id === "bold-launch" ? "bold" : "restrained");
 
-  const paletteResult = generatePalette(brandAccent ?? preset.colors.accent, {
+  const dialectPalette = brandAccent
+    ? {
+      bg: selectedDialect.palette.bg,
+      surface: selectedDialect.palette.surface,
+      text: selectedDialect.palette.text,
+      textMuted: selectedDialect.palette.textMuted,
+    }
+    : selectedDialect.palette;
+  const proposedPalette: FrameChoice["palette"] = {
+    ...dialectPalette,
+    ...choice?.palette,
+  };
+  // Canvas polarity is structural grammar, not a loose color suggestion. Keep
+  // exact white/paper/ink fields when the dialect explicitly calls for them.
+  if (selectedDialect.canvas.id === "true-white") proposedPalette.bg = "#FFFFFF";
+  if (selectedDialect.canvas.id === "warm-paper") {
+    proposedPalette.bg = selectedDialect.palette.bg ?? "#F3F0E8";
+  }
+  if (selectedDialect.canvas.id === "near-black") {
+    proposedPalette.bg = selectedDialect.palette.bg ?? "#131313";
+  }
+  if (selectedDialect.canvas.id === "binary-solid") {
+    proposedPalette.bg = basis === "dark" ? "#000000" : "#FFFFFF";
+    proposedPalette.surface = basis === "dark"
+      ? "#171717"
+      : selectedDialect.palette.surface ?? "#FFFFFF";
+    proposedPalette.text = basis === "dark" ? "#FFFFFF" : "#000000";
+    proposedPalette.textMuted = basis === "dark"
+      ? "#B8B8B8"
+      : selectedDialect.palette.textMuted ?? "#666666";
+  }
+
+  const paletteSeed = brandAccent ?? selectedDialect.accent ?? preset.colors.accent;
+  const paletteResult = generatePalette(paletteSeed, {
     basis,
     harmony,
     temperature,
     contrast,
     accentUsage,
-    proposed: choice?.palette,
+    proposed: proposedPalette,
   });
   // A chosen curated type system supplies the default trio (its families are all
   // embedded). The preset's own trio is the fallback. Committed brand fonts and an
   // explicit typography override still win over both, in that order.
-  const chosenTypeSystem = choice?.typeSystemId ? typeSystemById(choice.typeSystemId) : undefined;
+  const proposedTypeSystem = choice?.typeSystemId ? typeSystemById(choice.typeSystemId) : undefined;
+  const dialectTypeSystem = typeSystemById(selectedDialect.typeSystemId);
+  const proposedTypeIsCompatible = !proposedTypeSystem
+    || selectedDialect.typography.pairingMode === "single-family"
+    || proposedTypeSystem.display.family !== proposedTypeSystem.body.family;
+  const chosenTypeSystem = proposedTypeIsCompatible
+    ? proposedTypeSystem ?? dialectTypeSystem
+    : dialectTypeSystem;
+  if (proposedTypeSystem && !proposedTypeIsCompatible) {
+    dialectRepairs.push(
+      `replaced single-family type system ${proposedTypeSystem.id} with ${selectedDialect.typeSystemId}; ` +
+        `dialect ${selectedDialect.id} requires contrasting display/body roles`,
+    );
+  }
   const typeBase = chosenTypeSystem ? typeSystemToFrameType(chosenTypeSystem) : preset.type;
   const typographyResult = validateTypography(choice?.typography ?? {}, typeBase, {
     display: brandDisplay,
     body: brandBody,
+  }, {
+    pairingMode: selectedDialect.typography.pairingMode,
   });
+  const defaultDepth: DepthCharacter = selectedDialect.materialProfile === "clean-flat"
+    || selectedDialect.materialProfile === "paper-flat"
+    ? "flat"
+    : selectedDialect.materialProfile === "soft-elevated"
+      ? "elevated"
+      : "atmospheric";
+  const allowedDepths: Record<MaterialProfile, DepthCharacter[]> = {
+    "clean-flat": ["flat", "bordered"],
+    "paper-flat": ["flat", "bordered"],
+    "soft-elevated": ["bordered", "elevated"],
+    cinematic: ["elevated", "atmospheric"],
+  };
+  const depth = choice?.depth && allowedDepths[selectedDialect.materialProfile].includes(choice.depth)
+    ? choice.depth
+    : defaultDepth;
+  if (choice?.depth && choice.depth !== depth) {
+    dialectRepairs.push(
+      `repaired requested ${choice.depth} depth to ${depth}; material profile ` +
+        `${selectedDialect.materialProfile} permits ${allowedDepths[selectedDialect.materialProfile].join("/")}`,
+    );
+  }
   const layout = generateLayout({
     density: choice?.density ?? (preset.id === "editorial" ? "airy" : preset.id === "crisp-dev" ? "dense" : "balanced"),
     spacing: choice?.spacing ?? (preset.id === "dark-premium" ? "cinematic" : "balanced"),
     corners: choice?.corners ?? (preset.id === "bold-launch" || preset.id === "editorial" ? "square" : "crisp"),
-    depth: choice?.depth ?? (preset.id === "dark-premium" ? "atmospheric" : "bordered"),
+    depth,
   });
+  const background = backgroundPolicyForDialect(selectedDialect, choice?.backgroundPolicyId);
+  if (choice?.backgroundPolicyId && choice.backgroundPolicyId !== background.id) {
+    dialectRepairs.push(
+      `replaced incompatible background policy ${choice.backgroundPolicyId} with ${background.id} for dialect ${selectedDialect.id}`,
+    );
+  }
+  const proposedRules = choice?.rules?.length ? choice.rules : preset.rules;
+  const rules = [...selectedDialect.rules, ...proposedRules]
+    .filter((rule, index, all) => all.indexOf(rule) === index)
+    .slice(0, 5);
   const provenance = [
     brandAccent
       ? `brand hue ${brandAccent} from ${captured?.accent ? "site capture" : "evidence"}`
-      : `seed hue ${preset.colors.accent} from ${preset.id} mood DNA`,
+      : `seed hue ${paletteSeed} from ${selectedDialect.id} dialect`,
     brandDisplay || brandBody
       ? `committed brand type ${[brandDisplay, brandBody].filter(Boolean).join("/")}`
       : `${chosenTypeSystem ? `type system ${chosenTypeSystem.id}` : "art-directed"} embedded type ${typographyResult.value.display}/${typographyResult.value.body}/${typographyResult.value.mono}`,
     `palette ${harmony}/${temperature}/${contrast}/${accentUsage}`,
+    `dialect ${selectedDialect.id}/${selectedDialect.canvas.id}/${selectedDialect.materialProfile}`,
+    `background policy ${background.id}`,
     `layout ${layout.density}`,
   ].join("; ");
 
   return {
     presetId: preset.id,
     label: preset.label,
+    dialectId: selectedDialect.id,
+    dialectLabel: selectedDialect.label,
     basis,
     thesis: choice?.thesis || preset.thesis,
     colors: paletteResult.value,
@@ -458,13 +620,20 @@ export function remapPreset(
     spatial: layout.tokens,
     radius: layout.radius,
     shadow: layout.shadow,
-    background: choice?.background || preset.background,
-    rules: choice?.rules?.length ? choice.rules : preset.rules,
+    background,
+    canvas: selectedDialect.canvas,
+    colorTopology: selectedDialect.colorTopology,
+    chapterColors: [...(selectedDialect.chapterColors ?? [])],
+    materialProfile: selectedDialect.materialProfile,
+    visualGrammar: selectedDialect.visualGrammar,
+    typographyCharacter: selectedDialect.typography,
+    motion: selectedDialect.motion,
+    rules,
     exceptions,
     brandMatched: Boolean(brandAccent || brandDisplay || brandBody),
     accentCommitted: Boolean(brandAccent),
     provenance,
-    repairs: [...paletteResult.repairs, ...typographyResult.repairs],
+    repairs: [...dialectRepairs, ...paletteResult.repairs, ...typographyResult.repairs],
     direction: { harmony, temperature, contrast, accentUsage, density: layout.density },
   };
 }
@@ -496,28 +665,53 @@ function cinemaLightHex(hex: string, basis: "light" | "dark"): string {
  */
 export function forbiddenDefaults(design: FrameDesign): string[] {
   const dark = design.basis === "dark";
+  const colorRule = design.colorTopology === "chapter-palette"
+    ? "Chapter colors may rotate between scenes, but only one field may dominate a framing; " +
+      "interactive emphasis remains singular and positive/negative stay inline data."
+    : design.colorTopology === "monochrome"
+      ? "Stay monochrome except for documented directional status; hierarchy comes from register, " +
+        "scale, crop, and rules rather than a surprise CTA hue."
+      : "No second competing accent — one committed hue carries every highlight; " +
+        "positive/negative are inline directional data only, never a rival CTA.";
+  const materialRule = design.materialProfile === "soft-elevated"
+    ? "No stack of unrelated shadows — one restrained diffuse elevation tier may support the " +
+      "hero surface; text, buttons, and nested chrome stay shadowless."
+    : design.materialProfile === "cinematic"
+      ? "No generic card-shadow ladder — depth comes from one authored light hierarchy, spatial " +
+        "separation, and measured atmosphere."
+      : "No drop shadows on chrome, cards, buttons, or text — separate surfaces with " +
+        "a tint step, hard rule, or hairline border, not blur.";
   const rules: string[] = [
-    "No second competing accent — one committed hue carries every highlight; " +
-      "positive/negative are inline directional data only, never a rival CTA.",
+    colorRule,
     "No full-frame linear gradient washes — they band under H.264. Depth is a " +
       "localized radial glow, grain, or a tinted surface step, never a flat ramp.",
-    "No drop shadows on chrome, cards, buttons, or text — separate surfaces with " +
-      "a tint step + hairline border (the accentSoft/border roles), not blur.",
+    materialRule,
   ];
   if (dark) {
+    if (!design.canvas.allowPureBlack) {
+      rules.push(
+        "Never a pure #000 canvas — hold the documented near-black above; its warmth/" +
+          "coolness is part of the dialect.",
+      );
+    }
     rules.push(
-      "Never a pure #000 canvas — hold the tinted near-black above; the warmth/" +
-        "coolness is the premium signal.",
-      "No neon cyan-on-dark, no gradient-filled headline text — both cheapen the " +
-        "dark stage instantly.",
+      "No neon cyan-on-dark or gradient-filled headline text unless the documented " +
+        "chapter palette explicitly owns that signal.",
     );
   } else {
+    if (!design.canvas.allowPureWhite) {
+      rules.push(
+        "Don't wash the frame to edge-to-edge pure #FFF — keep the documented paper/" +
+          "tinted canvas so the dialect's temperature reads.",
+      );
+    }
     rules.push(
-      "Don't wash the frame to edge-to-edge pure #FFF with no surface step — keep " +
-        "the tinted canvas and a raised surface so hierarchy reads.",
-      "No gradient headline fills or drop-shadowed type — the accent is a mark, " +
-        "not a wash; let scale and one color do the work.",
+      "No gradient headline fills or drop-shadowed type — let scale, register, and the " +
+        "documented color topology do the work.",
     );
+  }
+  if (!design.canvas.allowSolidField) {
+    rules.push("Do not substitute a generic flat fill for the documented background construction.");
   }
   rules.push(
     "Don't default every metric to proportional figures — set numerals tabular " +
@@ -532,10 +726,23 @@ export function renderFrameMd(design: FrameDesign, brandName?: string): string {
   const dark = design.basis === "dark";
   const cinemaKey = rgba(cinemaLightHex(c.atmosphere, design.basis), dark ? 0.12 : 0.26);
   const cinemaBloom = rgba(cinemaLightHex(c.accent, design.basis), dark ? 0.18 : 0.22);
+  const chapterFields = design.chapterColors.length
+    ? design.chapterColors.map((color) => `\`${color}\``).join(", ")
+    : "None; keep the documented semantic palette continuous.";
+  const paletteHierarchy = design.colorTopology === "chapter-palette"
+    ? "Chapter colors may rotate between scenes, but only one dominates any framing and interactive emphasis stays singular."
+    : design.colorTopology === "monochrome"
+      ? "Preserve the monochrome register; directional status colors remain small, semantic exceptions."
+      : "Preserve the one-accent hierarchy; supporting roles may tint the accent but never compete with it.";
   const meta = JSON.stringify({
     presetId: design.presetId,
+    dialectId: design.dialectId,
+    dialectLabel: design.dialectLabel,
     label: design.label,
     basis: design.basis,
+    canvasPolicy: design.canvas.id,
+    materialProfile: design.materialProfile,
+    backgroundPolicyId: design.background.id,
     thesis: design.thesis,
     exceptions: design.exceptions,
     brandMatched: design.brandMatched,
@@ -553,7 +760,8 @@ export function renderFrameMd(design: FrameDesign, brandName?: string): string {
 > Art-directed starting system, not a hex-value cage. The committed brand hue
 > and brand fonts stay fixed when present. You may tune surface tints, border
 > opacity, text warmth, spacing, and atmospheric use while preserving the
-> contrast and embedded-font constraints below. Motion and composition stay free.
+> contrast and embedded-font constraints below. Exact choreography stays free;
+> preserve the selected visual grammar and motion signature.
 
 ## Visual thesis
 ${design.thesis}
@@ -561,6 +769,22 @@ ${design.thesis}
 Basis: **${design.basis}** · harmony: **${design.direction.harmony}** · temperature:
 **${design.direction.temperature}** · contrast: **${design.direction.contrast}** ·
 accent use: **${design.direction.accentUsage}** · density: **${design.direction.density}**.
+
+## Visual grammar
+- **Dialect:** ${design.dialectLabel} (\`${design.dialectId}\`)
+- **Canvas policy:** \`${design.canvas.id}\` — ${design.canvas.description}
+- **Color topology:** \`${design.colorTopology}\`
+- **Material profile:** \`${design.materialProfile}\`
+- **Shape / layout grammar:** ${design.visualGrammar}
+- **Typography character:** display ${design.typographyCharacter.displayWeight}; body ${design.typographyCharacter.bodyWeight}; ${design.typographyCharacter.tracking}; ${design.typographyCharacter.casing}; \`${design.typographyCharacter.pairingMode}\` pairing.
+- **Background policy:** ${design.background.label} (\`${design.background.id}\`) — ${design.background.direction}
+- **Chapter fields:** ${chapterFields}
+
+## Motion signature
+- **Macro:** ${design.motion.macro}
+- **Camera:** ${design.motion.camera}
+- **Micro:** ${design.motion.micro}
+- **Transitions:** ${design.motion.transitions}
 
 ## Recommended semantic palette
 | Role | Starting value | Constraint |
@@ -578,7 +802,8 @@ accent use: **${design.direction.accentUsage}** · density: **${design.direction
 
 The palette is a coherent starting answer. The director may adjust non-committed
 roles when the scene needs it, but must preserve the stated contrast ratios and
-one-accent hierarchy. Use \`${safeTextOn(c.accent)}\` as the safe default on accent.
+\`${design.colorTopology}\` topology. ${paletteHierarchy} Use \`${safeTextOn(c.accent)}\`
+as the safe default on accent.
 
 ## Typography (embedded fonts only)
 - **Display / headlines:** ${design.type.display}
@@ -594,7 +819,6 @@ measure, and role boundaries are creative decisions; unknown font families are i
 - **Spacing & density:** ${design.spacing}
 - **Corners:** ${design.radius}
 - **Depth:** ${design.shadow}
-- **Background family:** ${design.background}
 
 These are rhythms and ranges, not mandatory coordinates. Break the rhythm
 deliberately for a hero, cut, or focal transition—not accidentally.
@@ -795,6 +1019,8 @@ export function publicFrameMd(frameMd: string): string {
   const visualParts = visual.split(/\r?\n\r?\n/).map((part) => part.trim()).filter(Boolean);
   const thesis = visualParts[0] ?? "";
   const direction = visualParts.slice(1).join(" ");
+  const visualGrammar = section("Visual grammar");
+  const motionSignature = section("Motion signature");
   const paletteLines = section("Recommended semantic palette").split(/\r?\n/);
   const lastTableLine = paletteLines.reduce(
     (last, line, index) => line.trim().startsWith("|") ? index : last,
@@ -828,7 +1054,7 @@ export function publicFrameMd(frameMd: string): string {
     .join("\n");
   const paletteNotes = [
     `- ${paletteValue("Canvas") ?? "Canvas"} and ${paletteValue("Surface") ?? "surface"} carry the base field; ${paletteValue("Text") ?? "text"} stays the load-bearing copy color.`,
-    `- ${paletteValue("Committed accent") ?? "The accent"} is the single focal hue; ${paletteValue("Accent-soft") ?? "accent-soft"} supports panels/charts, and ${paletteValue("Atmosphere") ?? "atmosphere"} stays background-only.`,
+    `- ${paletteValue("Committed accent") ?? "The accent"}, ${paletteValue("Accent-soft") ?? "accent-soft"}, and ${paletteValue("Atmosphere") ?? "atmosphere"} follow the documented color topology; do not invent an unrelated competing hue.`,
     `- ${paletteValue("Positive / negative") ?? "Positive / negative"} are reserved for inline directional signals, not CTA competition.`,
   ].join("\n");
   return [
@@ -840,6 +1066,8 @@ export function publicFrameMd(frameMd: string): string {
     "## Design direction",
     direction,
     "",
+    ...(visualGrammar ? ["## Visual grammar", visualGrammar, ""] : []),
+    ...(motionSignature ? ["## Motion signature", motionSignature, ""] : []),
     "## Palette",
     paletteTable,
     "",
@@ -857,7 +1085,7 @@ export function publicFrameMd(frameMd: string): string {
     "## Composition cues",
     "- One hero should dominate the frame; supporting elements exist to reinforce it.",
     "- Intentional overflow, overlap, or occlusion should read as obviously deliberate, not like a cramped layout accident.",
-    "- Keep the one-accent hierarchy intact so the CTA, highlight, or metric still wins on first glance.",
+    "- Keep the documented color topology intact so the intended CTA, highlight, field, or metric wins on first glance.",
     "",
     "## Mood-board restraints",
     section("Mood-board restraints \\(≤5\\)"),
@@ -892,6 +1120,8 @@ export function frameCapsule(frameMd: string): string {
   const title = frameMd.match(/^# frame\.md[^\n]*$/m)?.[0]?.replace(/^# frame\.md/, "# frame.md capsule");
   const section = (heading: string): string => extractSection(frameMd, heading);
   const thesisBlock = section("Visual thesis");
+  const visualGrammar = section("Visual grammar");
+  const motionSignature = section("Motion signature");
   const paletteBlock = section("Recommended semantic palette");
   const paletteTable = paletteBlock
     .split(/\r?\n/)
@@ -918,12 +1148,14 @@ export function frameCapsule(frameMd: string): string {
     "",
     "> Compact design capsule. The committed brand hue/fonts and the contrast +",
     "> embedded-font constraints are fixed; tints, spacing, and atmosphere are",
-    "> tunable. Motion and composition stay free.",
+    "> tunable. Choreography stays free inside the documented motion signature.",
     "",
     "## Visual thesis",
     thesisBlock,
     "",
-    "## Palette (semantic tokens — keep the stated contrast + one-accent hierarchy)",
+    ...(visualGrammar ? ["## Visual grammar", visualGrammar, ""] : []),
+    ...(motionSignature ? ["## Motion signature", motionSignature, ""] : []),
+    "## Palette (semantic tokens — keep the stated contrast + color topology)",
     paletteTable,
     ...(safeAccent ? ["", `Safe default text on accent: \`${safeAccent}\`.`] : []),
     "",
@@ -936,8 +1168,9 @@ export function frameCapsule(frameMd: string): string {
     "`data-layout-anchor`/`-align`/`-attach`; a camera scene gets one",
     "`data-camera-world` plane with absolutely-placed `data-region` stations, then",
     "returns to flow inside each region. The host injects the cinematography kit",
-    "(`.material`/`.keylight`/`.grade-*`) and film grain/vignette — use those",
-    "classes, never re-declare them.",
+    "(`.material`/`.keylight`/`.grade-*`) under the selected material profile;",
+    "grain, vignette, sheen, and shadow automatically stand down for clean/flat",
+    "dialects. Use those classes where the profile calls for them; never re-declare the kit.",
     "",
     "## Restraints",
     restraints,
@@ -950,8 +1183,14 @@ export function frameCapsule(frameMd: string): string {
 
 export interface FrameMeta {
   presetId: string;
+  /** Optional for cached frame.md files created before dialects were introduced. */
+  dialectId?: string;
+  dialectLabel?: string;
   label: string;
   basis: "light" | "dark";
+  canvasPolicy?: string;
+  materialProfile?: MaterialProfile;
+  backgroundPolicyId?: string;
   thesis: string;
   exceptions: string[];
   brandMatched: boolean;
@@ -981,6 +1220,7 @@ export async function buildJobFrame(args: BuildJobFrameArgs): Promise<BuildJobFr
     return {
       frameMd: existingFrame,
       presetId: existingMeta.presetId,
+      dialectId: existingMeta.dialectId ?? defaultDialectForPreset(existingMeta.presetId).id,
       label: existingMeta.label,
       thesis: existingMeta.thesis,
       basis: existingMeta.basis,
@@ -992,6 +1232,7 @@ export async function buildJobFrame(args: BuildJobFrameArgs): Promise<BuildJobFr
   const tokens = extractBrandTokens([args.brief, evidence].filter(Boolean).join("\n\n"));
   const captured = tokens.url ? await captureBrandFromUrl(tokens.url) : null;
   const ranked = rankPresets(args.brief, args.tone);
+  const rankedDialects = rankDesignDialects(args.brief, args.tone);
   const choice = await chooseFrame(
     args.provider,
     args.brief,
@@ -1001,12 +1242,23 @@ export async function buildJobFrame(args: BuildJobFrameArgs): Promise<BuildJobFr
     args.options,
   );
   const preset = (choice && presetById(choice.presetId)) ?? ranked[0] ?? FRAME_PRESETS[0]!;
-  const design = remapPreset(preset, tokens, captured, choice?.exceptions ?? [], choice);
+  const dialect = (choice && designDialectById(choice.dialectId ?? ""))
+    ?? rankedDialects[0]
+    ?? defaultDialectForPreset(preset.id);
+  const design = remapPreset(
+    preset,
+    tokens,
+    captured,
+    choice?.exceptions ?? [],
+    choice,
+    dialect,
+  );
   const frameMd = renderFrameMd(design, args.brandName);
   fs.writeFileSync(frameFilePath(args.projectDir), frameMd, "utf8");
   return {
     frameMd,
     presetId: design.presetId,
+    dialectId: design.dialectId,
     label: design.label,
     thesis: design.thesis,
     basis: design.basis,

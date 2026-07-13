@@ -1,0 +1,89 @@
+{
+  "format": 2,
+  "revision": 1,
+  "id": "metric-odometer",
+  "title": "Hero metric with masked odometer digit roll",
+  "description": "A hero stat whose digits spin on masked odometer columns, decelerating into the final figure with a left-to-right wave landing, accent underline, and glow.",
+  "tags": [
+    "metric",
+    "stat",
+    "counter",
+    "odometer",
+    "kpi",
+    "payoff",
+    "proof"
+  ],
+  "triggerPatterns": [
+    "odometer",
+    "count[ -]?(up|er)",
+    "(digits?|numbers?) (roll|spin|tick)",
+    "roll(s|ing)? (up )?to",
+    "hero (stat|metric|number)",
+    "big (stat|metric|number)",
+    "\\bkpi\\b",
+    "stat[ -]?(payoff|reveal|callout)",
+    "(uptime|revenue|latency|accuracy) (number|stat|figure)"
+  ],
+  "durationWindow": {
+    "minSec": 3,
+    "maxSec": 10
+  },
+  "componentKinds": [
+    "stat-card"
+  ],
+  "params": [
+    {
+      "name": "value",
+      "kind": "text",
+      "description": "The final figure — up to six characters: digits 0-9 plus at most one separator (. , :). Digits roll; separators stay printed.",
+      "maxChars": 6
+    },
+    {
+      "name": "label",
+      "kind": "text",
+      "description": "What the number measures — the line under the metric.",
+      "maxChars": 30
+    },
+    {
+      "name": "prefix",
+      "kind": "text",
+      "description": "Static accent-colored lead-in ($, +, ~).",
+      "default": "",
+      "maxChars": 2
+    },
+    {
+      "name": "suffix",
+      "kind": "text",
+      "description": "Static accent-colored unit (%, ms, x).",
+      "default": "",
+      "maxChars": 3
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for prefix/suffix, underline, and glow.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "settleSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the last digit locks (leave >=1s of scene after it).",
+      "default": 2.2,
+      "min": 1.8,
+      "max": 8
+    }
+  ],
+  "engine": {
+    "kitVersions": {
+      "componentKit": 1,
+      "componentRuntime": 1,
+      "cameraRuntime": 1,
+      "cutRuntime": 1,
+      "interactionRuntime": 1,
+      "timeRuntime": 1,
+      "fxRuntime": 1,
+      "cinemaKit": 1
+    }
+  },
+  "fragmentHash": "e2dedc7cf9c5a91d84ba3e2a5a064b01043b8fc0bcc2aa8625b7e17cf7437d1e"
+}

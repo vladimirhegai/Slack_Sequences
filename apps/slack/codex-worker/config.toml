@@ -1,0 +1,39 @@
+# Installed into the dedicated CODEX_HOME by start.sh. This service owns that
+# volume, so the base file can set an execution-only permission profile without
+# altering a developer's local Codex configuration.
+approval_policy = "never"
+default_permissions = "luna-worker"
+
+[permissions.luna-worker]
+extends = ":workspace"
+
+[permissions.luna-worker.filesystem]
+":root" = "deny"
+":minimal" = "read"
+":tmpdir" = "deny"
+":slash_tmp" = "deny"
+
+[permissions.luna-worker.filesystem.":workspace_roots"]
+"." = "write"
+"**/*.env" = "deny"
+".codex" = "deny"
+"**/.codex" = "deny"
+".agents" = "deny"
+"**/.agents" = "deny"
+".claude" = "deny"
+"**/.claude" = "deny"
+".cursor" = "deny"
+"**/.cursor" = "deny"
+".git" = "deny"
+"**/.git" = "deny"
+"AGENTS.md" = "deny"
+"**/AGENTS.md" = "deny"
+"AGENTS.override.md" = "deny"
+"**/AGENTS.override.md" = "deny"
+"CLAUDE.md" = "deny"
+"**/CLAUDE.md" = "deny"
+"SKILL.md" = "deny"
+"**/SKILL.md" = "deny"
+
+[permissions.luna-worker.network]
+enabled = false

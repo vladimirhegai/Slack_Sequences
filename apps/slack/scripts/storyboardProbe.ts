@@ -6,12 +6,20 @@
  *
  *   npm run storyboard:probe --workspace @sequences/slack -- [runs] ["brief"]
  *
- * Requires OPENROUTER_API_KEY (or the configured provider's key). Each run
- * uses a fresh project dir so no planning cache is reused.
+ * This is a legacy-provider diagnostic and is never part of the Luna route.
+ * It requires both SEQUENCES_ENABLE_LEGACY_PROBES=1 and OPENROUTER_API_KEY (or
+ * the configured provider's key). Each run uses a fresh project dir so no
+ * planning cache is reused.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+if (process.env.SEQUENCES_ENABLE_LEGACY_PROBES !== "1") {
+  throw new Error(
+    "legacy paid probe disabled; set SEQUENCES_ENABLE_LEGACY_PROBES=1 explicitly",
+  );
+}
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.SLACK_SEQUENCES_DATA_DIR = path.join(appDir, ".data");

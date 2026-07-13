@@ -79,6 +79,8 @@ export interface FxEffectV1 {
   /** sweep / glow-pulse / draw: the data-part the effect answers.
    *  grade-shift: legacy anchor hint (the full-frame wash ignores it). */
   target?: string;
+  /** 1-based child item for an item-scoped highlight effect. */
+  item?: number;
   /** connector: the data-region whose camera arrival ends the draw. */
   region?: string;
   /** grade-shift: the grade class the scene turns to at full cover. */
@@ -154,6 +156,7 @@ export function resolveFxPlan(scenes: DirectScene[]): FxPlanV1 {
         kind: "draw",
         sceneId: scene.id,
         target: beat.component,
+        ...(beat.item !== undefined ? { item: beat.item } : {}),
         atSec: round(beat.startSec),
         durationSec: round(Math.max(0.2, beat.endSec - beat.startSec)),
       });
@@ -168,6 +171,7 @@ export function resolveFxPlan(scenes: DirectScene[]): FxPlanV1 {
         kind: "sweep",
         sceneId: scene.id,
         target: beat.component,
+        ...(beat.item !== undefined ? { item: beat.item } : {}),
         atSec: round(beat.startSec),
         durationSec: round(Math.min(
           Math.max(beat.endSec - beat.startSec, SWEEP_DURATION_SEC),

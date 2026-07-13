@@ -16,7 +16,9 @@ Kept here:
 - upstream license, credits, design notes, README, and skills manifest.
 
 All 19 agent skills were moved intact to [`../../skills`](../../skills), where
-the Sequences Slack planning brain can retrieve them locally.
+the explicit legacy-provider route and coding agents can retrieve them locally.
+The Luna-direct route uses its compact director prompt instead of this legacy
+skill committee.
 
 Omitted as unrelated to the Slack runtime: editor/plugin metadata
 (`.claude*`, `.codex*`, `.cursor*`), GitHub/release automation, cloud deployment
@@ -27,3 +29,8 @@ this snapshot is reference/runtime source, not a second CI surface.
 The production Slack renderer remains pinned to its currently verified npm
 substrate until the `0.7.x` runtime migration is tested separately. This
 snapshot and its skills are the local source of truth for that migration.
+
+Local compatibility patch: the vendored browser contrast audit decodes its
+host-owned PNG through `createImageBitmap` instead of navigating an `<img>` to
+a data URL. This preserves the audit under Luna's strict `img-src 'self'` CSP
+without weakening the authored document policy.

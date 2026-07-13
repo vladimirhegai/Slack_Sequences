@@ -125,7 +125,11 @@ describe("resolveCutPlan", () => {
       ["two", "three", "match", 9],
     ]);
     expect(plan.cuts[0]).toMatchObject({ axis: "left", travelPx: 230, exitSec: 0.3, entrySec: 0.42 });
-    expect(plan.cuts[1]).toMatchObject({ focalPartOut: "chip", focalPartIn: "panel" });
+    expect(plan.cuts[1]).toMatchObject({
+      focalPartOut: "chip",
+      focalPartIn: "panel",
+      exitSec: 0.4,
+    });
   });
 
   it("carries the swipe cover flag into the resolved plan", () => {
@@ -176,6 +180,24 @@ describe("resolveCutPlan", () => {
     ]);
     expect(plan.cuts[0]!.exitSec).toBeCloseTo(0.2);
     expect(plan.cuts[0]!.entrySec).toBeCloseTo(0.3);
+  });
+
+  it("clamps the bridged outgoing lead on a short scene", () => {
+    const plan = resolveCutPlan([
+      scene({
+        id: "short",
+        startSec: 0,
+        durationSec: 0.5,
+        cut: {
+          version: 1,
+          style: "morph",
+          focalPartOut: "chip",
+          focalPartIn: "panel",
+        },
+      }),
+      scene({ id: "next", startSec: 0.5, durationSec: 1 }),
+    ]);
+    expect(plan.cuts[0]!.exitSec).toBeCloseTo(0.2);
   });
 });
 

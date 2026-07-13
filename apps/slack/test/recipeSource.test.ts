@@ -17,7 +17,11 @@ import {
   parseRecipeSource,
   RECIPE_SOURCES_DIR,
 } from "../studio/recipeSource.ts";
-import { loadRecipeLibrary, recipeFragmentHash } from "../src/engine/recipeContract.ts";
+import {
+  loadRecipeLibrary,
+  recipeFragmentHash,
+  recipeRetrievalScore,
+} from "../src/engine/recipeContract.ts";
 
 const VALID_META = {
   format: 2,
@@ -114,5 +118,32 @@ describe("the committed source library", () => {
     const exported = loadRecipeLibrary({ refresh: true }).recipes.get("last-word-roulette");
     expect(exported, "golden recipe must exist in skills/sequences-recipes").toBeTruthy();
     expect(exported!.manifest.fragmentHash).toBe(source.fragmentHash);
+  });
+
+  it("keeps the motion-quality recipe trio safe for high-confidence host adoption", () => {
+    const ids = [
+      "ambient-hero-opener",
+      "overlap-dashboard-entrance",
+      "outgoing-morph-seam",
+    ];
+    for (const id of ids) {
+      const source = loadRecipeSource(id);
+      expect(source.manifest.params.every((param) => param.default !== undefined), id).toBe(true);
+      expect(
+        recipeRetrievalScore(source.manifest, source.sanityBriefs[0] ?? ""),
+        `${id} sanity brief should clear the host auto-declare threshold`,
+      ).toBeGreaterThanOrEqual(6);
+      expect(
+        recipeRetrievalScore(source.manifest, "A quiet legal footnote with no product motion."),
+        `${id} should stay silent on unrelated briefs`,
+      ).toBe(0);
+      expect(
+        recipeRetrievalScore(
+          source.manifest,
+          "A calm dashboard walkthrough: open the analytics table, filter a row, and export CSV.",
+        ),
+        `${id} should not match a generic dashboard walkthrough`,
+      ).toBe(0);
+    }
   });
 });

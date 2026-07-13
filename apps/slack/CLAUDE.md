@@ -1,982 +1,156 @@
-# Sequences for Slack — agent notes
+# Sequences for Slack — agent guide
 
-The active hackathon app (Slack Agent Builder Challenge, deadline **Jul 13 2026**).
-It turns a release thread into an on-brand launch video, in the channel. Bolt +
-Socket Mode; `tsx` runs the TS directly. Pitch: *from shipped to shown*.
+Sequences turns a Slack release brief into a storyboard, preview, and MP4. The
+app is Bolt + Socket Mode and runs TypeScript through `tsx`.
 
-## GitHub destination & deploy
+Keep the active documentation set small:
 
-Publish this app to **https://github.com/vladimirhegai/Slack_Sequences**.
-`vladimirhegai/Sequences` is the local/private development monorepo and is not
-the Slack app's GitHub delivery target. From the monorepo root, use
-`bash scripts/publish-public.sh "<message>"`; do not finish Slack work by pushing
-the monorepo branch and calling it published. The script archives **HEAD**, so
-commit first — uncommitted work is not published.
+- [REFACTOR_PLAN.md](REFACTOR_PLAN.md): the ACTIVE step-by-step refactor work
+  order — if you are here for refactor work, follow its agent protocol.
+- [OPERATIONS.md](OPERATIONS.md): local probes, publish, deploy, and recovery.
+- [LUNA_WORKFLOW.md](LUNA_WORKFLOW.md): default author route, worker security,
+  asset/session contract, and explicit legacy rollback.
+- [SENTINEL.md](SENTINEL.md): correctness ownership, retries, and fallback.
+- [PROBE_LOG.md](PROBE_LOG.md): current paid-probe evidence.
+- [REFACTOR_HANDOFF.md](REFACTOR_HANDOFF.md): architecture rationale behind
+  the plan.
 
-**Deploying the live bot is a separate step:** `railway up` from the monorepo root
-builds the root `Dockerfile` on Railway. GitHub autodeploy is deliberately **OFF**,
-so publishing source does **not** deploy. Verify with `/healthz` → `ready`. Docs-only
-changes need a publish but not a redeploy. Full runbook: [OPERATIONS.md](OPERATIONS.md).
+Current state (2026-07-13): Luna direct is the default creative route. The
+S6.9-S6.13 OpenRouter stabilization work is historical evidence, not the live
+orchestration path. Do not restart its paid-probe loop.
 
-**Deep docs (read only when this file is insufficient):**
-[ARCHITECTURE.md](ARCHITECTURE.md) (target design) ·
-[ROADMAP.md](ROADMAP.md) (current state / task list / TODOs) ·
-[OPERATIONS.md](OPERATIONS.md) (local setup + Railway deploy + recovery) ·
-[FALLBACKS.md](FALLBACKS.md) (fallback classes, recoverable-paperwork catalog, the
-prep-mode fail-loud flag, how to diagnose a fallback) ·
-[SENTINEL.md](SENTINEL.md) (the correctness-by-construction system: layer model,
-contract registry, budgets, and EVERY Sentinel flag) ·
-[HACKATHON_RULES.md](HACKATHON_RULES.md) (challenge constraints).
+## Delivery and scope
 
-## Sentinel — correctness by construction
+Slack work publishes to **https://github.com/vladimirhegai/Slack_Sequences**.
+This monorepo is only the development workspace. From the repository root:
 
-Authoring reliability is governed by **Sentinel** (the living system is documented
-in [SENTINEL.md](SENTINEL.md)). The
-thesis: move every mechanically-decidable obligation OFF the model so whole
-classes become *unrepresentable* (L0 schema / L1 host scaffold) or
-*deterministically repaired* (L2 normalize) instead of detected-and-retried.
-**Gates are never loosened — Sentinel changes WHERE an obligation is enforced,
-not WHETHER.** Before adding any authoring gate, rule, or repair, walk the
-SENTINEL.md placement decision tree and register the finding class in
-[src/engine/sentinel.ts](src/engine/sentinel.ts) (`test/sentinel.test.ts` fails on
-an unregistered class). Flags: `SLACK_SEQUENCES_SENTINEL_SKELETON` /
-`_SENTINEL_SLOTS` (host scene scaffolds + scene-addressable slots) and
-`SLACK_SEQUENCES_CRITIC_SKIP_CLEAN` (skip the critic on a pristine draft) — all in
-`src/engine/sentinelFlags.ts`, all in SENTINEL.md's flag table.
-
-> ⚠️ **Prep-mode:** the bot currently runs **fail-loud**
-> (`SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0`) so authoring failures surface
-> the full log instead of a generic film. **Set it back to `1` on Railway before
-> judges test the bot** — see [FALLBACKS.md](FALLBACKS.md). Read FALLBACKS.md
-> before changing the authoring pipeline.
-
-## Current motion-polish invariants (2026-07-09)
-
-These rules supersede older historical descriptions later in this file:
-
-- Camera fit targets actual painted/text/media content inside a station, not
-  the raw station rectangle. `data-camera-frame="region"` is the explicit
-  region-framing escape. Part shots include same-station
-  `data-layout-important` companions, which is how injected lockup copy stays
-  with its focal asset. Delayed entry moves receive a real origin, and only a
-  whip may use the reverse `seqAnticipate` wind-up. `seqSwoosh` is a continuous
-  cubic in/out phrase rather than a wait-rush-wait quintic.
-- Component morphs use a seek-safe cloned material-shell bridge. Never restore
-  `scaleX`/`scaleY` on live source DOM: source detail fades before a large
-  aspect change, target detail reveals after the shell lands, and reverse seek
-  must restore both endpoints (`test/componentMorph.browser.test.ts`).
-- `camera_framed_sparse` requires both an 18% content-union bbox and a 5.5%
-  exact painted rectangle-union occupancy. Only true thin bands/rails receive
-  the axis escape. The repair target is 22%; a camera-less sparse scene with a
-  declared focal may receive a restrained corrective path.
-- Primary focal QA follows a completed morph to its settled target. Primary
-  `moment_static_frame` findings block `strictOk`, remain in repair feedback,
-  and affect least-bad selection; supporting static moments are diagnostic.
-- Moment evidence ranks semantic affinity before generic major events.
-  Review thumbnails capture settled evidence, can walk backward when a subject
-  has departed, and require a normal-sized named subject inside a 2.5% safe
-  inset. A contact-sheet frame that is merely "mostly intersecting" is not
-  considered editorially framed.
-- Slot assembly canonicalizes bare `fromTo(...)` calls and model-invented
-  `window.__tl_scene_*` timeline references onto the host `tl`. Component
-  reconciliation may move one hidden `stat-card` binding to one unambiguous
-  visible stat/metric root with `data-cmp-value`; ambiguity remains blocking.
-
-## Sequences Studio + the agent-authored recipe library (2026-07-10)
-
-**Recipes are authored by coding agents as committed source files** — one
-recipe per file in [recipes/](recipes/) (`<id>.recipe.html`: a JSON
-`data-recipe-meta` block, a `data-recipe-doc` markdown block, and the fragment
-itself; authoring guide + hard rules in [recipes/README.md](recipes/README.md)).
-The loop: write the file → `npm run recipes --workspace @sequences/slack --
-gate <id>` (the EXACT production gate: staging library, demo scaffold, host
-injection, static validation, real browser QA, thumbnails — eyeball them) →
-`npm run recipes -- export <id>` (green gate only) writes the unchanged
-RecipeV2 format to `skills/sequences-recipes/<id>/` and runs retrieval sanity
-+ a live-retrieval surface check. `npm run studio:golden` = `export
-last-word-roulette`, the golden re-proof after any engine change on a recipe
-seam. Gate work dirs are derived + gitignored (`.data/studio/<id>/`).
-
-Live creates consume exported recipes at **Level 1 host instantiation**,
-unchanged: retrieval (`skillContext.ts`) offers ≤2 matching recipes with a
-declare-by-default instruction, the storyboard declares `recipes:[{id,params}]`
-per scene, `reconcileRecipeDeclarations` (Sentinel L2, degrade-never-veto)
-governs the declarations, and `applyDeterministicSourceRepairs` strips +
-re-injects the proven fragment VERBATIM every pass
-(`src/engine/recipeContract.ts` — the sixth host-owned contract; the author
-model can never edit the mechanism). Kill switch `SLACK_SEQUENCES_RECIPES=0`.
-**Touching any engine seam (runtime/kit versions, storyboard schema, injection
-order, retrieval, sentinel registry) requires updating
-[studio/INTEGRATION.md](studio/INTEGRATION.md)'s seam table** — bumping a
-runtime/kit version marks every exported recipe stale until re-proven.
-
-`apps/slack/studio/` is now ONE operator-local viewer — **Sequences Studio**
-(`npm run studio --workspace @sequences/slack` → `http://127.0.0.1:4321`;
-`npm run assets` is an alias; **never** on Railway — the server refuses
-`RAILWAY_ENVIRONMENT`): a Components tab (the catalog rendered live from
-`COMPONENT_CATALOG` + kit CSS, per-kind beat vocabulary), an Assets tab (the
-former standalone Asset Lab — params, spring animations, morph preview), and a
-Recipes tab (library gallery with a live seekable demo preview, param/tweak
-tables, gate findings, and Gate/Export buttons over the same CLI machinery).
-The operator-era canvas builder, workspace store, and in-studio agent chat
-were REMOVED in the 2026-07-10 pivot — the operator views; agents author.
-Historical plan/reports: [docs/RECIPE_STUDIO_PLAN.md](../../docs/RECIPE_STUDIO_PLAN.md)
-(private monorepo) + `docs/history/`.
-
-Headless-browser hygiene (2026-07-10): every Sequences-owned puppeteer launch
-goes through `src/engine/browserLifecycle.ts` (`launchHeadlessBrowser` —
-tagged temp profiles + process-exit reaping), and
-`npm run browsers:clean --workspace @sequences/slack` sweeps orphaned QA
-browsers stranded by killed test workers / interrupted gates (`-- --all` to
-also kill live tagged ones). The studio server sweeps orphans on boot.
-
-## Host plugins (2026-07-08 — the seventh contract)
-
-Storyboards may invoke **parameterized host GENERATORS** as typed
-`plugins:[{kind,params}]` forms (`src/engine/pluginContract.ts`): v1 kinds
-`dashboard-grid` (N seeded metric/chart tiles as one cascade),
-`notification-stack` (N believable product toasts), `lockup`
-(headline+sub+CTA owning copy, spacing, and entrance), `activity-feed` (a
-seeded list/table of believable activity rows cascading in — the direct kill
-for "Item 1/2/3" board rows), `terminal-log` (a terminal whose command
-typewrites, then seeded result lines stream in), and `team-strip` (a seeded
-avatar stack that pops in as one unit). Where a recipe is a
-frozen proven fragment, a plugin is computed fresh from params — but it never
-contributes raw model HTML/positions: `reconcileAndLowerPlugins`
-(parseStoryboard, Sentinel L2, degrade-never-veto) LOWERS each kept unit into
-ordinary typed components (host-stamped `pluginUid`) + beats so every existing
-gate (layout QA, moments, pacing, motion density, kit audit) judges the plan
-the runtime executes, and `injectPluginContract`
-(`applyDeterministicSourceRepairs`, before component-binding reconciliation)
-strips + re-generates the unit's seeded kit-valid markup byte-identically each
-pass. One unit = ONE budget/pacing unit regardless of children
-(`componentUnitCount` / `sceneIntroductionTimes`); children are never trimmed.
-Foundations: `pluginKernel.ts` (grid/stack/scatter distribution primitive,
-Fibonacci spacing rhythm, seeded PRNG) and `seedContent.ts` (deterministic
-on-topic SaaS content — metrics, task/PR rows, names, toasts; kills
-"Item 1/2/3" filler). The author model never sees lowered children
-(`authorStoryboardProjection`, skeleton do-not-author comments). Kill switch
-`SLACK_SEQUENCES_PLUGINS=0`; storyboard cache contract v17. Proof:
-`test/pluginContract.test.ts` + `test/pluginRuntime.browser.test.ts` (an
-all-plugin film through real browser QA). Seams: the plugin table in
-[studio/INTEGRATION.md](studio/INTEGRATION.md).
-**2026-07-09 probe fixes (plugin-probe-1/2 + plugin-live-1 lessons):** plugin
-entrance beats wait for the camera's arrival at the unit's station
-(`cameraArrivalSec` — count-ups no longer animate off-screen), the injected
-wrapper defends its placement against author station CSS
-(`grid-column:1/-1;min-width:0`), and author-drawn markup duplicating an
-ABSORBED component is hidden at injection (`pluginAbsorbedParts`). Three new
-L2 normalizers kill the probes' recurring attempt-burner classes:
-`repairStationPositioning` (a `data-region` with a left/top rect but no
-`position:` gets `position:absolute` — the live-1 240px-overflow root cause),
-a `repeat:-1 → repeat: 2` clamp (the probe-1 attempt-1 static death), and
-`injectBrandBase` (frame.md committed tokens/type/canvas as a host style block
-before authored styles — the "EB Garamond not used" class becomes
-unrepresentable, kit `var()` fallbacks bind to brand, no white first-frame
-flash). The component kit fixed three motion tells within v1: progress
-rings/bars and chart strokes render empty before their beat (flash-of-full),
-`html,body` carry the `--canvas` tint, and the default highlight is a
-hairline+bloom focus glow, not the 3px "blue pulse". The browser layout
-repair's scale floor deepens to 0.78 for full-frame `important_safe_area`
-bands (all three probes' least-bad penalty source). Round 2 (after the
-fix-probe-1 live run, penalty 31→1): same-scene exact text-node duplicates of
-a plugin's typed copy params are stamped + hidden at injection (the doubled
-lockup), camera scenes without a declared worldLayout get default
-viewport-sized cells synthesized per path region
-(`normalize.world-layout-derive` — no more author-freestyled 7680px wall
-stations at 0.25 fit zoom), and `repairStationPositioning` also completes
-`display:grid` on stations declaring grid-only alignment props with no
-display (cache contract v18).
-
-(The studio's former canvas builder and in-studio agent chat were removed in
-the 2026-07-10 pivot — see "Sequences Studio + the agent-authored recipe
-library" above. The recipe path stays degrade-never-veto;
-`SLACK_SEQUENCES_RECIPES=0` remains the kill switch.)
-
-## Pre-built assets + `/sequences asset` (2026-07-09 — canonical doc: [ASSETS.md](ASSETS.md))
-
-Designer-grade **parametric assets** replace model-drawn hero visuals:
-`src/engine/assetContract.ts` (typed color/number/text/enum params entering
-the DOM only as root custom properties; invokable animations eased by real
-spring physics from `src/engine/motionSpring.ts`; silhouette rhyme families
-aligned with the cut contract) + the 13-asset library in `src/engine/assets/`
-(one `defineAsset` file per asset, all five silhouette families). **Decision:
-assets are tweaked-prebuilt, never model-generated** — models may declare
-`asset-<id>` kinds on the plugin rails (flag `SLACK_SEQUENCES_ASSETS`, default
-ON after asset-probe-2; set `=0` for the asset-free rollback) but can never author or edit asset
-internals. The **in-film animation runtime SHIPPED 2026-07-09**
-(`assetRuntime.ts` + `templates/sequences-assets.v1.js`, the 8th host-owned
-island): each declared asset lowers to one internal `asset`-kind component +
-host-derived typed `animate` beats (spring `enter` at the camera-arrival
-anchor, `payoff`s sequenced after), so every existing gate binds for free —
-Sentinel rows `normalize.asset-lower` / `assets.contract`. Operator
-webview: `npm run assets` → the Assets tab of the combined Sequences Studio
-on `http://127.0.0.1:4321` (never Railway; trigger badges + morph
-spring/duration tweaks). Brand intake:
-**`/sequences asset`** opens a modal (`file_input` screenshots + notes) →
-`src/assetBrief.ts` extracts a palette deterministically (chromium canvas
-sampling, no model), stores ONE brief per channel in
-`.data/asset-briefs.json`, posts an asset-kit preview PNG, and every later
-`/sequences` create in that channel folds the brief into its context — plus,
-when assets ride the plugin rails, a declare-by-default `asset-<id>` offer
-with the brief's accent prefilled (`assetBriefPlanningOffer`)
-(`/sequences asset clear` forgets). Requires the bot `files:read` scope —
-**manifest.json changed 2026-07-09 → reinstall + refresh `SLACK_BOT_TOKEN`.**
-Duration policy (2026-07-09): no-length creates default to ~24s
-(`DEFAULT_TARGET_LENGTH_SEC`), the modal offers 20/25/30/45/60, and duration
-lives in the TEMPLATE, never a gate — the storyboard prompt always carries a
-host-computed narrative/duration scaffold (`storyboardShapeScaffold` over the
-typed `STORYBOARD_SHAPES` segments, scaled to the target; deterministic
-keyword pick when the light-model hint is off). **There is deliberately no
-duration veto: a time miss must never burn an attempt** (storyboard cache
-contract v19).
-
-## Film direction + continuous playback evidence (2026-07-09)
-
-`src/engine/directionScore.ts` derives a deterministic, versioned film score
-from the locked storyboard: phrase roles/bounds, attention, dominant action,
-competition, energy, entry continuity, and settle windows. Automatic camera
-drift and FX may consume it; explicit authored actions are not broadly retimed.
-`SLACK_SEQUENCES_DIRECTION_SCORE=0` is the A/B rollback for consumers, and
-`motion-plan.json` records whether consumers were enabled.
-
-`src/engine/continuousMotion.ts` samples browser playback and persists advisory
-focal visibility/occupancy, center-and-apparent-scale
-velocity/acceleration/jerk, reversal, independent motion, and measured settle
-evidence through browser QA and temporal reports.
-It must not affect `ok`/`strictOk` until thresholds have cross-film evidence;
-`SLACK_SEQUENCES_CONTINUOUS_MOTION=0` disables collection. Paid A/B evidence:
-the motion-heavy incident film improved settle and motion competition, while
-the quiet approval film and consumer-free golden retained their own rhythm.
-See [PROBE_LOG.md](PROBE_LOG.md) for the exact measurements and attempt accounting.
-
-Measurement invariants from the 2026-07-10 Vectorline audit: phrase-level
-attention (`part`, then `region`, then `selector`) takes precedence over a
-scene's generic `focalPart`; at a cue inside a camera move, that active move
-owns attention (a newly starting move wins a shared boundary); derivative
-metrics ignore sub-half-sample boundary intervals so 10ms cue/cut samples do
-not manufacture acceleration/jerk spikes. These are evaluator corrections,
-not choreography rewrites.
-
-The same probes added four deterministic attempt-economy rules: an immediate
-first camera segment owns the entry target; primary focal review follows typed
-component/interaction evidence; static liveness resolves recognized indexed
-`forEach` staggers; and a complete uninvoked `(tl) => {...}` slot envelope is
-unwrapped before assembly. Do not extend the last repair into a general source
-rewriter; widespread authored layout redesign remains architectural.
-
-An explicitly required rack focus is a modifier rather than a new creative
-action: when the planner already supplied a non-whip full camera move and a
-real part target, `topUpRequiredRackFocus` attaches the focus pull to the
-strongest existing landing. It never invents a move or part; missing camera
-intent remains a findings retry. A malformed `fromTo(target, settledVars,
-position)` may likewise normalize to `.to` only with an earlier opposite-state
-initialization or when it is a visible/settled ≤50ms pin; all ambiguous motion
-direction stays blocking.
-
-Final camera travel must expose its destination before the cut. When a
-substantial non-dive full move would land exactly on the scene boundary,
-`reserveFinalCameraLanding` reclaims the last 0.42s for the resolver's gentle
-destination drift. This is deliberately below the moment binder's look-back:
-camera evidence stays bindable, the world never freezes, and the audience gets
-a readable landing. Explicit holds, short whips, and dive envelopes win.
-
-A findings retry sometimes expresses the requested in-shot development as a
-new scene embedded inside the existing scene's authored time window. Before
-contiguous timing rebasing, `mergeEmbeddedDevelopmentScenes` folds that patch
-into the containing scene only when it reuses the exact component ids/kinds
-and focal part, adds only in-window beats/moments, and carries at most
-hold/drift camera. New surfaces, interactions, plugins, recipes, premium cuts,
-timed modifiers, full reframes, or escaped cues remain a real scene and follow
-the ordinary validation path.
-
-Camera-path order is a runtime invariant after any pacing retime. Connective
-`drift`/`hold` yields to a decisive full move, remnants below 150ms drop, and
-`normalizeConnectiveCameraSchedule` restores chronological order before the
-resolver runs. It never retimes or removes a full move. This prevents an old
-array position from crushing a later two-second pass into a few frames and
-manufacturing a jerk spike.
-
-Slot assembly owns structural stage geometry even though authored film CSS is
-loaded later: root bounds, absolute scene stacking, clip containment, and
-camera-overlay bounds are locked; display, spacing, color, and opacity remain
-authorable. Slot-script normalization also binds only mechanically certain
-aliases/envelopes to the host timeline and film clock. Source repair may quote
-a bare CSS `var()` token in executable JavaScript or remove an unbound
-decorative SVG ellipsis path; binding-bearing or ambiguous geometry still
-fails loud. The first scene's declared subject must appear within 1.25s, so a
-long empty cold open is rejected at storyboard time instead of after a paid
-source pass.
-
-Rendering must leave GPU/capture compatibility to HyperFrames producer:
-`browserGpuMode:"auto"`, never a host-forced software GPU or screenshot path.
-Software is the producer's compatibility fallback, not the production default.
-A CLI run requested with `--render` is a failure when no non-empty MP4 exists;
-thumbnails do not relabel a failed render as a warning.
-
-## Live-probe policy — fix the attempt before continuing
-
-Owner mandate (2026-07-09): the shipped product must publish with the
-minimum possible attempts. When a live probe (or any paid create) burns an
-attempt or falls back and the root cause is NOT architectural: pause the
-current task, fix it deterministically (SENTINEL.md placement tree — usually
-an L2 normalizer), add the regression test, log one row in
-[PROBE_LOG.md](PROBE_LOG.md), then resume. Architectural causes: log +
-park in ROADMAP instead. Never loosen a gate as the "fix".
-
-### Probe triage playbook (2026-07-10 camera session)
-
-Treat the process exit and `status-report.json` as the result. A thumbnail-ready
-message is not render success; when `--render` was requested, the report must be
-`fail` unless a non-empty MP4 exists. Do not repeatedly poll a long probe or
-send timer updates: keep the process handle open and wait for its completion
-event, which returns immediately on exit. Stage receipts then identify where
-the time went.
-
-Use persisted artifacts before paying for another model call:
-
-```powershell
-npm run storyboard:replay -- <raw-response-file>
-npm run temporal:replay -- <project-dir>
-npm run render:existing -- <project-dir>
+```bash
+bash scripts/publish-public.sh "type(scope): concise message"
 ```
 
-The replay tools use current normalization/evaluation code. `render:existing`
-rebuilds and renders the accepted source without planning or authoring, so it
-isolates renderer speed from model latency. During this session a 28s film's
-software capture failed after ~16.5m; the same exact project rendered through
-the corrected hardware-auto path in 38–41s. A final healthy live run took
-6.3m total: ~4s frame setup, ~112s storyboard, ~199s source/critic, and ~42s
-render. If a future run is slow, inspect stage receipts before changing a
-global timeout.
+Publishing and deploying are separate. The live sandbox changes only after
+deploying the exact clean `.publish` snapshot with `railway up`. Never publish
+or deploy unless the user explicitly asks.
 
-Symptom clusters learned from the seven probes:
+Active work lives in `apps/slack`. It may use `@sequences/core`,
+`@sequences/platform`, and pinned HyperFrames packages. The retired app/studio
+trees are gone (REFACTOR_PLAN.md Phase P); never recreate or import from them.
+Treat `packages/*` as stable dependencies.
 
-- camera, CTA, and cursor geometry failing together usually means the shared
-  stage/containing block is wrong; inspect the scene wrapper cascade first;
-- “PowerPointy” is not equivalent to too few camera moves—look for tiny product
-  occupancy, reset-to-title shots, disconnected HTML islands, late subjects,
-  no landing dwell, and connective moves overlapping decisive travel;
-- array order is observable choreography after any cue retime; sort before the
-  camera resolver and make drift/hold subordinate to full moves;
-- a passing source can still be a poor film. Review the MP4/contact strip plus
-  continuous-motion evidence, then correct the exact accepted project before
-  drawing conclusions from a new random generation;
-- `published-degraded`, deterministic fallback, missing render, or a least-bad
-  draft with unresolved visual penalties is internal evidence, never a
-  judge-ready success label.
+## Model boundaries
 
-## The two bots
+There are two different bots and one deterministic engine:
 
-This app runs **two distinct agents**. Keep them straight:
+1. `src/slackMcpContext.ts` uses the OpenAI Responses API and Slack hosted MCP
+   with the invoking user's OAuth token. This path requires `OPENAI_API_KEY`.
+2. `src/engine/lunaRoute.ts` sends verified facts/assets to the private
+   `codex-worker`, where one persistent Codex CLI thread runs
+   `gpt-5.6-luna` with high reasoning. That thread owns treatment, assets,
+   motion intent, storyboard, source, rendered self-review, and structural
+   revisions. `src/engine/runner/` is frozen behind the explicit
+   `legacy-provider` rollback route; it is never an automatic fallback.
+3. The internal Sequences MCP owns deterministic mutation, preview, render,
+   and undo for accepted compositions.
 
-1. **Context bot — Slack-hosted-MCP retrieval** ([src/slackMcpContext.ts](src/slackMcpContext.ts)).
-   OpenAI Responses API (`gpt-5-mini`) calling `https://mcp.slack.com/mcp` with
-   the **invoking user's** OAuth token. Reads messages/files, returns an evidence
-   pack. **Must be OpenAI** — the Responses `mcp` tool type is OpenAI-only, so
-   OpenRouter/DeepSeek cannot drive it. Always needs `OPENAI_API_KEY`. This is the
-   primary hackathon-qualifying MCP integration.
-2. **Planning / authoring bot — the main agent** ([src/engine/compositionRunner.ts](src/engine/compositionRunner.ts)).
-   Runs on `SLACK_SEQUENCES_PROVIDER` — Railway uses **`openrouter-api` (DeepSeek)**.
-   Turns brief + context into a canonical, direct HyperFrames HTML composition.
-   The video execution layer (validate/checkpoint/preview/render) is additionally
-   isolated behind an internal **stdio Sequences MCP** server.
+Editable Luna prompts belong in `prompts/luna-*.md`; the legacy planning prompt
+remains for rollback. Runtime facts and approved asset manifests are job-local
+files, while typed host contracts remain in source.
 
-## Prompts live in [prompts/](prompts/)
+## Execution contract
 
-General, editable system prompts for both bots go in `prompts/*.md` — not buried
-in `src/`: [prompts/context-retrieval.md](prompts/context-retrieval.md) for the
-context bot and [prompts/planning-director.md](prompts/planning-director.md) for
-direct authoring. **Not** in `prompts/`: RAG/skill retrieval
-([src/agent/skillContext.ts](src/agent/skillContext.ts)) and per-run
-deterministic context (color/typography picks, selected skills, brand tokens) —
-those are composed at runtime. See [prompts/README.md](prompts/README.md).
+The default Luna pipeline is staged and transactional:
 
-## App isolation (do not break)
+1. Collect the brief and permission-scoped Slack evidence.
+2. Copy/hash approved `/sequences assets` files into an isolated worker job.
+3. The same Luna thread chooses treatment and assets, declares motion intent,
+   and authors storyboard plus complete seekable source.
+4. Preserve exact raw bytes, validate declared selectors and local assets, then
+   run the existing static and real-browser direct-composition gate.
+5. Checkpoint accepted source and return thumbnails/evidence to the exact Luna
+   thread for zero or one self-directed polish pass.
+6. Revalidate changed bytes, render the MP4, and preserve hashes/evidence.
+7. Resume the exact thread ID for structural revisions; never use `--last`.
 
-`apps/slack` must publish standalone, without the paused apps:
+The legacy frame/storyboard/scaffold/repair pipeline stays unchanged behind
+`SLACK_SEQUENCES_AUTHOR_ROUTE=legacy-provider`.
 
-- ✅ May import `@sequences/core`, `@sequences/platform`, and pinned
-  `@hyperframes/*@0.6.86`.
-- ❌ Never import `apps/sequences/*` or `apps/forge/*`. Need their glue? **Copy it
-  into [src/engine/](src/engine/) and adapt.**
-- ❌ Don't modify `packages/*`, `apps/forge`, `apps/sequences` unless the task
-  explicitly says so.
+`SLACK_SEQUENCES_USE_MCP=0` is diagnostic only. Receipts never contain prompts,
+credentials, workspace content, plan data, or model output.
 
-The public Slack repo contains this app plus shared packages, so cross-app
-relative imports break after publishing.
+## Ownership and motion truths
 
-## MCP execution path (the internal Sequences MCP)
+- The host owns verified facts, permissions, asset/source hashes, local-only
+  execution, runtimes, scene windows, seek semantics, browser/encoding health,
+  checkpointing, and delivery.
+- Luna owns concept, structure, art direction, screen copy within verified
+  facts, assets, layout, transition/camera choice, pacing, and choreography.
+- Plugins and assets lower into ordinary components and beats. Recipes are
+  proven fragments; reconciliation is degrade-never-veto.
+- Continuity and camera blocking are default-on. Stable `entityId`s should
+  produce measured shared-element handoffs and one primary lens route.
+- Supporting phrases do not move the lens. Camera fitting uses painted content,
+  not empty station boxes.
+- Ambient motion belongs on imagery, furniture, and light. Primary copy holds
+  still while it is meant to be read.
+- A gesture follows anticipation → action → settle → readable hold. The film
+  gets one energy peak; connective motion stays subordinate.
+- A green JSON report is not a motion-quality pass. Inspect representative
+  frames and blocking evidence, then read the motion code for movement between
+  those frames.
+- Preserve creative ownership. Host repairs may correct contracts, bindings,
+  measured frame containment, and camera/station fit. They must not rewrite
+  copy, story order, component choice, beat timing, palette, typography, or
+  motion style merely to satisfy a taste heuristic.
 
-MCP is the **default** live path; `SLACK_SEQUENCES_USE_MCP=0` is a diagnostic
-opt-out. Normal flow:
+The authoritative environment-variable registry is
+`src/engine/featureFlags.ts`. Do not add an unregistered
+`SLACK_SEQUENCES_*` read.
 
-- live create/revise: `submit_composition` → `render_preview` → `render`;
-- curated demo: `submit_plan` → `render_preview` → `render`.
+## Failure discipline
 
-The in-process fallback ([src/orchestrator.ts](src/orchestrator.ts) `applyMutation`)
-is narrow and behaviorally equivalent — a flaky subprocess never breaks a demo.
-Every MCP attempt is visible through an **argument-free** receipt. Never put plan
-content, command args, credentials, user tokens, workspace messages, or model
-output in a Slack receipt.
+Read [SENTINEL.md](SENTINEL.md) before adding a rule or repair. The existing
+Sentinel committee applies to the legacy route; Luna currently reuses only its
+objective direct-composition mechanics. Put each
+obligation at the lowest layer that can own it: schema, scaffold,
+deterministic normalize, static gate, browser gate, then paid retry. Register
+finding classes in `src/engine/sentinel.ts`.
 
-## Determinism boundary
+For a paid attempt or fallback:
 
-- **No model:** `/sequences demo` (curated preset, [src/demo.ts](src/demo.ts));
-  the solver + linter; all delivery plumbing (thumbnails, render, uploads); the
-  zero-token tweak matcher in `tweakRunner.ts`; undo (journal replay).
-- **Uses a model:** real `/sequences` create (planning bot) and the context bot;
-  revise only when the zero-token matcher is unsure.
+1. Stop the retry loop when practical.
+2. Preserve the exact rejected artifact.
+3. Reproduce it without a model call.
+4. Fix only the shared deterministic cause and add a minimized regression.
+5. Record it in [PROBE_LOG.md](PROBE_LOG.md), then rerun only if authorized.
 
-Keep deterministic things deterministic: build new deterministic behavior in the
-plumbing layer or behind a preset/zero-token path. The 9 laws are **revised** for
-direct HyperFrames authoring — see ARCHITECTURE.md "Revised architecture laws";
-hard runtime invariants (deterministic seek, local assets, finite timelines,
-framework-owned playback) still bind.
+Classify before acting: runtime/schema failures are hard; host-known mechanical
+defects belong to one bounded deterministic repair; taste preferences remain
+visible advisories and do not trigger another author call or probe. Never raise
+attempt counts, loosen a hard gate, or add prompt prose merely to hide a
+mechanical failure. A Luna-authored defect should eventually return to the same
+thread with exact evidence; do not rebuild the old repair committee around it.
 
-## Two-tier delivery contract
+## Safety and verification
 
-In [src/index.ts](src/index.ts), create/revise preserve this order:
-1. apply plan/commands; 2. build + upload thumbnails; 3. update message to
-*rendering*; 4. render the MP4 async; 5. update to *ready*/*unavailable* and
-upload the MP4. Missing Chrome/FFmpeg or a render failure must leave a valid
-thumbnails-only result. Background Slack errors must be logged and contained
-(never crash the process).
+Railway owns the only live Socket Mode process. Never copy Railway tokens into
+local `.env` or start a second process with sandbox credentials.
 
-## Current feature state
+Fast loop:
 
-Wired end-to-end: `/sequences` create modal, `/sequences demo` (model-free),
-`/sequences mcp-test` self-check, 🎬 message shortcut (reads the whole thread),
-conversational reply-to-revise, live Thinking-Steps progress, Undo, Render HD,
-Approve & share. Per-user OAuth for hosted MCP. Direct HyperFrames create,
-revision, validation, checkpoint undo, thumbnails, and render are wired. Each job
-gets a per-job `frame.md` design system — curated SaaS mood DNA plus one bounded
-art-direction decision over harmony, type, and spatial character. **Deterministic
-design tools** extract brand truth, derive and validate semantic tokens, repair
-unsafe contrast/unavailable fonts, and expose which values are committed versus
-tunable without limiting motion. The art director also picks one **curated type
-system** — a display/body/mono trio from `engine/typeSystems.ts` (the integrated,
-**embedded-only** successor to the old `vendor/font-pairing/` sandbox: every
-family is one the renderer actually draws, deterministic keyword scorer + display
-diversity guard), so type variety is real, not five hardcoded trios. Every frame
-also renders a brand-informed **Forbidden defaults** block (one accent, no H.264-
-banding gradient washes, no chrome shadows, tinted never-pure-black/white canvas,
-tabular numerals — distilled from how Apple/Linear/Claude/Stripe restrain
-themselves). **Frame-as-artifact, capsule-to-author (Sentinel):** the full
-frame.md stays the on-disk artifact + the sole `frameValidation.ts` source (shown
-in the result, attached to the thread), but the concept/storyboard/author model
-calls receive `frameCapsule()` — a ~45% smaller projection of just the design
-decisions (thesis, tokens, type, the spatial scaffold the author must define,
-restraints, forbidden defaults, exceptions), dropping the cinematography-kit
-description (host-injected + already in `planning-director.md` — its presence made
-authors redundantly re-declare `.material`), the verbose prose, and the tool
-report. Fewer tokens, fewer distractions, gates unchanged
-([src/engine/frameDesign.ts](src/engine/frameDesign.ts) +
-[framePresets.ts](src/engine/framePresets.ts) /
-[typeSystems.ts](src/engine/typeSystems.ts) /
-[brandTokens.ts](src/engine/brandTokens.ts) / [frameTools.ts](src/engine/frameTools.ts) /
-[brandCapture.ts](src/engine/brandCapture.ts)). Direct shots may also carry
-typed spatial/focal intent and semantic cursor interactions. A versioned local
-runtime resolves hotspot/target/ripple geometry under camera transforms;
-interaction-time browser QA is enforced and persisted with each revision.
-Shots may also declare typed outgoing cuts (`hard`, directional,
-zoom/inverse-zoom, flash, object-match, or shape-match). `cutContract.ts`
-resolves those declarations and `sequences-cuts.v1.js` compiles host-owned,
-seek-safe boundary motion into the canonical timeline; `compositionRunner.ts`
-injects the binding from the locked storyboard so the source author cannot
-silently omit it.
-Object-match uses measured `data-part` geometry, while static validation catches
-missing bindings and warns when authored scene-wrapper tweens compete with the
-cut runtime. Shape-match (2026-07-03) swaps two *different* rhyming-silhouette
-elements through a dual-bridge crossfade with border-radius interpolation; a
-bind-time geometry audit (>2.5× aspect, >60-node subtree, off-frame parts)
-degrades the boundary to zoom-through with a typed reason that browser QA
-surfaces as a `cut_degraded:` warning, and the static gate warns when a bridge
-lands outside the incoming scene's entry framing
-(`test/cutShapeMatch.browser.test.ts` proves both paths).
-Shape-match v2 (2026-07-04) adds **deterministic cut discovery**: browser QA
-measures every boundary's visible `data-part` geometry, `cutDiscovery.ts`
-scores silhouette rhymes (aspect cap 2.0×, radius-weighted, max ONE per film,
-only `hard`/directional boundaries), and the host upgrades the one provable
-rhyme to shape-match before the critic — mutating the locked storyboard
-everywhere downstream, keeping the pre-upgrade draft on any QA regression
-(`SLACK_SEQUENCES_CUT_DISCOVERY=0` opts out).
-**Declared morph/match cuts happen or are labeled honestly (2026-07-04, WS1):**
-a planner-**declared** bridged cut the runtime degrades is now a measured
-`cut_degraded` polish finding (strictOk-blocking, never unpublishing) carrying
-the endpoint geometry from `DirectBoundaryInventory` and a restyle directive,
-so the author loop can repair it instead of silently shipping a zoom-through;
-`cutContract.ts` groups the `shapeOut`/`shapeIn` hints into silhouette families
-(pill·bar vs card·circle·window) and `auditShapeMatchHints` rejects a
-cross-family declaration at storyboard validation (cheap findings-retry), with
-a volunteered hopeless pair degrading to zoom-through on the final attempt
-(`degradeMismatchedShapeHintCuts` — brief-required shape-match stays blocking);
-and `reconcileDegradedCutPaperwork` runs LAST in `requestDirectComposition` so
-STORYBOARD.md / the Slack outline / manifest.json record the cut that actually
-executed (`test/cutShapeMatch.browser.test.ts` + `test/authorReliability.test.ts`
-prove the finding, hint audit, plan-time degrade, and paperwork rewrite).
-**Built for the eyes (2026-07-04, WS3+WS2):** storyboard validation now runs
-`auditPacing` (`engine/pacingAudit.ts`) — the density CEILING the system
-lacked: per scene ≤ 1 + floor(sec/3.5) full camera moves and ≤2 whips per
-film, the last introduced surface must land by ~65% of its scene with ≥0.9s
-per surface of development after it, typed copy gets a
-max(1.2s, 0.3s×words) reading floor before the next cut/whip, and
-press/set-state/toast payoffs get a ≥0.8s outcome hold — all judged in
-viewer time, all cheap findings-retries with "hold ≠ freeze" fix hints so
-plans don't thrash against liveness, and a 0.35s marginal-miss tolerance so
-a paid attempt is never vetoed over a rounding-scale shortfall (the
-`improve-ws32-1` probe lesson; storyboard cache contract v7→v8, prompt
-surgery teaches the ceiling + single-focal discipline in both prompts). And
-browser QA scores **eye-trace continuity** (`engine/eyeTrace.ts`): from the
-boundary geometry inventory, the outgoing attention target's viewport center
-vs the incoming target's center — >38% of the frame diagonal across a
-`hard`/undeclared cut (directional/zoom/bridged carry the eye; flash resets
-it) is an `eye_trace_jump` polish finding (strictOk-blocking, never
-unpublishing; `SLACK_SEQUENCES_EYE_TRACE=audit|0` to observe/disable), and
-consecutive beats 0.25–1.2s apart whose targets sit >50% of the diagonal
-apart raise an always-advisory `eye_trace_pingpong` (≤6 extra seeks;
-`QA_CACHE_VERSION` 4→5). Proof: `test/pacingAudit.test.ts`,
-`test/eyeTrace.test.ts`, `test/eyeTrace.browser.test.ts`.
-**WS hardening + fallback elimination (2026-07-05):** the pacing gate now
-covers single-surface scenes (short-final-resolve exemption only), in-flight
-camera moves (hold = 0 through a payoff), swapped-in copy and headline-class
-primary moments (reading floors), and judges the 65% introduction deadline
-in viewer time (storyboard cache contract v9); eye-trace measurement
-prioritizes declared attention targets under the 16-part cap, samples the
-outgoing side before the declared cut exit, and measures each ping-pong beat
-at its own time in viewer time; final-scene camera landings get a
-compact-resolve sparse tier (8%), zero-coverage landings defer to
-near-blank, and containment is re-checked at primary moment capture times
-(`QA_CACHE_VERSION` 6). The author ladder never ends on a blind compact
-patch (full re-author when nothing browser-valid is banked) and gets a
-source rescue rung on an independent model
-(`SLACK_SEQUENCES_SOURCE_RESCUE_MODEL`, default `tencent/hy3-preview`)
-before any deterministic fallback; the patch applier reverts only the
-individual edit that breaks an inline script's parse; childless `rows`
-targets (and, 2026-07-08, chartless charts and fill-less progress) get the
-kit's neutral internal structure injected host-side so the top
-`kit_markup_incomplete` bind gaps never burn a paid attempt; storyboard parse
-re-bases shot timing sequentially and degrades support-map beat violations
-to supported analogs (load-bearing beats stay blocking); truncation recovery
-keeps reasoning and demands a smaller artifact; planning artifacts mirror
-into a shared `.data/planning-cache/` so a fresh job id never re-pays a
-validated plan (`SLACK_SEQUENCES_SHARED_PLANNING_CACHE=0` opts out); and an
-unbound SUPPORTING moment re-anchors/drops with a warning instead of
-rejecting the attempt. Live-probe lesson (two runs died at storyboard-plan
-on marginal misses): the moment-interval veto carries a 0.35s grace
-(`INTERVAL_GRACE_SEC`), and `pacing/*` findings block only the primary
-rung's first two attempts — from its final attempt onward a plan clean
-except for pacing ships with the findings logged as advisories
-(degrade-never-veto). Details in ROADMAP's 2026-07-05 sections (the
-IMPROVEMENT_PLAN / WS_Improvements / LESS_FALLBACKS planning docs are retired;
-ROADMAP's "Full audit" section carries their surviving record + parked items).
-The storyboard stage also grants ONE artifact-less grace replay per run (a
-response with no `<storyboard_json>` at all replays its attempt instead of
-consuming a rung's final slot — the audit-final-a1 death class) and persists
-every rejected/truncated/artifact-less attempt under
-`planning/attempts/storyboard-<n>-<outcome>.*` for offline diagnosis
-(author-stage parity).
-**Codex-audit fixes (2026-07-05, later):** the timing re-base now normalizes
-nested beat/camera/interaction/moment/ramp times in the model's OWN frame
-and shifts them by the re-basing delta, so repairing a scene's arithmetic
-never silently re-times the choreography inside it (storyboard cache
-contract v10); the final-resolve pacing exemption accepts only COMPACT
-resolve kinds (button/stat-card/toast/toggle/progress/progress-ring/
-avatar-stack) — a dense window in the final slot stays judged; headline
-detection matches `\btype` so "prototype reveal" no longer earns a reading
-floor; and `camera_framed_sparse` mid-window sampling covers scenes whose
-camera path has NO full move (drift/hold-only paths never land anywhere and
-were previously unsampled — the fix-ws-probe-3 tiny-toast class;
-`QA_CACHE_VERSION` 7).
-**Cleaner, coherent output (2026-07-05, WS4+WS6+WS7).** Exit discipline
-(WS4): `auditSurfaceExits` (`componentContract.ts`, plan-stage) flags two
-station-dominating overlays (command-palette/modal/dropdown/context-menu)
-whose open windows OVERLAP in one station without the first being
-closed/swapped/morphed — an overlay over BASE content (⌘K over a window) is
-the designed pattern and never flagged; and `stale_asset_lingers`
-(`layoutInspector.ts`, ALWAYS advisory, bounded seeks) flags a component
-whose last beat has passed still at opacity ≥0.9 overlapping the focal
-element (`QA_CACHE_VERSION` 8). The prompt gains an exits paragraph
-(short/directional ≤0.4s or recede to ≤40%; never stack a new surface over a
-live one). Transition-language coherence (WS6): `auditCutCoherence`
-(`cutContract.ts`) flags a cut-style ZOO — distinct non-`hard` styles beyond
-`max(4, round(0.6×boundaries))`, so the golden film's four premium cuts pass
-but a fifth novelty per seam is a cheap findings-retry; and
-`auditCameraEnergy`'s repeated-verb rule now fires ONLY on a repeated
-HIGH-energy verb (whip/orbit) — repeated pan/drift/track is coherence, not
-churn. `browserQualityPenalty` already weights
-`camera_framed_clipped`/`_sparse`/`cut_degraded`/`eye_trace_jump` so those
-findings steer the attempt-3 least-bad pick. Both new plan findings ride the
-same late-attempt polish demotion as `pacing/*` (advisory from the final
-rung). Thumbnails show the moment (WS7, `generateDirectThumbnails` in
-`directComposition.ts`): a moment naming a `data-part` subject
-(component/interaction) walks forward from its capture time to the first
-frame the subject is actually visible (opacity ≥0.5, on frame); a no-subject
-moment (scene-start cut / camera / text tween) walks to the first frame that
-paints meaningfully MORE than the capture frame (relative painted-pixel test
-— a soft bloom cancels in the ratio), fixing the empty title-card / palette
-"gray circle". Both walks stay inside the cut-safe window; the page.evaluate
-bodies avoid named nested functions (the MCP-server `node --import tsx`
-transform `__name`-wraps them, which is undefined in the browser). Live paid
-probe `ws467-probe-2` (a dense command-palette+modal+stat-card+button+
-terminal brief) **published `hyperframes-direct`, no fallback** via the full
-recovery ladder (primary rung exhausted → storyboard rescue → full
-re-author → critic), with 10 content-rich moment thumbnails and **zero**
-`stale_asset_lingers`/`components/exit`/`cuts/coherence` false positives; a
-second probe `ws467-probe-3b` gave the **WS6 live true-positive** —
-`auditCutCoherence` rejected a 5-distinct-style storyboard, the planner fixed
-it on retry, and the film published with no fallback.
-Proof: `test/componentContract.test.ts` (`auditSurfaceExits`),
-`test/cutContract.test.ts` (`auditCutCoherence`), `test/cameraContract.test.ts`
-(relaxed energy rule), `test/directComposition.test.ts` (`momentSubjectPart`),
-and `film:demo` (m10 lockup now shows the title card, not a bloom).
-Scenes may also declare a typed **`timeRamp`** — the fifth host-owned contract
-(2026-07-04, `timeRamp.ts` + `sequences-time.v1.js`): ONE motivated
-slow-motion dip per scene (max 2 per film, never scene 1) compiled into
-net-zero piecewise-linear warp knots; a nested paused master timeline wraps
-the registered timeline at the registration seam (the LAST deterministic
-injection) and seeks the content timeline at `warp(masterTime)` — seek-safe
-by construction, byte-identical for non-ramped films. QA converts time bases
-only at physical-seek choke points; motion-density quiet gaps and moment
-spacing are judged in viewer (output) time. The fallback film and `film:demo`
-both ship a deterministic ramp as the proof path.
-Scenes may also declare a typed **camera path** over a continuous spatial world:
-`data-camera-world` is a plane larger than the viewport with named
-`data-region` stations, and `cameraContract.ts` +
-`templates/sequences-camera.v1.js` compile `hold`/`drift`/`pan`/`whip`/
-`push-in`/`pull-back`/`track-to-anchor`/`parallax-pass`/`orbit-lite`/`orbit`
-moves into seek-safe world transforms (gaps auto-fill with drift so the camera
-never silently freezes; `data-depth` layers — `data-parallax` is an alias —
-get depth counter-motion). `orbit` (2026-07-03) is a true 3D arc: perspective
-on the scene wrapper, a `rotateY` sandwich on the flat world plane returning
-to rest, counted as a high-energy peak, and deterministically forbidden from
-overlapping a cursor interaction. Any camera segment may carry a rack-focus
-`focus` modifier (`{part|depth, blurMaxPx ≤ 10}`): the runtime pulls a
-tweened focal plane across the scene's depth layers, blurring the others
-(≤4 layers, layers only, never the world element — the CSS-filter-flattens-3D
-landmine); `test/cameraDepth.browser.test.ts` proves both effects and their
-determinism under out-of-order seek. **Camera depth level 2 (2026-07-04)**:
-whip blur is relocated off the world element onto a `.seq-whip-lens`
-backdrop-filter overlay (the world never carries a CSS filter again), so an
-orbit scene may opt into `"depth3d":true` on its camera object — the world
-gets `preserve-3d` and `data-depth` layers separate in Z (`translateZ`, a
-pure function of orbit deflection, zero at rest so flat frames stay
-byte-identical and legible). Degrade-never-veto: the flag survives only with
-an orbit and warns without layers. The same
-runtime registers the Sequences ease library (`seqSwoosh`, `seqWhip`,
-`seqImpulse`, `seqSettle`, `seqGlide`, `seqDrift`, `seqAnticipate`,
-`seqMicrobounce`) in every composition for authored beats. Storyboards scale
-3-10 shots with a framing-density floor (a new framing — cut or camera move —
-roughly every 3.5s); camera bindings are injected deterministically from the
-locked storyboard and gated by `validateCameraContract`; layout QA suppresses
-heuristics during camera transits and for off-frame world stations; the
-model-free fallback ships a camera world as the deterministic proof path.
-Camera motion is *energy-graded* (2026-07-03): `auditCameraEnergy` blocks 12s+
-storyboards with no high-energy peak (whip / zoom≥1.3 push-in / energetic cut)
-or a single repeated verb; the resolver splits the drift before committed
-moves into a short `seqAnticipate` wind-up; whips carry host-compiled motion
-blur; storyboards may pin regions to viewport-sized grid cells (`worldLayout`)
-that the author prompt converts into deterministic station rects so content
-stops clipping or drifting off-camera. Simultaneous component beats settle in
-a 45ms cascade (follow-through).
-The 2026-07-04 **motion-quality pass** removed the "messy" tells: a reframe
-immediately followed by push-in/pull-back on the same target merges into ONE
-compound move (`mergeCompoundMoves` — no more pan-then-zoom dead stop; a
-zoomed compound counts as the high-energy peak); rack-focus blur *releases*
-(≤0.45s) when its segment ends instead of squatting on the scene;
-`dedupeRedundantBeats` degrades double-triggered motion (repeated pulses,
-overlapping same-channel beats, press beats under a cursor press) to single
-triggers at storyboard parse; `auditComponentComplexity` blocks plans the
-author cannot build (>1 component per ~1.2s scene / cap 4, >1 per 2s film);
-and browser QA runs a **camera-arrival framing audit** (`camera_framed_clipped`)
-that seeks each full-move landing and proves the framed station's content is
-actually on frame (double-sampled so entrances can't false-positive). The same
-pass runs a **framing-coverage audit** (`camera_framed_sparse`, 2026-07-04 WS5):
-the union bbox of each scene's on-frame content (post camera transform) at every
-fit-zoom landing and once mid-window for camera-less scenes must fill ≥18% of
-the frame — below that the viewer studies a tiny subject in a void. It is a
-polish finding (strictOk-blocking, never unpublishing) with a 60%-axis escape
-for full-width bands and a final-scene exemption for compact end cards;
-whole-scene scope means a tight track-to-anchor close-up passes when the
-surrounding UI fills the margins (`test/framingCoverage.browser.test.ts`). A
-light-model **shape hint** (`requestStoryboardShape`, `STORYBOARD_SHAPES`,
-kill switch `SLACK_SEQUENCES_SHAPE_HINT=0`) picks a pacing skeleton from six
-structural templates in parallel with the concept pass — deterministically
-rejectable, structure only, never creative authority. Details in ROADMAP's
-2026-07-04 motion-quality section. Slack shows an **ETA countdown** (persisted
-per-stage EMA, `stageTimings.ts`) instead of a stopwatch, and
-`/sequences debug on|off` appends a model-stage receipt trail
-(stage/status/attempts/duration) to results — details in ROADMAP's 2026-07-03
-polish-pass section.
-**Source-author reliability (2026-07-04, later):** every rejected author
-attempt persists its document + findings under `planning/attempts/` for
-offline diagnosis; a loaded draft that never registers its timeline is
-classified `runtime_bind_exception` (browser QA leads with the real console
-error, not the opaque 12s timeout) and the author loop escalates it to
-full-context re-authoring instead of a compact patch; and
-`engine/kitMarkupAudit.ts` re-runs the cut/camera/component runtimes' DOM
-bind queries statically (linkedom parse — what a spec parser sees is what
-the browser will see) so missing chart bars/rows/fills, absent morph twins,
-lost scenes, and missing camera stations surface as named
-`kit_markup_incomplete`/`dom_markup_broken` findings before the browser.
-**Fallback elimination (2026-07-04, latest — the `palette-input` incident):**
-cut focal parts and camera stations/parts now get the same conservative
-deterministic reconciliation as interaction targets (exact id / unique
-semantic candidate / exact-name station, scene-scoped, ambiguity stays
-blocking) inside `applyDeterministicSourceRepairs`, so a mechanically
-recoverable locked-storyboard binding never consumes a paid repair; a
-**volunteered** bridged cut (shape-match/object-match the brief never asked
-for) whose endpoint binding survives a model repair degrades to zoom-through
-deterministically instead of sinking the film (brief-required styles never
-degrade — they stay blocking and fall back honestly); a structural finding
-signature that survives the very patch asked to fix it switches the final
-attempt to a full-context re-author instead of a third identical compact
-patch (`near_blank_film:` browser findings escalate the same way — a blank
-scene is a missing visual world, full-document work a compact patch cannot
-do); compact repair prompts carry a bridged-cut endpoint checklist
-(both sides, present/missing) plus a never-delete-other-bindings warning;
-and every run persists `planning/author-run.json` (per-attempt normalized
-finding signatures + strategy changes) for offline failure grouping.
-Proof: `test/authorReliability.test.ts` (the minimized incident replay:
-recoverable endpoint reconciled, ambiguous endpoint stays blocking,
-persistent volunteered cut degrades, required cut never does).
-Browser QA also runs the **rendered temporal judge**
-(`SLACK_SEQUENCES_TEMPORAL_JUDGE=0` to disable): before/mid/after frame
-triples around every evidence-bound moment, pixel-diffed in-page; an
-invisible claimed change becomes a `moment_static_frame` **advisory** polish
-finding (it does NOT block `strictOk` and never unpublishes a runnable draft) —
-but a draft that is otherwise clean and still ships static-verdict moments
-records a `moment_static_frame:<n>` degradation, so that publish is
-`published-degraded`, never clean. Per-moment evidence is persisted as
-`temporalJudge` in the QA result.
-Wall-clock is defended without touching quality (2026-07-04 performance
-pass): every streaming model call carries a 90s no-token idle watchdog; slow
-OpenRouter calls hedge with one delayed duplicate request whose first
-completion wins (`SLACK_SEQUENCES_HEDGED_REQUESTS=0` /
-`SLACK_SEQUENCES_HEDGE_DELAY_MS` to tune); clean browser-QA passes are cached
-by content hash in `<projectDir>/qa-cache/` so the publication commit never
-re-measures identical bytes (`SLACK_SEQUENCES_QA_CACHE=0` opts out); and the
-Sequences MCP client pools one server per job across
-submit/preview/render (`withPooledMcpClient`). Details in ROADMAP's
-2026-07-04 performance-pass section.
-A host-owned **cinematography kit** (`engine/cinemaKit.ts` +
-`templates/sequences-cinema.v1.css`) is injected inline into every direct
-composition: automatic film grain + vignette, key-light fields, hero blooms,
-lit `.material` surfaces, and per-scene color grades that give each film a
-cold→warm color arc; `frame.md` renders palette-derived `--cinema-*` values
-and the planning prompt teaches the vocabulary. Pure static CSS — no timeline
-ownership, enhancement-only, deterministic under seek.
-**Motion-design texture (MOTION_DESIGN_PLAN MD1–MD6, 2026-07-06/07)** adds the
-"produced, not just choreographed" garnish layer on top — all host-derived,
-seek-safe, and Sentinel-registered (the completed motion-design plan is archived under `docs/history/`)
-+ the SENTINEL.md contract table): a host **FX runtime** (`engine/fxContract.ts` +
-`templates/sequences-fx.v1.js`) applies sweep / glow-pulse / draw-on / echo mostly
-automatically at payoff moments (planner opt-in is one `highlight.style` field);
-the planner-facing cut vocabulary collapsed from ten styles to
-`swipe`/`morph`/`match`/`hard` (legacy names normalize at parse — old plans + the
-fallback film replay byte-identically); a typed `dive` camera move owns the
-zoom-in→act→zoom-out arithmetic (the host derives the hold from the overlapping
-beat); a 23rd `headline` component kind gives hero copy a stable `data-part` and
-`type.style` `rise`/`pop`/`assemble` letter machinery; scenes may declare an
-animated `gradeShift` (`engine/gradeShift.ts`); and `seqPop`/`seqStamp` eases power
-capped pops on compact kinds. Net planner-facing surface *shrank* while texture grew.
-Scenes may also declare **motion-native components** — the fourth host-owned
-contract (`engine/componentContract.ts`). The storyboard lists typed
-`components` (23-kind SaaS catalog: app-window, search, command-palette,
-dropdown, button, toast, modal, stat-card, table, kanban, chat, charts,
-progress, terminal, tabs, headline, …) and typed `beats` (state changes at absolute
-seconds: `type`, `open`, `close`, `select`, `press`, `set-state`, `count`,
-`progress`, `chart`, `rows`, `stream`, `highlight`, `swap`, `morph`). The
-host injects the component kit CSS
-(`templates/sequences-components.v1.css`, always) and — when beats exist —
-the `sequences-components` island + `templates/sequences-components.v1.js` +
-compile call from the locked storyboard. The kit owns structure and end
-states (static CSS, no transitions); the author owns placement, copy,
-entrances, and final states; the runtime compiles seek-safe internal motion
-from live geometry, including FLIP twin morphs (search→command-palette,
-card→modal). A component id doubles as its `data-part`, so camera
-`track-to-anchor`, object-match cuts, and cursor interactions address the
-same object. `validateComponentContract` gates publication; beats count as
-motion-density activities and bind storyboard moments as `component`
-evidence; layout QA suppresses heuristics inside morph/open windows. GLM
-plans from a compact catalog vocabulary; the authoring prompt carries the
-markup contract for only the declared kinds. The fallback film ships a typed
-`progress` beat and `test/componentRuntime.browser.test.ts` proves eight beat
-kinds (including a morph) through real browser QA.
-`frame.md` also exposes six flow-first scene compositions and semantic zone
-helpers so primary content defaults to safe-area Grid/Flex placement. Ambiguous
-cursor targets still quarantine, while exact-id/unique-semantic mismatches are
-reconciled deterministically. Browser-QA infrastructure outages fall back to
-static validation, and a failed planning/authoring pass falls back to a small
-model-free direct composition rather than surfacing a create error.
-`npm run film:demo` exercises the model-free 24-second golden Slack ad through
-the real direct gate and writes compact temporal evidence (development strip,
-cut sheets, change curve, quiet windows) via `temporalInspector.ts`. The
-`temporalInspector` strips stay developer-facing, but since 2026-07-04 live
-create/revise DOES get rendered temporal evidence: the temporal judge inside
-browser QA (see above). Typed cuts and cinematography-kit injection are proven both by
-the fixture and by a paid OpenRouter live-authoring smoke (2026-07-01): the
-planner chose sensible cut styles and the author adopted kit material classes
-unprompted. Not built yet: registry source approval/materialization +
-in-Slack audition and component sub-agents. The in-film asset-animation
-runtime SHIPPED 2026-07-09 (see ASSETS.md), as did Slack screenshot
-ingestion (`/sequences asset` — see below).
-
-Live create/revise now also runs a static `motionDensity.ts` liveness pass for
-10s+, 3+ shot films. It classifies scene starts/cuts, authored GSAP beats, and
-interactions. Long quiet gaps, slide-like scenes, and front-loaded scenes are
-**blocking publication errors** (fed to the bounded repair loop); dense bursts,
-empty holds, and unplaceable tweens stay advisory warnings. The summary is
-persisted in `motion-plan.json`. This is not rendered temporal evidence;
-`temporalInspector` still owns pixel-based strips/change curves.
-
-**Storyboard moments** (`engine/storyboardMoments.ts`) are the review contract
-on top of scenes: each `StoryboardMomentV1` is one reviewable changed state
-(typed word, UI state, metric completion, camera arrival, cut landing, logo
-resolve) at an absolute `atSec`. The planner must declare a duration-scaled
-floor of moments (≥7 for 12s+ films, ~1 per 2.25s, spacing ≤2.6s except a short
-final resolve); publication binds every declared moment to executable timeline
-evidence (cut / typed camera move / interaction / positioned non-wrapper tween)
-and rejects unbound moments, a missed floor, or (for declared plans) dead
-intervals. Legacy/fallback storyboards without declared moments get moments
-synthesized from the same activity evidence. Moments drive the Slack storyboard
-outline (timestamped rows grouped under scenes), the thumbnail strip (one frame
-per moment, primaries first, cap 10, captured just after each moment's bound
-evidence *settles* and before the outgoing cut window — never mid-animation),
-`STORYBOARD.md`, and `motion-plan.json`.
-
-**Staged planning (GLM as three bounded jobs).** Live create now runs: a cached
-**concept pass** (thesis, narrative pressure, energy curve, motif, color arc,
-one risk — `requestConceptDirection`, kill-switch
-`SLACK_SEQUENCES_CONCEPT_PASS=0`), the **beat-expansion storyboard pass**
-(consumes the concept artifact; up to two bounded retries with deterministic
-findings on a rejected/truncated plan, then a **rescue rung** on an
-independent model — default `tencent/hy3-preview`, medium reasoning,
-`SLACK_SEQUENCES_STORYBOARD_RESCUE_MODEL`/`none` to override/disable — before
-the deterministic fallback is allowed; validation itself first runs a
-**deterministic moment top-up** (`topUpStoryboardMoments`) that fills dead
-intervals / floor misses with moments anchored on the plan's own typed
-beats/camera arrivals/cut landings, so a plan is never vetoed for moment
-paperwork it already proves — the 2026-07-04 live fallback root cause;
-`npm run storyboard:probe` measures this stage live), DeepSeek source authoring against the locked storyboard,
-then a **continuity critic** pass (GLM reviews the implemented film's moment
-evidence + motion-density contact sheet and returns ≤5 bounded repair
-directives; DeepSeek applies them as patches; deterministic QA accepts or
-rejects — kill-switch `SLACK_SEQUENCES_CREATIVE_CRITIC=0`; any critic failure
-keeps the pre-critique draft). Each artifact is cached independently.
-
-**Honest, labeled fallbacks.** `createVideo` attributes failures to named stages
-(`frame-design`, `storyboard-plan`, `source-author`); `VideoResult.stages`
-carries argument-free receipts (with per-stage retry `attempts` when
-`/sequences debug on` is set). When storyboard/source recovery is exhausted,
-the deterministic model-free proof film ships **by default** —
-`VideoResult.fallback = { stage, reason }` marks it and Slack labels it, so
-the audience never sees a raw error while the operator sees exactly what
-happened. Opt out with `SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK=0` to
-fail visibly instead (frame-design failures always fail visibly). The
-fallback obeys the full contract (11 declared, evidence-bound information
-moments over a camera-world pan; duration clamped to 20s) and is never cached
-under a model-artifact key.
-
-Agent-facing local checks use `npm run sequence:check --workspace
-@sequences/slack -- ...`. It simulates a `/sequences` create after Slack has
-collected the brief fields, runs the same orchestrator path, and writes one
-JSON/Markdown report with provider choice, progress receipts, validation,
-motion-density warnings, thumbnails, optional render, and artifact paths. It
-does not call Slack hosted MCP or post to Slack.
-
-## Environment
-
-One live Slack app: the developer-sandbox app on Railway. Local work is source,
-deterministic MCP/demo, render, and Docker checks only. **Never** copy Railway
-credentials into `apps/slack/.env`, and never start a second Socket Mode process
-with sandbox tokens. Socket Mode carries Slack events; the HTTP server exists only
-for `/healthz`, `/slack/install`, `/slack/oauth_redirect` — do not add Events API
-/ interactivity request URLs. Railway is not a public `/mcp` endpoint.
-
-## Verification & Testing Ladder
-
-This is the shared verification contract for human development and agent verification.
-
-### 1. Slack source gate (Routine check, no credentials needed)
 ```powershell
 npm run typecheck --workspace @sequences/slack
-npm run test --workspace @sequences/slack
+npm run test:unit --workspace @sequences/slack
+npm run test:browser --workspace @sequences/slack
+```
+
+Source gate:
+
+```powershell
 npm run mcp:demo --workspace @sequences/slack
 npm run direct:demo --workspace @sequences/slack
 npm run sequence:check --workspace @sequences/slack -- --demo --no-mcp --format both
-npm run film:demo --workspace @sequences/slack
-```
-- TypeScript compiler exits successfully.
-- All Slack tests pass.
-- Legacy MCP applies the curated fallback plan.
-- Direct MCP validates/checkpoints authored HTML, reports clean lint, and creates runtime-seeked scene previews.
-- Sequence check writes a consolidated local report for agent inspection without Slack credentials or a model call.
-- Golden-film smoke validates typed cuts and writes temporal evidence without a model call.
-
-### 2. Render and Docker gate (Required after engine/renderer/Docker changes)
-To verify direct HyperFrames MP4 rendering locally:
-```powershell
-$env:VERIFY_RENDER = "1"
-try {
-  npm run film:demo --workspace @sequences/slack
-} finally {
-  Remove-Item Env:VERIFY_RENDER -ErrorAction SilentlyContinue
-}
-```
-To test production Node/Docker MCP boundary:
-```powershell
-docker build -t sequences-slack .
-docker run --rm sequences-slack npm run mcp:demo -w @sequences/slack
-docker run --rm -e VERIFY_RENDER=1 sequences-slack npm run film:demo -w @sequences/slack
 ```
 
-### 3. Monorepo CI gate (Optional pre-push checks)
-Before pushing, you can validate the broader monorepo:
-```powershell
-npm run typecheck
-npm test
-npm run test:perf
-```
-
-### 4. Sandbox smoke
-After `/healthz` returns `200 ready`, run in the Slack sandbox:
-1. Run command: `/sequences mcp-test` (should verify Slack API, Sequences MCP, Render host browser/FFmpeg, planning provider, hosted MCP user OAuth, token encryption, data directory).
-2. Run command: `/sequences demo` and confirm storyboard thumbnails arrive before the MP4.
-3. Confirm the MP4 plays inline.
-4. Reply in the reel thread with `make it shorter`.
-5. Click **Undo** and confirm the previous revision returns.
-6. Click **Render HD** (if render-related code changed).
-7. Click **Approve & share** into a disposable sandbox channel.
-
-### 5. Real hosted-MCP flow
-Tester authorizes at: `https://sequences-slack-production.up.railway.app/slack/install`
-1. Run `/sequences` with a short synthetic product brief.
-2. Confirm the result includes a Slack-context hosted-MCP receipt.
-3. Confirm the build trace includes Sequences MCP tools.
-4. Try **🎬 Make a launch video** shortcut from a synthetic release thread.
-5. Confirm revisions, Undo, HD, and sharing still operate on that job.
-
-### 6. Change-specific minimums
-- **Documentation only**: links/commands review; `git diff --check`.
-- **Slack blocks or handlers**: Slack source gate + sandbox affected flow.
-- **Manifest/scopes/events**: paste manifest, reinstall, redeploy, self-check, affected flow.
-- **OAuth or hosted Slack MCP**: source gate, `/slack/install`, self-check, real `/sequences`.
-- **MCP client/server/mutation**: source gate, container MCP demo, create, revise, Undo.
-- **Typed cuts/temporal QA**: focused cut tests, `film:demo`, local MP4, Docker
-  `film:demo`, motion-density tests, then one paid live create before calling
-  model selection proven.
-- **Rendering/Docker/HyperFrames**: render/Docker gate, sandbox demo, draft + HD.
-
-### 7. Understanding Failures & Troubleshooting
-- `not_in_channel`: Run `/invite @Sequences` in the channel.
-- `missing_scope`: Update manifest.json, reinstall, refresh bot token, and redeploy.
-- Connect prompt: Complete `/slack/install` for that user.
-- `/healthz` says `starting`: Inspect the matching `xapp`/`xoxb` token pair.
-- Planning fails: Confirm `SLACK_SEQUENCES_PROVIDER` and its API key are correct.
-- Hosted MCP fails: Confirm OpenAI key, app MCP enablement, redirect URL, and per-user OAuth.
-- Thumbnails work but MP4 fails: Inspect Chromium, FFmpeg, and Railway memory.
-- Duplicate replies: Another process is using the same Slack app tokens.
-
-### 8. Reporting Verification
-Always state which layers actually ran (e.g., unit/type checks, MCP demo, Docker check, Railway health/logs, Slack sandbox demo, real hosted-MCP flow). Never describe unit tests alone as proof of OAuth, Socket Mode, Railway, or live Slack behavior.
+Runtime, camera, cut, render, or temporal changes also require the relevant
+browser tests and a rendered golden/probe inspection. Report exactly what ran;
+unit tests do not prove OAuth, Slack upload, Railway, or visual quality.

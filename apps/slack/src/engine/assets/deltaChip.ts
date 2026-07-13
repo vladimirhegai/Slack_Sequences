@@ -53,8 +53,8 @@ export const deltaChip = defineAsset({
       spring: "pop",
       trigger: "enter",
       tracks: [
-        { property: "scale", from: 0.72, to: 1 },
-        { property: "translateY", from: 14, to: 0 },
+        { property: "scale", from: 0.84, to: 1 },
+        { property: "translateY", from: 12, to: 0 },
         { property: "opacity", from: 0, to: 1 },
       ],
     },
@@ -73,36 +73,39 @@ export const deltaChip = defineAsset({
   font-size: calc(var(--dc-size, 64px) / 64 * 16px);
   display: inline-flex;
   align-items: center;
-  gap: 0.5em;
+  gap: 0.44em;
   padding: 0 1.05em;
   border-radius: 999px;
   color: var(--dc-tone);
-  font-weight: 700;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.005em;
+  letter-spacing: -0.012em;
   background:
-    radial-gradient(120% 150% at 30% 0%, rgba(255, 255, 255, 0.07), transparent 55%),
-    color-mix(in srgb, var(--dc-tone) 14%, var(--surface, #161b24));
+    radial-gradient(130% 180% at 28% -20%, rgba(255, 255, 255, 0.08), transparent 60%),
+    color-mix(in srgb, var(--dc-tone) 15%, var(--surface, #161b24));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    inset 0 0 0 1px color-mix(in srgb, var(--dc-tone) 32%, transparent),
-    0 0.55em 1.4em rgba(0, 0, 0, 0.32);
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 0 1px color-mix(in srgb, var(--dc-tone) 30%, transparent),
+    0 0.12em 0.35em rgba(0, 0, 0, 0.28),
+    0 0.5em 1.3em rgba(0, 0, 0, 0.3);
 }
 .asset-delta-chip[data-direction="down"] {
-  --dc-tone: color-mix(in srgb, #ff5c7a 72%, var(--text, #edf0f6));
+  --dc-tone: color-mix(in srgb, #ff6884 68%, var(--text, #edf0f6));
 }
 .asset-delta-chip .dc-arrow {
   display: inline-block;
   width: 0;
   height: 0;
-  border-left: 0.34em solid transparent;
-  border-right: 0.34em solid transparent;
-  border-bottom: 0.5em solid currentColor;
-  filter: drop-shadow(0 0 0.35em color-mix(in srgb, var(--dc-tone) 55%, transparent));
+  border-left: 0.3em solid transparent;
+  border-right: 0.3em solid transparent;
+  border-bottom: 0.44em solid currentColor;
+  transform: translateY(-0.02em);
+  filter: drop-shadow(0 0 0.28em color-mix(in srgb, var(--dc-tone) 42%, transparent));
 }
 .asset-delta-chip[data-direction="down"] .dc-arrow {
   border-bottom: none;
-  border-top: 0.5em solid currentColor;
+  border-top: 0.44em solid currentColor;
+  transform: translateY(0.02em);
 }
 .asset-delta-chip .dc-value { font-size: 1.05em; }
 `.trim(),

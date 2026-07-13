@@ -17,6 +17,29 @@
     return root.querySelector('[data-scene="' + CSS.escape(id) + '"]');
   }
 
+  function childItems(element) {
+    var selectors = [
+      ".cmp-row", ".cmp-item", ".cmp-card", ".cmp-msg", "[data-cmp-item]",
+      '[class$="-row"],[class*="-row "]', ":scope > i",
+    ];
+    for (var i = 0; i < selectors.length; i += 1) {
+      var found = element.querySelectorAll(selectors[i]);
+      if (found.length) return Array.prototype.slice.call(found);
+    }
+    return [];
+  }
+
+  function effectTarget(scene, effect) {
+    var component = scene.querySelector('[data-part="' + CSS.escape(effect.target) + '"]');
+    if (!component || typeof effect.item !== "number" || !isFinite(effect.item)) {
+      return component;
+    }
+    var items = childItems(component);
+    if (!items.length) return component;
+    var index = Math.max(0, Math.min(items.length - 1, Math.round(effect.item) - 1));
+    return items[index];
+  }
+
   function tween(timeline, target, fromVars, toVars, at) {
     toVars.immediateRender = false;
     timeline.fromTo(target, fromVars, toVars, at);
@@ -35,7 +58,7 @@
   // idiom in pure transform/opacity. The mask wrapper honors the target's
   // border-radius; the band color derives from the cinema kit's sheen token.
   function bindSweep(timeline, scene, effect) {
-    var target = scene.querySelector('[data-part="' + CSS.escape(effect.target) + '"]');
+    var target = effectTarget(scene, effect);
     if (!target) return null;
     if (getComputedStyle(target).position === "static") {
       target.style.position = "relative";
@@ -71,7 +94,7 @@
   // to rest. Reuses the target's own kit bloom when one exists; otherwise a
   // kit bloom is appended behind the target (enhancement-only either way).
   function bindGlowPulse(timeline, scene, effect) {
-    var target = scene.querySelector('[data-part="' + CSS.escape(effect.target) + '"]');
+    var target = effectTarget(scene, effect);
     if (!target) return null;
     var bloom = target.querySelector(".bloom") || scene.querySelector(".bloom");
     if (!bloom) {
@@ -152,9 +175,39 @@
   }
 
   function bindDraw(timeline, scene, effect) {
-    var target = scene.querySelector('[data-part="' + CSS.escape(effect.target) + '"]');
+    var target = effectTarget(scene, effect);
     if (!target) return null;
-    var container = target.querySelector(".fx-underline") || target;
+    var container = target.querySelector(".fx-underline");
+    if (!container) {
+      // Item-scoped underlines cannot be safely injected into a component root
+      // before the browser resolves its child collection. Build the measured
+      // underline beside the actual text slot at compile time instead of using
+      // guessed canvas coordinates or underlining the whole list.
+      var host = target.querySelector("[data-cmp-text],.cmp-text,.cmp-label,.cmp-title") || target;
+      var hostStyle = getComputedStyle(host);
+      if (hostStyle.position === "static") host.style.position = "relative";
+      if (hostStyle.display === "inline") host.style.display = "inline-block";
+      container = document.createElement("span");
+      container.className = "fx-underline";
+      container.setAttribute("data-sequences-fx", "underline");
+      var attachId = host.id || (
+        "sequences-underline-target-" +
+        String(effect.sceneId + "-" + effect.target + "-" + (effect.item || "root"))
+          .replace(/[^a-zA-Z0-9_-]/g, "-")
+      );
+      if (!host.id) host.id = attachId;
+      container.setAttribute("data-layout-attach", "#" + attachId);
+      container.setAttribute("data-layout-role", "underline");
+      container.setAttribute("aria-hidden", "true");
+      container.style.cssText =
+        "position:absolute;left:0;right:0;bottom:-0.16em;height:0.14em;pointer-events:none";
+      container.innerHTML =
+        '<svg viewBox="0 0 100 4" preserveAspectRatio="none" ' +
+        'style="display:block;width:100%;height:100%;overflow:visible">' +
+        '<line x1="0" y1="2" x2="100" y2="2" stroke="var(--accent,#6ea8ff)" ' +
+        'stroke-width="3" stroke-linecap="round"/></svg>';
+      host.appendChild(container);
+    }
     var drawn = drawStrokes(timeline, container, effect.atSec, effect.durationSec);
     return drawn ? { kind: "draw", target: effect.target, strokes: drawn } : null;
   }

@@ -9,6 +9,7 @@ import {
   scorePingPongPair,
 } from "../src/engine/eyeTrace.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
+import type { CameraPhrasePlanV1 } from "../src/engine/cameraPhrase.ts";
 import type {
   BoundaryPartMeasurement,
   DirectBoundaryInventory,
@@ -116,6 +117,46 @@ describe("resolveBoundaryAttention", () => {
       ],
     });
     expect(resolveBoundaryAttention(from, beatsOnly).inPart).toBe("opener");
+  });
+
+  it("uses the canonical executed phrases instead of a conflicting raw camera path", () => {
+    const from = scene({
+      id: "a",
+      startSec: 0,
+      durationSec: 4,
+      beats: [{ version: 1, id: "old-out", sceneId: "a", component: "old-out", kind: "highlight", atSec: 3 }],
+    });
+    const to = scene({
+      id: "b",
+      startSec: 4,
+      durationSec: 4,
+      camera: {
+        version: 1,
+        path: [{ version: 1, move: "pan", toPart: "wrong-raw-target", startSec: 4, durationSec: 1 }],
+      },
+    });
+    const phrases = {
+      version: 1,
+      enabled: true,
+      scenes: [
+        { sceneId: "a", phrases: [{
+          target: { kind: "part", id: "executed-out" },
+          dwell: { endSec: 3.8 },
+          travel: { startSec: 2.5 },
+          arrivalSec: 3,
+        }] },
+        { sceneId: "b", phrases: [{
+          target: { kind: "part", id: "executed-in" },
+          dwell: { endSec: 5.5 },
+          travel: { startSec: 4 },
+          arrivalSec: 4.5,
+        }] },
+      ],
+    } as unknown as CameraPhrasePlanV1;
+    expect(resolveBoundaryAttention(from, to, phrases)).toEqual({
+      outPart: "executed-out",
+      inPart: "executed-in",
+    });
   });
 });
 

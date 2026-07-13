@@ -1,0 +1,107 @@
+{
+  "format": 2,
+  "revision": 6,
+  "id": "ambient-hero-opener",
+  "title": "Living-canvas hero opener with a stable product focal",
+  "description": "A staged product hero rises into a living depth field while wallpaper, light, and decorative layers keep breathing behind stable readable copy.",
+  "tags": [
+    "ambient-hero",
+    "hero-opener",
+    "living-canvas",
+    "parallax",
+    "product-stage",
+    "depth"
+  ],
+  "triggerPatterns": [
+    "ambient (hero|opener|opening)",
+    "living[ -]?canvas",
+    "parallax (hero|opener|opening)",
+    "cinematic (hero|opener|opening)",
+    "hero (shot|scene) .*breath",
+    "opening shot .*product",
+    "product .*living background"
+  ],
+  "durationWindow": {
+    "minSec": 4.2,
+    "maxSec": 10
+  },
+  "componentKinds": [
+    "app-window",
+    "headline"
+  ],
+  "params": [
+    {
+      "name": "eyebrow",
+      "kind": "text",
+      "description": "Short product or release label above the hero claim.",
+      "default": "NEW IN SEQUENCES",
+      "maxChars": 28
+    },
+    {
+      "name": "headline",
+      "kind": "text",
+      "description": "The opener's single product claim.",
+      "default": "Launch stories that stay in motion",
+      "maxChars": 48
+    },
+    {
+      "name": "body",
+      "kind": "text",
+      "description": "One supporting sentence kept stable while the environment moves.",
+      "default": "From release thread to finished film, without leaving the channel.",
+      "maxChars": 78
+    },
+    {
+      "name": "metric",
+      "kind": "text",
+      "description": "Compact proof value inside the product surface.",
+      "default": "24 sec",
+      "maxChars": 12
+    },
+    {
+      "name": "metricLabel",
+      "kind": "text",
+      "description": "What the compact proof value means.",
+      "default": "release film",
+      "maxChars": 22
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for light, status, and product accents.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "settleSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the hero finishes assembling.",
+      "default": 1.9,
+      "min": 1.55,
+      "max": 5
+    },
+    {
+      "name": "ambientSec",
+      "kind": "number",
+      "description": "Finite duration of the background drift; keep within the scene.",
+      "default": 5.35,
+      "min": 3.8,
+      "max": 10
+    }
+  ],
+  "engine": {
+    "kitVersions": {
+      "componentKit": 1,
+      "componentRuntime": 1,
+      "cameraRuntime": 1,
+      "continuityRuntime": 1,
+      "environmentRuntime": 1,
+      "environmentKit": 1,
+      "cutRuntime": 1,
+      "interactionRuntime": 1,
+      "timeRuntime": 1,
+      "fxRuntime": 1,
+      "cinemaKit": 1
+    }
+  },
+  "fragmentHash": "4dea03ffaaebf4169ce33ca89141ff5bf5e0d3f3d87964fe5af37b042f35ff90"
+}

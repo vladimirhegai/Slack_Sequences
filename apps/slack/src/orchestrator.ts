@@ -4,11 +4,13 @@
  *   createVideo()  messy brief  → authored HyperFrames → thumbnails → MP4
  *   reviseVideo()  NL revision  → checkpointed source → thumbnails → MP4
  *
- * Live work routes through the Sequences MCP server (mcpClient) by default —
- * the bot acting as a real MCP client — and falls back to the copied in-process
- * glue if the subprocess can't start. Live jobs author HyperFrames directly;
- * the frozen Plan compiler remains only for the deterministic demo fallback.
+ * Luna owns live creative authoring in one exact Codex thread. Accepted bytes
+ * still route through the Sequences MCP server (mcpClient) for deterministic
+ * commit/render operations by default, with copied in-process glue as the
+ * mechanical fallback. The former provider committee is explicit rollback;
+ * the frozen Plan compiler remains only for the deterministic demo.
  */
+import fs from "node:fs";
 import path from "node:path";
 import {
   lintProject,
@@ -57,21 +59,44 @@ import {
   type DirectCompositionDraft,
 } from "./engine/directComposition.ts";
 import { inspectDirectComposition } from "./engine/layoutInspector.ts";
+import { reportTemporalEvidence } from "./engine/temporalInspector.ts";
 import { tryDirectInteractionRevision } from "./engine/directRevisionRouter.ts";
 import {
+  activeSentinelLedgerEvents,
   beginSentinelRun,
   finalizeSentinelRun,
+  recordSentinelFallback,
+  recordSentinelCatalogConversion,
+  recordSentinelQualityStatus,
   recordSentinelStages,
   recordSentinelTierFromRunStart,
 } from "./engine/sentinelTelemetry.ts";
+import {
+  deriveLedgerStageReceipts,
+  deriveLedgerStatus,
+  type LedgerStatus,
+} from "./engine/runner/attemptLedger.ts";
 import { sentinelSkeletonEnabled, sentinelSlotsEnabled } from "./engine/sentinelFlags.ts";
+import { slackSequencesEnvRawValue } from "./engine/featureFlags.ts";
+import {
+  activateLunaAssets,
+  authorLunaComposition,
+  confirmLunaComposition,
+  loadLunaSession,
+  reconcileLunaSessionAfterUndo,
+  resolveAuthorRoute,
+  reviseLunaComposition,
+  selfReviewLunaComposition,
+  type LunaFactEnvelope,
+  type LunaMotionIntentV1,
+} from "./engine/lunaRoute.ts";
 
 /* ----------------------------------------------------------- provider choice */
 
-/** Default planning brain: a key-free CLI login, else the Anthropic API. */
+/** Provider resolver for the explicit legacy-provider rollback route only. */
 export function resolveProvider(explicit?: ProviderId): ProviderId {
   if (explicit) return explicit;
-  const env = process.env.SLACK_SEQUENCES_PROVIDER as ProviderId | undefined;
+  const env = slackSequencesEnvRawValue("SLACK_SEQUENCES_PROVIDER") as ProviderId | undefined;
   if (env && PROVIDERS[env]) return env;
   if (process.env.ANTHROPIC_API_KEY) return "anthropic-api";
   return "claude-code-cli";
@@ -80,7 +105,7 @@ export function resolveProvider(explicit?: ProviderId): ProviderId {
 /** MCP is opt-out: set SLACK_SEQUENCES_USE_MCP=0 only for local diagnosis. */
 export function mcpEnabled(prefer?: boolean): boolean {
   if (prefer !== undefined) return prefer;
-  return process.env.SLACK_SEQUENCES_USE_MCP !== "0";
+  return slackSequencesEnvRawValue("SLACK_SEQUENCES_USE_MCP") !== "0";
 }
 
 /* ------------------------------------------------------------------- briefs */
@@ -139,6 +164,25 @@ export function assembleBrief(fields: BriefFields): string {
   return lines.join("\n");
 }
 
+/**
+ * An explicit paid-artifact recovery may resume only a failed project that has
+ * never committed a direct composition. This keeps normal job ids immutable
+ * while allowing a validator/source fix to continue from persisted attempts.
+ */
+export function canResumeFailedProject(
+  dir: string,
+  recoverySelector = slackSequencesEnvRawValue(
+    "SLACK_SEQUENCES_RECOVER_REJECTED_STORYBOARD",
+  )?.trim(),
+): boolean {
+  return Boolean(
+    recoverySelector &&
+    fs.existsSync(path.join(dir, "project.json")) &&
+    fs.existsSync(path.join(dir, "FAILURE.md")) &&
+    !hasDirectComposition(dir),
+  );
+}
+
 /* ------------------------------------------------------------------ outputs */
 
 export interface VideoResult {
@@ -161,6 +205,10 @@ export interface VideoResult {
   /** True when the plan came from a curated preset rather than a planning brain. */
   usedPreset: boolean;
   provider: ProviderId;
+  /** Creative orchestration seam; Luna-direct never enters the legacy committee. */
+  authorRoute?: "luna-direct" | "legacy-provider";
+  /** Honest runtime/quality publication axes folded from the attempt ledger. */
+  ledgerStatus?: LedgerStatus;
   /** The per-job frame.md design system chosen for this video, if any. */
   frame?: FrameInfo;
   /** Argument-free receipts for the named authoring stages that actually ran. */
@@ -177,7 +225,10 @@ export interface VideoResult {
 export type AuthoringStage =
   | "frame-design"
   | "storyboard-plan"
-  | "source-author";
+  | "source-author"
+  | "luna-director"
+  | "luna-self-review"
+  | "luna-revision";
 
 export interface StageReceipt {
   stage: AuthoringStage;
@@ -185,6 +236,21 @@ export interface StageReceipt {
   durationMs: number;
   /** How many model attempts the stage consumed (1 = clean first pass). */
   attempts?: number;
+}
+
+function ledgerStageReceipts(): StageReceipt[] {
+  return deriveLedgerStageReceipts(activeSentinelLedgerEvents() ?? [])
+    .filter((stage): stage is typeof stage & { stage: AuthoringStage } =>
+      stage.stage === "frame-design" ||
+      stage.stage === "storyboard-plan" ||
+      stage.stage === "source-author",
+    )
+    .map((stage) => ({
+      stage: stage.stage,
+      status: stage.status,
+      durationMs: stage.durationMs,
+      ...(stage.attempts === undefined ? {} : { attempts: stage.attempts }),
+    }));
 }
 
 export interface FrameInfo {
@@ -664,6 +730,12 @@ export interface CreateVideoOptions extends BriefFields {
   onProgress?: ProgressCallback;
   /** Pulse for the model-authoring stages; drives the Slack ETA countdown. */
   onStageProgress?: StageProgressCallback;
+  /** Approved `/sequences assets` files copied into the isolated Luna job. */
+  assetReferencePaths?: readonly string[];
+  /** Containment root for those host-owned references. Required when files exist. */
+  assetReferenceRoot?: string;
+  /** Context without legacy planner/asset offers; preserves Luna's creative ownership. */
+  lunaContext?: string;
   /**
    * Model-free proof film when creative authoring is exhausted. ON by default:
    * the result is explicitly labeled (`VideoResult.fallback` + the Slack
@@ -674,26 +746,251 @@ export interface CreateVideoOptions extends BriefFields {
    */
   allowDeterministicFallback?: boolean;
   /**
-   * Skip the planning brain and apply this plan directly. A function receives the
+   * Skip creative authoring and apply this plan directly. A function receives the
    * freshly-initialized project so it can reference seeded asset ids. This is the
    * deterministic `/sequences demo` path — instant, key-free, and known-good.
    */
   presetPlan?: Plan | ((project: Project) => Plan);
 }
 
+function pulseAuthorStage(
+  callback: StageProgressCallback | undefined,
+  stage: AuthoringStage,
+  phase: "started" | "completed",
+  durationMs?: number,
+): void {
+  try {
+    callback?.(stage, phase, durationMs);
+  } catch {
+    // Slack progress is advisory and must never disturb the authoring run.
+  }
+}
+
+async function captureLunaTemporalEvidence(
+  dir: string,
+  intent: LunaMotionIntentV1,
+): Promise<void> {
+  await reportTemporalEvidence(dir, {
+    framesPerShot: 5,
+    declaredBoundaries: intent.boundaries.map((boundary) => ({
+      fromScene: boundary.fromScene,
+      toScene: boundary.toScene,
+      strategy: boundary.strategy,
+      atSec: boundary.atSec,
+    })),
+    declaredCameraMoves: intent.cameraMoves.map((camera) => ({
+      sceneId: camera.sceneId,
+      targetSelector: camera.targetSelector,
+      startSec: camera.startSec,
+      arrivalSec: camera.arrivalSec,
+      settleEndSec: camera.settleEndSec,
+      holdEndSec: camera.holdEndSec,
+    })),
+  });
+}
+
+async function createVideoWithLuna(
+  options: CreateVideoOptions,
+  dir: string,
+): Promise<VideoResult> {
+  const stages: StageReceipt[] = [];
+  const directorStarted = performance.now();
+  pulseAuthorStage(options.onStageProgress, "luna-director", "started");
+  const facts: LunaFactEnvelope = {
+    version: 1,
+    product: options.product,
+    brandName: options.brandName ?? options.product,
+    whatShipped: options.whatShipped,
+    ...(options.audience ? { audience: options.audience } : {}),
+    ...(options.tone ? { tone: options.tone } : {}),
+    targetDurationSec: options.lengthSec ?? DEFAULT_TARGET_LENGTH_SEC,
+    ...((options.lunaContext ?? options.context)
+      ? { context: options.lunaContext ?? options.context }
+      : {}),
+    provenance: {
+      source: "slack-user-and-authorized-workspace-context",
+      unsupportedClaimsAllowed: false,
+    },
+  };
+
+  let authored;
+  try {
+    authored = await authorLunaComposition({
+      projectDir: dir,
+      jobId: options.jobId,
+      facts,
+      assetReferencePaths: options.assetReferencePaths,
+      assetReferenceRoot: options.assetReferenceRoot,
+    });
+    const durationMs = Math.round(performance.now() - directorStarted);
+    stages.push({ stage: "luna-director", status: "succeeded", durationMs, attempts: 1 });
+    pulseAuthorStage(options.onStageProgress, "luna-director", "completed", durationMs);
+  } catch (error) {
+    const durationMs = Math.round(performance.now() - directorStarted);
+    stages.push({ stage: "luna-director", status: "failed", durationMs, attempts: 1 });
+    pulseAuthorStage(options.onStageProgress, "luna-director", "completed", durationMs);
+    throw error;
+  }
+
+  const initialAssets = activateLunaAssets(dir, authored.assetFiles);
+  let initialMutation: Awaited<ReturnType<typeof applyDirectMutation>>;
+  try {
+    initialMutation = await applyDirectMutation(
+      dir,
+      options.product,
+      authored.draft,
+      options.preferMcp,
+      options.onProgress,
+    );
+    confirmLunaComposition(dir, authored);
+    initialAssets.commit();
+  } catch (error) {
+    initialAssets.rollback();
+    throw error;
+  }
+
+  let previews = await buildPreviews(dir, {
+    render: false,
+    preferMcp: options.preferMcp,
+    onProgress: options.onProgress,
+  });
+  const toolCalls: ToolCallReceipt[] = [
+    ...(initialMutation.receipt ? [initialMutation.receipt] : []),
+    ...previews.toolCalls,
+  ];
+  let usedMcp = initialMutation.usedMcp || previews.usedMcp;
+
+  // Rendered self-review is one optional director turn. A failed polish pass
+  // cannot invalidate the already mechanically accepted first cut.
+  const reviewStarted = performance.now();
+  pulseAuthorStage(options.onStageProgress, "luna-self-review", "started");
+  try {
+    await captureLunaTemporalEvidence(dir, authored.intent);
+    const reviewed = await selfReviewLunaComposition({
+      projectDir: dir,
+      thumbnailPaths: previews.thumbnailPaths,
+    });
+    if (reviewed.artifactFingerprint !== authored.artifactFingerprint) {
+      const acceptedPreviewBytes = previews.thumbnailPaths.map((filePath) => ({
+        filePath,
+        bytes: fs.existsSync(filePath) ? fs.readFileSync(filePath) : undefined,
+      }));
+      const reviewAssets = activateLunaAssets(dir, reviewed.assetFiles);
+      let reviewCommitted = false;
+      try {
+        const reviewMutation = await applyDirectMutation(
+          dir,
+          options.product,
+          reviewed.draft,
+          options.preferMcp,
+          options.onProgress,
+        );
+        reviewCommitted = true;
+        const reviewPreviews = await buildPreviews(dir, {
+          render: false,
+          preferMcp: options.preferMcp,
+          onProgress: options.onProgress,
+        });
+        await captureLunaTemporalEvidence(dir, reviewed.intent);
+        confirmLunaComposition(dir, reviewed);
+        reviewAssets.commit();
+        if (reviewMutation.receipt) toolCalls.push(reviewMutation.receipt);
+        usedMcp ||= reviewMutation.usedMcp;
+        previews = reviewPreviews;
+        toolCalls.push(...previews.toolCalls);
+        usedMcp ||= previews.usedMcp;
+        authored = reviewed;
+      } catch (error) {
+        if (reviewCommitted) undoDirectComposition(dir);
+        reviewAssets.rollback();
+        for (const accepted of acceptedPreviewBytes) {
+          if (accepted.bytes) fs.writeFileSync(accepted.filePath, accepted.bytes);
+          else fs.rmSync(accepted.filePath, { force: true });
+        }
+        if (reviewCommitted) {
+          await captureLunaTemporalEvidence(dir, authored.intent).catch((restoreError) => {
+            process.stderr.write(
+              `[luna] could not restore first-cut temporal evidence: ${String(restoreError)}\n`,
+            );
+          });
+        }
+        throw error;
+      }
+    } else {
+      // The same thread explicitly chose to keep the accepted bytes.
+      confirmLunaComposition(dir, reviewed);
+      authored = reviewed;
+    }
+    const durationMs = Math.round(performance.now() - reviewStarted);
+    stages.push({ stage: "luna-self-review", status: "succeeded", durationMs, attempts: 1 });
+    pulseAuthorStage(options.onStageProgress, "luna-self-review", "completed", durationMs);
+  } catch (error) {
+    const durationMs = Math.round(performance.now() - reviewStarted);
+    stages.push({ stage: "luna-self-review", status: "failed", durationMs, attempts: 1 });
+    pulseAuthorStage(options.onStageProgress, "luna-self-review", "completed", durationMs);
+    process.stderr.write(
+      `[luna] optional rendered self-review failed; retaining accepted first cut: ${String(error)}\n`,
+    );
+  }
+
+  if (options.render ?? true) {
+    const rendered = await renderVideo(dir, {
+      preferMcp: options.preferMcp,
+      onProgress: options.onProgress,
+    });
+    previews = {
+      ...previews,
+      ...(rendered.mp4Path ? { mp4Path: rendered.mp4Path } : {}),
+      toolCalls: previews.toolCalls,
+      usedMcp: previews.usedMcp,
+    };
+    toolCalls.push(...rendered.toolCalls);
+    usedMcp ||= rendered.usedMcp;
+  }
+
+  const current = loadDirectComposition(dir);
+  return {
+    ...previews,
+    projectDir: dir,
+    outline: directOutline(current.manifest),
+    lint: await directLintText(dir),
+    usedMcp,
+    mcpRequested: mcpEnabled(options.preferMcp),
+    toolCalls,
+    skillsUsed: ["luna-single-director"],
+    usedPreset: false,
+    provider: "codex-cli",
+    authorRoute: "luna-direct",
+    stages,
+  };
+}
+
 export async function createVideo(options: CreateVideoOptions): Promise<VideoResult> {
-  const providerId = resolveProvider(options.provider);
+  const authorRoute = resolveAuthorRoute(options.provider);
+  const providerId = authorRoute === "luna-direct"
+    ? "codex-cli"
+    : resolveProvider(options.provider);
 
   const dir = projectDirFor(options.jobId);
-  initializeProject(dir, {
-    name: options.product,
-    brandName: options.brandName ?? options.product,
-    seedScreenshot: true,
-  });
+  const resumedFailedProject = canResumeFailedProject(dir);
+  if (resumedFailedProject) {
+    process.stderr.write(
+      `[orchestrator] resuming failed uncommitted project from its persisted paid artifacts: ${dir}\n`,
+    );
+  } else {
+    initializeProject(dir, {
+      name: options.product,
+      brandName: options.brandName ?? options.product,
+      seedScreenshot: true,
+    });
+  }
 
   const project = loadProject(dir);
   const usedPreset = options.presetPlan !== undefined;
   let skillsUsed: string[] = [];
+  if (options.presetPlan === undefined && authorRoute === "luna-direct") {
+    return createVideoWithLuna(options, dir);
+  }
   if (options.presetPlan === undefined) {
     const provider = PROVIDERS[providerId];
     if (!provider) throw new Error(`unknown provider "${providerId}"`);
@@ -751,14 +1048,6 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     };
     const stageReason = (error: unknown): string =>
       (error instanceof Error ? error.message : String(error)).slice(0, 300);
-    // Attempt counters are out-params the retry loops write into; the debug
-    // receipt trail renders them so an operator can see silent retries.
-    const setStageAttempts = (stage: AuthoringStage, count: number): void => {
-      if (count <= 0) return;
-      const receipt = [...stages].reverse().find((entry) => entry.stage === stage);
-      if (receipt) receipt.attempts = count;
-    };
-
     // Per-job frame.md: bounded art direction + deterministic design tools.
     // Hard brand/contrast/font constraints, tunable recommendations, safe
     // fallback — buildJobFrame degrades internally, so a throw here is real.
@@ -786,9 +1075,9 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       throw new Error(report);
     }
     const frame = framed.value;
+    recordSentinelCatalogConversion("looks", frame.dialectId);
     let authoredDraft: DirectCompositionDraft | undefined;
     let fallbackInfo: VideoResult["fallback"];
-    const storyboardAttempts = { count: 0 };
     const planned = await runStage("storyboard-plan", () =>
       requestStoryboardPlan(provider, {
         brief,
@@ -796,12 +1085,9 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
         skills,
         frameMd: frame.frameMd,
         targetDurationSec: targetLengthSec,
-        attempts: storyboardAttempts,
       }));
-    setStageAttempts("storyboard-plan", storyboardAttempts.count);
     let authoredError: unknown;
     if (planned.value) {
-      const authorAttempts = { count: 0 };
       const authored = await runStage("source-author", () =>
         requestDirectComposition(provider, {
           brief,
@@ -809,9 +1095,7 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
           skills,
           frameMd: frame.frameMd,
           lockedStoryboard: planned.value,
-          attempts: authorAttempts,
         }));
-      setStageAttempts("source-author", authorAttempts.count);
       if (authored.value) {
         authoredDraft = authored.value.draft;
       }
@@ -824,7 +1108,7 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       const fullReason = failError instanceof Error ? failError.message : String(failError);
       const allowFallback =
         options.allowDeterministicFallback ??
-        process.env.SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK !== "0";
+        slackSequencesEnvRawValue("SLACK_SEQUENCES_ALLOW_DETERMINISTIC_FALLBACK") !== "0";
       // Always assemble + persist the full diagnostic — whether we fail loud or
       // ship the labeled safe film, the operator can retrieve the complete log
       // (stage, per-attempt findings, artifact paths) from FAILURE.md / Railway.
@@ -852,6 +1136,7 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
           `full diagnostic at ${reportPath ?? `${dir}/FAILURE.md`}\n`,
       );
       fallbackInfo = { stage: failedStage, reason };
+      recordSentinelFallback(`${failedStage}:${reason}`);
       authoredDraft = buildFallbackComposition({
         product: options.product,
         whatShipped: options.whatShipped,
@@ -871,6 +1156,20 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       options.preferMcp,
       options.onProgress,
     );
+    // A deterministic fallback bypasses the author runner's final browser
+    // evidence event; recover its two axes from the committed manifest.
+    if (!activeSentinelLedgerEvents()?.some((event) => event.kind === "quality-status")) {
+      const committedQa = loadDirectComposition(dir).manifest.qa;
+      recordSentinelQualityStatus({
+        runtimeValid: committedQa?.browserValidated ?? false,
+        qualityResidue: committedQa?.warningCount ?? 0,
+      });
+    }
+    if (resumedFailedProject) {
+      // The attempt documents remain valuable probe evidence; only the stale
+      // top-level fail-loud marker is retired after a composition really commits.
+      fs.rmSync(path.join(dir, "FAILURE.md"), { force: true });
+    }
     // Tier wall-clocks are recorded INSIDE buildPreviews, where each tier
     // actually completes: tier 1 when the thumbnails exist, tier 2 when the
     // MP4 exists. (They used to be stamped here, before/around the call, so
@@ -883,6 +1182,8 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     });
     recordSentinelStages(stages);
     finalizeSentinelRun(fallbackInfo ? "fallback" : "published");
+    const ledgerEvents = activeSentinelLedgerEvents() ?? [];
+    const ledgerStatus = deriveLedgerStatus(ledgerEvents);
     const current = loadDirectComposition(dir);
     return {
       ...previews,
@@ -895,7 +1196,9 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
       skillsUsed,
       usedPreset: false,
       provider: providerId,
-      stages,
+      authorRoute: "legacy-provider",
+      stages: ledgerStageReceipts(),
+      ledgerStatus,
       ...(fallbackInfo ? { fallback: fallbackInfo } : {}),
       frame: {
         presetId: frame.presetId,
@@ -935,7 +1238,9 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     preferMcp: options.preferMcp,
     onProgress: options.onProgress,
   });
+  recordSentinelQualityStatus({ runtimeValid: true, qualityResidue: 0 });
   finalizeSentinelRun("published");
+  const ledgerStatus = deriveLedgerStatus(activeSentinelLedgerEvents() ?? []);
   const applied = loadProject(dir);
   return {
     ...previews,
@@ -948,6 +1253,8 @@ export async function createVideo(options: CreateVideoOptions): Promise<VideoRes
     skillsUsed,
     usedPreset,
     provider: providerId,
+    authorRoute: "legacy-provider",
+    ledgerStatus,
   };
 }
 
@@ -960,11 +1267,107 @@ export interface ReviseVideoOptions {
   render?: boolean;
   preferMcp?: boolean;
   onProgress?: ProgressCallback;
+  onStageProgress?: StageProgressCallback;
 }
 
 export async function reviseVideo(options: ReviseVideoOptions): Promise<VideoResult & { mode: string }> {
   const dir = options.projectDir;
-  const providerId = resolveProvider(options.provider);
+  const authorRoute = resolveAuthorRoute(options.provider);
+  const providerId = authorRoute === "luna-direct"
+    ? "codex-cli"
+    : resolveProvider(options.provider);
+  if (hasDirectComposition(dir) && authorRoute === "luna-direct") {
+    const previousSession = loadLunaSession(dir);
+    if (!previousSession) {
+      throw new Error(
+        "This film predates the Luna session route. Recreate it with /sequences or use the explicit legacy-provider rollback route.",
+      );
+    }
+    const started = performance.now();
+    pulseAuthorStage(options.onStageProgress, "luna-revision", "started");
+    let revisionStageCompleted = false;
+    let revisionDurationMs = 0;
+    const completeRevisionStage = (): number => {
+      if (!revisionStageCompleted) {
+        revisionStageCompleted = true;
+        revisionDurationMs = Math.round(performance.now() - started);
+        pulseAuthorStage(
+          options.onStageProgress,
+          "luna-revision",
+          "completed",
+          revisionDurationMs,
+        );
+      }
+      return revisionDurationMs;
+    };
+    let authored;
+    try {
+      authored = await reviseLunaComposition({
+        projectDir: dir,
+        instruction: options.instruction,
+      });
+    } catch (error) {
+      completeRevisionStage();
+      throw error;
+    }
+
+    let mutation: Awaited<ReturnType<typeof applyDirectMutation>> = { usedMcp: false };
+    let mode = "luna-direct-noop";
+    let revisedAssets: ReturnType<typeof activateLunaAssets> | undefined;
+    let revisionCommitted = false;
+    if (
+      authored.artifactFingerprint !==
+      (previousSession.latestArtifactFingerprint ?? previousSession.latestRawSourceSha256)
+    ) {
+      revisedAssets = activateLunaAssets(dir, authored.assetFiles);
+      try {
+        mutation = await applyDirectMutation(
+          dir,
+          loadDirectComposition(dir).manifest.title,
+          authored.draft,
+          options.preferMcp,
+          options.onProgress,
+        );
+        revisionCommitted = true;
+        mode = "luna-direct-revision";
+      } catch (error) {
+        revisedAssets.rollback();
+        completeRevisionStage();
+        throw error;
+      }
+    }
+    try {
+      confirmLunaComposition(dir, authored);
+      revisedAssets?.commit();
+    } catch (error) {
+      if (revisionCommitted) undoDirectComposition(dir);
+      revisedAssets?.rollback();
+      completeRevisionStage();
+      throw error;
+    }
+    const durationMs = completeRevisionStage();
+    const previews = await buildPreviews(dir, {
+      render: options.render ?? true,
+      preferMcp: options.preferMcp,
+      onProgress: options.onProgress,
+    });
+    const applied = loadDirectComposition(dir);
+    return {
+      ...previews,
+      projectDir: dir,
+      outline: directOutline(applied.manifest),
+      lint: await directLintText(dir),
+      usedMcp: mutation.usedMcp || previews.usedMcp,
+      mcpRequested: mcpEnabled(options.preferMcp),
+      toolCalls: [...(mutation.receipt ? [mutation.receipt] : []), ...previews.toolCalls],
+      skillsUsed: ["luna-single-director"],
+      usedPreset: false,
+      provider: "codex-cli",
+      authorRoute: "luna-direct",
+      stages: [{ stage: "luna-revision", status: "succeeded", durationMs, attempts: 1 }],
+      mode,
+    };
+  }
   if (hasDirectComposition(dir)) {
     const provider = PROVIDERS[providerId];
     if (!provider) throw new Error(`unknown provider "${providerId}"`);
@@ -1028,6 +1431,7 @@ export async function reviseVideo(options: ReviseVideoOptions): Promise<VideoRes
       skillsUsed: skills.skillNames,
       usedPreset: false,
       provider: providerId,
+      authorRoute: "legacy-provider",
       mode: revisionMode,
       ...frameInfo(dir),
     };
@@ -1066,6 +1470,7 @@ export async function reviseVideo(options: ReviseVideoOptions): Promise<VideoRes
     skillsUsed: skills.skillNames,
     usedPreset: false,
     provider: providerId,
+    authorRoute: "legacy-provider",
     mode: tweak.mode,
   };
 }
@@ -1129,6 +1534,7 @@ export async function undoVideo(
     onProgress: options.onProgress,
   });
   if (direct) {
+    const restoredLunaSession = reconcileLunaSessionAfterUndo(dir);
     const applied = loadDirectComposition(dir);
     return {
       ...previews,
@@ -1140,7 +1546,8 @@ export async function undoVideo(
       toolCalls: [...toolCalls, ...previews.toolCalls],
       skillsUsed: [],
       usedPreset: false,
-      provider: providerId,
+      provider: restoredLunaSession ? "codex-cli" : providerId,
+      authorRoute: restoredLunaSession ? "luna-direct" : "legacy-provider",
       ...frameInfo(dir),
     };
   }

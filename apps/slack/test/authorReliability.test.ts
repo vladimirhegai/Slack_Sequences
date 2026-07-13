@@ -9,6 +9,7 @@ import {
   dedupeFeedbackBySignature,
   degradeMismatchedShapeHintCuts,
   degradeVolunteeredBridgedCuts,
+  ensureHostCompileOrdering,
   ensureRuntimeScriptOrdering,
   findingSignature,
   HOST_PLAN_ISLAND_IDS,
@@ -18,6 +19,7 @@ import {
   reconcileComponentBindings,
   reconcileComponentInternalPartAliases,
   reconcileContractBindings,
+  rehomeRegionComponents,
   repairMalformedFromToCalls,
   quoteBareCssVarsInInlineScripts,
   stripInvalidSvgPathPlaceholders,
@@ -31,6 +33,11 @@ import {
   topUpRowsMarkup,
   volunteeredCutBoundaries,
 } from "../src/engine/compositionRunner.ts";
+import {
+  normalizeInteractionActors,
+  scopeRingValueGeometryStyles,
+} from "../src/engine/runner/repairs/implementation.ts";
+import { degradeCrossKindComponentMorphCuts } from "../src/engine/runner/storyboardAudit.ts";
 import { hasPausedTimeline } from "../src/engine/directComposition.ts";
 import { auditKitMarkupCompleteness } from "../src/engine/kitMarkupAudit.ts";
 import { validateCameraContract } from "../src/engine/cameraContract.ts";
@@ -101,6 +108,90 @@ describe("embedded development scene repair", () => {
       expect(mergeEmbeddedDevelopmentScenes([parent(), child]).normalized).toEqual([]);
     }
   });
+
+  it("absorbs an adjacent final CTA hold into the scene that already owns that CTA", () => {
+    const lockup = {
+      id: "lockup-cta",
+      title: "Review in Monogram",
+      purpose: "reveal the lockup and CTA",
+      startSec: 17,
+      durationSec: 6,
+      components: [
+        component("lockup", "headline"),
+        component("cta-button", "button"),
+      ],
+      beats: [{ version: 1, id: "cta-ready", component: "cta-button", kind: "set-state", atSec: 19 }],
+      moments: [{ id: "lockup-ready", atSec: 19 }],
+      camera: { version: 1, path: [{ move: "whip", toRegion: "cta-station", startSec: 20, durationSec: 1 }] },
+      spatialIntent: { focalPart: "lockup" },
+      interactions: [],
+      plugins: [],
+      recipes: [],
+    };
+    const finalHold = {
+      id: "final-cta",
+      title: "Final CTA Hold",
+      purpose: "Final CTA hold",
+      incomingIdea: "Invite the viewer",
+      foreground: "Review in Monogram",
+      startSec: 23,
+      durationSec: 3,
+      components: [],
+      beats: [],
+      moments: [{ id: "final-hold", atSec: 23, title: "Final CTA hold", change: "CTA holds steady", motionIntent: "resolve" }],
+      camera: { version: 1, path: [{ move: "hold", startSec: 23, durationSec: 2 }] },
+      spatialIntent: { focalPart: "cta-button" },
+      cut: { style: "hard" },
+      interactions: [],
+      plugins: [],
+      recipes: [],
+      outgoingCut: "Hard to black",
+    };
+    const result = mergeEmbeddedDevelopmentScenes([lockup, finalHold]);
+    expect(result.storyboard).toHaveLength(1);
+    expect(result.normalized[0]).toContain("without a duplicate cut");
+    const merged = result.storyboard[0] as Record<string, unknown>;
+    expect(merged.durationSec).toBe(9);
+    expect((merged.moments as Array<{ id: string }>).map((moment) => moment.id))
+      .toEqual(["lockup-ready", "final-hold"]);
+    expect((merged.moments as Array<Record<string, unknown>>).at(-1)).toMatchObject({
+      sceneId: "lockup-cta",
+      importance: "supporting",
+      motionIntent: "camera-arrival",
+      title: "Operated CTA hold begins",
+    });
+    expect(
+      ((merged.camera as { path: Array<Record<string, unknown>> }).path).at(-1),
+    ).toMatchObject({ move: "hold", toPart: "cta-button", startSec: 23 });
+    expect(merged.outgoingCut).toBe("Hard to black");
+  });
+
+  it("keeps an adjacent CTA scene when it introduces a real state change", () => {
+    const base = {
+      id: "lockup",
+      startSec: 0,
+      durationSec: 4,
+      components: [component("cta-button", "button")],
+      camera: { path: [{ move: "hold", startSec: 0, durationSec: 4 }] },
+      spatialIntent: { focalPart: "cta-button" },
+    };
+    const changed = {
+      id: "final-cta",
+      title: "Final CTA",
+      purpose: "CTA hold",
+      startSec: 4,
+      durationSec: 3,
+      components: [],
+      beats: [{ id: "new-state", component: "cta-button", kind: "set-state", atSec: 4.2 }],
+      moments: [{ id: "ready", atSec: 4.2, title: "CTA ready", change: "new state", motionIntent: "resolve" }],
+      camera: { path: [{ move: "hold", startSec: 4, durationSec: 2 }] },
+      spatialIntent: { focalPart: "cta-button" },
+      interactions: [],
+      plugins: [],
+      recipes: [],
+    };
+    expect(mergeEmbeddedDevelopmentScenes([base, changed]).normalized).toEqual([]);
+  });
 });
 
 afterEach(() => {
@@ -125,6 +216,93 @@ function scene(id: string, startSec: number, overrides: Partial<DirectScene> = {
     ...overrides,
   };
 }
+
+describe("held-result source repair parity", () => {
+  it("upgrades a persisted pre-normalizer plan before injecting host contracts", () => {
+    const storyboard: DirectScene[] = [scene("approval", 10, {
+      durationSec: 6,
+      camera: {
+        version: 1,
+        path: [
+          { version: 1, move: "push-in", startSec: 10, durationSec: 1, toRegion: "approval" },
+          { version: 1, move: "drift", startSec: 11, durationSec: 5 },
+        ],
+      },
+      components: [{ version: 1, id: "confirm", kind: "button", region: "approval" }],
+      beats: [{
+        version: 1,
+        id: "confirm-ready",
+        sceneId: "approval",
+        component: "confirm",
+        kind: "set-state",
+        atSec: 12,
+        toState: "succeed",
+      }],
+      interactions: [{
+        version: 1,
+        id: "confirm-click",
+        sceneId: "approval",
+        cursorId: "cursor-1",
+        targetPart: "confirm",
+        action: "click",
+        startSec: 11,
+        arriveSec: 11.5,
+        pressSec: 11.7,
+        releaseSec: 11.9,
+        from: "frame:bottom-right",
+        path: "arc",
+        aimX: 0.5,
+        aimY: 0.5,
+        feedback: "press-ripple",
+      }],
+      moments: [
+        {
+          version: 1,
+          id: "result-ready",
+          sceneId: "approval",
+          atSec: 12,
+          title: "Result ready",
+          visualState: "Confirmation succeeds",
+          change: "The button reaches its ready state",
+          motionIntent: "resolve",
+          importance: "primary",
+        },
+        {
+          version: 1,
+          id: "ready-holds",
+          sceneId: "approval",
+          atSec: 15.5,
+          title: "Ready holds",
+          visualState: "Confirmation remains ready",
+          change: "The successful result settles",
+          motionIntent: "resolve",
+          importance: "supporting",
+        },
+      ],
+    })];
+    const html = `<!doctype html><html><body><main data-composition-id="held" ` +
+      `data-width="1920" data-height="1080" data-duration="16">` +
+      `<section id="approval" data-scene="approval" data-start="10" data-duration="6">` +
+      `<div data-camera-world><div data-region="approval">` +
+      `<button data-part="confirm" data-component="button">Approve</button>` +
+      `</div></div></section></main><script>` +
+      `const tl=gsap.timeline({paused:true});window.__timelines.held=tl;</script></body></html>`;
+
+    const repaired = applyDeterministicSourceRepairs(
+      { html, storyboard },
+      tempDir(),
+      storyboard,
+    );
+    expect(repaired.storyboard[0]?.beats).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "approval-held-result-highlight",
+        component: "confirm",
+        kind: "highlight",
+        atSec: 14.4,
+      }),
+    ]));
+  });
+});
 
 /** The 2026-07-04 live-fallback shape: shape-match + camera stations. */
 function incidentStoryboard(): DirectScene[] {
@@ -486,6 +664,16 @@ describe("deterministic rows-markup top-up (fallback-elimination lever 1)", () =
     expect(topUpRowsMarkup(ambiguous, rowsScene("table")).repaired).toEqual([]);
   });
 
+  it("recognizes authored semantic rows instead of injecting neutral duplicates", () => {
+    const html = `<section data-scene="triage"><div data-part="sev-board" data-component="table">` +
+      `<div class="inbox-row">Alpha</div><div class="inbox-row">Beta</div>` +
+      `<div class="inbox-row">Gamma</div></div></section>`;
+    const result = topUpRowsMarkup(html, rowsScene("table"));
+    expect(result.repaired).toEqual([]);
+    expect(result.html).toBe(html);
+    expect(result.html).not.toContain("data-sequences-neutral");
+  });
+
   it("survives nested same-tag children when locating the root close tag", () => {
     const html =
       '<div data-part="sev-board" data-component="chat" class="cmp cmp-chat">' +
@@ -706,6 +894,44 @@ describe("deterministic progress-markup top-up (kit_markup_incomplete absorption
       '<div data-part="build" data-component="progress" class="cmp cmp-progress">' +
       "<i data-cmp-fill></i></div>";
     expect(topUpProgressMarkup(html, progressScene("progress")).repaired).toEqual([]);
+  });
+
+  it("fills one repeated continuity component independently in every scene", () => {
+    const scenes = ["metric-41", "metric-68", "metric-91"].map((id, index) =>
+      scene(id, index * 3, {
+        components: [{ version: 1, id: "hairline-rule", kind: "progress" }],
+        beats: [{
+          version: 1,
+          id: `rule-progress-${index + 1}`,
+          sceneId: id,
+          component: "hairline-rule",
+          kind: "progress",
+          atSec: index * 3 + 0.5,
+        }],
+      })
+    );
+    const before = compositionDoc(scenes.map((entry) =>
+      `<section data-scene="${entry.id}" data-start="${entry.startSec}" ` +
+      `data-duration="3"><div data-part="hairline-rule" ` +
+      `data-component="progress"></div></section>`
+    ).join(""));
+    const result = topUpProgressMarkup(before, scenes);
+    expect(result.repaired).toEqual(["hairline-rule", "hairline-rule", "hairline-rule"]);
+    expect(result.html.match(/data-sequences-neutral="progress"/g)).toHaveLength(3);
+    expect(auditKitMarkupCompleteness(result.html, scenes).errors).toEqual([]);
+    expect(topUpProgressMarkup(result.html, scenes).repaired).toEqual([]);
+  });
+
+  it("declines duplicate progress roots inside the same scene", () => {
+    const scenes = progressScene("progress");
+    const html = compositionDoc(
+      '<section data-scene="deploy" data-start="0" data-duration="4">' +
+      '<div data-part="build" data-component="progress"></div>' +
+      '<div data-part="build" data-component="progress"></div></section>',
+    );
+    const result = topUpProgressMarkup(html, scenes);
+    expect(result.repaired).toEqual([]);
+    expect(result.html).toBe(html);
   });
 
   it("clears the exact kit_markup_incomplete finding it targets (round-trip vs the audit)", () => {
@@ -987,6 +1213,257 @@ describe("reconcileComponentBindings — missing data-part recovery", () => {
     expect(repairs).toBe(0);
     expect(out).toContain('data-part="impact-stat" data-component="stat-card" style="display:none"');
     expect(out).not.toContain('data-part="impact-stat-hidden-aux-1"');
+  });
+
+  it("moves a hidden focal-row binding onto the one item every action names", () => {
+    const html = wrap(
+      '<div class="cmp cmp-table" data-part="queue-table" data-component="table">' +
+        '<div class="cmp-row" data-part="queue-row-1">MG-201</div>' +
+        '<div class="cmp-row" data-part="queue-row-2">MG-204</div>' +
+        '<div class="cmp-row" data-part="queue-row-3">MG-207</div></div>' +
+        '<div data-part="row-mg204" data-component="list" ' +
+        'data-layout-important="1" style="display:none"></div>' +
+        "<script>tl.to('[data-part=\"queue-row-2\"]',{scale:1.02},7)</script>",
+    );
+    const { html: out, repairs } = reconcileComponentBindings(html, [
+      scene("dashboard-overload", 0, {
+        components: [
+          component("queue-table", "table"),
+          component("row-mg204", "list"),
+        ],
+        beats: [
+          {
+            version: 1,
+            id: "highlight-row",
+            sceneId: "dashboard-overload",
+            component: "queue-table",
+            kind: "highlight",
+            atSec: 2,
+            item: 2,
+          },
+          {
+            version: 1,
+            id: "underline-row",
+            sceneId: "dashboard-overload",
+            component: "row-mg204",
+            kind: "highlight",
+            atSec: 2.3,
+            item: 1,
+          },
+        ],
+        interactions: [{
+          version: 1,
+          id: "pick-row",
+          sceneId: "dashboard-overload",
+          cursorId: "cursor",
+          targetPart: "queue-table",
+          action: "click",
+          startSec: 1,
+          arriveSec: 2,
+          item: 2,
+          from: "frame:bottom-right",
+          path: "arc",
+          aimX: 0.5,
+          aimY: 0.5,
+          feedback: "press-ripple",
+        }],
+        spatialIntent: {
+          version: 1,
+          focalPart: "row-mg204",
+          composition: "table detail",
+          relationships: [],
+        },
+      }),
+    ]);
+    expect(repairs).toBe(1);
+    expect(out).toContain(
+      'class="cmp-row" data-part="row-mg204" data-component="list" ' +
+        'data-sequences-part-alias="queue-row-2" data-layout-important="1"',
+    );
+    expect(out).toContain('data-part="row-mg204-hidden-aux-1"');
+    expect(out).toContain("tl.to('[data-part=\"row-mg204\"]'");
+    expect(out.match(/<[^>]+data-part="row-mg204"(?:\s|>)/g)).toHaveLength(1);
+  });
+
+  it("does not guess a hidden focal row when item evidence disagrees", () => {
+    const html = wrap(
+      '<div class="cmp cmp-table" data-part="queue-table" data-component="table">' +
+        '<div class="cmp-row">MG-201</div><div class="cmp-row">MG-204</div></div>' +
+        '<div data-part="row-mg204" data-component="list" style="display:none"></div>',
+    );
+    const { html: out, repairs } = reconcileComponentBindings(html, [
+      scene("dashboard-overload", 0, {
+        components: [
+          component("queue-table", "table"),
+          component("row-mg204", "list"),
+        ],
+        beats: [{
+          version: 1,
+          id: "highlight-first",
+          sceneId: "dashboard-overload",
+          component: "queue-table",
+          kind: "highlight",
+          atSec: 2,
+          item: 1,
+        }],
+        interactions: [{
+          version: 1,
+          id: "pick-second",
+          sceneId: "dashboard-overload",
+          cursorId: "cursor",
+          targetPart: "queue-table",
+          action: "click",
+          startSec: 1,
+          arriveSec: 2,
+          item: 2,
+          from: "frame:bottom-right",
+          path: "arc",
+          aimX: 0.5,
+          aimY: 0.5,
+          feedback: "press-ripple",
+        }],
+        spatialIntent: {
+          version: 1,
+          focalPart: "row-mg204",
+          composition: "table detail",
+          relationships: [],
+        },
+      }),
+    ]);
+    expect(repairs).toBe(0);
+    expect(out).toContain('data-part="row-mg204" data-component="list" style="display:none"');
+  });
+
+  it("degrades a volunteered cross-kind morph before browser structure QA", () => {
+    const storyboard = [
+      scene("proof", 0, {
+        components: [{ version: 1, id: "confidence", kind: "stat-card", role: "hero" }],
+        cut: {
+          version: 1,
+          style: "morph",
+          focalPartOut: "confidence",
+          focalPartIn: "gate-ring",
+          shapeOut: "card",
+          shapeIn: "circle",
+          exitSec: 0.35,
+          entrySec: 0.5,
+        },
+      }),
+      scene("gate", 4, {
+        components: [{ version: 1, id: "gate-ring", kind: "progress-ring", role: "hero" }],
+      }),
+    ];
+    const result = degradeCrossKindComponentMorphCuts(storyboard);
+    expect(result.degraded).toEqual([
+      "proof->gate (stat-card:confidence->progress-ring:gate-ring)",
+    ]);
+    expect(result.scenes[0]!.cut).toEqual({
+      version: 1,
+      style: "swipe",
+      axis: "right",
+      exitSec: 0.35,
+      entrySec: 0.5,
+    });
+    expect(result.scenes[0]!.outgoingCut).toContain("host DOM structures differ");
+  });
+
+  it("preserves same-kind component morphs", () => {
+    const storyboard = [
+      scene("before", 0, {
+        components: [{ version: 1, id: "card-a", kind: "stat-card", role: "hero" }],
+        cut: {
+          version: 1,
+          style: "morph",
+          focalPartOut: "card-a",
+          focalPartIn: "card-b",
+        },
+      }),
+      scene("after", 4, {
+        components: [{ version: 1, id: "card-b", kind: "stat-card", role: "hero" }],
+      }),
+    ];
+    expect(degradeCrossKindComponentMorphCuts(storyboard)).toEqual({
+      scenes: storyboard,
+      degraded: [],
+    });
+  });
+});
+
+describe("component camera-station ownership", () => {
+  it("rehomes one typed CTA from a sibling station into its declared station", () => {
+    const html =
+      '<section data-scene="close" id="close" data-start="0" data-duration="5">' +
+      '<div data-camera-world>' +
+      '<div data-region="savings-station"><div class="hero">' +
+      '<button data-part="cta" data-component="button" data-region="cta-station">Go</button>' +
+      '</div></div>' +
+      '<div data-region="cta-station"></div>' +
+      '</div></section>';
+    const result = rehomeRegionComponents(html, [{
+      id: "close",
+      title: "Close",
+      purpose: "Land the CTA",
+      startSec: 0,
+      durationSec: 5,
+      components: [{
+        version: 1,
+        id: "cta",
+        kind: "button",
+        region: "cta-station",
+      }],
+    }]);
+    expect(result.repairs).toBe(1);
+    expect(result.html).toMatch(
+      /<div data-region="cta-station"><button data-part="cta"(?![^>]*data-region)[\s\S]*?<\/button><\/div>/,
+    );
+    expect(result.html).not.toMatch(
+      /data-region="savings-station"[\s\S]*?data-part="cta"[\s\S]*?data-region="cta-station"><\/div>/,
+    );
+  });
+
+  it("creates a station when the component itself was used as the region", () => {
+    const html =
+      '<section data-scene="close" id="close" data-start="0" data-duration="5">' +
+      '<div data-camera-world><div data-region="savings-station">' +
+      '<button data-part="cta" data-component="button" data-region="cta-station">Go</button>' +
+      '</div></div></section>';
+    const result = rehomeRegionComponents(html, [{
+      id: "close",
+      title: "Close",
+      purpose: "Land the CTA",
+      startSec: 0,
+      durationSec: 5,
+      components: [{ version: 1, id: "cta", kind: "button", region: "cta-station" }],
+    }]);
+    expect(result.repairs).toBe(1);
+    expect(result.html).toMatch(
+      /<\/div><div data-region="cta-station"><button data-part="cta"(?![^>]*data-region)/,
+    );
+    expect(result.html.match(/data-region="cta-station"/g)).toHaveLength(1);
+  });
+
+  it("preserves a later ambiguous component after an earlier repair", () => {
+    const html =
+      '<section data-scene="close" id="close" data-start="0" data-duration="5">' +
+      '<div data-camera-world><div data-region="wrong">' +
+      '<button data-part="cta" data-component="button">Go</button></div>' +
+      '<div data-region="cta-station"></div>' +
+      '<div data-part="badge" data-component="badge" data-region="badge-station">New</div>' +
+      '</div><div data-camera-world></div></section>';
+    const result = rehomeRegionComponents(html, [{
+      id: "close",
+      title: "Close",
+      purpose: "Land the CTA",
+      startSec: 0,
+      durationSec: 5,
+      components: [
+        { version: 1, id: "cta", kind: "button", region: "cta-station" },
+        { version: 1, id: "badge", kind: "toast", region: "badge-station" },
+      ],
+    }]);
+    expect(result.repairs).toBe(1);
+    expect(result.html).toContain('data-part="badge"');
+    expect(result.html).toContain('data-region="badge-station"');
   });
 });
 
@@ -1352,6 +1829,46 @@ describe("ensureRuntimeScriptOrdering — the SequencesInteractions is not defin
 
 /* -------------------------------------------- Sentinel Phase 1 — scaffold */
 
+describe("ensureHostCompileOrdering - live target geometry follows scene motion", () => {
+  it("runs interaction followers after every scene-producing host compiler", () => {
+    const html = `<script>
+var tl = gsap.timeline({ paused: true });
+SequencesInteractions.compile(tl, root);
+SequencesFx.compile(tl, root);
+SequencesCuts.compile(tl, root);
+SequencesAssets.compile(tl, root);
+SequencesComponents.compile(tl, root);
+SequencesContinuity.compile(tl, root);
+SequencesCamera.compile(tl, root);
+var __seqWarped = SequencesTime.wrap(tl);
+</script>`;
+    const first = ensureHostCompileOrdering(html);
+    expect(first.changed).toBe(true);
+    const names = ["Cuts", "Camera", "Continuity", "Components", "Fx", "Assets", "Interactions"];
+    const positions = names.map((name) => first.html.indexOf(`Sequences${name}.compile`));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(positions.at(-1)).toBeLessThan(first.html.indexOf("SequencesTime.wrap"));
+    expect(ensureHostCompileOrdering(first.html)).toEqual({ html: first.html, changed: false });
+  });
+
+  it("does not mix compiler calls belonging to different timeline variables", () => {
+    const html = `<script>
+SequencesInteractions.compile(hero, heroRoot);
+SequencesCamera.compile(detail, detailRoot);
+SequencesCamera.compile(hero, heroRoot);
+SequencesInteractions.compile(detail, detailRoot);
+</script>`;
+    const { html: repaired } = ensureHostCompileOrdering(html);
+    expect(repaired.indexOf("SequencesCamera.compile(hero")).toBeLessThan(
+      repaired.indexOf("SequencesInteractions.compile(hero"),
+    );
+    expect(repaired.indexOf("SequencesCamera.compile(detail")).toBeLessThan(
+      repaired.indexOf("SequencesInteractions.compile(detail"),
+    );
+  });
+});
+
 /** The 2026-07-05 incident 1 shape: a component scene + a camera-path scene
  * where the model omitted the component `data-part` and the `data-camera-world`
  * plane. The Phase-1 skeleton emits both so those repairs never fire. */
@@ -1629,5 +2146,71 @@ describe("hasPausedTimeline — Sentinel Phase 1 false-reject fix", () => {
 
   it("rejects a timeline that is not paused (even with a nested config)", () => {
     expect(hasPausedTimeline('gsap.timeline({ defaults: { ease: "none" } });')).toBe(false);
+  });
+});
+
+describe("typed component and interaction source ownership", () => {
+  it("scopes centered ring value geometry away from stat-card values", () => {
+    const source = `<!doctype html><html><head><style>
+.cmp-value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cmp-value { font-variant-numeric: tabular-nums; }
+.cmp-ring .cmp-value { color: cyan; }
+</style></head><body>
+<div data-component="progress-ring"><div class="cmp-value">43%</div></div>
+<div data-component="stat-card"><div class="cmp-value">94%</div></div>
+</body></html>`;
+    const result = scopeRingValueGeometryStyles(source);
+    expect(result.repairs).toBe(1);
+    expect(result.html).toContain(
+      '[data-component="progress-ring"] .cmp-value {\n  position: absolute;',
+    );
+    expect(result.html).toContain(".cmp-value { font-variant-numeric: tabular-nums; }");
+    expect(result.html).toContain(".cmp-ring .cmp-value { color: cyan; }");
+  });
+
+  it("does not guess when the geometry is not a centered ring signature", () => {
+    const source = `<style>.cmp-value{position:absolute;inset:0}</style>` +
+      `<div data-component="progress-ring"><div class="cmp-value"></div></div>` +
+      `<div data-component="stat-card"><div class="cmp-value"></div></div>`;
+    expect(scopeRingValueGeometryStyles(source)).toEqual({ html: source, repairs: 0 });
+  });
+
+  it("retires a class-only pointer actor but preserves a typing caret", () => {
+    const source = `<!doctype html><html><body>` +
+      `<main data-composition-id="proof">` +
+      `<section data-scene="approval" data-start="0" data-duration="3">` +
+      `<div class="cursor-indicator"></div><i class="typing-cursor"></i>` +
+      `<button data-part="confirm">Confirm</button></section></main></body></html>`;
+    const result = normalizeInteractionActors(source, [{
+      version: 1,
+      id: "confirm-click",
+      sceneId: "approval",
+      cursorId: "owner-cursor",
+      targetPart: "confirm",
+      action: "click",
+      startSec: 1,
+      arriveSec: 1.4,
+      pressSec: 1.5,
+      releaseSec: 1.65,
+      from: "frame:bottom-right",
+      path: "arc",
+      aimX: 0.5,
+      aimY: 0.5,
+      feedback: "press",
+    }]);
+    expect(result.html).toContain(
+      'class="cursor-indicator" data-sequences-retired-cursor="owner-cursor"',
+    );
+    expect(result.html).toContain('<i class="typing-cursor"></i>');
+    expect(result.html).not.toContain(
+      'class="typing-cursor" data-sequences-retired-cursor',
+    );
+    expect(result.html).toContain("data-sequences-runtime-cursor");
   });
 });

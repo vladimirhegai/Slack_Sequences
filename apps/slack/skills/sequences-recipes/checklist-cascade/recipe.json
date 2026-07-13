@@ -1,0 +1,92 @@
+{
+  "format": 2,
+  "revision": 1,
+  "id": "checklist-cascade",
+  "title": "Checklist tick-through with drawn checkmarks",
+  "description": "Four checklist rows cascade in, then get ticked off in rhythm — accent discs pop, checkmarks draw on with real strokes, copy brightens — closing with a completion bar under the title.",
+  "tags": [
+    "checklist",
+    "tick-through",
+    "checkmark",
+    "cascade",
+    "completion",
+    "onboarding-steps"
+  ],
+  "triggerPatterns": [
+    "check[ -]?list",
+    "checkmarks?",
+    "tick(s|ed|ing)? (off|through)",
+    "to[ -]?dos? (list|complete)",
+    "(tasks?|items?|steps?) (check(ed)? off|complet(e|ed|ing))",
+    "(ship|launch|release) list",
+    "onboarding (checklist|steps)",
+    "one by one .*(done|complete|checked)"
+  ],
+  "durationWindow": {
+    "minSec": 4.5,
+    "maxSec": 12
+  },
+  "componentKinds": [
+    "progress"
+  ],
+  "params": [
+    {
+      "name": "title",
+      "kind": "text",
+      "description": "The list's claim — what all four ticks add up to.",
+      "default": "Launch day, handled",
+      "maxChars": 34
+    },
+    {
+      "name": "item1",
+      "kind": "text",
+      "description": "First row (ticked first).",
+      "maxChars": 26
+    },
+    {
+      "name": "item2",
+      "kind": "text",
+      "description": "Second row.",
+      "maxChars": 26
+    },
+    {
+      "name": "item3",
+      "kind": "text",
+      "description": "Third row.",
+      "maxChars": 26
+    },
+    {
+      "name": "item4",
+      "kind": "text",
+      "description": "Fourth row (the payoff tick — strongest item last).",
+      "maxChars": 26
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for the tick discs, checkmark surrounds, and completion bar.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "settleSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the LAST checkmark finishes (leave >=1s of scene after it).",
+      "default": 3.2,
+      "min": 2.8,
+      "max": 10
+    }
+  ],
+  "engine": {
+    "kitVersions": {
+      "componentKit": 1,
+      "componentRuntime": 1,
+      "cameraRuntime": 1,
+      "cutRuntime": 1,
+      "interactionRuntime": 1,
+      "timeRuntime": 1,
+      "fxRuntime": 1,
+      "cinemaKit": 1
+    }
+  },
+  "fragmentHash": "534e1c315fd26c551b56faf858a5bc86dd023b2da7916865498920901f47ef60"
+}

@@ -21,8 +21,8 @@ afterEach(() => {
  * One film proving the whole MD2 substrate in a real browser: the masked
  * sweep band (pure transform+opacity, deterministic under out-of-order
  * seek), the glow pulse (returns exactly to rest), the connector trim-path
- * draw (strokeDashoffset honoring the timeline), and the echo ghosts on a
- * morph bridge flight (alive mid-flight, dead at flight end).
+ * draw (strokeDashoffset honoring the timeline), and a clean morph bridge
+ * flight with no duplicated UI echo ghosts.
  */
 function fxFilm(): { storyboard: DirectScene[]; html: string; fxPlan: FxPlanV1 } {
   const storyboard: DirectScene[] = [
@@ -139,7 +139,7 @@ interface FxState {
 }
 
 describe("sequences-fx runtime browser contract (MD2)", () => {
-  it("compiles sweep, glow, draw, and echo as pure functions of timeline time", async () => {
+  it("compiles sweep, glow, draw, and an echo-free morph as pure functions of timeline time", async () => {
     const browserPath = findBrowserExecutable();
     expect(browserPath, "a Chromium/Chrome/Edge executable is required").toBeTruthy();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sequences-fx-smoke-"));
@@ -224,18 +224,18 @@ describe("sequences-fx runtime browser contract (MD2)", () => {
       const settled = await capture(3.2);
       expect(Number.parseFloat(settled.bloomOpacity)).toBeCloseTo(0.5, 2);
       expect(Number.parseFloat(settled.bandOpacity)).toBe(0);
-      // Echo ghosts: alive with decaying opacities mid morph flight
-      // (boundary at 4.0), trailing the bridge, dead at flight end.
+      // A morph used to trail two readable copies of the outgoing UI. That
+      // garnish made product surfaces smear, so the clean dual-clone bridge
+      // must never create echo nodes during or after the flight.
       const midFlight = await capture(4.0);
-      expect(midFlight.ghostOpacities.map(Number)).toEqual([0.35, 0.18]);
-      expect(midFlight.ghostTransforms[0]).not.toBe(midFlight.ghostTransforms[1]);
+      expect(midFlight.ghostOpacities).toEqual([]);
+      expect(midFlight.ghostTransforms).toEqual([]);
       const flightDone = await capture(4.7);
-      expect(flightDone.ghostOpacities.map(Number)).toEqual([0, 0]);
+      expect(flightDone.ghostOpacities).toEqual([]);
+      expect(flightDone.ghostTransforms).toEqual([]);
       // Determinism: replaying the same instants after seeking around the
-      // timeline reproduces byte-identical fx state. (Hidden echo ghosts keep
-      // transform residue at opacity 0 — invisible by construction — so the
-      // sweep-instant comparison covers the channels that paint there; the
-      // flight-instant comparison covers the ghosts while they are driven.)
+      // timeline reproduces byte-identical fx state, including the invariant
+      // that a morph never accumulates transition-echo DOM across seeks.
       await capture(7.9);
       await capture(0.1);
       const replaySweep = await capture(2.35);

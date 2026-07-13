@@ -1,0 +1,410 @@
+<script type="application/json" data-recipe-meta>
+{
+  "format": 2,
+  "id": "ambient-hero-opener",
+  "title": "Living-canvas hero opener with a stable product focal",
+  "description": "A staged product hero rises into a living depth field while wallpaper, light, and decorative layers keep breathing behind stable readable copy.",
+  "tags": [
+    "ambient-hero",
+    "hero-opener",
+    "living-canvas",
+    "parallax",
+    "product-stage",
+    "depth"
+  ],
+  "triggerPatterns": [
+    "ambient (hero|opener|opening)",
+    "living[ -]?canvas",
+    "parallax (hero|opener|opening)",
+    "cinematic (hero|opener|opening)",
+    "hero (shot|scene) .*breath",
+    "opening shot .*product",
+    "product .*living background"
+  ],
+  "durationWindow": { "minSec": 4.2, "maxSec": 10 },
+  "componentKinds": ["app-window", "headline"],
+  "params": [
+    {
+      "name": "eyebrow",
+      "kind": "text",
+      "description": "Short product or release label above the hero claim.",
+      "default": "NEW IN SEQUENCES",
+      "maxChars": 28
+    },
+    {
+      "name": "headline",
+      "kind": "text",
+      "description": "The opener's single product claim.",
+      "default": "Launch stories that stay in motion",
+      "maxChars": 48
+    },
+    {
+      "name": "body",
+      "kind": "text",
+      "description": "One supporting sentence kept stable while the environment moves.",
+      "default": "From release thread to finished film, without leaving the channel.",
+      "maxChars": 78
+    },
+    {
+      "name": "metric",
+      "kind": "text",
+      "description": "Compact proof value inside the product surface.",
+      "default": "24 sec",
+      "maxChars": 12
+    },
+    {
+      "name": "metricLabel",
+      "kind": "text",
+      "description": "What the compact proof value means.",
+      "default": "release film",
+      "maxChars": 22
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for light, status, and product accents.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "settleSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the hero finishes assembling.",
+      "default": 1.9,
+      "min": 1.55,
+      "max": 5
+    },
+    {
+      "name": "ambientSec",
+      "kind": "number",
+      "description": "Finite duration of the background drift; keep within the scene.",
+      "default": 5.35,
+      "min": 3.8,
+      "max": 10
+    }
+  ],
+  "revision": 2,
+  "demo": {
+    "durationSec": 5.8,
+    "params": {
+      "eyebrow": "NEW IN SEQUENCES",
+      "headline": "Launch stories that stay in motion",
+      "body": "From release thread to finished film, without leaving the channel.",
+      "metric": "24 sec",
+      "metricLabel": "release film",
+      "accent": "var(--cinema-key)",
+      "settleSec": 1.9,
+      "ambientSec": 5.35
+    }
+  },
+  "sanityBriefs": [
+    "Open on an ambient hero: a living-canvas product stage with gentle parallax behind stable launch copy.",
+    "A cinematic hero opener where the product sits in a breathing background rather than freezing after entry."
+  ]
+}
+</script>
+<template data-recipe-doc>
+# ambient-hero-opener — stable hero, living depth field, finite ambience
+
+**What it is.** A first-shot product stage whose focal app surface and copy
+assemble once, settle cleanly, then stay optically stable while the *world
+behind them* remains alive. A wallpaper lattice drifts slowly, two soft depth
+objects counter-move, and the key light breathes over a finite timeline. The
+motion belongs to imagery and atmosphere, never to the reading block. This is
+the reusable answer to the long parked frame that feels like a slide.
+
+**When to declare it.** Use for an ambient hero, cinematic opener, living
+canvas, or product-first opening shot. It is strongest in the first scene of a
+film whose opening claim needs two or more seconds of reading room. Its
+defaults are deliberately complete, so a high-confidence retrieval can be
+host-declared without inventing copy.
+
+**How to stage the shot around it.** Keep the camera locked or use one gentle
+push that lands before `settleSec`; the recipe already supplies depth motion.
+Do not place another moving text block over it. The product stage fills most
+of the frame and owns the eye; a following directional cut may leave after
+the hero has held for at least one second. Declare the settled hero as a
+PRIMARY moment at roughly `sceneStart + settleSec`.
+
+**Slots.** `eyebrow`, `headline`, and `body` own the stable reading block;
+`metric` and `metricLabel` populate the compact product proof; `accent` is a
+brand token; `settleSec` ends the assembly; `ambientSec` is the finite ambient
+drift duration and should stay inside the scene.
+</template>
+<style data-recipe-style>
+  .rcp-ambient {
+    --rcp-ambient-ink: #f4f6f8;
+    position: relative;
+    width: 1460px;
+    height: 760px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 42px;
+    background: #111720;
+    color: var(--rcp-ambient-ink);
+    box-shadow: 0 46px 120px rgba(0, 0, 0, 0.42);
+    isolation: isolate;
+  }
+  .rcp-ambient .rcp-ambient-grid {
+    position: absolute;
+    inset: -80px;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+    background-size: 72px 72px;
+    opacity: 0.72;
+  }
+  .rcp-ambient .rcp-ambient-light {
+    position: absolute;
+    width: 820px;
+    height: 820px;
+    left: -190px;
+    top: -300px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--rcp-accent, #ffc24d) 0%, transparent 68%);
+    opacity: 0.12;
+    filter: blur(22px);
+  }
+  .rcp-ambient .rcp-ambient-orb {
+    position: absolute;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.035);
+  }
+  .rcp-ambient .rcp-ambient-orb-a {
+    width: 260px;
+    height: 260px;
+    right: -70px;
+    top: 72px;
+  }
+  .rcp-ambient .rcp-ambient-orb-b {
+    width: 150px;
+    height: 150px;
+    left: 47%;
+    bottom: -68px;
+  }
+  .rcp-ambient .rcp-ambient-copy {
+    position: absolute;
+    z-index: 2;
+    left: 84px;
+    top: 92px;
+    width: 600px;
+  }
+  .rcp-ambient .rcp-ambient-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 13px;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    color: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-ambient .rcp-ambient-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--rcp-accent, #ffc24d);
+    box-shadow: 0 0 20px var(--rcp-accent, #ffc24d);
+  }
+  .rcp-ambient .rcp-ambient-title {
+    margin-top: 30px;
+    font-size: 72px;
+    line-height: 0.98;
+    letter-spacing: -0.045em;
+    font-weight: 760;
+  }
+  .rcp-ambient .rcp-ambient-body {
+    margin-top: 30px;
+    max-width: 540px;
+    font-size: 27px;
+    line-height: 1.45;
+    color: rgba(244, 246, 248, 0.72);
+  }
+  .rcp-ambient .rcp-ambient-window {
+    position: absolute;
+    z-index: 3;
+    right: 70px;
+    bottom: 62px;
+    width: 670px;
+    height: 480px;
+    border-radius: 30px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: #171e29;
+    box-shadow: 0 34px 80px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+  }
+  .rcp-ambient .rcp-ambient-bar {
+    height: 70px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 28px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.025);
+  }
+  .rcp-ambient .rcp-ambient-bar i {
+    display: block;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+  }
+  .rcp-ambient .rcp-ambient-product {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    height: 410px;
+  }
+  .rcp-ambient .rcp-ambient-rail {
+    padding: 34px 24px;
+    border-right: 1px solid rgba(255, 255, 255, 0.09);
+  }
+  .rcp-ambient .rcp-ambient-rail-line {
+    height: 12px;
+    margin-bottom: 22px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+  }
+  .rcp-ambient .rcp-ambient-rail-line:first-child {
+    width: 80%;
+    background: var(--rcp-accent, #ffc24d);
+    opacity: 0.72;
+  }
+  .rcp-ambient .rcp-ambient-board {
+    padding: 42px 38px;
+  }
+  .rcp-ambient .rcp-ambient-board-kicker {
+    font-size: 18px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(244, 246, 248, 0.58);
+  }
+  .rcp-ambient .rcp-ambient-metric {
+    margin-top: 20px;
+    font-size: 86px;
+    line-height: 1;
+    font-weight: 760;
+    letter-spacing: -0.04em;
+  }
+  .rcp-ambient .rcp-ambient-metric-label {
+    margin-top: 12px;
+    font-size: 23px;
+    color: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-ambient .rcp-ambient-track {
+    margin-top: 56px;
+    height: 9px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.11);
+    overflow: hidden;
+  }
+  .rcp-ambient .rcp-ambient-fill {
+    width: 82%;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--rcp-accent, #ffc24d);
+    transform-origin: 0 50%;
+  }
+  .rcp-ambient .rcp-ambient-status {
+    margin-top: 34px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 18px;
+    color: rgba(244, 246, 248, 0.65);
+  }
+  .rcp-ambient .rcp-ambient-glint {
+    position: absolute;
+    z-index: 4;
+    top: -24%;
+    bottom: -24%;
+    left: -28%;
+    width: 18%;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.22), transparent);
+    transform: skewX(-16deg);
+    opacity: 0;
+  }
+</style>
+<template data-recipe-markup>
+  <div class="rcp-ambient" data-part="{{uid}}-ambient-hero" data-layout-important
+    data-layout-anchor="frame:center" style="--rcp-accent: {{accent}}">
+    <div class="rcp-ambient-grid" data-layout-ignore></div>
+    <div class="rcp-ambient-light" data-layout-ignore></div>
+    <div class="rcp-ambient-orb rcp-ambient-orb-a" data-layout-ignore></div>
+    <div class="rcp-ambient-orb rcp-ambient-orb-b" data-layout-ignore></div>
+    <div class="rcp-ambient-copy">
+      <div class="rcp-ambient-eyebrow"><span class="rcp-ambient-dot"></span>{{eyebrow}}</div>
+      <div class="rcp-ambient-title">{{headline}}</div>
+      <div class="rcp-ambient-body">{{body}}</div>
+    </div>
+    <div class="rcp-ambient-window" data-part="{{uid}}-product-window">
+      <div class="rcp-ambient-bar"><i></i><i></i><i></i></div>
+      <div class="rcp-ambient-product">
+        <div class="rcp-ambient-rail">
+          <div class="rcp-ambient-rail-line"></div>
+          <div class="rcp-ambient-rail-line"></div>
+          <div class="rcp-ambient-rail-line"></div>
+          <div class="rcp-ambient-rail-line"></div>
+        </div>
+        <div class="rcp-ambient-board">
+          <div class="rcp-ambient-board-kicker">Release pulse</div>
+          <div class="rcp-ambient-metric">{{metric}}</div>
+          <div class="rcp-ambient-metric-label">{{metricLabel}}</div>
+          <div class="rcp-ambient-track"><div class="rcp-ambient-fill"></div></div>
+          <div class="rcp-ambient-status"><span>Storyboard locked</span><span>Ready to share</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="rcp-ambient-glint" data-layout-ignore></div>
+  </div>
+</template>
+<script data-recipe-motion>
+  var settle = {{start}} + {{settleSec}};
+
+  // One coherent rise family: copy leads, the product follows, internals
+  // settle last. Every phrase overlaps; nothing waits for the prior phrase to
+  // finish before beginning.
+  tl.fromTo('[data-part="{{uid}}-ambient-hero"]', { opacity: 0, scale: 0.985 },
+    { opacity: 1, scale: 1, duration: 0.55, ease: "power3.out" }, {{start}} + 0.06);
+  tl.fromTo('[data-part="{{uid}}-ambient-hero"] .rcp-ambient-eyebrow', { y: 16, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.42, ease: "power3.out" }, {{start}} + 0.14);
+  tl.fromTo('[data-part="{{uid}}-ambient-hero"] .rcp-ambient-title', { y: 34, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.58, ease: "power4.out" }, {{start}} + 0.2);
+  tl.fromTo('[data-part="{{uid}}-ambient-hero"] .rcp-ambient-body', { y: 20, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.5, ease: "power3.out" }, {{start}} + 0.34);
+  tl.fromTo('[data-part="{{uid}}-product-window"]', { y: 46, x: 24, opacity: 0, scale: 0.945 },
+    { y: -5, x: -3, opacity: 1, scale: 1.012, duration: 0.58, ease: "power4.out" }, {{start}} + 0.28);
+  tl.to('[data-part="{{uid}}-product-window"]',
+    { y: 0, x: 0, scale: 1, duration: 0.3, ease: "seqSettle" }, {{start}} + 0.86);
+  tl.fromTo('[data-part="{{uid}}-product-window"] .rcp-ambient-rail-line', { scaleX: 0, transformOrigin: "0% 50%" },
+    { scaleX: 1, duration: 0.52, stagger: 0.07, ease: "power3.out" }, {{start}} + 0.64);
+  tl.fromTo('[data-part="{{uid}}-product-window"] .rcp-ambient-fill', { scaleX: 0 },
+    { scaleX: 1, duration: 0.75, ease: "seqSettle" }, settle - 0.75);
+  tl.fromTo('[data-part="{{uid}}-product-window"] .rcp-ambient-status', { y: 10, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.42, ease: "power3.out" }, settle - 0.42);
+  tl.fromTo('[data-part="{{uid}}-ambient-hero"] .rcp-ambient-glint', { x: 0, opacity: 0 },
+    { x: 1880, opacity: 0.72, duration: 0.62, ease: "power2.inOut", immediateRender: false }, settle - 0.32);
+  tl.to('[data-part="{{uid}}-ambient-hero"] .rcp-ambient-glint',
+    { opacity: 0, duration: 0.14, ease: "power1.out" }, settle + 0.3);
+
+  // Ambient life is finite and seek-safe. Only wallpaper, leaf decor, and
+  // light move after the assembly; copy and product geometry remain stable.
+  tl.fromTo('[data-part="{{uid}}-ambient-hero"] .rcp-ambient-grid', { x: -18, y: -10 },
+    { x: 18, y: 10, duration: {{ambientSec}}, ease: "none" }, {{start}});
+  tl.fromTo('[data-part="{{uid}}-ambient-hero"] .rcp-ambient-orb-a', { x: -5, y: 3 },
+    { x: 7, y: -4, duration: {{ambientSec}}, ease: "sine.inOut" }, {{start}});
+  tl.fromTo('[data-part="{{uid}}-ambient-hero"] .rcp-ambient-orb-b', { x: 4, y: -3 },
+    { x: -6, y: 4, duration: {{ambientSec}}, ease: "sine.inOut" }, {{start}});
+  tl.fromTo('[data-part="{{uid}}-ambient-hero"] .rcp-ambient-light', { opacity: 0.09, scale: 0.96 },
+    { opacity: 0.17, scale: 1.04, duration: {{ambientSec}}, ease: "sine.inOut" }, {{start}});
+
+  // A fast tonal handoff replaces the demo's abrupt product-to-proof cut.
+  // The focal recedes only after its reading hold, while the textured stage
+  // remains visible for the host-owned cut. A recipe must not manufacture an
+  // opaque pre-cut plate: it strands a blank representative frame whenever
+  // the following scene begins slightly after the recipe's ambient window.
+  tl.to('[data-part="{{uid}}-product-window"]',
+    { y: -10, scale: 0.985, opacity: 0.45, duration: 0.38, ease: "power2.in" }, {{start}} + {{ambientSec}} - 0.46);
+  tl.to('[data-part="{{uid}}-ambient-hero"] .rcp-ambient-copy',
+    { y: -8, opacity: 0.2, duration: 0.34, ease: "power2.in" }, {{start}} + {{ambientSec}} - 0.4);
+  tl.to('[data-part="{{uid}}-ambient-hero"]',
+    { scale: 1.44, borderRadius: 0, duration: 0.48, ease: "power3.inOut" }, {{start}} + {{ambientSec}} - 0.42);
+</script>

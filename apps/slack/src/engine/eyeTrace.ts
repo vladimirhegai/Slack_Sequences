@@ -23,8 +23,10 @@
  * thresholds are unit-testable without a browser.
  */
 import { canonicalCutStyle } from "./cutContract.ts";
-import { resolveTimeRampPlan, warpInverseOf } from "./timeRamp.ts";
+import { resolveTimeRampPlan } from "./timeRamp.ts";
+import { sourceTime, timeConversionService } from "./time.ts";
 import type { DirectScene } from "./directComposition.ts";
+import type { CameraPhrasePlanV1, CameraPhraseV1 } from "./cameraPhrase.ts";
 import type {
   BoundaryPartMeasurement,
   DirectBoundaryInventory,
@@ -90,21 +92,36 @@ export interface EyeTraceAttention {
 export function resolveBoundaryAttention(
   from: DirectScene,
   to: DirectScene,
+  cameraPhrases?: CameraPhrasePlanV1,
 ): EyeTraceAttention {
+  const phrasesFor = (sceneId: string): CameraPhraseV1[] =>
+    cameraPhrases?.scenes.find((scene) => scene.sceneId === sceneId)?.phrases ?? [];
+  const outgoingRoute = [...phrasesFor(from.id)]
+    .filter((phrase) => phrase.target.kind === "part")
+    .sort((a, b) => b.dwell.endSec - a.dwell.endSec)[0];
+  const incomingRoute = [...phrasesFor(to.id)]
+    .filter((phrase) => phrase.target.kind === "part")
+    .sort((a, b) => a.travel.startSec - b.travel.startSec || a.arrivalSec - b.arrivalSec)[0];
   const lastBeat = [...(from.beats ?? [])].sort((a, b) => a.atSec - b.atSec).pop();
   const outPart =
-    from.cut?.focalPartOut ?? lastBeat?.component ?? from.spatialIntent?.focalPart;
+    from.cut?.focalPartOut ?? outgoingRoute?.target.id ??
+    lastBeat?.component ?? from.spatialIntent?.focalPart;
 
   const components = to.components ?? [];
-  const entryMove = to.camera?.path?.[0];
-  const entryRegion = entryMove?.fromRegion ?? entryMove?.toRegion;
-  const stationComponents = entryRegion
-    ? components.filter((component) => component.region === entryRegion)
+  const legacyEntryMove = incomingRoute ? undefined : to.camera?.path?.[0];
+  const entryTarget = incomingRoute?.framingTarget ?? incomingRoute?.target ??
+    (legacyEntryMove?.fromRegion
+      ? { kind: "region" as const, id: legacyEntryMove.fromRegion }
+      : legacyEntryMove?.toRegion
+        ? { kind: "region" as const, id: legacyEntryMove.toRegion }
+        : undefined);
+  const stationComponents = entryTarget?.kind === "region"
+    ? components.filter((component) => component.region === entryTarget.id)
     : components;
   const hero = (stationComponents.length ? stationComponents : components)
     .find((component) => component.role === "hero");
   const firstBeat = [...(to.beats ?? [])].sort((a, b) => a.atSec - b.atSec)[0];
-  const inPart = from.cut?.focalPartIn ?? hero?.id ?? firstBeat?.component;
+  const inPart = from.cut?.focalPartIn ?? incomingRoute?.target.id ?? hero?.id ?? firstBeat?.component;
 
   return {
     ...(outPart ? { outPart } : {}),
@@ -151,6 +168,7 @@ function measuredCenter(
  */
 export function scoreEyeTraceBoundaries(args: {
   scenes: DirectScene[];
+  cameraPhrases?: CameraPhrasePlanV1;
   boundaries: DirectBoundaryInventory[];
   frameWidth: number;
   frameHeight: number;
@@ -174,7 +192,7 @@ export function scoreEyeTraceBoundaries(args: {
     if (bridgedMatch) continue;
     const budgetFraction =
       cutStyle === "match" ? MATCH_EYE_TRACE_JUMP_FRACTION : EYE_TRACE_JUMP_FRACTION;
-    const attention = resolveBoundaryAttention(from, to);
+    const attention = resolveBoundaryAttention(from, to, args.cameraPhrases);
     if (!attention.outPart || !attention.inPart) continue;
     const outCenter = measuredCenter(
       boundary.outgoing,
@@ -235,7 +253,8 @@ export interface PingPongCandidate {
  */
 export function pingPongCandidates(scenes: DirectScene[]): PingPongCandidate[] {
   const candidates: PingPongCandidate[] = [];
-  const toViewer = warpInverseOf(resolveTimeRampPlan(scenes));
+  const conversion = timeConversionService(resolveTimeRampPlan(scenes));
+  const toViewer = (value: number): number => conversion.toViewer(sourceTime(value));
   for (const scene of scenes) {
     const beats = [...(scene.beats ?? [])].sort((a, b) => a.atSec - b.atSec);
     const sceneEnd = scene.startSec + scene.durationSec;

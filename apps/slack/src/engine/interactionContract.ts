@@ -48,6 +48,8 @@ export interface InteractionIntentV1 {
   sceneId: string;
   cursorId: string;
   targetPart: string;
+  /** 1-based semantic child inside a list/table component target. */
+  item?: number;
   action: InteractionAction;
   startSec: number;
   arriveSec: number;
@@ -396,6 +398,9 @@ export function normalizeStoryboardInteractionIntents(
       sceneId: context.sceneId,
       cursorId: stableToken(object.cursorId) || "pointer",
       targetPart,
+      ...(finite(object.item)
+        ? { item: clamp(Math.round(object.item), 1, 48) }
+        : {}),
       action,
       ...timing,
       from,
@@ -441,6 +446,7 @@ export function normalizeStoryboardInteractionIntents(
       candidate !== interaction &&
       candidate.cursorId === interaction.cursorId &&
       candidate.targetPart === interaction.targetPart &&
+      candidate.item === interaction.item &&
       (
         candidate.action === "click" ||
         candidate.action === "focus" ||
@@ -451,6 +457,74 @@ export function normalizeStoryboardInteractionIntents(
       Math.abs(candidate.arriveSec - interaction.arriveSec) <= 0.25
     );
   });
+}
+
+/**
+ * One action may be expressed by several host systems (cursor, selected row,
+ * highlight/underline FX). Collapse their focus onto one semantic child so a
+ * pointer cannot land on row 2 while a ring or underline calls out row 3.
+ * This only copies an already-declared item; it never invents a target.
+ */
+export function cohereInteractionFocusItems(
+  storyboard: DirectScene[],
+): { scenes: DirectScene[]; normalized: string[] } {
+  const normalized: string[] = [];
+  const scenes = storyboard.map((scene) => {
+    if (!scene.interactions?.length || !scene.beats?.length) return scene;
+    let interactions = scene.interactions;
+    let beats = scene.beats;
+    let changed = false;
+    for (const intent of interactions) {
+      const actionAt = intent.pressSec ?? intent.arriveSec;
+      const end = intent.holdUntilSec ?? intent.releaseSec ?? intent.arriveSec;
+      const focusIndexes = beats.flatMap((beat, index) =>
+        beat.component === intent.targetPart &&
+          (beat.kind === "select" || beat.kind === "highlight") &&
+          beat.atSec >= intent.startSec - 0.45 &&
+          beat.atSec <= end + 0.75
+          ? [index]
+          : []
+      );
+      if (!focusIndexes.length) continue;
+      const nearestDeclared = focusIndexes
+        .map((index) => beats[index]!)
+        .filter((beat) => beat.item !== undefined)
+        .sort((a, b) => Math.abs(a.atSec - actionAt) - Math.abs(b.atSec - actionAt))[0];
+      const item = intent.item ?? nearestDeclared?.item;
+      if (item === undefined) continue;
+      const nextIntent = intent.item === item ? intent : { ...intent, item };
+      if (nextIntent !== intent) {
+        interactions = interactions.map((entry) => entry === intent ? nextIntent : entry);
+        changed = true;
+      }
+      const mismatched = focusIndexes.filter((index) => beats[index]!.item !== item);
+      if (mismatched.length) {
+        const mismatchSet = new Set(mismatched);
+        beats = beats.map((beat, index) =>
+          mismatchSet.has(index) ? { ...beat, item } : beat
+        );
+        changed = true;
+      }
+      if (nextIntent !== intent || mismatched.length) {
+        normalized.push(
+          `scene "${scene.id}": focused interaction "${intent.id}" and ` +
+            `${focusIndexes.length} selection/highlight beat(s) on ` +
+            `${intent.targetPart} item ${item}`,
+        );
+      }
+    }
+    if (!changed) return scene;
+    return {
+      ...scene,
+      interactions,
+      beats,
+      sentinelNormalizations: [
+        ...(scene.sentinelNormalizations ?? []),
+        "interaction-focus: cursor and focus FX share one semantic item",
+      ],
+    };
+  });
+  return { scenes, normalized };
 }
 
 function optionalFinite(
@@ -529,6 +603,7 @@ function parseInteraction(
   const hitInsetPx = optionalFinite(object, "hitInsetPx", errors, label);
   const cursorScale = optionalFinite(object, "cursorScale", errors, label);
   const targetScale = optionalFinite(object, "targetScale", errors, label);
+  const item = optionalFinite(object, "item", errors, label);
   if (bend !== undefined && (bend < -1 || bend > 1)) errors.push(`${label}.bend must be -1..1`);
   if (hitInsetPx !== undefined && hitInsetPx < 0) errors.push(`${label}.hitInsetPx must be >= 0`);
   if (cursorScale !== undefined && (cursorScale < 0.5 || cursorScale > 1)) {
@@ -536,6 +611,9 @@ function parseInteraction(
   }
   if (targetScale !== undefined && (targetScale < 0.75 || targetScale > 1)) {
     errors.push(`${label}.targetScale must be 0.75..1`);
+  }
+  if (item !== undefined && (!Number.isInteger(item) || item < 1 || item > 48)) {
+    errors.push(`${label}.item must be an integer from 1..48`);
   }
   let waypoints: InteractionWaypoint[] | undefined;
   if (object.waypoints !== undefined) {
@@ -611,6 +689,7 @@ function parseInteraction(
     sceneId: String(object.sceneId).trim(),
     cursorId: String(object.cursorId).trim(),
     targetPart,
+    ...(item !== undefined ? { item } : {}),
     action: object.action as InteractionAction,
     startSec,
     arriveSec,

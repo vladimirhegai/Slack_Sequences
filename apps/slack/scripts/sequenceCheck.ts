@@ -1,10 +1,11 @@
 /**
  * Agent-friendly local simulator for a Slack `/sequences` create.
  *
- * It runs the same orchestrator path Slack uses after modal/thread fields are
- * collected: brief -> frame.md -> storyboard/source authoring -> validation /
- * checkpoint -> thumbnails -> optional MP4. It does not post to Slack and does
- * not require Slack tokens.
+ * It runs the same orchestrator seam Slack uses after modal/thread fields are
+ * collected. By default that is the Luna director -> direct composition ->
+ * mechanical gate -> rendered self-review -> optional MP4 route. `--provider`
+ * explicitly selects the preserved legacy provider committee. The script does
+ * not post to Slack and does not require Slack tokens.
  */
 // Load apps/slack/.env like the bot (src/index.ts) does, so `--provider
 // openrouter-api` (and any model/thinking overrides) resolve their keys. Without
@@ -33,12 +34,18 @@ import {
 } from "../src/engine/directComposition.ts";
 import { reportTemporalEvidence } from "../src/engine/temporalInspector.ts";
 import { CAMERA_FULL_MOVES } from "../src/engine/cameraContract.ts";
+import { resolveCliInputPath } from "../src/engine/cliPaths.ts";
+import { summarizeSequenceCheckStatus } from "../src/engine/sequenceCheckStatus.ts";
+import {
+  AttemptLedger,
+  deriveLedgerStageReceipts,
+  deriveLedgerStatus,
+} from "../src/engine/runner/attemptLedger.ts";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.SLACK_SEQUENCES_DATA_DIR ??= path.join(appDir, ".data");
 
 type OutputFormat = "json" | "markdown" | "both";
-type CheckStatus = "pass" | "warn" | "fail";
 
 interface FileEvidence {
   path: string;
@@ -56,20 +63,6 @@ interface DirectEvidence {
   validation: DirectValidationSummary;
   motionDensity: unknown;
   spatialQa: unknown;
-}
-
-interface StatusReport {
-  direct?: { validation?: { ok?: boolean; motionWarnings?: string[] } };
-  result: {
-    authoringMode: string;
-    thumbnailPaths: FileEvidence[];
-  };
-  artifacts: {
-    mp4?: FileEvidence | null;
-  };
-  options: {
-    render: boolean;
-  };
 }
 
 interface CliOptions extends BriefFields {
@@ -101,7 +94,7 @@ function usage(): string {
     "  --length <seconds>         Target length.",
     "  --context <text>           Extra trusted context.",
     "  --context-file <path>      Append file contents to context.",
-    "  --provider <id>            Provider override, e.g. openrouter-api.",
+    "  --provider <id>            Explicit legacy-route provider, e.g. openrouter-api.",
     "  --mcp / --no-mcp           Prefer internal Sequences MCP transport (default: app setting).",
     "  --render                   Also render draft MP4.",
     "  --temporal                 Capture temporal evidence after create (Chrome required).",
@@ -112,7 +105,9 @@ function usage(): string {
 }
 
 function readJson(file: string): Partial<BriefFields & { brandName?: string }> {
-  const parsed = JSON.parse(fs.readFileSync(path.resolve(file), "utf8")) as unknown;
+  const parsed = JSON.parse(
+    fs.readFileSync(resolveCliInputPath(file, appDir), "utf8"),
+  ) as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("--input must point to a JSON object");
   }
@@ -165,7 +160,9 @@ function parseArgs(argv: string[]): CliOptions {
       extraContext.push(take(index, arg));
       index += 1;
     } else if (arg === "--context-file") {
-      extraContext.push(fs.readFileSync(path.resolve(take(index, arg)), "utf8"));
+      extraContext.push(
+        fs.readFileSync(resolveCliInputPath(take(index, arg), appDir), "utf8"),
+      );
       index += 1;
     } else if (arg === "--provider") {
       values.provider = take(index, arg) as ProviderId;
@@ -304,17 +301,6 @@ function markdownReport(report: Record<string, unknown>): string {
   ].join("\n");
 }
 
-function summarizeStatus(report: StatusReport): CheckStatus {
-  if (report.direct?.validation?.ok === false) return "fail";
-  if (report.result.thumbnailPaths.some((thumb) => !thumb.exists || thumb.bytes <= 0)) return "fail";
-  if (report.options.render && (!report.artifacts.mp4?.exists || report.artifacts.mp4.bytes <= 0)) {
-    return "fail";
-  }
-  if (report.result.authoringMode === "deterministic-fallback") return "warn";
-  if ((report.direct?.validation?.motionWarnings?.length ?? 0) > 0) return "warn";
-  return "pass";
-}
-
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const progress: Array<OrchestratorProgress & { atMs: number }> = [];
@@ -372,6 +358,28 @@ async function main(): Promise<void> {
     };
   }
 
+  const sentinelPath = path.join(result.projectDir, "planning", "sentinel-run.json");
+  const sentinel = fs.existsSync(sentinelPath)
+    ? JSON.parse(fs.readFileSync(sentinelPath, "utf8")) as {
+        disposition?: string;
+        degradations?: string[];
+      }
+    : undefined;
+  const ledgerPath = path.join(result.projectDir, "planning", "attempt-ledger.json");
+  const persistedLedger = fs.existsSync(ledgerPath)
+    ? safeReadJson(ledgerPath) as { events?: unknown[] } | undefined
+    : undefined;
+  const ledgerEvents = Array.isArray(persistedLedger?.events)
+    ? AttemptLedger.replay(persistedLedger.events as Parameters<typeof AttemptLedger.replay>[0]).events
+    : [];
+  const legacyRuntimeValid = direct?.manifest.qa?.browserValidated ?? direct?.validation.ok ?? true;
+  const legacyQualityResidue = direct?.manifest.qa?.warningCount ?? 0;
+  const ledgerStatus = deriveLedgerStatus(ledgerEvents, {
+    runtimeValid: legacyRuntimeValid,
+    qualityResidue: legacyQualityResidue,
+  });
+  const ledgerStages = deriveLedgerStageReceipts(ledgerEvents);
+
   const report = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -415,8 +423,15 @@ async function main(): Promise<void> {
       mcpRequested: result.mcpRequested,
       usedPreset: result.usedPreset,
       authoringMode: directAuthoringMode(result.projectDir, result.fallback?.stage),
-      stages: result.stages ?? [],
+      stages: ledgerStages.length ? ledgerStages : result.stages ?? [],
+      ledgerStatus,
+      runtimeValid: ledgerStatus.runtimeValid,
+      qualityResidue: ledgerStatus.qualityResidue,
+      degradedAxes: ledgerStatus.degradedAxes,
+      oneAttemptSuccess: ledgerStatus.oneAttemptSuccess,
       fallback: result.fallback ?? null,
+      sentinelDisposition: sentinel?.disposition ?? null,
+      sentinelDegradations: sentinel?.degradations ?? [],
       outline: result.outline,
       lint: result.lint,
       skillsUsed: result.skillsUsed,
@@ -481,8 +496,9 @@ async function main(): Promise<void> {
       temporal: temporal ?? null,
     },
     progress,
+    ledger: ledgerStatus,
   };
-  report.status = summarizeStatus(report);
+  report.status = summarizeSequenceCheckStatus(report);
 
   const paths = reportPaths(result.projectDir, options.output, options.format);
   if (paths.json) {

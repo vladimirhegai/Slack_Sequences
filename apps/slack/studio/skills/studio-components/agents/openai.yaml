@@ -1,0 +1,4 @@
+interface:
+  display_name: "Studio Components"
+  short_description: "Add proven component kinds"
+  default_prompt: "Use -components to add a production-ready Studio component kind."

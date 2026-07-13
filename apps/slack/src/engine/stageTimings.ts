@@ -21,6 +21,9 @@ export type TimedStep = string;
  * Real EMA data replaces these after the first few runs.
  */
 const SEED_MS: Record<string, number> = {
+  "luna-director": 180_000,
+  "luna-self-review": 90_000,
+  "luna-revision": 120_000,
   "frame-design": 10_000,
   "storyboard-plan": 60_000,
   "source-author": 120_000,
@@ -150,13 +153,28 @@ export function formatEtaMs(ms: number): string {
 }
 
 /** The steps a live `/sequences` create walks through (tier 1, pre-render). */
-export const CREATE_STEPS: TimedStep[] = [
+export const LUNA_CREATE_STEPS: TimedStep[] = [
+  "luna-director",
+  "submit_composition",
+  "render_preview",
+  "luna-self-review",
+];
+export const LEGACY_CREATE_STEPS: TimedStep[] = [
   "frame-design",
   "storyboard-plan",
   "source-author",
   "submit_composition",
   "render_preview",
 ];
+/** Default public alias; route-aware callers should select the matching list. */
+export const CREATE_STEPS = LUNA_CREATE_STEPS;
 
 /** The steps a revise walks through before its preview lands. */
-export const REVISE_STEPS: TimedStep[] = ["apply_commands", "render_preview"];
+export const LUNA_REVISE_STEPS: TimedStep[] = [
+  "luna-revision",
+  "submit_composition",
+  "render_preview",
+];
+export const LEGACY_REVISE_STEPS: TimedStep[] = ["apply_commands", "render_preview"];
+/** Default public alias; route-aware callers should select the matching list. */
+export const REVISE_STEPS = LUNA_REVISE_STEPS;

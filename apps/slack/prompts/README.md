@@ -1,46 +1,50 @@
-# prompts/ — general system prompts for both bots
+# prompts/ — editable guidance for the two bots
 
-This folder holds the **plain, general, editable** prompts for the two agents in
-Sequences for Slack. Keep them here so they can be tuned without hunting through
-`src/`. Each file is loaded at runtime from disk (see the loader noted below).
+This folder holds plain, general prompts loaded from disk at runtime. Per-job
+facts, approved asset bytes, hashes, evidence, and user revisions remain typed
+job-local files.
 
-## The two bots
+## Context bot
 
-1. **Context bot — Slack-hosted-MCP retrieval** (`src/slackMcpContext.ts`).
-   OpenAI Responses API (`gpt-5-mini`) calling `https://mcp.slack.com/mcp` with
-   the invoking user's OAuth token. Reads messages/files; returns an evidence
-   pack. Its system prompt is [`context-retrieval.md`](context-retrieval.md).
-   (Must be OpenAI: the Responses `mcp` tool type is OpenAI-only — OpenRouter /
-   DeepSeek cannot drive it.)
+`context-retrieval.md` is used by `src/slackMcpContext.ts`: OpenAI Responses API
+plus Slack hosted MCP, with the invoking user's OAuth token. This independent
+path requires `OPENAI_API_KEY`; do not conflate it with video authoring.
 
-2. **Planning / authoring bot — the main agent** (`src/engine/compositionRunner.ts`).
-   Runs on the provider in `SLACK_SEQUENCES_PROVIDER` — Railway uses
-   `openrouter-api` (DeepSeek). This is the agent that turns the brief + context
-   into a direct HyperFrames composition. Its system prompt is
-   [`planning-director.md`](planning-director.md).
+## Default Luna author
 
-## What belongs here vs. what does not
+`src/engine/lunaRoute.ts` sends these prompts to the private Railway Codex
+worker:
 
-**Here:** static system prompts and general agent guidance — the kind of text you
-want to read and edit as prose.
+- `luna-director.md` — treatment, assets, motion intent, storyboard, and full
+  seekable source in one persistent `gpt-5.6-luna`/high thread.
+- `luna-motion-reference.md` — distilled continuity/cinematography principles
+  from the golden film, explicitly not a visual or shot template.
+- `luna-self-review.md` — rendered evidence returned to the exact thread for
+  zero or one self-directed polish pass.
+- `luna-revision.md` — later user revision in that same exact thread.
+- `LUNA_CLI_SUBAGENT_SIMULATOR.md` — copy-paste parent-agent protocol that
+  simulates the session shape for tests without claiming to prove Railway,
+  Codex authentication, or the exact model path.
 
-**Not here (composed at runtime, stays in code):**
-- HyperFrames skill retrieval / RAG (`src/agent/skillContext.ts`).
-- Per-run, project-specific context: deterministic color/typography picks,
-  the skills selected for that run, asset manifests, brand tokens.
-- The per-job `frame.md` design system (`src/engine/frameDesign.ts` +
-  `src/engine/frameTools.ts`): curated mood DNA, bounded art direction, and
-  deterministic brand extraction/derivation/validation that produce the
-  `<frame_md>` block. It is data composed per job, not editable prose.
-- The deterministic brief assembly (`assembleBrief` in `orchestrator.ts`).
+The host supplies `inputs/fact-envelope.json`, `inputs/asset-brief.md`, approved
+`inputs/brand-assets/**`, and later `inputs/evidence/**` or revision files. The
+director writes the fixed `deliverables/` envelope described in the prompt.
 
-Rule of thumb: if a human would tune it by editing prose, it lives here. If it is
-assembled per-project from data or retrieval, it stays in `src/`.
+Prompt prose gives Luna creative authority. It must not become the repair owner
+for permissions, path containment, hashes, selector syntax, local assets,
+deterministic seeking, browser runtime, or encoding; those stay deterministic.
+Taste observations must not become quotas or automatic repair instructions.
 
-## Current wiring
+## Explicit legacy rollback
 
-- `context-retrieval.md` → read by `src/slackMcpContext.ts`.
-- `planning-director.md` → read by `src/engine/compositionRunner.ts`; exact
-  HyperFrames core references, blueprints, motion rules, available assets, the
-  per-job `frame.md` design system, and current revision state are appended
-  deterministically per run.
+`planning-director.md` and the large composed prompts in
+`src/engine/runner/prompts.ts` belong to the unchanged frame/storyboard/scaffold
+provider committee. They run only when
+`SLACK_SEQUENCES_AUTHOR_ROUTE=legacy-provider`. Model selection remains in the
+legacy model policy. OpenRouter is not a fallback from a failed Luna job.
+
+## Placement rule
+
+Put stable, human-tunable guidance here. Put verified facts, Slack retrieval,
+asset manifests, runtime contracts, and deterministic validation in typed source
+or job-local input files. Never interpolate secrets into a prompt or receipt.

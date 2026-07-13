@@ -1,0 +1,291 @@
+<script type="application/json" data-recipe-meta>
+{
+  "format": 2,
+  "id": "checklist-cascade",
+  "title": "Checklist tick-through with drawn checkmarks",
+  "description": "Four checklist rows cascade in, then get ticked off in rhythm — accent discs pop, checkmarks draw on with real strokes, copy brightens — closing with a completion bar under the title.",
+  "tags": [
+    "checklist",
+    "tick-through",
+    "checkmark",
+    "cascade",
+    "completion",
+    "onboarding-steps"
+  ],
+  "triggerPatterns": [
+    "check[ -]?list",
+    "checkmarks?",
+    "tick(s|ed|ing)? (off|through)",
+    "to[ -]?dos? (list|complete)",
+    "(tasks?|items?|steps?) (check(ed)? off|complet(e|ed|ing))",
+    "(ship|launch|release) list",
+    "onboarding (checklist|steps)",
+    "one by one .*(done|complete|checked)"
+  ],
+  "durationWindow": { "minSec": 4.5, "maxSec": 12 },
+  "componentKinds": ["progress"],
+  "params": [
+    {
+      "name": "title",
+      "kind": "text",
+      "description": "The list's claim — what all four ticks add up to.",
+      "default": "Launch day, handled",
+      "maxChars": 34
+    },
+    {
+      "name": "item1",
+      "kind": "text",
+      "description": "First row (ticked first).",
+      "maxChars": 26
+    },
+    {
+      "name": "item2",
+      "kind": "text",
+      "description": "Second row.",
+      "maxChars": 26
+    },
+    {
+      "name": "item3",
+      "kind": "text",
+      "description": "Third row.",
+      "maxChars": 26
+    },
+    {
+      "name": "item4",
+      "kind": "text",
+      "description": "Fourth row (the payoff tick — strongest item last).",
+      "maxChars": 26
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for the tick discs, checkmark surrounds, and completion bar.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "settleSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the LAST checkmark finishes (leave >=1s of scene after it).",
+      "default": 3.2,
+      "min": 2.8,
+      "max": 10
+    }
+  ],
+  "revision": 1,
+  "demo": {
+    "durationSec": 6,
+    "params": {
+      "title": "Launch day, handled",
+      "item1": "Threads summarized",
+      "item2": "Storyboard approved",
+      "item3": "Video rendered in channel",
+      "item4": "Shared with the team",
+      "accent": "var(--cinema-key)",
+      "settleSec": 3.4
+    }
+  },
+  "sanityBriefs": [
+    "Onboarding checklist scene: four setup steps get ticked off one by one until the list is complete.",
+    "The launch checklist ticks through — checkmarks draw in as every shipped item completes."
+  ]
+}
+</script>
+<template data-recipe-doc>
+# checklist-cascade — rows cascade in, ticks land in rhythm, bar completes
+
+**What it is.** A four-row checklist that performs its own completion: rows
+slide in as a quick cascade, then each row is ticked off in a steady rhythm —
+an accent disc pops behind a checkmark that DRAWS on with a real stroke while
+the row's copy brightens — and when the last tick lands, a completion bar
+sweeps under the title. The drawn strokes and the tick rhythm are the
+signature; a model-authored imitation reliably ships instant checkmarks and
+uneven timing.
+
+**When to declare it.** Briefs about finishing, coverage, or accumulation:
+onboarding steps completed, a launch/release checklist, "everything you
+shipped this quarter", a feature list where each item lands as *done*, setup
+flows ("connect, configure, invite, ship"). The final tick is a natural
+PRIMARY moment: place a declared moment at roughly `sceneStart + settleSec`
+with motionIntent "resolve" or "set-state".
+
+**How to stage the shot around it.**
+- The ticks run from `settleSec - 2.0` to `settleSec`; keep the camera calm
+  through that window (a slow drift or a gentle push-in works; ticks read as
+  the scene's rhythm section).
+- Escalate the items: weakest first, the thesis item fourth — the last tick
+  is the payoff.
+- Keep row copy short and parallel (verb-first reads best: "Threads
+  summarized", "Video rendered").
+- Pairs naturally with a `timeRamp` dip on the final tick or a cut whose
+  continuity anchor is the completed list.
+
+**Slots.** `title` (the list's claim), `item1..item4` (row copy, ticked in
+order — all four required), `accent` (a `var(--…)` brand token), `settleSec`
+(seconds after scene start when the LAST checkmark finishes; leave ≥1s of
+scene after it).
+</template>
+<!--
+  checklist-cascade — the completion-rhythm signature (agent-authored recipe).
+
+  Instantiation contract (host-owned — see recipeContract.ts): markup template
+  injected inside the declared scene with {{param}} slots filled; style
+  injected once into <head>; the motion body runs as (tl, root, start,
+  duration, uid) adding tweens to the ONE paused master timeline. Pure
+  function of timeline time — no clocks, no rAF, no randomness, no repeats.
+
+  Static-analyzability convention (keeps the lint gate warning-free): tween
+  targets are INLINE STRING LITERALS with {{uid}} filled by the host, and the
+  timing spine derives from {{start}}/{{settleSec}} numeric literal slots so
+  every position constant-folds in the pinned GSAP parser.
+-->
+<style data-recipe-style>
+  .rcp-chk {
+    position: relative;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 40px;
+    text-align: left;
+  }
+  .rcp-chk .rcp-chk-head {
+    position: relative;
+    display: inline-block;
+    padding-bottom: 16px;
+  }
+  .rcp-chk .rcp-chk-title {
+    font-size: var(--rcp-title-size, 58px);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .rcp-chk .rcp-chk-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--rcp-accent, #ffc24d);
+    transform: scaleX(0);
+    transform-origin: 0 50%;
+  }
+  .rcp-chk .rcp-chk-item {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    opacity: 0;
+  }
+  .rcp-chk .rcp-chk-dot {
+    position: relative;
+    width: 50px;
+    height: 50px;
+    flex: 0 0 50px;
+    border-radius: 50%;
+    border: 2.5px solid var(--rcp-accent, #ffc24d);
+  }
+  .rcp-chk .rcp-chk-fill {
+    position: absolute;
+    inset: -2.5px;
+    border-radius: 50%;
+    background: var(--rcp-accent, #ffc24d);
+    transform: scale(0);
+    will-change: transform;
+  }
+  .rcp-chk .rcp-chk-mark {
+    position: absolute;
+    inset: 8px;
+    width: 34px;
+    height: 34px;
+  }
+  .rcp-chk .rcp-chk-path {
+    fill: none;
+    stroke: #0b0e12;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-dasharray: 24;
+    stroke-dashoffset: 24;
+  }
+  .rcp-chk .rcp-chk-copy {
+    font-size: var(--rcp-item-size, 38px);
+    font-weight: 500;
+    opacity: 0.62;
+  }
+</style>
+<template data-recipe-markup>
+  <div class="rcp-chk" data-part="{{uid}}-checklist" data-layout-important
+    data-layout-anchor="frame:center" style="--rcp-accent: {{accent}}">
+    <div class="rcp-chk-head">
+      <span class="rcp-chk-title">{{title}}</span>
+      <span class="rcp-chk-bar" data-layout-ignore></span>
+    </div>
+    <div class="rcp-chk-item rcp-chk-item-1">
+      <span class="rcp-chk-dot"><span class="rcp-chk-fill"></span><svg class="rcp-chk-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="rcp-chk-path" d="M5 12.6l4.4 4.4L19 7.2"/></svg></span>
+      <span class="rcp-chk-copy">{{item1}}</span>
+    </div>
+    <div class="rcp-chk-item rcp-chk-item-2">
+      <span class="rcp-chk-dot"><span class="rcp-chk-fill"></span><svg class="rcp-chk-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="rcp-chk-path" d="M5 12.6l4.4 4.4L19 7.2"/></svg></span>
+      <span class="rcp-chk-copy">{{item2}}</span>
+    </div>
+    <div class="rcp-chk-item rcp-chk-item-3">
+      <span class="rcp-chk-dot"><span class="rcp-chk-fill"></span><svg class="rcp-chk-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="rcp-chk-path" d="M5 12.6l4.4 4.4L19 7.2"/></svg></span>
+      <span class="rcp-chk-copy">{{item3}}</span>
+    </div>
+    <div class="rcp-chk-item rcp-chk-item-4">
+      <span class="rcp-chk-dot"><span class="rcp-chk-fill"></span><svg class="rcp-chk-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="rcp-chk-path" d="M5 12.6l4.4 4.4L19 7.2"/></svg></span>
+      <span class="rcp-chk-copy">{{item4}}</span>
+    </div>
+  </div>
+</template>
+<script data-recipe-motion>
+  // Timing spine: {{start}}/{{settleSec}} are numeric literals, so every
+  // position below constant-folds at parse time (lint-placeable, identical
+  // at runtime). settle = the moment the LAST checkmark finishes drawing;
+  // ticks land every 0.55s before it.
+  var settle = {{start}} + {{settleSec}};
+
+  // Title, then the rows cascade in.
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-head', { y: 16, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, {{start}} + 0.12);
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-1', { x: -18, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, {{start}} + 0.26);
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-2', { x: -18, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, {{start}} + 0.38);
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-3', { x: -18, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, {{start}} + 0.50);
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-4', { x: -18, opacity: 0 },
+    { x: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, {{start}} + 0.62);
+
+  // Tick rhythm: per row — the accent disc pops (committed, seqPop), the
+  // checkmark stroke DRAWS on, and the row copy brightens. Each draw ends
+  // 0.55s after the previous; the last finishes exactly at settle.
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-1 .rcp-chk-fill', { scale: 0 },
+    { scale: 1, duration: 0.25, ease: "seqPop" }, settle - 2.01);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-1 .rcp-chk-path',
+    { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, settle - 1.95);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-1 .rcp-chk-copy',
+    { opacity: 1, duration: 0.25, ease: "power2.out" }, settle - 1.96);
+
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-2 .rcp-chk-fill', { scale: 0 },
+    { scale: 1, duration: 0.25, ease: "seqPop" }, settle - 1.46);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-2 .rcp-chk-path',
+    { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, settle - 1.40);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-2 .rcp-chk-copy',
+    { opacity: 1, duration: 0.25, ease: "power2.out" }, settle - 1.41);
+
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-3 .rcp-chk-fill', { scale: 0 },
+    { scale: 1, duration: 0.25, ease: "seqPop" }, settle - 0.91);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-3 .rcp-chk-path',
+    { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, settle - 0.85);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-3 .rcp-chk-copy',
+    { opacity: 1, duration: 0.25, ease: "power2.out" }, settle - 0.86);
+
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-item-4 .rcp-chk-fill', { scale: 0 },
+    { scale: 1, duration: 0.25, ease: "seqPop" }, settle - 0.36);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-4 .rcp-chk-path',
+    { strokeDashoffset: 0, duration: 0.3, ease: "power2.out" }, settle - 0.30);
+  tl.to('[data-part="{{uid}}-checklist"] .rcp-chk-item-4 .rcp-chk-copy',
+    { opacity: 1, duration: 0.25, ease: "power2.out" }, settle - 0.31);
+
+  // Completion: the bar sweeps under the title once everything is ticked.
+  tl.fromTo('[data-part="{{uid}}-checklist"] .rcp-chk-bar', { scaleX: 0 },
+    { scaleX: 1, duration: 0.4, ease: "power3.out" }, settle + 0.10);
+</script>

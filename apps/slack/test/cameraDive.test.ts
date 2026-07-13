@@ -135,6 +135,57 @@ describe("deriveDiveWindows (the L2 arithmetic normalizer)", () => {
     expect(normalized[0]).toContain("degraded to push-in");
   });
 
+  it("extends the held window so a covered payoff gets its outcome hold before the pull-back (quillsign regression)", () => {
+    // motion-quality-verify-2-quillsign burned two storyboard attempts: the
+    // host-derived pull-back leg fired exactly at a covered set-state payoff,
+    // minting the very `pacing/outcome` finding the model cannot repair (it
+    // does not own the legs). The derivation must hold >=0.8s past the payoff,
+    // growing the dive when the scene has free time.
+    const payoffScene = diveScene({
+      id: "one-gesture",
+      durationSec: 10,
+      components: [
+        { version: 1, id: "sign-button", kind: "button", region: "workbench-ui" },
+      ],
+      beats: [{
+        version: 1,
+        id: "button-loading",
+        sceneId: "one-gesture",
+        component: "sign-button",
+        kind: "set-state",
+        atSec: 4.8,
+        durationSec: 0.5,
+        toState: "loading",
+      }],
+      camera: {
+        version: 1,
+        path: [
+          { version: 1, move: "hold", toRegion: "workbench-ui", startSec: 0, durationSec: 2 },
+          {
+            version: 1,
+            move: "dive",
+            toPart: "sign-button",
+            startSec: 2,
+            durationSec: 3.5,
+            zoom: 1.3,
+          },
+        ],
+      },
+    });
+    const { storyboard, normalized } = deriveDiveWindows([payoffScene]);
+    const dive = storyboard[0]!.camera!.path.find((move) => move.move === "dive")!;
+    // Payoff ends at 5.3s; the pull-back (the next framing change) must wait
+    // out the 0.8s outcome hold, so the window itself grows past 5.5s.
+    expect(dive.durationSec).toBeGreaterThan(3.5);
+    const pullBackStart = dive.startSec + dive.durationSec - dive.outSec!;
+    expect(pullBackStart).toBeGreaterThanOrEqual(5.3 + 0.8 - 1e-6);
+    expect(normalized[0]).toContain("outcome hold");
+    // The gate itself must agree — no `pacing/outcome` finding on the plan
+    // the host derived.
+    const findings = auditPacing(storyboard);
+    expect(findings.filter((finding) => finding.includes("pacing/outcome"))).toEqual([]);
+  });
+
   it("counts an interaction on the dive target as motivation", () => {
     const withInteraction = diveScene({
       beats: [],
@@ -158,6 +209,39 @@ describe("deriveDiveWindows (the L2 arithmetic normalizer)", () => {
     expect(
       storyboard[0]!.camera!.path.find((move) => move.move === "dive"),
     ).toBeDefined();
+  });
+
+  it("retargets a sibling dive to the explicit interaction in the same station", () => {
+    const sibling = diveScene({
+      components: [
+        { version: 1, id: "release-card", kind: "stat-card", region: "focus-station" },
+        { version: 1, id: "approve-btn", kind: "button", region: "focus-station" },
+      ],
+      beats: [{
+        version: 1, id: "card-state", sceneId: "workbench", component: "release-card",
+        kind: "set-state", atSec: 3, durationSec: 0.5, toState: "ready",
+      }],
+      interactions: [{
+        version: 1, id: "approve", sceneId: "workbench", cursorId: "cursor",
+        targetPart: "approve-btn", action: "click", startSec: 3.2, arriveSec: 3.7,
+        pressSec: 3.8, releaseSec: 4, from: "frame:bottom-right", path: "arc",
+        aimX: 0.5, aimY: 0.5, feedback: "press-ripple",
+      }],
+      camera: {
+        version: 1,
+        path: [{
+          version: 1, move: "dive", toRegion: "focus-station", toPart: "release-card",
+          startSec: 2.2, durationSec: 5, zoom: 1.3,
+          focus: { part: "release-card", blurMaxPx: 6 },
+        }],
+      },
+    });
+    const result = deriveDiveWindows([sibling]);
+    const dive = result.storyboard[0]!.camera!.path[0]!;
+    expect(dive).toMatchObject({ move: "dive", toPart: "approve-btn" });
+    expect(dive.focus?.part).toBe("approve-btn");
+    expect(result.normalized.some((line) => line.includes("retargeted"))).toBe(true);
+    expect(auditDiveInteractions(result.storyboard)).toEqual([]);
   });
 });
 

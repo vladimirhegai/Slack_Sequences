@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAssetBriefModal,
+  buildCreateModal,
   buildingBlocks,
   resultBlocks,
   storyboardReadyBlocks,
@@ -7,6 +9,60 @@ import {
 } from "../src/blocks.ts";
 
 describe("Slack blocks", () => {
+  it("keeps the launch modal aligned with the current short-commercial workflow", () => {
+    const modal = buildCreateModal({ channel: "C123" });
+    const length = modal.blocks?.find((block) => "block_id" in block && block.block_id === "length");
+    const product = modal.blocks?.find((block) => "block_id" in block && block.block_id === "product");
+    const whatShipped = modal.blocks?.find(
+      (block) => "block_id" in block && block.block_id === "what_shipped",
+    );
+    const serialized = JSON.stringify(modal);
+
+    expect(modal.callback_id).toBe("create_video");
+    expect(length).toMatchObject({
+      element: {
+        initial_option: { value: "15" },
+        options: expect.arrayContaining([
+          expect.objectContaining({ value: "15" }),
+          expect.objectContaining({ value: "30" }),
+        ]),
+      },
+    });
+    expect(product).not.toHaveProperty("element.initial_value");
+    expect(whatShipped).not.toHaveProperty("element.initial_value");
+    expect(serialized).toContain("permission-scoped Slack context");
+    expect(serialized).toContain("Trusted facts, CTA, or constraints");
+  });
+
+  it("preserves shortcut prefills without emitting empty initial values", () => {
+    const modal = buildCreateModal({
+      channel: "C123",
+      product: "Sequences",
+      whatShipped: "Launch briefs now return an MP4 in Slack.",
+    });
+
+    expect(JSON.stringify(modal)).toContain('"initial_value":"Sequences"');
+    expect(JSON.stringify(modal)).toContain('"initial_value":"Launch briefs now return an MP4 in Slack."');
+    expect(JSON.stringify(buildCreateModal({ channel: "C123" }))).not.toContain('"initial_value":""');
+  });
+
+  it("keeps the asset intake modal valid and documents the canonical assets command", () => {
+    const modal = buildAssetBriefModal({ channel: "C123", userId: "U123", teamId: "T123" });
+    const images = modal.blocks?.find((block) => "block_id" in block && block.block_id === "images");
+
+    expect(modal.callback_id).toBe("asset_brief");
+    expect(images).toMatchObject({
+      type: "input",
+      element: {
+        type: "file_input",
+        action_id: "value",
+        filetypes: ["png", "jpg", "jpeg", "webp"],
+        max_files: 5,
+      },
+    });
+    expect(JSON.stringify(modal)).toContain("/sequences assets clear");
+  });
+
   it("escapes user-controlled mrkdwn in titles", () => {
     const [block] = buildingBlocks("<!channel>");
     expect(block).toMatchObject({

@@ -19,8 +19,8 @@
  *    immediate framing change (hold = 0), not a free pass.
  * 3. Hold on outcomes longer than actions — the result of a press matters
  *    more than the press.
- * 4. Camera density has a ceiling as well as a floor: today only
- *    under-movement blocks, so the system structurally rewards churn.
+ * 4. Camera density is budgeted by ideas, not raw moves: each scene gets one
+ *    primary lens route while supporting evidence develops inside that frame.
  *
  * Every finding asks for a fix (extend, move, or drop) rather than vetoing a
  * creative addition, and every fix hint carries the "hold ≠ freeze" language
@@ -29,7 +29,7 @@
  * count/progress/highlight beat satisfies both.
  *
  * All windows are judged in VIEWER (output) time: a timeRamp dip stretches
- * the content seconds it covers, so spans convert through `warpInverseOf`
+ * the content seconds it covers, so spans convert through the time service
  * before comparison, like the temporal judge and motion-density passes.
  */
 import {
@@ -39,17 +39,35 @@ import {
   diveWindows,
   type CameraMoveIntentV1,
 } from "./cameraContract.ts";
-import { resolveComponentPlan, type ResolvedComponentBeatV1 } from "./componentContract.ts";
+import { auditCameraIdeaBudget } from "./cameraBlocking.ts";
+import {
+  resolveComponentPlan,
+  type ComponentKind,
+  type ResolvedComponentBeatV1,
+} from "./componentContract.ts";
 import {
   EVIDENCE_AFTER_SEC,
   EVIDENCE_BEFORE_SEC,
   FINAL_RESOLVE_ALLOWANCE_SEC,
 } from "./storyboardMoments.ts";
-import { resolveTimeRampPlan, warpInverseOf } from "./timeRamp.ts";
+import { resolveTimeRampPlan } from "./timeRamp.ts";
 import type { DirectScene } from "./directComposition.ts";
+import { cascadeRetime, duration, sourceTime, timeConversionService } from "./time.ts";
 
 function round(value: number): number {
   return Math.round(value * 1000) / 1000;
+}
+
+function applyCascadeStretches(
+  storyboard: DirectScene[],
+  stretches: ReadonlyMap<string, number>,
+): DirectScene[] {
+  let retimed = storyboard;
+  for (const scene of storyboard) {
+    const delta = stretches.get(scene.id) ?? 0;
+    if (delta > 0) retimed = cascadeRetime(retimed, scene.id, duration(delta)).plan;
+  }
+  return retimed;
 }
 
 /** Seconds of post-introduction development each introduced surface needs. */
@@ -66,7 +84,7 @@ export const READING_MAX_SEC = 4;
 export const OUTCOME_HOLD_SEC = 0.8;
 /** An `assemble` headline is a resolve gesture — its lock holds at least this. */
 export const ASSEMBLE_HOLD_SEC = 1.2;
-/** Full camera moves allowed per scene: 1 + floor(duration / this). */
+/** Cadence used by the film-wide distinct-framing floor. */
 export const CAMERA_BUDGET_WINDOW_SEC = 3.5;
 /** Whips allowed per film. */
 export const MAX_WHIPS_PER_FILM = 2;
@@ -97,7 +115,7 @@ export const PACING_TOLERANCE_SEC = 0.35;
  * of being reported to the model as a findings-retry. A miss this size is
  * mechanical arithmetic (extend a cut by at most a beat and a half); a larger one is a
  * genuine creative deficit and stays blocking, per Sentinel's decision rule
- * (SENTINEL_PLAN.md §3 Phase 3.1: normalize what deletes/degrades/retimes,
+ * (SENTINEL.md L2 rule: normalize what deletes/degrades/retimes,
  * send content deficits back to the model).
  */
 export const MAX_PACING_STRETCH_SEC = 1.5;
@@ -108,6 +126,11 @@ export const MAX_PACING_STRETCH_SEC = 1.5;
  * the same four-second maximum reading floor the move is clearing.
  */
 export const MAX_PACING_RETIME_SEC = READING_MAX_SEC;
+/** A same-station camera phrase may land on a payoff instead of crossing it,
+ * but never by collapsing below a readable phrase or below 60% of its authored
+ * duration. Cross-station travel is never shortened by this repair. */
+const PAYOFF_LANDING_MIN_CAMERA_SEC = 0.6;
+const PAYOFF_LANDING_MIN_DURATION_RATIO = 0.6;
 /**
  * A cursor interaction owns the frame from just before the cursor arrives
  * until its result settles: a full camera move IN FLIGHT there stacks two
@@ -161,12 +184,14 @@ function isEnergeticCameraMove(move: CameraMoveIntentV1): boolean {
 function beatHoldWindows(
   scene: DirectScene,
   beats: ResolvedComponentBeatV1[],
+  excludedComponents: ReadonlySet<string> = new Set(),
 ): Array<{ from: number; until: number }> {
   const componentKinds = new Map(
     (scene.components ?? []).map((component) => [component.id, component.kind]),
   );
   const windows: Array<{ from: number; until: number }> = [];
   for (const beat of beats) {
+    if (excludedComponents.has(beat.component)) continue;
     let needed = 0;
     if ((beat.kind === "type" || beat.kind === "swap") && beat.text) {
       needed = Math.min(
@@ -216,11 +241,24 @@ function advanceClearOfWindows(
   return round(target);
 }
 
-/** Beat kinds that put a NEW surface (or new content) in front of the viewer.
+/** Beat kinds that withhold a NEW surface or its first readable content until
+ * the beat starts. `type`/`stream` clear their authored text slots at compile;
  * `animate` covers a pre-built asset unit's spring entrance (its first beat is
  * its arrival, camera-aware) so introduction timing judges the real moment the
- * viewer sees it. */
-const ENTRANCE_BEAT_KINDS = new Set(["open", "rows", "swap", "animate"]);
+ * viewer sees it. A `swap` is deliberately absent: the runtime swaps content
+ * on an already-painted slot, so it is development, not that slot's entrance. */
+const ENTRANCE_BEAT_KINDS = new Set(["type", "stream", "open", "rows", "animate"]);
+/** Lightweight evidence that reads inside one product chassis, not as another
+ * independent dense surface. Explicit entrance beats still introduce it later. */
+const LOCAL_PRODUCT_EVIDENCE_KINDS: ReadonlySet<ComponentKind> = new Set([
+  "button",
+  "stat-card",
+  "progress",
+  "progress-ring",
+  "headline",
+  "toggle",
+  "avatar-stack",
+]);
 /**
  * Component kinds compact enough to land late in a short final resolve (a
  * logo / CTA / metric end card is read in one glance). Dense surfaces —
@@ -232,7 +270,7 @@ const COMPACT_RESOLVE_KINDS = new Set([
   "button", "stat-card", "toast", "toggle", "progress", "progress-ring", "avatar-stack",
 ]);
 /** Beat kinds whose landing is a payoff the viewer must see resolve. */
-const PAYOFF_BEAT_KINDS = new Set(["press", "set-state"]);
+export const PAYOFF_BEAT_KINDS = new Set(["press", "set-state"]);
 
 function words(text: string): number {
   const trimmed = text.trim();
@@ -283,8 +321,8 @@ export function nextFramingChangeAfter(
 /**
  * Introduction events for one scene: each declared component appears once (at
  * its first entrance-class beat, else at the scene start where the author
- * entrances it), and each additional swap beat re-fills an existing surface
- * with new content the viewer must re-read.
+ * entrances it), and each swap beat re-fills that existing surface with new
+ * content the viewer must re-read.
  */
 export function sceneIntroductionTimes(scene: DirectScene): number[] {
   const components = scene.components ?? [];
@@ -292,14 +330,43 @@ export function sceneIntroductionTimes(scene: DirectScene): number[] {
   const beats = scene.beats ?? [];
   const events: number[] = [];
   const usedBeatIds = new Set<string>();
+  const entranceByComponent = new Map(components.map((component) => [
+    component.id,
+    beats
+      .filter((beat) => beat.component === component.id && ENTRANCE_BEAT_KINDS.has(beat.kind))
+      .sort((a, b) => a.atSec - b.atSec)[0],
+  ]));
+  // One app window (or one hero modal) plus static metric/CTA evidence in the
+  // same typed station is one readable product surface. CurrentProof D's one
+  // approval panel was charged as app-window + stat + button, inflating the
+  // hold requirement beyond the bounded stretch normalizer and burning a paid
+  // retry. Keep the grouping narrow: require one unambiguous chassis and one
+  // shared non-empty region; dense tables/charts, overlays, plugins, and any
+  // child with its own explicit entrance remain independent introductions.
+  const productSurfaces = components.filter((component) =>
+    !component.pluginUid &&
+    (component.kind === "app-window" || (component.kind === "modal" && component.role === "hero"))
+  );
+  const productSurface = productSurfaces.length === 1 && productSurfaces[0]!.region
+    ? productSurfaces[0]
+    : undefined;
+  const groupedProductEvidence = new Set(
+    productSurface
+      ? components.filter((component) =>
+          !component.pluginUid &&
+          component.region === productSurface.region &&
+          (component.id === productSurface.id ||
+            (LOCAL_PRODUCT_EVIDENCE_KINDS.has(component.kind) &&
+              !entranceByComponent.get(component.id)))
+        ).map((component) => component.id)
+      : [],
+  );
   // A plugin unit's children arrive as ONE host-choreographed gesture (the
   // cascade), so the unit contributes one introduction at its earliest
   // entrance — N seeded tiles are one surface to the eye, not N.
   const pluginIntro = new Map<string, number>();
   for (const component of components) {
-    const entrance = beats
-      .filter((beat) => beat.component === component.id && ENTRANCE_BEAT_KINDS.has(beat.kind))
-      .sort((a, b) => a.atSec - b.atSec)[0];
+    const entrance = entranceByComponent.get(component.id);
     if (entrance) usedBeatIds.add(entrance.id);
     const at = entrance ? entrance.atSec : scene.startSec;
     if (component.pluginUid) {
@@ -308,9 +375,16 @@ export function sceneIntroductionTimes(scene: DirectScene): number[] {
         component.pluginUid,
         earliest === undefined ? at : Math.min(earliest, at),
       );
+    } else if (groupedProductEvidence.has(component.id)) {
+      // The chassis owns one event below; static local evidence is already
+      // visible inside it. A child with an entrance was excluded from the set.
+      continue;
     } else {
       events.push(at);
     }
+  }
+  if (productSurface && groupedProductEvidence.has(productSurface.id)) {
+    events.push(entranceByComponent.get(productSurface.id)?.atSec ?? scene.startSec);
   }
   events.push(...pluginIntro.values());
   for (const beat of beats) {
@@ -325,9 +399,10 @@ export function sceneIntroductionTimes(scene: DirectScene): number[] {
  * findings-retry can fix them precisely.
  */
 export function auditPacing(storyboard: DirectScene[]): string[] {
-  const findings: string[] = [];
+  const findings: string[] = [...auditCameraIdeaBudget(storyboard)];
   // Content seconds → viewer seconds (identity when no timeRamp is declared).
-  const toViewer = warpInverseOf(resolveTimeRampPlan(storyboard));
+  const conversion = timeConversionService(resolveTimeRampPlan(storyboard));
+  const toViewer = (value: number): number => conversion.toViewer(sourceTime(value));
   const viewerSpan = (fromSec: number, toSec: number): number =>
     Math.max(0, toViewer(toSec) - toViewer(fromSec));
   const resolvedBeats = new Map<string, ResolvedComponentBeatV1[]>(
@@ -341,19 +416,6 @@ export function auditPacing(storyboard: DirectScene[]): string[] {
     const path = scene.camera?.path ?? [];
     const fullMoves = path.filter((move) => CAMERA_FULL_MOVES.has(move.move));
     whipCount += path.filter((move) => move.move === "whip").length;
-
-    // 4. Camera-segment budget: the counterweight to the density floor. The
-    // parsed path is already compound-merged, so a pan+push pair the resolver
-    // fuses counts as one move here too.
-    const moveCap = 1 + Math.floor(scene.durationSec / CAMERA_BUDGET_WINDOW_SEC);
-    if (fullMoves.length > moveCap) {
-      findings.push(
-        `pacing/camera-budget: scene "${scene.id}" (${scene.durationSec.toFixed(1)}s) declares ` +
-          `${fullMoves.length} full camera moves — a window that length supports at most ` +
-          `${moveCap} reframes before the film reads as churn. Cut the least motivated ` +
-          `move(s); a drift or hold develops the current framing without spending a new one`,
-      );
-    }
 
     // 1. Introduction → development ratio. The contract is per scene, not
     // only multi-surface scenes: ONE dense window opened at 90% of the scene
@@ -598,14 +660,48 @@ function cameraMoveEnergyRank(move: CameraMoveIntentV1): number {
  * normalization).
  */
 export function isLoadBearingMove(scene: DirectScene, move: CameraMoveIntentV1): boolean {
-  const moveEnd = move.startSec + move.durationSec;
-  return (scene.moments ?? []).some((moment) => momentNeedsCamera(moment) &&
-    moveEnd >= moment.atSec - EVIDENCE_BEFORE_SEC &&
-    move.startSec <= moment.atSec + EVIDENCE_AFTER_SEC
-  );
+  const path = scene.camera?.path ?? [];
+  return (scene.moments ?? []).some((moment) => {
+    // Host top-up paperwork describes surviving motion; it must never make
+    // that same optional move undeletable on the next parse. Only a director-
+    // declared moment can protect a camera move from deterministic cleanup.
+    if (/-auto-\d+$/i.test(moment.id)) return false;
+    if (!momentNeedsCamera(scene, moment)) return false;
+    const candidates = path.filter((candidate) =>
+      candidate.startSec + candidate.durationSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
+      candidate.startSec <= moment.atSec + EVIDENCE_AFTER_SEC
+    );
+    // Publication binds one best camera activity, not every move touching the
+    // evidence window. Protect the same closest-start candidate and leave
+    // redundant overlaps droppable; otherwise a track ending exactly where a
+    // whip begins defeats the budget normalizer.
+    const best = candidates.sort((a, b) =>
+      Math.abs(a.startSec - moment.atSec) - Math.abs(b.startSec - moment.atSec) ||
+      path.indexOf(a) - path.indexOf(b)
+    )[0];
+    return best === move;
+  });
 }
 
-function momentNeedsCamera(moment: NonNullable<DirectScene["moments"]>[number]): boolean {
+function momentNeedsCamera(
+  scene: DirectScene,
+  moment: NonNullable<DirectScene["moments"]>[number],
+): boolean {
+  const prose = `${moment.title} ${moment.visualState} ${moment.change}`.toLowerCase();
+  const explicitlyCameraOwned =
+    /\b(?:camera|reframe|framing|pan|whip|zoom|track|orbit|dive|push-in|pull-back)\b/.test(prose);
+  const explicitlyInteractionOwned = /\b(?:cursor|click|press|tap|drag|pointer)\b/.test(prose) &&
+    (scene.interactions ?? []).some((interaction) => {
+      const end = interaction.holdUntilSec ?? interaction.releaseSec ?? interaction.arriveSec;
+      return interaction.startSec - EVIDENCE_BEFORE_SEC <= moment.atSec &&
+        end + EVIDENCE_AFTER_SEC >= moment.atSec;
+    });
+  // A planner sometimes labels "Cursor arrives" as `camera-arrival`. The
+  // explicit interaction is still the evidence owner; preserving a clashing
+  // camera move for that mislabeled moment makes the host retry the planner
+  // for arithmetic it can resolve by holding the station. Explicit camera
+  // prose continues to win when the shot genuinely follows the pointer.
+  if (explicitlyInteractionOwned && !explicitlyCameraOwned) return false;
   const intent = `${moment.motionIntent} ${moment.title} ${moment.change}`.toLowerCase();
   return /\b(?:camera|reframe|framing|pan|whip|zoom|track|orbit|dive|push-in|pull-back)\b/
     .test(intent);
@@ -621,62 +717,15 @@ export function withNormalizationNotes(scene: DirectScene, notes: string[]): Dir
 }
 
 /**
- * Sentinel Phase 3 normalize-before-retry: mechanically clamp camera-move
- * counts to `auditPacing`'s own ceilings instead of sending an over-dense
- * storyboard back to the model for a findings-retry. This deletes/degrades
- * only — it never invents a move, a target, or a timing the model didn't
- * already declare, so it is a normalization (L2), not a creative rewrite.
- *
- * 1. Per-scene full-move budget: drop the lowest-energy extra move(s) down to
- *    `1 + floor(durationSec / CAMERA_BUDGET_WINDOW_SEC)` (auditPacing's own
- *    cap). A dropped move leaves a gap the downstream camera resolver already
- *    auto-fills with a drift/creep segment (see cameraContract.ts) — exactly
- *    the finding's own suggested fix ("a drift or hold develops the current
- *    framing without spending a new one").
- * 2. Film-wide whip budget: keep the earliest `MAX_WHIPS_PER_FILM` whips
- *    chronologically, drop the rest — "drop the 3rd+ whip" per the plan.
- *
- * A scene's `camera` is dropped entirely (never left with an empty `path`)
- * if a clamp would otherwise empty it — camera is an enhancement, never a
- * veto, matching the rest of this contract's degrade philosophy.
+ * Compatibility seam for the mechanical film-wide whip clamp. Phase 3.4
+ * removed raw per-scene move deletion: selecting which visual idea to cut is
+ * creative and now returns an actionable `camera/idea-budget` findings-retry.
  */
 export function normalizeCameraBudget(
   storyboard: DirectScene[],
 ): { storyboard: DirectScene[]; normalized: string[] } {
   const normalized: string[] = [];
   let scenes = storyboard.map((scene) => ({ ...scene }));
-
-  scenes = scenes.map((scene) => {
-    const path = scene.camera?.path;
-    if (!path || !path.length) return scene;
-    const moveCap = 1 + Math.floor(scene.durationSec / CAMERA_BUDGET_WINDOW_SEC);
-    const fullMoveEntries = path
-      .map((move, index) => ({ move, index }))
-      .filter((entry) => CAMERA_FULL_MOVES.has(entry.move.move));
-    if (fullMoveEntries.length <= moveCap) return scene;
-    const toDrop = fullMoveEntries.length - moveCap;
-    // Moves a declared moment may bind to as evidence are never dropped; if
-    // the budget cannot be met from the rest, leave the blocking finding for
-    // the model — silently orphaning moment evidence is worse than a retry.
-    const droppable = fullMoveEntries.filter((entry) => !isLoadBearingMove(scene, entry.move));
-    if (droppable.length < toDrop) return scene;
-    const dropIndexes = new Set(
-      [...droppable]
-        .sort((a, b) => cameraMoveEnergyRank(a.move) - cameraMoveEnergyRank(b.move) || a.index - b.index)
-        .slice(0, toDrop)
-        .map((entry) => entry.index),
-    );
-    const newPath = path.filter((_, index) => !dropIndexes.has(index));
-    const note =
-      `dropped ${toDrop} lowest-energy camera move(s) to fit the ` +
-      `${moveCap}-move budget for a ${scene.durationSec.toFixed(1)}s window`;
-    normalized.push(`scene "${scene.id}": ${note}`);
-    if (!newPath.length) {
-      const { camera: _camera, ...rest } = scene;
-      return withNormalizationNotes(rest, [note]);
-    }
-    return withNormalizationNotes({ ...scene, camera: { ...scene.camera!, path: newPath } }, [note]);
-  });
 
   // move.startSec is already absolute (per CameraMoveIntentV1) — no
   // scene.startSec offset to add.
@@ -777,11 +826,22 @@ export function topUpFramingFloor(
     0,
   );
   const framings = storyboard.length + fullMoveCount;
-  // Short by EXACTLY one; anything larger is a real content deficit.
-  if (requiredFramingCount(totalSec) - framings !== 1) return { storyboard, normalized };
+  const required = requiredFramingCount(totalSec);
+  const deficit = required - framings;
+  // One or two missing framings in an otherwise structured film are mechanical:
+  // two long, held product shots can each accept one bounded establishing move.
+  // Larger misses still mean the plan lacks a real visual argument and retry.
+  if (deficit < 1 || deficit > 2) return { storyboard, normalized };
 
   const pushDuration = (scene: DirectScene): number =>
     round(Math.min(1.0, Math.max(0.5, scene.durationSec * 0.4)));
+  const neutralChassis = (scene: DirectScene): CameraMoveIntentV1 | undefined => {
+    const path = scene.camera?.path ?? [];
+    const only = path.length === 1 ? path[0] : undefined;
+    return only?.move === "hold" && Boolean(only.toPart || only.toRegion)
+      ? only
+      : undefined;
+  };
   // A candidate "holds a single framing" with NO declared camera path at all —
   // a fresh single-move push-in can be created without colliding with an
   // existing hold/drift segment at the scene start (a scene that already owns a
@@ -792,28 +852,37 @@ export function topUpFramingFloor(
     .map((scene, index) => ({ scene, index }))
     .filter(
       ({ scene }) =>
-        (scene.camera?.path.length ?? 0) === 0 &&
+        ((scene.camera?.path.length ?? 0) === 0 || Boolean(neutralChassis(scene))) &&
         hasFramingSubject(scene) &&
         !(scene.beats ?? []).some(
           (beat) => beat.atSec <= scene.startSec + pushDuration(scene) + 0.05,
         ),
     )
     .sort((a, b) => b.scene.durationSec - a.scene.durationSec || a.index - b.index);
-  const chosen = candidates[0];
-  if (!chosen) return { storyboard, normalized };
+  const chosen = candidates.slice(0, deficit);
+  // Commit only when the deterministic additions actually meet the floor.
+  if (chosen.length !== deficit) return { storyboard, normalized };
+  const chosenByIndex = new Map(chosen.map((entry, order) => [entry.index, order]));
 
   const scenes = storyboard.map((scene, index) => {
-    if (index !== chosen.index) return scene;
+    const order = chosenByIndex.get(index);
+    if (order === undefined) return scene;
     const push: CameraMoveIntentV1 = {
       version: 1,
       move: "push-in",
       zoom: FRAMING_TOPUP_ZOOM,
       startSec: round(scene.startSec),
       durationSec: pushDuration(scene),
+      ...(neutralChassis(scene)?.toPart
+        ? { toPart: neutralChassis(scene)!.toPart }
+        : neutralChassis(scene)?.toRegion
+          ? { toRegion: neutralChassis(scene)!.toRegion }
+          : {}),
     };
     const note =
       `added a gentle establishing push-in (zoom ${FRAMING_TOPUP_ZOOM}) to meet the ` +
-      `${requiredFramingCount(totalSec)}-framing floor for a ${totalSec.toFixed(0)}s film`;
+      `${required}-framing floor for a ${totalSec.toFixed(0)}s film` +
+      (deficit > 1 ? ` (${order + 1}/${deficit} bounded top-ups)` : "");
     normalized.push(`scene "${scene.id}": ${note}`);
     // The candidate had no camera path, so the fresh single-move path can't
     // collide; the host wraps its data-camera-world plane at author time.
@@ -835,7 +904,9 @@ export function topUpFramingFloor(
  *  - the move starts or remains in flight through the required hold,
  *  - the delay is <= MAX_PACING_RETIME_SEC,
  *  - the delayed move does not pass the next full move, and
- *  - the move is not load-bearing (no declared moment binds to its window).
+ *  - a multi-phrase scene keeps every moment binding; a scene with exactly one
+ *    full camera phrase carries its camera-only moment timestamps by the same
+ *    delay because ownership is unambiguous.
  * When the delayed move no longer fits before the scene's own cut, the scene
  * boundary stretches by the overflow (<= MAX_PACING_STRETCH_SEC, 15s scene
  * cap) and every later scene cascade-shifts — the short-scene shape the
@@ -852,13 +923,14 @@ export function delayConflictingCameraMoves(
     resolveComponentPlan(storyboard).scenes.map((scene) => [scene.sceneId, scene.beats]),
   );
   const out: DirectScene[] = [];
-  let cumulativeShift = 0;
+  const stretches = new Map<string, number>();
   // Detection runs in each scene's ORIGINAL frame (where the resolved beats
   // live); the cascade shift from earlier boundary stretches preserves every
   // within-scene distance and is applied only when emitting the output scene.
   for (const scene of storyboard) {
     let result = scene;
     let stretch = 0;
+    const retimedMomentAt = new Map<string, number>();
     const path = scene.camera?.path;
     if (path?.length) {
       const sceneEnd = scene.startSec + scene.durationSec;
@@ -868,11 +940,79 @@ export function delayConflictingCameraMoves(
       const componentKinds = new Map(
         (scene.components ?? []).map((component) => [component.id, component.kind]),
       );
+      const componentRegions = new Map(
+        (scene.components ?? []).map((component) => [component.id, component.region]),
+      );
+      const componentIds = new Set((scene.components ?? []).map((component) => component.id));
+      const soleWorldRegion = scene.worldLayout?.length === 1
+        ? scene.worldLayout[0]!.region
+        : undefined;
       const beats = fullMoves.length ? resolvedBeatsByScene.get(scene.id) ?? [] : [];
-      const allBeatHolds = beatHoldWindows(scene, beats);
+      const destinationIdsFor = (move: CameraMoveIntentV1): Set<string> => new Set(
+        [...componentRegions.entries()]
+          .filter(([id, region]) =>
+            (move.toPart && id === move.toPart) ||
+            (move.toRegion && region === move.toRegion)
+          )
+          .map(([id]) => id),
+      );
+      const targetKey = (part: string | undefined, region: string | undefined): string | undefined => {
+        if (region) return `region:${region}`;
+        if (!part) return undefined;
+        const componentRegion = componentRegions.get(part);
+        if (componentRegion) return `region:${componentRegion}`;
+        const pluginRegion = scene.plugins?.find((plugin) => plugin.id === part)?.region;
+        return pluginRegion ? `region:${pluginRegion}` : `part:${part}`;
+      };
+      const namedCameraTargets = new Set(
+        path.flatMap((move) => [
+          targetKey(move.fromPart, move.fromRegion),
+          targetKey(move.toPart, move.toRegion),
+        ]).filter((target): target is string => Boolean(target)),
+      );
+      const focalTarget = targetKey(scene.spatialIntent?.focalPart, undefined);
+      if (focalTarget) namedCameraTargets.add(focalTarget);
+      const declaredContentStations = new Set([
+        ...(scene.components ?? []).flatMap((component) =>
+          component.region ? [`region:${component.region}`] : []
+        ),
+        ...(scene.plugins ?? []).flatMap((plugin) =>
+          plugin.region ? [`region:${plugin.region}`] : []
+        ),
+        ...(scene.worldLayout ?? []).map((station) => `region:${station.region}`),
+      ]);
+      // A single toRegion is not proof of a same-station move: its unseen
+      // source may be elsewhere. The scene's actual content must declare one
+      // and only one station, matching the camera target.
+      const sameStationReframe = namedCameraTargets.size === 1 &&
+        declaredContentStations.size === 1 &&
+        [...namedCameraTargets].every((target) => declaredContentStations.has(target));
+      // World-layout completion can prove a sole station even when the model
+      // omitted `region` on its focal component. Keep that inference local to
+      // payoff landing; the broader delay/drop policy must retain its stricter
+      // authored-region test so an opening route is not reclassified.
+      const inferredSoleStationPayoffRoute = Boolean(
+        soleWorldRegion &&
+        declaredContentStations.size === 1 &&
+        declaredContentStations.has(`region:${soleWorldRegion}`) &&
+        [...namedCameraTargets].every((target) =>
+          target === `region:${soleWorldRegion}` ||
+          (target.startsWith("part:") && componentIds.has(target.slice("part:".length)))
+        ),
+      );
+      const samePartPayoffRoute = Boolean(
+        focalTarget &&
+        focalTarget.startsWith("part:") &&
+        componentIds.has(focalTarget.slice("part:".length)) &&
+        namedCameraTargets.size === 1 &&
+        namedCameraTargets.has(focalTarget),
+      );
+      const sameTargetPayoffReframe = sameStationReframe ||
+        inferredSoleStationPayoffRoute || samePartPayoffRoute;
       // The latest hold each too-early move must clear, from every beat it cuts.
       const requiredStart = new Map<number, number>();
       const conflictCount = new Map<number, number>();
+      const conflictingPayoffEnd = new Map<number, number>();
       for (const beat of beats) {
         let needed = 0;
         if ((beat.kind === "type" || beat.kind === "swap") && beat.text) {
@@ -882,11 +1022,20 @@ export function delayConflictingCameraMoves(
           );
         }
         const isToastOpen = beat.kind === "open" && componentKinds.get(beat.component) === "toast";
-        if (PAYOFF_BEAT_KINDS.has(beat.kind) || isToastOpen) {
+        const isPayoff = PAYOFF_BEAT_KINDS.has(beat.kind) || isToastOpen;
+        if (isPayoff) {
           needed = Math.max(needed, OUTCOME_HOLD_SEC);
         }
         if (!needed) continue;
         for (const entry of fullMoves) {
+          // A destination may enter while the lens travels toward it. Its own
+          // reveal/payoff hold must not push the camera until after the thing
+          // it exists to reveal (Probe 5's late publish button).
+          // A true travel move may reveal destination content while the lens is
+          // moving. A same-station reframe cannot: it is still interrupting copy
+          // that is already visible in the active station, and the pacing audit
+          // deliberately treats that overlap as a reading conflict.
+          if (!sameTargetPayoffReframe && destinationIdsFor(entry.move).has(beat.component)) continue;
           const start = entry.move.startSec;
           const activeUntil = start + entry.move.durationSec;
           if (activeUntil <= beat.endSec + 0.05) continue;
@@ -896,6 +1045,12 @@ export function delayConflictingCameraMoves(
             Math.max(requiredStart.get(entry.index) ?? 0, round(beat.endSec + needed)),
           );
           conflictCount.set(entry.index, (conflictCount.get(entry.index) ?? 0) + 1);
+          if (isPayoff) {
+            conflictingPayoffEnd.set(
+              entry.index,
+              Math.max(conflictingPayoffEnd.get(entry.index) ?? 0, beat.endSec),
+            );
+          }
         }
       }
       if (requiredStart.size) {
@@ -908,36 +1063,111 @@ export function delayConflictingCameraMoves(
             required,
             entry.move.durationSec,
             entry.move.startSec,
-            allBeatHolds,
+            beatHoldWindows(scene, beats, destinationIdsFor(entry.move)),
           );
           const delay = target - entry.move.startSec;
+          // A long, authored approach can miss the bounded scene-stretch cap
+          // by only a few frames after we protect a payoff. Preserve the move
+          // and trim that small excess instead of reverting the entire atomic
+          // normalization (RelayGuard live attempt 2). This is deliberately
+          // narrow: at most 350ms / 15% and never below a 600ms camera phrase.
+          let durationSec = entry.move.durationSec;
+          const initialOverflow = target + durationSec - sceneEnd;
+          const trimNeeded = initialOverflow - MAX_PACING_STRETCH_SEC;
+          const maxSafeTrim = Math.min(0.35, entry.move.durationSec * 0.15);
+          const trimsMarginalOverflow =
+            trimNeeded > 1e-6 &&
+            trimNeeded <= maxSafeTrim + 1e-9 &&
+            entry.move.durationSec - trimNeeded >= 0.6 - 1e-9;
+          if (trimsMarginalOverflow) durationSec = round(entry.move.durationSec - trimNeeded);
           const next = fullMoves.find((other) => other.move.startSec > entry.move.startSec + 1e-6);
           // Retiming a load-bearing move is safe only while every moment that
           // could bind to the original move still overlaps the new window.
           const boundMoments = (scene.moments ?? []).filter((moment) =>
-            momentNeedsCamera(moment) &&
+            momentNeedsCamera(scene, moment) &&
             entry.move.startSec + entry.move.durationSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
             entry.move.startSec <= moment.atSec + EVIDENCE_AFTER_SEC
           );
           const keepsBindings = boundMoments.every((moment) =>
-            target + entry.move.durationSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
+            target + durationSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
             target <= moment.atSec + EVIDENCE_AFTER_SEC
           );
-          const overflow = target + entry.move.durationSec - sceneEnd;
+          const overflow = target + durationSec - sceneEnd;
           const fitsDelay = delay > 0 && delay <= MAX_PACING_RETIME_SEC + 1e-9;
-          const fitsBeforeNext = !next || target + entry.move.durationSec <= next.move.startSec + 1e-6;
+          const fitsBeforeNext = !next || target + durationSec <= next.move.startSec + 1e-6;
           const fitsScene = overflow <= 1e-6 ||
             (overflow <= MAX_PACING_STRETCH_SEC + 1e-9 &&
               scene.durationSec + overflow <= 15 + 1e-9);
-          if (!fitsDelay || !fitsBeforeNext || !keepsBindings || !fitsScene) {
+          // A scene with ONE full camera phrase has no ambiguity about which
+          // motion owns its camera-only moments. If arithmetic must delay that
+          // phrase, carry those timestamps by the same delta instead of making
+          // stale paperwork veto the repair. Multi-move scenes remain strict:
+          // shifting a moment there could change which phrase it describes.
+          const canCarryCameraMoments =
+            !keepsBindings && fullMoves.length === 1 && boundMoments.length > 0;
+          const bindingsSafe = keepsBindings || canCarryCameraMoments;
+          const destinationIds = destinationIdsFor(entry.move);
+          const servesGatedDestination = (scene.beats ?? []).some((candidate) =>
+            destinationIds.has(candidate.component) &&
+            (candidate.kind === "type" || candidate.kind === "open" ||
+              candidate.kind === "rows" || candidate.kind === "morph" ||
+              candidate.kind === "swap") &&
+            candidate.atSec > scene.startSec + 0.25
+          );
+          const shouldDropCrowdedOverflow =
+            overflow > 1e-6 &&
+            ((conflictCount.get(entry.index) ?? 0) >= 2 || sameStationReframe) &&
+            !isLoadBearingMove(scene, entry.move) &&
+            (!servesGatedDestination || sameStationReframe);
+          const delayFits = fitsDelay && fitsBeforeNext && bindingsSafe && fitsScene &&
+            !shouldDropCrowdedOverflow;
+          if (!delayFits) {
+            // A single same-station push that is already carrying the payoff
+            // can land WITH that payoff instead of being delayed until after
+            // it. This preserves the authored route and declared camera
+            // evidence while turning an in-flight result into a framed settle.
+            // It is deliberately unavailable to cross-station travel, crowded
+            // holds, or a trim that would collapse the authored phrase.
+            const payoffEnd = conflictingPayoffEnd.get(entry.index);
+            // `nextFramingChangeAfter` treats a move ending within 50ms of a
+            // payoff as still in flight. Land 60ms before resolution so the
+            // audit and the rendered frame agree that the camera has settled.
+            const landedDuration = payoffEnd === undefined
+              ? 0
+              : round(payoffEnd - entry.move.startSec - 0.06);
+            const shortenedKeepsBindings = payoffEnd !== undefined && boundMoments.every((moment) =>
+              entry.move.startSec + landedDuration >= moment.atSec - EVIDENCE_BEFORE_SEC &&
+              entry.move.startSec <= moment.atSec + EVIDENCE_AFTER_SEC
+            );
+            const canLandOnPayoff =
+              sameTargetPayoffReframe &&
+              fullMoves.length === 1 &&
+              (conflictCount.get(entry.index) ?? 0) === 1 &&
+              payoffEnd !== undefined &&
+              landedDuration >= PAYOFF_LANDING_MIN_CAMERA_SEC &&
+              landedDuration >= entry.move.durationSec * PAYOFF_LANDING_MIN_DURATION_RATIO &&
+              landedDuration < entry.move.durationSec - 0.05 &&
+              sceneEnd - payoffEnd + PACING_TOLERANCE_SEC >= OUTCOME_HOLD_SEC &&
+              shortenedKeepsBindings;
+            if (canLandOnPayoff) {
+              newPath[entry.index] = { ...entry.move, durationSec: landedDuration };
+              const note =
+                `shortened the same-station ${entry.move.move} from ` +
+                `${entry.move.durationSec.toFixed(2)}s to ${landedDuration.toFixed(2)}s so it ` +
+                `lands with the payoff and leaves the resolved frame readable`;
+              notes.push(note);
+              normalized.push(`scene "${scene.id}": ${note}`);
+              continue;
+            }
             // One camera phrase cutting across several independent reading /
             // payoff holds has no free slot left. When it carries no camera
             // moment, dropping that reframe is safer than repeatedly asking
             // the planner to solve contradictory timing (direction-live-a
             // attempt 1: one pull-back crossed two lockup lines + the metric).
             if (
-              (conflictCount.get(entry.index) ?? 0) >= 2 &&
-              !isLoadBearingMove(scene, entry.move)
+              ((conflictCount.get(entry.index) ?? 0) >= 2 || sameStationReframe) &&
+              !isLoadBearingMove(scene, entry.move) &&
+              (!servesGatedDestination || sameStationReframe)
             ) {
               newPath[entry.index] = undefined;
               const note =
@@ -954,10 +1184,22 @@ export function delayConflictingCameraMoves(
             // by the overflow instead of leaving the finding to a paid retry.
             stretch = Math.max(stretch, round(overflow));
           }
-          newPath[entry.index] = { ...entry.move, startSec: round(target) };
+          newPath[entry.index] = { ...entry.move, startSec: round(target), durationSec };
+          if (canCarryCameraMoments) {
+            const delta = target - entry.move.startSec;
+            for (const moment of boundMoments) {
+              retimedMomentAt.set(moment.id, round(moment.atSec + delta));
+            }
+          }
           const note =
             `delayed the ${entry.move.move} from ${entry.move.startSec.toFixed(2)}s to ` +
             `${target.toFixed(2)}s so the payoff/copy holds without an in-flight reframe` +
+            (trimsMarginalOverflow
+              ? ` (trimmed duration ${entry.move.durationSec.toFixed(2)}s to ${durationSec.toFixed(2)}s)`
+              : "") +
+            (canCarryCameraMoments
+              ? ` (carried ${boundMoments.length} single-phrase camera moment(s))`
+              : "") +
             (overflow > 1e-6 ? ` (cut boundary stretched ${overflow.toFixed(2)}s to fit it)` : "");
           notes.push(note);
           normalized.push(`scene "${scene.id}": ${note}`);
@@ -969,6 +1211,14 @@ export function delayConflictingCameraMoves(
           result = withNormalizationNotes(
             {
               ...scene,
+              ...(retimedMomentAt.size
+                ? {
+                    moments: (scene.moments ?? []).map((moment) => ({
+                      ...moment,
+                      atSec: retimedMomentAt.get(moment.id) ?? moment.atSec,
+                    })),
+                  }
+                : {}),
               ...(keptPath.length
                 ? { camera: { ...scene.camera!, path: keptPath } }
                 : { camera: undefined }),
@@ -980,15 +1230,10 @@ export function delayConflictingCameraMoves(
         }
       }
     }
-    const shifted = withShiftedSceneTimes(result, cumulativeShift);
-    if (stretch > 0) {
-      out.push({ ...shifted, durationSec: round(shifted.durationSec + stretch) });
-      cumulativeShift = round(cumulativeShift + stretch);
-    } else {
-      out.push(shifted);
-    }
+    out.push(result);
+    if (stretch > 0) stretches.set(scene.id, stretch);
   }
-  return { storyboard: out, normalized };
+  return { storyboard: applyCascadeStretches(out, stretches), normalized };
 }
 
 /**
@@ -1016,7 +1261,7 @@ export function retimeCameraOverInteractions(
     resolveComponentPlan(storyboard).scenes.map((scene) => [scene.sceneId, scene.beats]),
   );
   const out: DirectScene[] = [];
-  let cumulativeShift = 0;
+  const stretches = new Map<string, number>();
   for (const scene of storyboard) {
     let result = scene;
     let stretch = 0;
@@ -1041,7 +1286,9 @@ export function retimeCameraOverInteractions(
           for (let pass = 0; pass <= windows.length; pass += 1) {
             const end = target + entry.move.durationSec;
             const clash = windows.find(
-              (window) => target < window.until - 1e-6 && end > window.from + 1e-6,
+              (window) =>
+                target < window.until - PACING_TOLERANCE_SEC &&
+                end > window.from + PACING_TOLERANCE_SEC,
             );
             if (!clash) break;
             target = Math.max(target, round(clash.until));
@@ -1057,8 +1304,9 @@ export function retimeCameraOverInteractions(
         if (target <= entry.move.startSec + 1e-6) continue;
         const firstClash = windows.find(
           (window) =>
-            entry.move.startSec < window.until - 1e-6 &&
-            entry.move.startSec + entry.move.durationSec > window.from + 1e-6,
+            entry.move.startSec < window.until - PACING_TOLERANCE_SEC &&
+            entry.move.startSec + entry.move.durationSec >
+              window.from + PACING_TOLERANCE_SEC,
         )!;
         const next = fullMoves.find((other) => other.move.startSec > entry.move.startSec + 1e-6);
         const fitsBeforeNext = !next || target + entry.move.durationSec <= next.move.startSec + 1e-6;
@@ -1069,14 +1317,46 @@ export function retimeCameraOverInteractions(
         // Binding preservation: every moment that could bind to the original
         // window must still overlap the retimed one.
         const boundMoments = (scene.moments ?? []).filter((moment) =>
+          momentNeedsCamera(scene, moment) &&
           entry.move.startSec + entry.move.durationSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
           entry.move.startSec <= moment.atSec + EVIDENCE_AFTER_SEC
         );
-        const keepsBindings = boundMoments.every((moment) =>
+        const resolvedBeats = resolvedBeatsByScene.get(scene.id) ?? [];
+        const hasNonCameraEvidence = (
+          moment: NonNullable<DirectScene["moments"]>[number],
+        ): boolean =>
+          resolvedBeats.some((beat) =>
+            beat.endSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
+            beat.startSec <= moment.atSec + EVIDENCE_AFTER_SEC
+          ) || (/\b(?:cursor|click|press|tap|drag|pointer)\b/i.test(
+            `${moment.title} ${moment.visualState} ${moment.change}`,
+          ) && (scene.interactions ?? []).some((interaction) => {
+            const end = interaction.holdUntilSec ?? interaction.releaseSec ?? interaction.arriveSec;
+            return interaction.startSec <= moment.atSec + EVIDENCE_AFTER_SEC &&
+              end >= moment.atSec - EVIDENCE_BEFORE_SEC;
+          }));
+        // Camera prose is sometimes duplicated by a resolved count/state beat
+        // at the same moment. That typed evidence survives without the
+        // clashing reframe, so it must not make the camera move load-bearing.
+        const cameraOnlyBoundMoments = boundMoments.filter((moment) =>
+          !hasNonCameraEvidence(moment)
+        );
+        const keepsBindings = cameraOnlyBoundMoments.every((moment) =>
           target + entry.move.durationSec >= moment.atSec - EVIDENCE_BEFORE_SEC &&
           target <= moment.atSec + EVIDENCE_AFTER_SEC
         );
-        if (fitsBeforeNext && fitsScene && keepsBindings) {
+        // If a non-camera moment already owns the interaction and postponing
+        // this move would stretch the scene, holding the existing station is
+        // the smaller deterministic edit. It avoids manufacturing a long,
+        // empty tail (LedgerFlow live attempt 1) and reflects the director's
+        // rule that the interaction itself supplies the focus.
+        const typedEvidenceOwnsMoments =
+          boundMoments.length > 0 && cameraOnlyBoundMoments.length === 0;
+        const shouldDropOverflow = overflow > 1e-6 && cameraOnlyBoundMoments.length === 0;
+        if (
+          fitsBeforeNext && fitsScene && keepsBindings &&
+          !shouldDropOverflow && !typedEvidenceOwnsMoments
+        ) {
           if (overflow > 1e-6) stretch = Math.max(stretch, round(overflow));
           newPath[entry.index] = { ...entry.move, startSec: round(target) };
           const note =
@@ -1086,7 +1366,7 @@ export function retimeCameraOverInteractions(
             (overflow > 1e-6 ? ` (cut boundary stretched ${overflow.toFixed(2)}s to fit it)` : "");
           notes.push(note);
           normalized.push(`scene "${scene.id}": ${note}`);
-        } else if (!boundMoments.length) {
+        } else if (!cameraOnlyBoundMoments.length) {
           newPath[entry.index] = undefined;
           const note =
             `dropped the ${entry.move.move} at ${entry.move.startSec.toFixed(2)}s — it re-framed ` +
@@ -1111,15 +1391,10 @@ export function retimeCameraOverInteractions(
         stretch = 0;
       }
     }
-    const shifted = withShiftedSceneTimes(result, cumulativeShift);
-    if (stretch > 0) {
-      out.push({ ...shifted, durationSec: round(shifted.durationSec + stretch) });
-      cumulativeShift = round(cumulativeShift + stretch);
-    } else {
-      out.push(shifted);
-    }
+    out.push(result);
+    if (stretch > 0) stretches.set(scene.id, stretch);
   }
-  return { storyboard: out, normalized };
+  return { storyboard: applyCascadeStretches(out, stretches), normalized };
 }
 
 /**
@@ -1146,7 +1421,7 @@ export function spaceStackedCameraMoves(
     resolveComponentPlan(storyboard).scenes.map((scene) => [scene.sceneId, scene.beats]),
   );
   const out: DirectScene[] = [];
-  let cumulativeShift = 0;
+  const stretches = new Map<string, number>();
   storyboard.forEach((scene, sceneIndex) => {
     let result = scene;
     let stretch = 0;
@@ -1242,15 +1517,10 @@ export function spaceStackedCameraMoves(
         stretch = 0;
       }
     }
-    const shifted = withShiftedSceneTimes(result, cumulativeShift);
-    if (stretch > 0) {
-      out.push({ ...shifted, durationSec: round(shifted.durationSec + stretch) });
-      cumulativeShift = round(cumulativeShift + stretch);
-    } else {
-      out.push(shifted);
-    }
+    out.push(result);
+    if (stretch > 0) stretches.set(scene.id, stretch);
   });
-  return { storyboard: out, normalized };
+  return { storyboard: applyCascadeStretches(out, stretches), normalized };
 }
 
 /**
@@ -1282,7 +1552,7 @@ export function delayEarlySwapBeats(
     resolveComponentPlan(storyboard).scenes.map((scene) => [scene.sceneId, scene.beats]),
   );
   const out: DirectScene[] = [];
-  let cumulativeShift = 0;
+  const stretches = new Map<string, number>();
   storyboard.forEach((scene, sceneIndex) => {
     let result = scene;
     let stretch = 0;
@@ -1299,7 +1569,25 @@ export function delayEarlySwapBeats(
         const beat = newBeats[i]!;
         if (beat.kind !== "swap") continue;
         if (beat.atSec >= settlePoint - 1e-6) continue;
-        const target = settlePoint;
+        // Prefer the full entry-settle hold. In a short scene containing
+        // several already-landed surfaces, however, pushing a development
+        // swap all the way to that point can create a NEW introduction/
+        // development deficit and make the atomic normalizer revert. Cap the
+        // delay at the latest point that still satisfies that existing floor,
+        // while remaining just beyond the audit's tolerated early-swap edge.
+        const introductionCount = sceneIntroductionTimes(scene).length;
+        const latestDevelopmentAt = round(
+          sceneEnd - DEVELOPMENT_SEC_PER_INTRODUCTION * introductionCount +
+            PACING_TOLERANCE_SEC,
+        );
+        const earliestAcceptedAt = round(
+          scene.startSec + ENTRY_SETTLE_SEC - PACING_TOLERANCE_SEC + 0.01,
+        );
+        const target = round(Math.max(
+          earliestAcceptedAt,
+          Math.min(settlePoint, latestDevelopmentAt),
+        ));
+        if (target <= beat.atSec + 1e-6 || target > settlePoint + 1e-6) continue;
         // Duration from the resolved beat (default-filled), else the intent.
         const resolvedBeat = resolved.get(beat.id);
         const beatStart = resolvedBeat ? resolvedBeat.startSec : beat.atSec;
@@ -1339,51 +1627,10 @@ export function delayEarlySwapBeats(
         stretch = 0;
       }
     }
-    const shifted = withShiftedSceneTimes(result, cumulativeShift);
-    if (stretch > 0) {
-      out.push({ ...shifted, durationSec: round(shifted.durationSec + stretch) });
-      cumulativeShift = round(cumulativeShift + stretch);
-    } else {
-      out.push(shifted);
-    }
+    out.push(result);
+    if (stretch > 0) stretches.set(scene.id, stretch);
   });
-  return { storyboard: out, normalized };
-}
-
-/** Shift a scene's own start and every nested absolute time by `delta` seconds. */
-function withShiftedSceneTimes(scene: DirectScene, delta: number): DirectScene {
-  if (Math.abs(delta) < 1e-6) return scene;
-  const shift = (value: number): number => round(value + delta);
-  return {
-    ...scene,
-    startSec: shift(scene.startSec),
-    ...(scene.timeRamp ? { timeRamp: { ...scene.timeRamp, atSec: shift(scene.timeRamp.atSec) } } : {}),
-    ...(scene.gradeShift
-      ? { gradeShift: { ...scene.gradeShift, atSec: shift(scene.gradeShift.atSec) } }
-      : {}),
-    ...(scene.camera
-      ? {
-          camera: {
-            ...scene.camera,
-            path: scene.camera.path.map((move) => ({ ...move, startSec: shift(move.startSec) })),
-          },
-        }
-      : {}),
-    ...(scene.beats ? { beats: scene.beats.map((beat) => ({ ...beat, atSec: shift(beat.atSec) })) } : {}),
-    ...(scene.interactions
-      ? {
-          interactions: scene.interactions.map((interaction) => ({
-            ...interaction,
-            startSec: shift(interaction.startSec),
-            arriveSec: shift(interaction.arriveSec),
-            ...(interaction.pressSec !== undefined ? { pressSec: shift(interaction.pressSec) } : {}),
-            ...(interaction.releaseSec !== undefined ? { releaseSec: shift(interaction.releaseSec) } : {}),
-            ...(interaction.holdUntilSec !== undefined ? { holdUntilSec: shift(interaction.holdUntilSec) } : {}),
-          })),
-        }
-      : {}),
-    ...(scene.moments ? { moments: scene.moments.map((moment) => ({ ...moment, atSec: shift(moment.atSec) })) } : {}),
-  };
+  return { storyboard: applyCascadeStretches(out, stretches), normalized };
 }
 
 /**
@@ -1395,20 +1642,22 @@ function withShiftedSceneTimes(scene: DirectScene, delta: number): DirectScene {
  * constraining "next framing change" is the scene's OWN end (not an internal
  * camera move already in flight) are stretched: an internal-move conflict is
  * a genuine creative layout call the model should make, not host arithmetic.
- * Scenes inside a declared timeRamp hold are skipped — the ramp already
- * warps content seconds non-linearly, so stretching raw content time there
- * would not deliver the viewer-time hold the finding asks for.
+ * Shortfalls are measured in viewer time, including scenes with a time ramp.
+ * Ramps are net-zero and identity at scene boundaries, so extending the cut by
+ * N content seconds buys exactly N viewer seconds. Atomic convergence remains
+ * the backstop if the longer scene changes the ramp's internal recovery.
  */
 export function stretchMarginalPacingMisses(
   storyboard: DirectScene[],
 ): { storyboard: DirectScene[]; normalized: string[] } {
   const normalized: string[] = [];
-  const rampSceneIds = new Set(resolveTimeRampPlan(storyboard).ramps.map((ramp) => ramp.sceneId));
+  const conversion = timeConversionService(resolveTimeRampPlan(storyboard));
+  const toViewer = (value: number): number => conversion.toViewer(sourceTime(value));
   const resolvedBeatsByScene = new Map<string, ResolvedComponentBeatV1[]>(
     resolveComponentPlan(storyboard).scenes.map((scene) => [scene.sceneId, scene.beats]),
   );
   const out: DirectScene[] = [];
-  let cumulativeShift = 0;
+  const stretches = new Map<string, number>();
 
   // Detection runs in each scene's ORIGINAL frame (where the resolved beats
   // live); a uniform later shift preserves every within-scene distance, so the
@@ -1416,8 +1665,10 @@ export function stretchMarginalPacingMisses(
   // emitting the output scene.
   for (const original of storyboard) {
     let applied = 0;
-    if (!rampSceneIds.has(original.id)) {
+    {
       const sceneEnd = original.startSec + original.durationSec;
+      const viewerStart = toViewer(original.startSec);
+      const viewerEnd = toViewer(sceneEnd);
       const fullMoves = (original.camera?.path ?? []).filter((move) => CAMERA_FULL_MOVES.has(move.move));
       const stretchEvents = framingChangeEvents(fullMoves);
       const nextFramingChange = (afterSec: number): number =>
@@ -1427,6 +1678,36 @@ export function stretchMarginalPacingMisses(
       );
       const beats = resolvedBeatsByScene.get(original.id) ?? [];
       let shortfall = 0;
+
+      // The introduction/development finding is also constrained by the
+      // scene's own cut. When the miss is bounded, extending that boundary is
+      // the same deterministic arithmetic as a reading/outcome hold and
+      // avoids paying a model to move an otherwise coherent late surface.
+      // Solve both clauses used by auditPacing: development seconds after the
+      // last introduction, and the 65%-of-scene latest-landing cap.
+      const introductions = sceneIntroductionTimes(original);
+      const isShortFinalResolve =
+        original === storyboard[storyboard.length - 1] &&
+        original.durationSec <= FINAL_RESOLVE_ALLOWANCE_SEC &&
+        introductions.length === 1 &&
+        COMPACT_RESOLVE_KINDS.has(original.components?.[0]?.kind ?? "");
+      if (introductions.length && !isShortFinalResolve) {
+        const lastIntro = introductions[introductions.length - 1]!;
+        const neededDevelopment = DEVELOPMENT_SEC_PER_INTRODUCTION * introductions.length;
+        const viewerIntro = toViewer(lastIntro);
+        const availableDevelopment = viewerEnd - viewerIntro;
+        if (availableDevelopment + PACING_TOLERANCE_SEC < neededDevelopment) {
+          shortfall = Math.max(shortfall, neededDevelopment - availableDevelopment);
+        }
+        const viewerLength = viewerEnd - viewerStart;
+        const latestAllowed = viewerStart + viewerLength * LAST_INTRODUCTION_MAX_FRACTION;
+        if (viewerIntro > latestAllowed + PACING_TOLERANCE_SEC) {
+          const viewerLengthNeeded =
+            (viewerIntro - viewerStart - PACING_TOLERANCE_SEC) /
+            LAST_INTRODUCTION_MAX_FRACTION;
+          shortfall = Math.max(shortfall, viewerLengthNeeded - viewerLength);
+        }
+      }
       for (const beat of beats) {
         // Only a shortfall constrained by the scene's OWN end (not an internal
         // camera move already in flight) is host-stretchable: extending the
@@ -1436,14 +1717,14 @@ export function stretchMarginalPacingMisses(
           const wordCount = words(beat.text);
           const needed = Math.min(READING_MAX_SEC, Math.max(READING_MIN_SEC, READING_SEC_PER_WORD * wordCount));
           if (nextFramingChange(beat.endSec) >= sceneEnd - 1e-6) {
-            const available = sceneEnd - beat.endSec;
+            const available = viewerEnd - toViewer(beat.endSec);
             if (available + PACING_TOLERANCE_SEC < needed) shortfall = Math.max(shortfall, needed - available);
           }
         }
         const isToastOpen = beat.kind === "open" && componentKinds.get(beat.component) === "toast";
         if (PAYOFF_BEAT_KINDS.has(beat.kind) || isToastOpen) {
           if (nextFramingChange(beat.endSec) >= sceneEnd - 1e-6) {
-            const available = sceneEnd - beat.endSec;
+            const available = viewerEnd - toViewer(beat.endSec);
             if (available + PACING_TOLERANCE_SEC < OUTCOME_HOLD_SEC) {
               shortfall = Math.max(shortfall, OUTCOME_HOLD_SEC - available);
             }
@@ -1455,20 +1736,19 @@ export function stretchMarginalPacingMisses(
         if (applied <= 0.01) applied = 0;
       }
     }
-    const shifted = withShiftedSceneTimes(original, cumulativeShift);
     if (applied > 0) {
       const note =
         `stretched ${applied.toFixed(2)}s to close a marginal pacing-floor ` +
         `shortfall at its own cut boundary`;
       out.push(withNormalizationNotes(
-        { ...shifted, durationSec: round(shifted.durationSec + applied) },
+        original,
         [note],
       ));
-      cumulativeShift = round(cumulativeShift + applied);
+      stretches.set(original.id, applied);
       normalized.push(`scene "${original.id}": ${note}`);
     } else {
-      out.push(shifted);
+      out.push(original);
     }
   }
-  return { storyboard: out, normalized };
+  return { storyboard: applyCascadeStretches(out, stretches), normalized };
 }

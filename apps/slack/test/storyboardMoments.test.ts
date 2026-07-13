@@ -11,6 +11,7 @@ import {
 import { CAMERA_FULL_MOVES } from "../src/engine/cameraContract.ts";
 import { buildFallbackComposition } from "../src/engine/fallbackComposition.ts";
 import type { DirectScene } from "../src/engine/directComposition.ts";
+import type { MotionDensityReport } from "../src/engine/motionDensity.ts";
 
 const scenes: DirectScene[] = [
   { id: "signal", title: "Signal", purpose: "Open the problem", startSec: 0, durationSec: 5 },
@@ -226,6 +227,62 @@ tl.fromTo("#close-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .
     expect(contract.errors.join("\n")).toContain("no executable timeline evidence");
   });
 
+  it("does not borrow evidence from the next scene across a cut boundary", () => {
+    const boundaryHtml = html(`
+tl.fromTo("#signal-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .7 }, .2);
+tl.fromTo("#proof-title", { x: 80, opacity: 0 }, { x: 0, opacity: 1, duration: .7 }, 5.0);
+tl.fromTo("#close-title", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: .7 }, 10.0);
+`);
+    const declared = scenes.map((scene, index) => ({
+      ...scene,
+      moments: index === 0
+        ? [
+            moment(scene.id, "signal-open", 0.3),
+            moment(scene.id, "signal-boundary-ghost", 4.8, {
+              importance: "primary",
+              motionIntent: "component reveal",
+            }),
+          ]
+        : [moment(scene.id, `${scene.id}-open`, scene.startSec + 0.1)],
+    }));
+
+    // Isolate the ownership seam: the only nearby component activity belongs
+    // to the incoming shot. (A normal density report also includes the
+    // outgoing cut, which is valid evidence for an outgoing cut moment.)
+    const report: MotionDensityReport = {
+      version: 1,
+      durationSec: 15,
+      applies: true,
+      activities: [
+        {
+          kind: "medium",
+          source: "gsap.fromTo",
+          sceneId: "signal",
+          target: "#signal-title",
+          startSec: 0.2,
+          endSec: 0.9,
+        },
+        {
+          kind: "medium",
+          source: "component:open",
+          sceneId: "proof",
+          target: "proof-panel",
+          startSec: 5,
+          endSec: 5.7,
+        },
+      ],
+      quietGaps: [],
+      maxQuietGapSec: 0,
+      sceneReports: [],
+      errors: [],
+      warnings: [],
+    };
+    const contract = resolveMomentContract(boundaryHtml, declared, 15, report);
+    const ghost = contract.moments.find((entry) => entry.id === "signal-boundary-ghost")!;
+    expect(ghost.evidence).toBeUndefined();
+    expect(contract.errors.join("\n")).toContain('"signal-boundary-ghost"');
+  });
+
   it("re-anchors an unbound supporting moment onto nearby authored evidence", () => {
     // 3.5s is outside the bind window of the 2.4s beat but within the
     // re-anchor reach — the paperwork degrades instead of costing an attempt.
@@ -343,6 +400,46 @@ describe("topUpStoryboardMoments", () => {
     ).toEqual(planned[0]!.moments);
   });
 
+  it("uses the midpoint of long typed camera travel when its landing is too late to fill a gap", () => {
+    const planned: DirectScene[] = [
+      {
+        ...scenes[0]!,
+        moments: [
+          moment("signal", "signal-a", 0.3),
+          moment("signal", "signal-b", 2.5),
+          moment("signal", "signal-c", 4.5),
+        ],
+      },
+      {
+        ...scenes[1]!,
+        camera: {
+          version: 1,
+          path: [{
+            version: 1,
+            move: "orbit",
+            toRegion: "comparison",
+            startSec: 6,
+            durationSec: 3.2,
+          }],
+        },
+        moments: [moment("proof", "proof-entry", 5.2)],
+      },
+      {
+        ...scenes[2]!,
+        moments: [
+          moment("close", "close-a", 10.3),
+          moment("close", "close-b", 12.5),
+          moment("close", "close-c", 14.3),
+        ],
+      },
+    ];
+    const topped = topUpStoryboardMoments(planned, CAMERA_FULL_MOVES);
+    expect(topped.added.some((entry) =>
+      entry.sceneId === "proof" && entry.atSec === 7.6 && entry.title.includes("develops")
+    )).toBe(true);
+    expect(validatePlannedMoments(topped.storyboard, 15)).toEqual([]);
+  });
+
   it("leaves a compliant plan untouched", () => {
     const planned = scenes.map((scene) => ({
       ...scene,
@@ -365,6 +462,28 @@ describe("topUpStoryboardMoments", () => {
     const topped = topUpStoryboardMoments(planned, CAMERA_FULL_MOVES);
     expect(topped.added).toEqual([]);
     expect(topped.storyboard).toBe(planned);
+  });
+
+  it("removes stale host-auto moments when their typed evidence no longer exists", () => {
+    const planned = scenes.map((scene, index) => ({
+      ...scene,
+      moments: [
+        moment(scene.id, `${scene.id}-m1`, scene.startSec + 0.3),
+        moment(scene.id, `${scene.id}-m2`, scene.startSec + 2.3),
+        moment(scene.id, `${scene.id}-m3`, scene.startSec + 4.2),
+        ...(index === 2 ? [{
+          ...moment(scene.id, `${scene.id}-auto-1`, scene.startSec + 3.2),
+          title: "Camera pull-back develops toward CTA",
+          motionIntent: "camera",
+        }] : []),
+      ],
+    }));
+
+    const topped = topUpStoryboardMoments(planned, CAMERA_FULL_MOVES);
+    expect(topped.storyboard.flatMap((scene) => scene.moments ?? [])
+      .some((entry) => entry.id.endsWith("-auto-1"))).toBe(false);
+    expect(topped.storyboard.flatMap((scene) => scene.moments ?? [])
+      .some((entry) => entry.title.includes("Camera pull-back"))).toBe(false);
   });
 
   it("leaves genuine dead air for the findings retry", () => {

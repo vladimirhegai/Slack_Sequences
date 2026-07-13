@@ -1,0 +1,288 @@
+<script type="application/json" data-recipe-meta>
+{
+  "format": 2,
+  "id": "iris-cta-close",
+  "title": "Iris-flood CTA end card with ignition pop",
+  "description": "An accent iris floods out from behind a ghost CTA pill, the pill ignites to solid accent with a committed pop, and the supporting line settles beneath — a big, confident close.",
+  "tags": [
+    "cta",
+    "end-card",
+    "close",
+    "iris",
+    "button",
+    "resolve",
+    "conversion"
+  ],
+  "triggerPatterns": [
+    "iris",
+    "call[ -]?to[ -]?action",
+    "\\bcta\\b",
+    "(start|get) (your )?(free )?(trial|demo)",
+    "get started",
+    "sign[ -]?up",
+    "end[ -]?card",
+    "closing (card|shot|cta|button)",
+    "final (cta|button|card)",
+    "button .*(fills|ignites|pops|lands)"
+  ],
+  "durationWindow": { "minSec": 3, "maxSec": 10 },
+  "componentKinds": ["button"],
+  "params": [
+    {
+      "name": "kicker",
+      "kind": "text",
+      "description": "Short line above the button that frames the ask.",
+      "default": "Ready when you are",
+      "maxChars": 32
+    },
+    {
+      "name": "label",
+      "kind": "text",
+      "description": "The button copy — the one action the film asks for.",
+      "maxChars": 22
+    },
+    {
+      "name": "sub",
+      "kind": "text",
+      "description": "Reassurance line under the button (pricing, friction-remover, URL).",
+      "default": "Free to start · no credit card",
+      "maxChars": 44
+    },
+    {
+      "name": "accent",
+      "kind": "color-token",
+      "description": "Brand token for the iris flood, ring, and ignited button.",
+      "default": "var(--cinema-key)"
+    },
+    {
+      "name": "settleSec",
+      "kind": "number",
+      "description": "Seconds after scene start when the iris lands and the button ignites (leave >=1s of scene after it).",
+      "default": 2.2,
+      "min": 1.6,
+      "max": 8
+    }
+  ],
+  "revision": 1,
+  "demo": {
+    "durationSec": 4.6,
+    "params": {
+      "kicker": "Ship the story",
+      "label": "Start free trial",
+      "sub": "Sequences for Slack · free today",
+      "accent": "var(--cinema-key)",
+      "settleSec": 2.3
+    }
+  },
+  "sanityBriefs": [
+    "Close the film on a big call to action: the Start free trial button ignites as an accent iris floods the end card.",
+    "Final shot needs a sign-up CTA that pops after an iris wipe fills the frame."
+  ]
+}
+</script>
+<template data-recipe-doc>
+# iris-cta-close — accent iris flood, CTA ignition, supporting line
+
+**What it is.** The film's closing gesture: a kicker line and a ghost
+(outlined) CTA pill hold the frame; an accent ring pulses once, then an accent
+iris disc floods outward from behind the pill — its crisp edge sweeps past the
+frame and relaxes into a subtle accent tint over the canvas. At the landing
+the pill ignites to solid accent with dark ink copy and one committed pop, and
+the reassurance line settles beneath. It exists because model-authored end
+cards reliably ship small, timid CTAs on empty canvases; this pattern makes
+the close the biggest moment of the film by construction.
+
+**When to declare it.** Any brief that ends on a call to action, sign-up,
+trial, install, or "get started" — the DEFAULT close for launch and feature
+films. Declare it in the FINAL scene. The ignition is a natural PRIMARY
+moment: place a declared moment at roughly `sceneStart + settleSec` with
+motionIntent "resolve" or "press".
+
+**How to stage the shot around it.**
+- Final scene, calm camera: `hold` or a slow `drift`; the iris supplies the
+  scene's energy. Never whip away after the ignition — leave ≥1s of read.
+- The pattern owns the frame center; keep other content off the scene or in
+  the margins (a small logo top-left is fine).
+- The iris flood reads best arriving from a darker canvas; pair naturally
+  with a warming `gradeShift` or a `flash`-free hard cut in.
+- Copy discipline: `label` is the action ("Start free trial"), `sub` removes
+  the friction ("no credit card"), `kicker` frames the ask.
+
+**Slots.** `kicker` (line above), `label` (button copy — the ask), `sub`
+(reassurance under the button), `accent` (a `var(--…)` brand token; vivid
+tokens read best — the ignited button uses near-black ink on it),
+`settleSec` (seconds after scene start when the iris lands and the button
+ignites; leave ≥1s of scene after it).
+</template>
+<!--
+  iris-cta-close — the end-card signature (agent-authored recipe).
+
+  Instantiation contract (host-owned — see recipeContract.ts): markup template
+  injected inside the declared scene with {{param}} slots filled; style
+  injected once into <head>; the motion body runs as (tl, root, start,
+  duration, uid) adding tweens to the ONE paused master timeline. Pure
+  function of timeline time — no clocks, no rAF, no randomness, no repeats.
+
+  Static-analyzability convention (keeps the lint gate warning-free): tween
+  targets are INLINE STRING LITERALS with {{uid}} filled by the host, and the
+  timing spine derives from {{start}}/{{settleSec}} numeric literal slots so
+  every position constant-folds in the pinned GSAP parser.
+
+  Contrast strategy: the iris relaxes to a 16% accent tint over the (dark)
+  canvas, so pre-flood copy colors stay valid after the flood; the ignited
+  pill uses near-black ink on the accent, the standard SaaS CTA treatment.
+-->
+<style data-recipe-style>
+  .rcp-cta {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 36px;
+    text-align: center;
+  }
+  .rcp-cta .rcp-cta-kicker {
+    font-size: var(--rcp-kicker-size, 27px);
+    font-weight: 600;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--rcp-accent, #ffc24d);
+    opacity: 0;
+    position: relative;
+    z-index: 1;
+  }
+  .rcp-cta .rcp-cta-pillwrap {
+    position: relative;
+    display: inline-block;
+  }
+  .rcp-cta .rcp-cta-iris {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 3600px;
+    height: 3600px;
+    margin-left: -1800px;
+    margin-top: -1800px;
+    border-radius: 50%;
+    background: var(--rcp-accent, #ffc24d);
+    opacity: 0;
+    transform: scale(0);
+    will-change: transform;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .rcp-cta .rcp-cta-ring {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 440px;
+    height: 440px;
+    margin-left: -220px;
+    margin-top: -220px;
+    border-radius: 50%;
+    border: 3px solid var(--rcp-accent, #ffc24d);
+    opacity: 0;
+    transform: scale(0.55);
+    will-change: transform;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .rcp-cta .rcp-cta-pill {
+    position: relative;
+    display: grid;
+    padding: 30px 80px;
+    border-radius: 999px;
+    border: 3px solid var(--rcp-accent, #ffc24d);
+    font-size: var(--rcp-label-size, 52px);
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    opacity: 0;
+    z-index: 1;
+    will-change: transform;
+  }
+  .rcp-cta .rcp-cta-fill {
+    position: absolute;
+    inset: -3px;
+    border-radius: 999px;
+    background: var(--rcp-accent, #ffc24d);
+    opacity: 0;
+  }
+  .rcp-cta .rcp-cta-label {
+    grid-area: 1 / 1;
+    position: relative;
+    white-space: nowrap;
+  }
+  .rcp-cta .rcp-cta-label-ghost {
+    color: var(--rcp-accent, #ffc24d);
+  }
+  .rcp-cta .rcp-cta-label-lit {
+    color: #0b0e12;
+    opacity: 0;
+  }
+  .rcp-cta .rcp-cta-sub {
+    font-size: var(--rcp-sub-size, 27px);
+    font-weight: 500;
+    opacity: 0;
+    position: relative;
+    z-index: 1;
+  }
+</style>
+<template data-recipe-markup>
+  <div class="rcp-cta" data-part="{{uid}}-cta" data-layout-important
+    data-layout-anchor="frame:center" style="--rcp-accent: {{accent}}">
+    <span class="rcp-cta-kicker">{{kicker}}</span>
+    <span class="rcp-cta-pillwrap" data-layout-allow-overflow>
+      <span class="rcp-cta-iris" data-layout-ignore></span>
+      <span class="rcp-cta-ring" data-layout-ignore></span>
+      <span class="rcp-cta-pill" data-part="{{uid}}-cta-button">
+        <span class="rcp-cta-fill"></span>
+        <span class="rcp-cta-label rcp-cta-label-ghost">{{label}}</span>
+        <span class="rcp-cta-label rcp-cta-label-lit">{{label}}</span>
+      </span>
+    </span>
+    <span class="rcp-cta-sub">{{sub}}</span>
+  </div>
+</template>
+<script data-recipe-motion>
+  // Timing spine: {{start}}/{{settleSec}} are numeric literals, so every
+  // position below constant-folds at parse time (lint-placeable, identical at
+  // runtime). settle = the iris landing / button ignition.
+  var settle = {{start}} + {{settleSec}};
+
+  // Entrance: kicker, then the ghost pill.
+  tl.fromTo('[data-part="{{uid}}-cta"] .rcp-cta-kicker', { y: 18, opacity: 0 },
+    { y: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, {{start}} + 0.15);
+  tl.fromTo('[data-part="{{uid}}-cta"] .rcp-cta-pill', { y: 20, opacity: 0, scale: 0.97 },
+    { y: 0, opacity: 1, scale: 1, duration: 0.45, ease: "power3.out" }, {{start}} + 0.32);
+
+  // Anticipation ring: one clean pulse announcing the flood.
+  // immediateRender:false — this fromTo's FROM state is VISIBLE (opacity
+  // 0.55); without it GSAP paints that state at timeline build, parking a
+  // ghost ring on the frame from scene start. CSS rest (opacity 0) rules
+  // until the pulse begins.
+  tl.fromTo('[data-part="{{uid}}-cta"] .rcp-cta-ring', { scale: 0.55, opacity: 0.55 },
+    { scale: 1.5, opacity: 0, duration: 0.55, ease: "power2.out", immediateRender: false },
+    settle - 0.62);
+
+  // The iris: a crisp accent edge sweeps past the frame, relaxing to a tint
+  // so every pre-flood copy color stays valid on the landed canvas.
+  // (immediateRender:false for the same reason — its from-opacity is 0.85;
+  // scale 0 happens to hide it, but the rest state belongs to the CSS.)
+  tl.fromTo('[data-part="{{uid}}-cta"] .rcp-cta-iris', { scale: 0, opacity: 0.85 },
+    { scale: 1, opacity: 0.16, duration: 0.5, ease: "seqSwoosh", immediateRender: false },
+    settle - 0.5);
+
+  // Ignition: the pill fills accent, ink label crossfades in, ghost releases.
+  tl.fromTo('[data-part="{{uid}}-cta"] .rcp-cta-fill', { opacity: 0 },
+    { opacity: 1, duration: 0.16, ease: "power2.out" }, settle);
+  tl.fromTo('[data-part="{{uid}}-cta"] .rcp-cta-label-lit', { opacity: 0 },
+    { opacity: 1, duration: 0.16, ease: "power2.out" }, settle);
+  tl.to('[data-part="{{uid}}-cta"] .rcp-cta-label-ghost', { opacity: 0, duration: 0.12, ease: "power1.out" }, settle);
+
+  // One committed pop (no wobble), then the reassurance line settles.
+  tl.fromTo('[data-part="{{uid}}-cta"] .rcp-cta-pill', { scale: 1 },
+    { scale: 1.05, duration: 0.12, ease: "power2.out" }, settle + 0.01);
+  tl.to('[data-part="{{uid}}-cta"] .rcp-cta-pill', { scale: 1, duration: 0.3, ease: "seqSettle" }, settle + 0.15);
+  tl.fromTo('[data-part="{{uid}}-cta"] .rcp-cta-sub', { y: 14, opacity: 0 },
+    { y: 0, opacity: 0.9, duration: 0.4, ease: "power3.out" }, settle + 0.22);
+</script>

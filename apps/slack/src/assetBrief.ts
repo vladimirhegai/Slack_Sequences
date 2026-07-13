@@ -1,6 +1,6 @@
 /**
- * Channel asset briefs — the `/sequences asset` intake (ASSETS.md workflow
- * step 2). A user runs `/sequences asset`, uploads UI screenshots in the
+ * Channel asset briefs — the `/sequences assets` intake (ASSETS.md workflow
+ * step 2). A user runs `/sequences assets`, uploads UI screenshots in the
  * modal's file input (Slack slash commands themselves cannot carry files —
  * the modal `file_input` block is the native path), and adds optional notes.
  * The host then extracts brand truth DETERMINISTICALLY (chromium canvas
@@ -9,7 +9,7 @@
  * context so frame design + the asset library retheme to the user's product.
  *
  * Deliberate boundaries:
- * - one brief per channel, replaced on re-run, removed by `/sequences asset
+ * - one brief per channel, replaced on re-run, removed by `/sequences assets
  *   clear` — nothing else from the channel is ever stored;
  * - extraction is the tweak-prebuilt philosophy applied to intake: screenshots
  *   become PARAMETERS (accent, canvas tone), never generated markup;
@@ -51,7 +51,12 @@ function briefsFile(): string {
 }
 
 function refsDir(channel: string): string {
-  return path.join(dataDir(), "asset-briefs", channel.replace(/[^\w-]/g, "_"));
+  return path.join(assetBriefReferencesRoot(), channel.replace(/[^\w-]/g, "_"));
+}
+
+/** The only host filesystem root whose regular files may enter a Luna job. */
+export function assetBriefReferencesRoot(): string {
+  return path.join(dataDir(), "asset-briefs");
 }
 
 function readAll(): Record<string, ChannelAssetBrief> {
@@ -226,7 +231,7 @@ export async function extractPaletteFromImages(
  */
 export function assetBriefContext(brief: ChannelAssetBrief): string {
   const lines = [
-    "Brand truth captured from the user's own UI screenshots (`/sequences asset`) — " +
+    "Brand truth captured from the user's own UI screenshots (`/sequences assets`) — " +
       "honor these over inferred defaults:",
   ];
   if (brief.palette.accent) {

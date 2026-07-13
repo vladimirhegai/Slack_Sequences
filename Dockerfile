@@ -37,8 +37,6 @@ ENV PUPPETEER_SKIP_DOWNLOAD=1 \
 COPY package.json package-lock.json ./
 COPY packages/core/package.json packages/core/
 COPY packages/platform/package.json packages/platform/
-COPY apps/forge/package.json apps/forge/
-COPY apps/sequences/package.json apps/sequences/
 COPY apps/slack/package.json apps/slack/
 
 # Install the whole workspace from the committed lockfile. There is no compile
